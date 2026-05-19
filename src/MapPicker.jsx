@@ -117,7 +117,7 @@ export function MapPicker({ lat, lng, onPositionChange, className = '', interact
   };
 
   return (
-    <div className={'overflow-hidden rounded-lg border-2 border-slate-300 bg-slate-100 ' + className}>
+    <div className={'rounded-lg border-2 border-slate-300 bg-slate-100 ' + className}>
       <p className="border-b border-slate-200 bg-white px-2 py-1.5 text-[10px] font-bold text-slate-600">
         {interactive
           ? '地図をクリックして現場位置を指定（OpenStreetMap）'
@@ -127,7 +127,7 @@ export function MapPicker({ lat, lng, onPositionChange, className = '', interact
         <MapContainer
           center={center}
           zoom={zoom}
-          className="z-0 h-64 min-h-[300px] w-full sm:h-72"
+          className="z-0 h-64 min-h-[300px] w-full overflow-hidden sm:h-72"
           style={{ height: '300px', minHeight: '300px', width: '100%' }}
           scrollWheelZoom
         >
@@ -145,7 +145,7 @@ export function MapPicker({ lat, lng, onPositionChange, className = '', interact
           <button
             type="button"
             onClick={handleResetToPosition}
-            className="absolute bottom-4 right-4 z-[500] rounded-lg border border-gray-200 bg-white p-2 text-sm font-bold text-gray-700 shadow-md hover:bg-gray-50 active:scale-[0.98]"
+            className="absolute bottom-4 right-4 z-[1100] rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700 shadow-md hover:bg-gray-50 active:scale-[0.98]"
           >
             現場位置に戻る
           </button>

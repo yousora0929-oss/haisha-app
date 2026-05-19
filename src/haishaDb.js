@@ -770,6 +770,7 @@ function mapProjectRow(row) {
           : '',
     trading_company: row.trading_company != null ? String(row.trading_company) : '',
     contractor: row.contractor != null ? String(row.contractor) : '',
+    url_token: row.url_token != null ? String(row.url_token) : '',
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -785,6 +786,7 @@ function mapCustomerRow(row) {
     manager_name: row.manager_name != null ? String(row.manager_name) : '',
     phone_number: row.phone_number != null ? String(row.phone_number) : '',
     login_password: row.login_password != null ? String(row.login_password) : '',
+    url_token: row.url_token != null ? String(row.url_token) : '',
     created_at: row.created_at,
   };
 }

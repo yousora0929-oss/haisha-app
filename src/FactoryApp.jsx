@@ -39,6 +39,21 @@ const SPLIT_MIN_LEFT_PX = 260;
 const SPLIT_MIN_RIGHT_PX = 300;
 const SPLIT_GRIP_PX = 12;
 
+function buildSiteOrderUrl(urlToken) {
+  const token = String(urlToken || '').trim();
+  if (!token) return '';
+  const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
+  return `${origin}/order/${token}`;
+}
+
+function resolveSiteUrlToken(order, projectById) {
+  const pid = String(order?.project_id ?? order?.projectId ?? '').trim();
+  if (pid && projectById?.[pid]?.url_token) {
+    return String(projectById[pid].url_token).trim();
+  }
+  return String(order?.url_token ?? order?.urlToken ?? '').trim();
+}
+
 function csvCell(value) {
   const s = String(value ?? '').replace(/\r?\n/g, ' ');
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -586,6 +601,185 @@ function orderPartyInfo(order) {
       );
     }
 
+    function SiteOrderUrlCopyButton({ urlToken, onCopied }) {
+      const [copied, setCopied] = useState(false);
+      const token = String(urlToken || '').trim();
+      if (!token) return null;
+
+      const handleCopy = async (e) => {
+        e?.stopPropagation?.();
+        const url = buildSiteOrderUrl(token);
+        if (!url) return;
+        try {
+          await navigator.clipboard.writeText(url);
+          setCopied(true);
+          onCopied?.();
+          window.setTimeout(() => setCopied(false), 2000);
+        } catch (err) {
+          console.error('専用URLのコピーに失敗しました', err);
+        }
+      };
+
+      return (
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:text-sm"
+        >
+          {copied ? '🔗 コピー完了' : '🔗 専用URLコピー'}
+        </button>
+      );
+    }
+
+    function formatProjectLocation(project) {
+      const lat = project?.lat;
+      const lng = project?.lng;
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        return `緯度 ${lat} / 経度 ${lng}`;
+      }
+      return '—';
+    }
+
+    function enrichProjectForFactoryList(project, customers) {
+      const customer = (customers || []).find((c) => c && String(c.id) === String(project?.customer_id || ''));
+      const companyName = String(customer?.company_name || customer?.name || '').trim();
+      const contractor = String(project?.contractor || '').trim() || companyName || '—';
+      const trader = String(project?.trading_company_name || project?.trading_company || '').trim() || '—';
+      const phone = String(customer?.phone_number || '').trim() || '—';
+      const contact = String(customer?.manager_name || '').trim();
+      return {
+        ...project,
+        displayContractor: contractor,
+        displayTrader: trader,
+        displayPhone: phone,
+        displayContact: contact || '—',
+        displayLocation: formatProjectLocation(project),
+      };
+    }
+
+    function FactoryAssignedProjectCard({ project, roleLabel, onUrlCopied }) {
+      return (
+        <li className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={
+                    'inline-flex rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ' +
+                    (roleLabel === 'main'
+                      ? 'bg-indigo-100 text-indigo-800 ring-1 ring-indigo-200'
+                      : 'bg-sky-100 text-sky-800 ring-1 ring-sky-200')
+                  }
+                >
+                  {roleLabel === 'main' ? 'メイン' : 'サブ'}
+                </span>
+                <h4 className="break-words text-base font-black text-slate-900">{project.name || '—'}</h4>
+              </div>
+              <dl className="mt-2 grid gap-1.5 text-xs sm:grid-cols-2 sm:text-sm">
+                <div>
+                  <dt className="font-bold text-slate-500">業者</dt>
+                  <dd className="font-bold text-slate-800">{project.displayContractor}</dd>
+                </div>
+                <div>
+                  <dt className="font-bold text-slate-500">商社</dt>
+                  <dd className="font-bold text-slate-800">{project.displayTrader}</dd>
+                </div>
+                <div>
+                  <dt className="font-bold text-slate-500">担当者</dt>
+                  <dd className="font-bold text-slate-800">{project.displayContact}</dd>
+                </div>
+                <div>
+                  <dt className="font-bold text-slate-500">連絡先</dt>
+                  <dd className="font-mono font-bold text-slate-800">{project.displayPhone}</dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="font-bold text-slate-500">所在地（座標）</dt>
+                  <dd className="font-mono text-slate-700">{project.displayLocation}</dd>
+                </div>
+              </dl>
+            </div>
+            <SiteOrderUrlCopyButton urlToken={project.url_token} onCopied={onUrlCopied} />
+          </div>
+        </li>
+      );
+    }
+
+    function FactoryAssignedProjectsSection({ title, description, projects, roleLabel, onUrlCopied, emptyMessage }) {
+      return (
+        <section className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 shadow-sm sm:p-4">
+          <div className="border-b border-slate-200 pb-2">
+            <h3 className="text-base font-black text-slate-900 sm:text-lg">{title}</h3>
+            <p className="mt-0.5 text-xs font-medium text-slate-600 sm:text-sm">{description}</p>
+          </div>
+          {projects.length === 0 ? (
+            <p className="mt-3 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-5 text-center text-sm font-bold text-slate-500">
+              {emptyMessage}
+            </p>
+          ) : (
+            <ul className="mt-3 grid gap-2">
+              {projects.map((p) => (
+                <FactoryAssignedProjectCard key={p.id} project={p} roleLabel={roleLabel} onUrlCopied={onUrlCopied} />
+              ))}
+            </ul>
+          )}
+        </section>
+      );
+    }
+
+    function FactoryAssignedProjectsTab({ projects, customers, currentFactoryId, onUrlCopied }) {
+      const { mainProjects, subProjects } = useMemo(() => {
+        const fid = String(currentFactoryId || '').trim();
+        const main = [];
+        const sub = [];
+        if (!fid) return { mainProjects: main, subProjects: sub };
+        for (const raw of projects || []) {
+          if (!raw?.id) continue;
+          const p = enrichProjectForFactoryList(raw, customers);
+          if (String(p.main_factory_id) === fid) {
+            main.push(p);
+            continue;
+          }
+          if (Array.isArray(p.sub_factory_ids) && p.sub_factory_ids.some((x) => String(x) === fid)) {
+            sub.push(p);
+          }
+        }
+        const byName = (a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja');
+        main.sort(byName);
+        sub.sort(byName);
+        return { mainProjects: main, subProjects: sub };
+      }, [projects, customers, currentFactoryId]);
+
+      const totalCount = mainProjects.length + subProjects.length;
+
+      return (
+        <div className="grid gap-3">
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 px-3 py-2.5 sm:px-4">
+            <p className="text-sm font-black text-indigo-950 sm:text-base">割当物件一覧</p>
+            <p className="mt-0.5 text-xs font-medium text-indigo-900/80 sm:text-sm">
+              ログイン中の工場がメイン（主担当）またはサブ（応援）として登録されている現場です。専用URLを現場担当者へ共有できます。
+            </p>
+            <p className="mt-1 text-xs font-bold text-indigo-800">全 {totalCount} 件（メイン {mainProjects.length} / サブ {subProjects.length}）</p>
+          </div>
+          <FactoryAssignedProjectsSection
+            title="メイン割当物件"
+            description="自社が主担当（メイン工場）として割り当てられている現場です。"
+            projects={mainProjects}
+            roleLabel="main"
+            onUrlCopied={onUrlCopied}
+            emptyMessage="メイン割当の現場はありません。"
+          />
+          <FactoryAssignedProjectsSection
+            title="サブ割当物件"
+            description="自社が応援・副担当（サブ工場）として割り当てられている現場です。"
+            projects={subProjects}
+            roleLabel="sub"
+            onUrlCopied={onUrlCopied}
+            emptyMessage="サブ割当の現場はありません。"
+          />
+        </div>
+      );
+    }
+
     function FactoryStatusMini({ status }) {
       const st = normalizeFactoryResponse(status);
       if (st === FACTORY_RESPONSE.ACCEPTED) {
@@ -616,7 +810,7 @@ function orderPartyInfo(order) {
       );
     }
 
-    function OrderFullEditModal({ order, open, onClose, onSave }) {
+    function OrderFullEditModal({ order, open, onClose, onSave, projectById, onSiteUrlCopied }) {
       const [editData, setEditData] = useState({
         preferredDate: '',
         timeSlot: String(TIME_SLOTS[0]?.value ?? '480'),
@@ -784,7 +978,15 @@ function orderPartyInfo(order) {
                     <input id="foe-trader" name="traderName" type="text" value={editData.traderName} onChange={handleInputChange} className={fieldInput} />
                   </div>
                   <div>
-                    <label className={fieldLabel} htmlFor="foe-site">現場名</label>
+                    <div className="flex flex-wrap items-end justify-between gap-2">
+                      <label className={fieldLabel} htmlFor="foe-site">
+                        現場名
+                      </label>
+                      <SiteOrderUrlCopyButton
+                        urlToken={resolveSiteUrlToken(order, projectById)}
+                        onCopied={onSiteUrlCopied}
+                      />
+                    </div>
                     <input id="foe-site" name="siteName" type="text" value={editData.siteName} onChange={handleInputChange} className={fieldInput} />
                   </div>
                   <div>
@@ -846,6 +1048,8 @@ function orderPartyInfo(order) {
       onFactoryChatSent,
       factoryName,
       forceExpanded,
+      projectById,
+      onSiteUrlCopied,
     }) {
       const isToast = variant === 'toast';
       const canAcceptOrder = !isToast && typeof onAcceptOrder === 'function' && Boolean(order.id);
@@ -1005,7 +1209,7 @@ function orderPartyInfo(order) {
             : responseStatus === FACTORY_RESPONSE.PENDING
               ? 'rounded-2xl border-[3px] border-amber-400 bg-white shadow-xl ring-2 ring-amber-200/90 '
               : 'rounded-2xl border-2 border-slate-800/15 bg-white shadow-xl ' +
-                (idx === 0 ? 'ring-4 ring-orange-400 ring-offset-2 ring-offset-slate-50 ' : '');
+                (idx === 0 && !isRead && !isRejectedByMe ? 'ring-4 ring-orange-400 ring-offset-2 ring-offset-slate-50 ' : '');
 
       const primaryTopLabel = isToast ? 'text-[10px] sm:text-[11px]' : 'text-[11px] sm:text-xs';
       const primaryValueDate = isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg';
@@ -1150,7 +1354,15 @@ function orderPartyInfo(order) {
                 </p>
               </div>
               <div className="min-w-0 border-t border-slate-200/60 pt-1.5 text-left">
-                <p className={primaryTopLabel + ' font-bold uppercase tracking-wider text-slate-500'}>現場名</p>
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <p className={primaryTopLabel + ' font-bold uppercase tracking-wider text-slate-500'}>現場名</p>
+                  {!isToast ? (
+                    <SiteOrderUrlCopyButton
+                      urlToken={resolveSiteUrlToken(order, projectById)}
+                      onCopied={onSiteUrlCopied}
+                    />
+                  ) : null}
+                </div>
                 <p
                   className={'mt-0.5 break-words font-bold text-slate-900 ' + (isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg')}
                   title={party.site}
@@ -1181,7 +1393,9 @@ function orderPartyInfo(order) {
             {renderPrimarySummary({ borderless: true })}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {!isAccepted && !isCustomerCancelled ? <FactoryStatusMini status={order.factoryResponseStatus} /> : null}
+            {!isAccepted && !isCustomerCancelled && !isRejectedByMe ? (
+              <FactoryStatusMini status={order.factoryResponseStatus} />
+            ) : null}
             {hasUnreadChat ? (
               <span className="inline-flex animate-pulse rounded-full border-2 border-red-500 bg-red-600 px-2 py-0.5 text-[10px] font-black text-white shadow-sm sm:text-[11px]">
                 🔴 新着チャット
@@ -1410,22 +1624,18 @@ function orderPartyInfo(order) {
               {canOpenOrderMenu ? (
                 <button
                   type="button"
-                  className="rounded-lg p-2 text-slate-500 hover:bg-white hover:text-indigo-700"
+                  className="flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg border border-slate-200/90 bg-white p-1.5 text-slate-600 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800"
                   aria-label="注文操作メニュー"
+                  title="注文操作"
                   aria-expanded={actionMenuOpen}
                   onClick={(e) => {
                     e.stopPropagation();
                     setActionMenuOpen((v) => !v);
                   }}
                 >
-                  <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                    <circle cx="12" cy="12" r="3" />
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6 1.65 1.65 0 0 0 10 3.09V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
-                    />
-                  </svg>
+                  <span className="text-xl leading-none" aria-hidden="true">
+                    ⚙️
+                  </span>
                 </button>
               ) : (
                 <span className="h-10 w-8 shrink-0" aria-hidden="true" />
@@ -1475,7 +1685,7 @@ function orderPartyInfo(order) {
                   非表示
                 </button>
               ) : null}
-              {idx === 0 && !isRead ? (
+              {idx === 0 && !isRead && !isRejectedByMe ? (
                 <span className="rounded bg-orange-500 px-1.5 py-0.5 text-[9px] font-black leading-none text-white sm:text-[10px]">
                   NEW
                 </span>
@@ -1531,6 +1741,8 @@ function orderPartyInfo(order) {
               order={order}
               open={editOpen}
               onClose={() => setEditOpen(false)}
+              projectById={projectById}
+              onSiteUrlCopied={onSiteUrlCopied}
               onSave={async (id, patch) => {
                 const ok = await onOrderFullPatch(id, patch);
                 if (ok !== false) setEditOpen(false);
@@ -1592,6 +1804,8 @@ function orderPartyInfo(order) {
       onMarkChatRead,
       onFactoryChatSent,
       focusedOrderId,
+      projectById,
+      onSiteUrlCopied,
     }) {
       const [searchQuery, setSearchQuery] = useState('');
       const filteredOrders = useMemo(
@@ -1657,6 +1871,8 @@ function orderPartyInfo(order) {
                     onFactoryChatSent={onFactoryChatSent}
                     factoryName={factorySearchLabel}
                     forceExpanded={Boolean(focusedOrderId && String(o.id) === String(focusedOrderId))}
+                    projectById={projectById}
+                    onSiteUrlCopied={onSiteUrlCopied}
                   />
                 </li>
               ))
@@ -2272,6 +2488,7 @@ function orderPartyInfo(order) {
       const [readOrderIds, setReadOrderIds] = useState(() => new Set());
       const [hiddenOrderIds, setHiddenOrderIds] = useState(() => new Set());
       const [projects, setProjects] = useState([]);
+      const [customers, setCustomers] = useState([]);
       const [holidays, setHolidays] = useState([]);
       const [systemSettings, setSystemSettings] = useState({ start_time: '08:00:00', end_time: '16:00:00' });
       const [escalationTick, setEscalationTick] = useState(0);
@@ -2295,6 +2512,14 @@ function orderPartyInfo(order) {
         () => Object.fromEntries((factories || []).map((f) => [f.id, f.name])),
         [factories],
       );
+      const projectById = useMemo(
+        () => Object.fromEntries((projects || []).filter((p) => p?.id).map((p) => [String(p.id), p])),
+        [projects],
+      );
+      const handleSiteUrlCopied = useCallback(() => {
+        setActionNotice('URLをコピーしました');
+        window.setTimeout(() => setActionNotice(''), 2500);
+      }, []);
       const activeFactoryRows = useMemo(
         () => (factories || []).filter((f) => f && String(f.id) === String(activeFactoryId)),
         [factories, activeFactoryId],
@@ -2538,6 +2763,13 @@ function orderPartyInfo(order) {
 
       const handleFactoryRefresh = useCallback(async () => {
         await syncFromStorage({ playSound: false });
+        try {
+          const [projs, customerRows] = await Promise.all([db.fetchProjects(), db.fetchCustomers()]);
+          setProjects(projs);
+          setCustomers(customerRows);
+        } catch (e) {
+          console.error('物件・業者マスタの再取得に失敗しました', e);
+        }
         if (activeFactoryId) {
           const m = await db.fetchSchedulesForFactory(activeFactoryId);
           setScheduleByDate(m);
@@ -2624,15 +2856,17 @@ function orderPartyInfo(order) {
         let cancelled = false;
         (async () => {
           try {
-            const [rows, projs, hols, settings] = await Promise.all([
+            const [rows, projs, hols, settings, customerRows] = await Promise.all([
               db.fetchFactories(),
               db.fetchProjects(),
               db.fetchHolidays(),
               db.fetchSystemSettings(),
+              db.fetchCustomers(),
             ]);
             if (cancelled) return;
             setFactories(rows);
             setProjects(projs);
+            setCustomers(customerRows);
             setHolidays(hols);
             setSystemSettings(settings);
             const nameMap = Object.fromEntries((rows || []).map((r) => [r.id, r.name]));
@@ -2814,18 +3048,20 @@ function orderPartyInfo(order) {
           if (!order?.id || !activeFactoryId) return;
           if (!window.confirm('この注文を見送りますか？')) return;
           markOrderRead(order.id);
+          if (order?.id) notifiedOrderIds.current.add(order.id);
           try {
             const nextIds = await db.rejectOrderForFactory(order.id, activeFactoryId);
-            setRawOrders((prev) =>
-              Array.isArray(prev)
-                ? prev.map((o) => (o?.id === order.id ? { ...o, rejected_factory_ids: nextIds } : o))
-                : prev,
-            );
-            setOrders((prev) =>
-              Array.isArray(prev)
-                ? prev.map((o) => (o?.id === order.id ? { ...o, rejected_factory_ids: nextIds } : o))
-                : prev,
-            );
+            const patchRejected = (o) =>
+              o?.id === order.id
+                ? {
+                    ...o,
+                    rejected_factory_ids: nextIds,
+                    factoryResponseStatus: FACTORY_RESPONSE.REJECTED,
+                    factoryResponseLocked: true,
+                  }
+                : o;
+            setRawOrders((prev) => (Array.isArray(prev) ? prev.map(patchRejected) : prev));
+            setOrders((prev) => (Array.isArray(prev) ? prev.map(patchRejected) : prev));
             setToastOrder((cur) => (cur?.id === order.id ? null : cur));
             setActionNotice('見送りました');
             window.setTimeout(() => setActionNotice(''), 3500);
@@ -3070,14 +3306,18 @@ function orderPartyInfo(order) {
       const newOrdersCount = useMemo(
         () =>
           (orders || []).filter((order) => {
-            if (!order) return false;
+            if (!order?.id) return false;
+            if (readOrderIds.has(String(order.id))) return false;
+            if (isRejectedByFactory(order, activeFactoryId)) return false;
             const orderStatus = String(order.status || '').trim();
-            if (['accepted', 'rejected', 'customer_cancelled', 'cancelled', 'completed', 'deleted'].includes(orderStatus)) return false;
+            if (['accepted', 'rejected', 'customer_cancelled', 'cancelled', 'completed', 'deleted'].includes(orderStatus)) {
+              return false;
+            }
             if (normalizeFactoryResponse(order.factoryResponseStatus)) return false;
             const assignedFactoryId = getAssignedFactoryId(order);
             return !assignedFactoryId || isSameFactoryId(assignedFactoryId, activeFactoryId);
           }).length,
-        [orders, activeFactoryId],
+        [orders, activeFactoryId, readOrderIds],
       );
 
       if (!isFactoryAuthenticated) {
@@ -3173,10 +3413,11 @@ function orderPartyInfo(order) {
               </div>
             </div>
             <div className="flex flex-1 flex-wrap items-center justify-end gap-1.5">
-              <div className="grid min-w-full flex-1 grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1 sm:min-w-[28rem] sm:flex-none lg:min-w-[34rem]">
+              <div className="grid min-w-full flex-1 grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 sm:grid-cols-4 sm:min-w-[32rem] sm:flex-none lg:min-w-[40rem]">
                 {[
-                  ['schedule', '⚙️ スケジュール設定'],
+                  ['schedule', '⚙️ スケジュール'],
                   ['orders', '🚚 注文'],
+                  ['assignments', '割当物件'],
                   ['calendar', '📅 カレンダー'],
                 ].map(([id, label]) => {
                   const active = activeTab === id;
@@ -3254,26 +3495,38 @@ function orderPartyInfo(order) {
                   onFactoryStatusChange={handleFactoryStatusChange}
                 />
               ) : null}
-              {activeTab === 'orders' ? (
-                <DispatchInbox
-                  orders={orders}
+              {activeTab === 'assignments' ? (
+                <FactoryAssignedProjectsTab
+                  projects={projects}
+                  customers={customers}
                   currentFactoryId={activeFactoryId}
-                  readOrderIds={readOrderIds}
-                  factorySearchLabel={activeFactoryName}
-                  onOrderFullPatch={handleOrderFullPatch}
-                  onMarkRead={markOrderRead}
-                  onAcceptOrder={handleAcceptOrder}
-                  onRejectOrder={handleRejectOrder}
-                  onCustomerCancelOrder={handleCustomerCancelOrder}
-                  onHideOrder={hideOrder}
-                  onResponseStatusChange={handleResponseStatusChange}
-                  onRequestUnlock={handleFactoryUnlockRequest}
-                  chatThreads={chatThreads}
-                  readChatKeys={readChatKeys}
-                  onMarkChatRead={markChatRead}
-                  onFactoryChatSent={refreshChatThreads}
-                  focusedOrderId={focusedOrderId}
+                  onUrlCopied={handleSiteUrlCopied}
                 />
+              ) : null}
+              {activeTab === 'orders' ? (
+                <div className="grid gap-2">
+                  <DispatchInbox
+                    orders={orders}
+                    currentFactoryId={activeFactoryId}
+                    readOrderIds={readOrderIds}
+                    factorySearchLabel={activeFactoryName}
+                    onOrderFullPatch={handleOrderFullPatch}
+                    onMarkRead={markOrderRead}
+                    onAcceptOrder={handleAcceptOrder}
+                    onRejectOrder={handleRejectOrder}
+                    onCustomerCancelOrder={handleCustomerCancelOrder}
+                    onHideOrder={hideOrder}
+                    onResponseStatusChange={handleResponseStatusChange}
+                    onRequestUnlock={handleFactoryUnlockRequest}
+                    chatThreads={chatThreads}
+                    readChatKeys={readChatKeys}
+                    onMarkChatRead={markChatRead}
+                    onFactoryChatSent={refreshChatThreads}
+                    focusedOrderId={focusedOrderId}
+                    projectById={projectById}
+                    onSiteUrlCopied={handleSiteUrlCopied}
+                  />
+                </div>
               ) : null}
               {activeTab === 'calendar' ? (
                 <FactoryAllocationCalendar
