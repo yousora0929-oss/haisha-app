@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import * as db from './haishaDb.js';
 import { supabase } from './supabaseClient.js';
 import { MapPicker } from './MapPicker.jsx';
@@ -53,6 +54,9 @@ function resolveSiteUrlToken(order, projectById) {
   }
   return String(order?.url_token ?? order?.urlToken ?? '').trim();
 }
+
+const SITE_ORDER_URL_BTN_CLASS =
+  'inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:text-sm';
 
 function csvCell(value) {
   const s = String(value ?? '').replace(/\r?\n/g, ' ');
@@ -601,14 +605,93 @@ function orderPartyInfo(order) {
       );
     }
 
-    function SiteOrderUrlCopyButton({ urlToken, onCopied }) {
+    function SiteOrderUrlQrModal({ open, siteName, url, onClose }) {
+      useEffect(() => {
+        if (!open) return undefined;
+        const style = document.createElement('style');
+        style.id = 'site-order-qr-print-style';
+        style.textContent = `
+          @media print {
+            body * { visibility: hidden !important; }
+            #site-order-qr-print, #site-order-qr-print * { visibility: visible !important; }
+            #site-order-qr-print {
+              position: fixed !important;
+              inset: 0 !important;
+              display: flex !important;
+              align-items: center !important;
+              justify-content: center !important;
+              background: white !important;
+              padding: 24px !important;
+            }
+          }
+        `;
+        document.head.appendChild(style);
+        return () => {
+          style.remove();
+        };
+      }, [open]);
+
+      if (!open) return null;
+
+      const displayName = String(siteName || '').trim() || '現場';
+
+      return (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 print:bg-white"
+          role="presentation"
+          onClick={onClose}
+        >
+          <div
+            id="site-order-qr-print"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="site-order-qr-title"
+            className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-5 shadow-2xl print:max-w-none print:border-0 print:shadow-none"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="site-order-qr-title" className="text-center text-lg font-black text-slate-900 sm:text-xl">
+              専用発注URL（QRコード）
+            </h2>
+            <p className="mt-2 text-center text-sm font-bold text-slate-700">対象の現場名</p>
+            <p className="mt-0.5 break-words text-center text-base font-black text-indigo-900">{displayName}</p>
+            <div className="mt-4 flex justify-center rounded-lg border border-slate-200 bg-white p-4">
+              {url ? <QRCodeSVG value={url} size={256} level="M" includeMargin /> : null}
+            </div>
+            {url ? (
+              <p className="mt-3 break-all text-center font-mono text-[10px] leading-snug text-slate-600 sm:text-xs">{url}</p>
+            ) : null}
+            <p className="mt-2 text-center text-xs text-slate-500">スマートフォンで読み取り、専用発注画面を開けます</p>
+            <div className="mt-5 grid grid-cols-2 gap-2 print:hidden">
+              <button
+                type="button"
+                onClick={onClose}
+                className="min-h-[44px] rounded-lg border-2 border-slate-300 bg-white text-sm font-black text-slate-800 hover:bg-slate-50"
+              >
+                閉じる
+              </button>
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="min-h-[44px] rounded-lg border-2 border-indigo-700 bg-indigo-600 text-sm font-black text-white hover:bg-indigo-700"
+              >
+                印刷する
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function SiteOrderUrlActions({ urlToken, siteName, onCopied }) {
       const [copied, setCopied] = useState(false);
+      const [qrOpen, setQrOpen] = useState(false);
       const token = String(urlToken || '').trim();
       if (!token) return null;
 
+      const url = buildSiteOrderUrl(token);
+
       const handleCopy = async (e) => {
         e?.stopPropagation?.();
-        const url = buildSiteOrderUrl(token);
         if (!url) return;
         try {
           await navigator.clipboard.writeText(url);
@@ -620,14 +703,28 @@ function orderPartyInfo(order) {
         }
       };
 
+      const openQr = (e) => {
+        e?.stopPropagation?.();
+        setQrOpen(true);
+      };
+
       return (
-        <button
-          type="button"
-          onClick={handleCopy}
-          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:text-sm"
-        >
-          {copied ? '🔗 コピー完了' : '🔗 専用URLコピー'}
-        </button>
+        <>
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+            <button type="button" onClick={handleCopy} className={SITE_ORDER_URL_BTN_CLASS}>
+              {copied ? '🔗 コピー完了' : '🔗 専用URLコピー'}
+            </button>
+            <button type="button" onClick={openQr} className={SITE_ORDER_URL_BTN_CLASS}>
+              📱 QR表示
+            </button>
+          </div>
+          <SiteOrderUrlQrModal
+            open={qrOpen}
+            siteName={siteName}
+            url={url}
+            onClose={() => setQrOpen(false)}
+          />
+        </>
       );
     }
 
@@ -698,7 +795,7 @@ function orderPartyInfo(order) {
                 </div>
               </dl>
             </div>
-            <SiteOrderUrlCopyButton urlToken={project.url_token} onCopied={onUrlCopied} />
+            <SiteOrderUrlActions urlToken={project.url_token} siteName={project.name} onCopied={onUrlCopied} />
           </div>
         </li>
       );
@@ -982,8 +1079,9 @@ function orderPartyInfo(order) {
                       <label className={fieldLabel} htmlFor="foe-site">
                         現場名
                       </label>
-                      <SiteOrderUrlCopyButton
+                      <SiteOrderUrlActions
                         urlToken={resolveSiteUrlToken(order, projectById)}
+                        siteName={editData.siteName || order?.siteName}
                         onCopied={onSiteUrlCopied}
                       />
                     </div>
@@ -1357,8 +1455,9 @@ function orderPartyInfo(order) {
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <p className={primaryTopLabel + ' font-bold uppercase tracking-wider text-slate-500'}>現場名</p>
                   {!isToast ? (
-                    <SiteOrderUrlCopyButton
+                    <SiteOrderUrlActions
                       urlToken={resolveSiteUrlToken(order, projectById)}
+                      siteName={party.site}
                       onCopied={onSiteUrlCopied}
                     />
                   ) : null}
