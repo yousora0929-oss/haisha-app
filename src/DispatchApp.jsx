@@ -19,6 +19,13 @@ import {
   setupNotificationClickRedirect,
 } from './utils/notification.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
+import { AiOrderAssistant } from './components/AiOrderAssistant.jsx';
+import {
+  analyzeOrderText,
+  ANALYZE_ORDER_TEXT_ERROR_MESSAGE,
+  buildMixTextFromAnalysis,
+  timeStringToSlotValue,
+} from './utils/analyzeOrderText.js';
 
 const DISPATCH_CUSTOMER_SESSION_KEY = 'haisha_dispatch_customer_id_v1';
 const DISPATCH_AUTH_SESSION_KEY = 'haisha_dispatch_auth_customer_id_v1';
@@ -970,6 +977,9 @@ function unloadDurationLabel(value) {
       const [addressSearchLoading, setAddressSearchLoading] = useState(false);
       const [addressSearchError, setAddressSearchError] = useState('');
       const [preferredFactoryId, setPreferredFactoryId] = useState('');
+      const [aiAssistText, setAiAssistText] = useState('');
+      const [aiAssistLoading, setAiAssistLoading] = useState(false);
+      const [aiAssistNotice, setAiAssistNotice] = useState('');
       const orderFormRef = useRef(null);
 
       const selectedProject = useMemo(
@@ -1550,6 +1560,51 @@ function unloadDurationLabel(value) {
         [currentCustomer, currentCustomerId, repeatPreferredDate, repeatTimeSlot],
       );
 
+      const handleAiOrderAssist = useCallback(async () => {
+        const text = String(aiAssistText || '').trim();
+        if (!text || aiAssistLoading) return;
+        setAiAssistLoading(true);
+        setAiAssistNotice('');
+        setSubmitError('');
+        try {
+          const result = await analyzeOrderText(text);
+          if (result.date) {
+            const nextDate = String(result.date);
+            let slot = timeStringToSlotValue(result.time);
+            if (!slot || !TIME_SLOTS.some((s) => s.value === slot)) {
+              slot = TIME_SLOTS[0]?.value ?? '480';
+            }
+            if (isPastPreferredDateTime(nextDate, slot)) {
+              const available = firstAvailableTimeSlotForDate(nextDate);
+              if (available) {
+                setPreferredDate(nextDate);
+                setTimeSlot(available.value);
+              } else {
+                const next = nextAvailableOrderDateTime(nextDate);
+                setPreferredDate(next.date);
+                setTimeSlot(next.slot);
+              }
+            } else {
+              setPreferredDate(nextDate);
+              setTimeSlot(slot);
+            }
+          }
+          if (result.volume != null && result.volume !== '') {
+            setQuantityM3(String(result.volume));
+          }
+          const mix = buildMixTextFromAnalysis(result);
+          if (mix) setMixText(mix);
+          setAiAssistNotice('フォームに自動入力しました！');
+          window.setTimeout(() => setAiAssistNotice(''), 4000);
+        } catch (err) {
+          console.error('AI注文解析に失敗しました', err);
+          setSubmitError(ANALYZE_ORDER_TEXT_ERROR_MESSAGE);
+          window.alert(ANALYZE_ORDER_TEXT_ERROR_MESSAGE);
+        } finally {
+          setAiAssistLoading(false);
+        }
+      }, [aiAssistText, aiAssistLoading]);
+
       const handleSubmit = useCallback(
         async (e) => {
           e.preventDefault();
@@ -1926,6 +1981,15 @@ function unloadDurationLabel(value) {
                   </button>
                 </div>
                 <form className="mt-6 grid min-w-0 gap-6 overflow-hidden lg:grid-cols-2 lg:items-start" onSubmit={handleSubmit}>
+              <div className="lg:col-span-2">
+                <AiOrderAssistant
+                  value={aiAssistText}
+                  onChange={setAiAssistText}
+                  onSubmit={handleAiOrderAssist}
+                  loading={aiAssistLoading}
+                  notice={aiAssistNotice}
+                />
+              </div>
               <div className="flex flex-col gap-3">
                 <span className="text-sm font-semibold text-slate-700">注文種別</span>
                 <p className="text-xs leading-relaxed text-slate-500">
