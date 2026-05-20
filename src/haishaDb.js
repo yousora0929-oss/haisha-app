@@ -11,6 +11,41 @@ import {
 const ORDER_SELECT =
   'id, order_data, chat_messages, created_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids';
 
+const CUSTOMER_SELECT_MIN =
+  'id, company_name, phone_number, manager_name, url_token';
+
+const PROJECT_SELECT_MIN =
+  'id, name, customer_id, trading_company_name, trading_company, main_factory_id, sub_factory_ids, lat, lng, contractor, created_at, updated_at';
+
+/** 物件の url_token が無い場合、紐づく業者（customers）の url_token を補完する */
+function pickSiteUrlToken(project, customer) {
+  const fromProject = String(project?.url_token ?? '').trim();
+  if (fromProject) return fromProject;
+  return String(customer?.url_token ?? '').trim();
+}
+
+async function enrichProjectsWithCustomerUrlTokens(projects) {
+  const list = Array.isArray(projects) ? projects.filter(Boolean) : [];
+  const customerIds = [...new Set(list.map((p) => p?.customer_id).filter(Boolean))];
+  if (!customerIds.length) return list;
+
+  const { data, error } = await supabase.from('customers').select('id, url_token').in('id', customerIds);
+  if (error) {
+    console.warn('[fetchProjects] customers.url_token の取得に失敗しました', error);
+    return list;
+  }
+
+  const tokenByCustomerId = new Map(
+    (data || []).map((c) => [String(c.id), c.url_token != null ? String(c.url_token).trim() : '']),
+  );
+
+  return list.map((p) => {
+    const merged = pickSiteUrlToken(p, { url_token: tokenByCustomerId.get(String(p.customer_id || '')) });
+    if (!merged || merged === String(p.url_token ?? '').trim()) return p;
+    return { ...p, url_token: merged };
+  });
+}
+
 function normalizeChatMessages(raw) {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -189,14 +224,11 @@ export async function fetchOrdersWithChat() {
   let customerById = new Map();
   let projectById = new Map();
   if (customerIds.length) {
-    const { data: customers } = await supabase.from('customers').select('id, company_name, phone_number').in('id', customerIds);
+    const { data: customers } = await supabase.from('customers').select(CUSTOMER_SELECT_MIN).in('id', customerIds);
     customerById = new Map((customers || []).map((c) => [String(c.id), c]));
   }
   if (projectIds.length) {
-    const { data: projects } = await supabase
-      .from('projects')
-      .select('id, name, customer_id, trading_company_name, trading_company, url_token')
-      .in('id', projectIds);
+    const { data: projects } = await supabase.from('projects').select(PROJECT_SELECT_MIN).in('id', projectIds);
     projectById = new Map((projects || []).map((p) => [String(p.id), p]));
   }
   for (let i = 0; i < orders.length; i += 1) {
@@ -225,6 +257,7 @@ export async function fetchOrdersWithChat() {
           : p?.trading_company != null
             ? String(p.trading_company)
             : ''),
+      url_token: pickSiteUrlToken(p, c),
     };
   }
   return { orders, chatThreads };
@@ -938,7 +971,8 @@ export async function updateAdminPassword(currentPassword, newPassword) {
 export async function fetchProjects() {
   const { data, error } = await supabase.from('projects').select('*').order('name', { ascending: true });
   if (error) throw error;
-  return (data || []).map(mapProjectRow).filter(Boolean);
+  const mapped = (data || []).map(mapProjectRow).filter(Boolean);
+  return enrichProjectsWithCustomerUrlTokens(mapped);
 }
 
 export async function insertProject(payload) {

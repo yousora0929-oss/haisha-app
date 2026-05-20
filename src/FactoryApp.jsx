@@ -47,11 +47,15 @@ function buildSiteOrderUrl(urlToken) {
   return `${origin}/order/${token}`;
 }
 
-function resolveSiteUrlToken(order, projectById) {
+function resolveSiteUrlToken(order, projectById, customerById) {
   const pid = String(order?.project_id ?? order?.projectId ?? '').trim();
-  if (pid && projectById?.[pid]?.url_token) {
-    return String(projectById[pid].url_token).trim();
-  }
+  const cid = String(order?.customer_id ?? order?.customerId ?? '').trim();
+  const project = pid ? projectById?.[pid] : null;
+  const customer = cid ? customerById?.[cid] : null;
+  const fromProject = String(project?.url_token ?? '').trim();
+  if (fromProject) return fromProject;
+  const fromCustomer = String(customer?.url_token ?? '').trim();
+  if (fromCustomer) return fromCustomer;
   return String(order?.url_token ?? order?.urlToken ?? '').trim();
 }
 
@@ -782,6 +786,7 @@ function orderPartyInfo(order) {
       const contact = String(customer?.manager_name || '').trim();
       return {
         ...project,
+        url_token: String(project?.url_token || customer?.url_token || '').trim(),
         displayContractor: contractor,
         displayTrader: trader,
         displayPhone: phone,
@@ -947,7 +952,7 @@ function orderPartyInfo(order) {
       );
     }
 
-    function OrderFullEditModal({ order, open, onClose, onSave, projectById, onSiteUrlCopied }) {
+    function OrderFullEditModal({ order, open, onClose, onSave, projectById, customerById, onSiteUrlCopied }) {
       const [editData, setEditData] = useState({
         preferredDate: '',
         timeSlot: String(TIME_SLOTS[0]?.value ?? '480'),
@@ -1120,7 +1125,7 @@ function orderPartyInfo(order) {
                         現場名
                       </label>
                       <SiteOrderUrlActions
-                        urlToken={resolveSiteUrlToken(order, projectById)}
+                        urlToken={resolveSiteUrlToken(order, projectById, customerById)}
                         siteName={editData.siteName || order?.siteName}
                         onCopied={onSiteUrlCopied}
                       />
@@ -1187,6 +1192,7 @@ function orderPartyInfo(order) {
       factoryName,
       forceExpanded,
       projectById,
+      customerById,
       onSiteUrlCopied,
     }) {
       const isToast = variant === 'toast';
@@ -1496,7 +1502,7 @@ function orderPartyInfo(order) {
                   <p className={primaryTopLabel + ' font-bold uppercase tracking-wider text-slate-500'}>現場名</p>
                   {!isToast ? (
                     <SiteOrderUrlActions
-                      urlToken={resolveSiteUrlToken(order, projectById)}
+                      urlToken={resolveSiteUrlToken(order, projectById, customerById)}
                       siteName={party.site}
                       onCopied={onSiteUrlCopied}
                     />
@@ -1881,6 +1887,7 @@ function orderPartyInfo(order) {
               open={editOpen}
               onClose={() => setEditOpen(false)}
               projectById={projectById}
+              customerById={customerById}
               onSiteUrlCopied={onSiteUrlCopied}
               onSave={async (id, patch) => {
                 const ok = await onOrderFullPatch(id, patch);
@@ -1944,6 +1951,7 @@ function orderPartyInfo(order) {
       onFactoryChatSent,
       focusedOrderId,
       projectById,
+      customerById,
       onSiteUrlCopied,
     }) {
       const [searchQuery, setSearchQuery] = useState('');
@@ -2011,6 +2019,7 @@ function orderPartyInfo(order) {
                     factoryName={factorySearchLabel}
                     forceExpanded={Boolean(focusedOrderId && String(o.id) === String(focusedOrderId))}
                     projectById={projectById}
+                    customerById={customerById}
                     onSiteUrlCopied={onSiteUrlCopied}
                   />
                 </li>
@@ -2654,6 +2663,10 @@ function orderPartyInfo(order) {
       const projectById = useMemo(
         () => Object.fromEntries((projects || []).filter((p) => p?.id).map((p) => [String(p.id), p])),
         [projects],
+      );
+      const customerById = useMemo(
+        () => Object.fromEntries((customers || []).filter((c) => c?.id).map((c) => [String(c.id), c])),
+        [customers],
       );
       const handleSiteUrlCopied = useCallback(() => {
         setActionNotice('URLをコピーしました');
@@ -3663,6 +3676,7 @@ function orderPartyInfo(order) {
                     onFactoryChatSent={refreshChatThreads}
                     focusedOrderId={focusedOrderId}
                     projectById={projectById}
+                    customerById={customerById}
                     onSiteUrlCopied={handleSiteUrlCopied}
                   />
                 </div>
