@@ -148,18 +148,28 @@ function extractJsonText(response) {
  * Gemini API で自然言語テキストから注文項目を抽出（複数件対応・常に配列で返す）
  * @returns {Promise<Array<{ date: string, time: string, volume: number, strength: number, slump: number, aggregate_size: number }>>}
  */
-export async function analyzeOrderText(text) {
-  const userText = String(text || '').trim();
-  if (!userText) {
-    throw new Error('Empty input');
+function failAnalyze(error, { rethrowGeneric = true } = {}) {
+  console.error('【詳細なエラー原因】:', error);
+  if (rethrowGeneric) {
+    throw new Error(ANALYZE_ORDER_TEXT_ERROR_MESSAGE);
   }
+  throw error;
+}
 
-  const apiKey = String(import.meta.env.VITE_GEMINI_API_KEY || '').trim();
-  if (!apiKey) {
-    console.error('[analyzeOrderText] VITE_GEMINI_API_KEY is not set');
+export async function analyzeOrderText(text) {
+  const envApiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  if (envApiKey === undefined || envApiKey === null || String(envApiKey).trim() === '') {
+    console.error('【エラー】APIキーが読み込まれていません。ローカルサーバーを再起動してください。');
     throw new Error(ANALYZE_ORDER_TEXT_ERROR_MESSAGE);
   }
 
+  const userText = String(text || '').trim();
+  if (!userText) {
+    const emptyErr = new Error('Empty input');
+    failAnalyze(emptyErr);
+  }
+
+  const apiKey = String(envApiKey).trim();
   const prompt = buildOrderAnalysisPrompt(userText);
 
   try {
@@ -173,23 +183,29 @@ export async function analyzeOrderText(text) {
     });
 
     const result = await model.generateContent(prompt);
-    const rawJson = extractJsonText(result.response);
+    const rawText = extractJsonText(result.response);
+    console.log('【Geminiの生レスポンス】:', rawText);
+
     let parsed;
     try {
-      parsed = JSON.parse(rawJson);
+      parsed = JSON.parse(rawText);
     } catch (parseErr) {
-      console.error('[analyzeOrderText] JSON parse failed', parseErr, rawJson);
-      throw new Error(ANALYZE_ORDER_TEXT_ERROR_MESSAGE);
+      failAnalyze(parseErr);
     }
 
-    const orders = normalizeAnalysisList(parsed);
-    return orders.map((order) => ({
-      ...order,
-      mixText: buildMixTextFromAnalysis(order),
-    }));
-  } catch (err) {
-    if (err?.message === ANALYZE_ORDER_TEXT_ERROR_MESSAGE) throw err;
-    console.error('[analyzeOrderText] Gemini API call failed', err);
-    throw new Error(ANALYZE_ORDER_TEXT_ERROR_MESSAGE);
+    try {
+      const orders = normalizeAnalysisList(parsed);
+      return orders.map((order) => ({
+        ...order,
+        mixText: buildMixTextFromAnalysis(order),
+      }));
+    } catch (normalizeErr) {
+      failAnalyze(normalizeErr);
+    }
+  } catch (error) {
+    if (error?.message === ANALYZE_ORDER_TEXT_ERROR_MESSAGE) {
+      throw error;
+    }
+    failAnalyze(error);
   }
 }
