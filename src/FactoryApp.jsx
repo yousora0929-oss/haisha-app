@@ -58,6 +58,32 @@ function resolveSiteUrlToken(order, projectById) {
 const SITE_ORDER_URL_BTN_CLASS =
   'inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:text-sm';
 
+class SiteOrderQrCodeBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(err) {
+    console.error('QRコードの描画に失敗しました', err);
+  }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <p className="max-w-[256px] text-center text-sm font-bold text-amber-800">
+          QRの描画に失敗しました。下のURLをご利用ください。
+        </p>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function csvCell(value) {
   const s = String(value ?? '').replace(/\r?\n/g, ' ');
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -655,7 +681,11 @@ function orderPartyInfo(order) {
             <p className="mt-2 text-center text-sm font-bold text-slate-700">対象の現場名</p>
             <p className="mt-0.5 break-words text-center text-base font-black text-indigo-900">{displayName}</p>
             <div className="mt-4 flex justify-center rounded-lg border border-slate-200 bg-white p-4">
-              {url ? <QRCodeSVG value={url} size={256} level="M" includeMargin /> : null}
+              {url ? (
+                <SiteOrderQrCodeBoundary>
+                  <QRCodeSVG value={url} size={256} level="M" includeMargin />
+                </SiteOrderQrCodeBoundary>
+              ) : null}
             </div>
             {url ? (
               <p className="mt-3 break-all text-center font-mono text-[10px] leading-snug text-slate-600 sm:text-xs">{url}</p>
@@ -686,13 +716,14 @@ function orderPartyInfo(order) {
       const [copied, setCopied] = useState(false);
       const [qrOpen, setQrOpen] = useState(false);
       const token = String(urlToken || '').trim();
-      if (!token) return null;
-
-      const url = buildSiteOrderUrl(token);
+      const url = token ? buildSiteOrderUrl(token) : '';
 
       const handleCopy = async (e) => {
         e?.stopPropagation?.();
-        if (!url) return;
+        if (!token || !url) {
+          window.alert('この現場には url_token が未設定のため、専用URLをコピーできません。');
+          return;
+        }
         try {
           await navigator.clipboard.writeText(url);
           setCopied(true);
@@ -700,11 +731,16 @@ function orderPartyInfo(order) {
           window.setTimeout(() => setCopied(false), 2000);
         } catch (err) {
           console.error('専用URLのコピーに失敗しました', err);
+          window.alert('クリップボードへのコピーに失敗しました。');
         }
       };
 
       const openQr = (e) => {
         e?.stopPropagation?.();
+        if (!token || !url) {
+          window.alert('この現場には url_token が未設定のため、QRコードを表示できません。');
+          return;
+        }
         setQrOpen(true);
       };
 
@@ -795,7 +831,11 @@ function orderPartyInfo(order) {
                 </div>
               </dl>
             </div>
-            <SiteOrderUrlActions urlToken={project.url_token} siteName={project.name} onCopied={onUrlCopied} />
+            <SiteOrderUrlActions
+              urlToken={project?.url_token ?? ''}
+              siteName={project?.name ?? ''}
+              onCopied={onUrlCopied}
+            />
           </div>
         </li>
       );

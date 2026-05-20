@@ -193,7 +193,10 @@ export async function fetchOrdersWithChat() {
     customerById = new Map((customers || []).map((c) => [String(c.id), c]));
   }
   if (projectIds.length) {
-    const { data: projects } = await supabase.from('projects').select('id, name, customer_id, trading_company_name, trading_company').in('id', projectIds);
+    const { data: projects } = await supabase
+      .from('projects')
+      .select('id, name, customer_id, trading_company_name, trading_company, url_token')
+      .in('id', projectIds);
     projectById = new Map((projects || []).map((p) => [String(p.id), p]));
   }
   for (let i = 0; i < orders.length; i += 1) {
