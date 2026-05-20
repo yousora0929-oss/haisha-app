@@ -355,52 +355,56 @@ function parseDeliveryCoord(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function buildOrderInsertRow(order) {
+  const id = createOrderId();
+  const hasTest = Boolean(order.has_test);
+  const isSpot = Boolean(order.is_spot);
+  const projectId = !isSpot && order.project_id != null ? String(order.project_id).trim() : '';
+  const customerId = sanitizeRefId(order.customer_id ?? order.customerId);
+  const orderedBy = String(order.ordered_by ?? order.orderedBy ?? '').trim();
+  const deliveryLat = isSpot ? parseDeliveryCoord(order.delivery_lat ?? order.deliveryLat) : null;
+  const deliveryLng = isSpot ? parseDeliveryCoord(order.delivery_lng ?? order.deliveryLng) : null;
+  const safeOrder = sanitizeOrderRefs(order);
+  const preferredFactoryId = sanitizeRefId(safeOrder.preferred_factory_id);
+  const nextOrder = sanitizeOrderDataForDb({
+    ...safeOrder,
+    id,
+    has_test: hasTest,
+    customer_id: customerId,
+    customerName: safeOrder.customerName ?? '',
+    trading_company_name: safeOrder.trading_company_name ?? safeOrder.projectTradingCompanyName ?? '',
+    projectTradingCompanyName: safeOrder.projectTradingCompanyName ?? safeOrder.trading_company_name ?? '',
+    ordered_by: orderedBy,
+    orderedBy,
+    factory_site_id: null,
+    factorySiteId: null,
+    preferred_factory_id: preferredFactoryId,
+    preferredFactoryId: preferredFactoryId,
+    main_factory_id: sanitizeRefId(safeOrder.main_factory_id),
+    mainFactoryId: sanitizeRefId(safeOrder.mainFactoryId),
+  });
+  return {
+    id,
+    has_test: hasTest,
+    order_data: nextOrder,
+    chat_messages: [],
+    customer_id: customerId,
+    ordered_by: orderedBy || null,
+    is_spot: isSpot,
+    project_id: projectId || null,
+    delivery_lat: deliveryLat,
+    delivery_lng: deliveryLng,
+    preferred_factory_id: sanitizeRefId(preferredFactoryId),
+    factory_site_id: null,
+    status: 'pending',
+    rejected_factory_ids: [],
+  };
+}
+
 export async function insertOrder(order) {
   if (!order || typeof order !== 'object') throw new Error('order が必要です');
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const id = createOrderId();
-    const hasTest = Boolean(order.has_test);
-    const isSpot = Boolean(order.is_spot);
-    const projectId = !isSpot && order.project_id != null ? String(order.project_id).trim() : '';
-    const customerId = sanitizeRefId(order.customer_id ?? order.customerId);
-    const orderedBy = String(order.ordered_by ?? order.orderedBy ?? '').trim();
-    const deliveryLat = isSpot ? parseDeliveryCoord(order.delivery_lat ?? order.deliveryLat) : null;
-    const deliveryLng = isSpot ? parseDeliveryCoord(order.delivery_lng ?? order.deliveryLng) : null;
-    const safeOrder = sanitizeOrderRefs(order);
-    const preferredFactoryId = sanitizeRefId(safeOrder.preferred_factory_id);
-    const nextOrder = sanitizeOrderDataForDb({
-      ...safeOrder,
-      id,
-      has_test: hasTest,
-      customer_id: customerId,
-      customerName: safeOrder.customerName ?? '',
-      trading_company_name: safeOrder.trading_company_name ?? safeOrder.projectTradingCompanyName ?? '',
-      projectTradingCompanyName: safeOrder.projectTradingCompanyName ?? safeOrder.trading_company_name ?? '',
-      ordered_by: orderedBy,
-      orderedBy,
-      factory_site_id: null,
-      factorySiteId: null,
-      preferred_factory_id: preferredFactoryId,
-      preferredFactoryId: preferredFactoryId,
-      main_factory_id: sanitizeRefId(safeOrder.main_factory_id),
-      mainFactoryId: sanitizeRefId(safeOrder.mainFactoryId),
-    });
-    const row = {
-      id,
-      has_test: hasTest,
-      order_data: nextOrder,
-      chat_messages: [],
-      customer_id: customerId,
-      ordered_by: orderedBy || null,
-      is_spot: isSpot,
-      project_id: projectId || null,
-      delivery_lat: deliveryLat,
-      delivery_lng: deliveryLng,
-      preferred_factory_id: sanitizeRefId(preferredFactoryId),
-      factory_site_id: null,
-      status: 'pending',
-      rejected_factory_ids: [],
-    };
+    const row = buildOrderInsertRow(order);
     const { data, error } = await supabase.from('orders').insert([row]).select(ORDER_SELECT).single();
     if (!error) return normalizeOrderRow(data);
     if (error.code !== '23505' || attempt === 2) {
@@ -409,6 +413,20 @@ export async function insertOrder(order) {
     }
   }
   throw new Error('注文IDの生成に失敗しました');
+}
+
+/** 複数注文を orders テーブルへ一括挿入 */
+export async function insertOrdersBulk(orders) {
+  const list = Array.isArray(orders) ? orders.filter((o) => o && typeof o === 'object') : [];
+  if (list.length === 0) throw new Error('登録する注文がありません');
+
+  const rows = list.map((order) => buildOrderInsertRow(order));
+  const { data, error } = await supabase.from('orders').insert(rows).select(ORDER_SELECT);
+  if (error) {
+    console.error('insertOrdersBulk failed', error);
+    throw error;
+  }
+  return (data || []).map(normalizeOrderRow).filter(Boolean);
 }
 
 export async function updateOrderDetails(orderId, updatedData) {

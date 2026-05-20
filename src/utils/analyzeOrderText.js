@@ -5,7 +5,7 @@ export const ANALYZE_ORDER_TEXT_ERROR_MESSAGE = 'AIの解析に失敗しまし�
 
 const GEMINI_MODEL = 'gemini-1.5-flash';
 
-const ORDER_ANALYSIS_JSON_SCHEMA = {
+const ORDER_ITEM_SCHEMA = {
   type: 'object',
   properties: {
     date: { type: 'string', description: 'YYYY-MM-DD' },
@@ -16,6 +16,12 @@ const ORDER_ANALYSIS_JSON_SCHEMA = {
     aggregate_size: { type: 'number', description: 'Max aggregate size mm, e.g. 20 or 40' },
   },
   required: ['date', 'time', 'volume', 'strength', 'slump', 'aggregate_size'],
+};
+
+/** Gemini へ渡す JSON 配列スキーマ */
+const ORDER_ANALYSIS_ARRAY_SCHEMA = {
+  type: 'array',
+  items: ORDER_ITEM_SCHEMA,
 };
 
 /** "08:30" → TIME_SLOTS の value（分単位の文字列、例: "510"） */
@@ -36,24 +42,41 @@ export function buildMixTextFromAnalysis({ strength, slump, aggregate_size }) {
   return `${Math.round(s)}-${Math.round(sl)}-${Math.round(agg)}N`;
 }
 
-function buildOrderAnalysisPrompt(userText, todayIso) {
-  return `あなたは生コンクリート工場の優秀な受注アシスタントです。
-顧客からの自然言語の注文依頼を読み取り、発注フォーム用の項目だけを抽出してください。
+function buildTodayContextLine() {
+  const now = new Date();
+  const jaDate = now.toLocaleDateString('ja-JP', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'long',
+  });
+  const iso = todayLocalISODate();
+  const jaTime = now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+  return `本日の日付は ${jaDate}（ISO: ${iso}、現在時刻 ${jaTime}）です。これを基準に「明日」「再来週」「来月の第2火曜」などの相対的な日付を正確に計算してください。`;
+}
 
-【基準日（今日）】${todayIso}
-「明日」「明後日」「来週月曜」などはこの基準日から解釈し、date は必ず YYYY-MM-DD で返してください。
+function buildOrderAnalysisPrompt(userText) {
+  const todayContext = buildTodayContextLine();
+  return `${todayContext}
+
+あなたは生コンクリート工場の優秀な受注アシスタントです。
+顧客からの自然言語の注文依頼を読み取り、含まれる注文をすべて個別に分解して抽出してください。
 
 【顧客の注文文】
 ${userText}
 
 【出力ルール】
-- 次のキーのみを持つ JSON オブジェクト 1 つだけを返す（説明文・マークダウン禁止）
-- date: 希望納入日（YYYY-MM-DD）
-- time: 希望時刻（HH:MM、24時間制。例: 08:30）
-- volume: 数量（m³ の数値のみ。単位文字は含めない）
-- strength: 呼び強度・設計基準強度（数値のみ）
-- slump: スランプ（cm、数値のみ）
-- aggregate_size: 粗骨材の最大寸法（20 や 40 など数値のみ）
+- 必ず JSON 配列のみを返す（説明文・マークダウン禁止）
+- 注文が1件だけでも [{ ... }] のように要素1つの配列にする
+- 複数日・複数時刻・複数数量が書かれている場合は、それぞれ別要素のオブジェクトに分ける
+- 各オブジェクトは次のキーのみを持つ:
+  - date: 希望納入日（YYYY-MM-DD）
+  - time: 希望時刻（HH:MM、24時間制。例: 08:30）
+  - volume: 数量（m³ の数値のみ。単位文字は含めない）
+  - strength: 呼び強度・設計基準強度（数値のみ）
+  - slump: スランプ（cm、数値のみ）
+  - aggregate_size: 粗骨材の最大寸法（20 や 40 など数値のみ）
+- 文脈で共通の配合・数量が書かれている場合は、各注文に同じ値を適用してよい
 - 不明な項目は文脈から妥当な一般的値を推定（volume 未記載なら 3 など）`;
 }
 
@@ -84,9 +107,9 @@ function parseFiniteNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-function normalizeAnalysisPayload(parsed) {
+function normalizeAnalysisItem(parsed, index) {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Invalid JSON shape');
+    throw new Error(`Invalid item at index ${index}`);
   }
 
   const date = normalizeDateString(parsed.date);
@@ -97,10 +120,22 @@ function normalizeAnalysisPayload(parsed) {
   const aggregate_size = parseFiniteNumber(parsed.aggregate_size);
 
   if (!date || !time || volume == null || strength == null || slump == null || aggregate_size == null) {
-    throw new Error('Missing or invalid required fields');
+    throw new Error(`Missing or invalid fields at index ${index}`);
   }
 
   return { date, time, volume, strength, slump, aggregate_size };
+}
+
+function normalizeAnalysisList(parsed) {
+  let items = parsed;
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    if (Array.isArray(parsed.orders)) items = parsed.orders;
+    else items = [parsed];
+  }
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error('Empty or invalid order array');
+  }
+  return items.map((item, i) => normalizeAnalysisItem(item, i));
 }
 
 function extractJsonText(response) {
@@ -110,8 +145,8 @@ function extractJsonText(response) {
 }
 
 /**
- * Gemini API で自然言語テキストから注文項目を抽出
- * @returns {Promise<{ date: string, time: string, volume: number, strength: number, slump: number, aggregate_size: number }>}
+ * Gemini API で自然言語テキストから注文項目を抽出（複数件対応・常に配列で返す）
+ * @returns {Promise<Array<{ date: string, time: string, volume: number, strength: number, slump: number, aggregate_size: number }>>}
  */
 export async function analyzeOrderText(text) {
   const userText = String(text || '').trim();
@@ -125,8 +160,7 @@ export async function analyzeOrderText(text) {
     throw new Error(ANALYZE_ORDER_TEXT_ERROR_MESSAGE);
   }
 
-  const todayIso = todayLocalISODate();
-  const prompt = buildOrderAnalysisPrompt(userText, todayIso);
+  const prompt = buildOrderAnalysisPrompt(userText);
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
@@ -134,7 +168,7 @@ export async function analyzeOrderText(text) {
       model: GEMINI_MODEL,
       generationConfig: {
         responseMimeType: 'application/json',
-        responseSchema: ORDER_ANALYSIS_JSON_SCHEMA,
+        responseSchema: ORDER_ANALYSIS_ARRAY_SCHEMA,
       },
     });
 
@@ -148,7 +182,11 @@ export async function analyzeOrderText(text) {
       throw new Error(ANALYZE_ORDER_TEXT_ERROR_MESSAGE);
     }
 
-    return normalizeAnalysisPayload(parsed);
+    const orders = normalizeAnalysisList(parsed);
+    return orders.map((order) => ({
+      ...order,
+      mixText: buildMixTextFromAnalysis(order),
+    }));
   } catch (err) {
     if (err?.message === ANALYZE_ORDER_TEXT_ERROR_MESSAGE) throw err;
     console.error('[analyzeOrderText] Gemini API call failed', err);

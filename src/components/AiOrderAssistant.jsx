@@ -18,14 +18,14 @@ export function AiOrderAssistant({ value, onChange, onSubmit, loading, notice })
         </h3>
       </div>
       <p className="mt-1.5 text-xs font-medium leading-relaxed text-slate-600 sm:text-sm">
-        注文内容を文章で入力すると、Gemini が希望日時・数量・配合などを読み取り、フォームに自動入力します。
+        注文内容を文章で入力すると、Gemini が複数件の注文（日付・時刻・数量・配合など）を抽出して一覧表示します。
       </p>
       <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={loading}
         rows={3}
-        placeholder="例：明日の朝8時半に、呼び強度21、スランプ18、粗骨材20mmを3㎥お願いします"
+        placeholder="例：明日8:30に3㎥、明後日10:00に5㎥。呼び強度21、スランプ18、粗骨材20mmでお願いします"
         className="mt-3 min-h-[88px] w-full resize-y rounded-xl border-2 border-indigo-200/80 bg-white px-4 py-3 text-sm font-medium text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:bg-slate-100"
         aria-describedby="ai-order-assistant-hint"
       />
@@ -48,7 +48,7 @@ export function AiOrderAssistant({ value, onChange, onSubmit, loading, notice })
               解析中…
             </>
           ) : (
-            'AIで入力欄を埋める'
+            'AIで注文を解析'
           )}
         </button>
         {loading ? (

@@ -20,12 +20,9 @@ import {
 } from './utils/notification.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { AiOrderAssistant } from './components/AiOrderAssistant.jsx';
-import {
-  analyzeOrderText,
-  ANALYZE_ORDER_TEXT_ERROR_MESSAGE,
-  buildMixTextFromAnalysis,
-  timeStringToSlotValue,
-} from './utils/analyzeOrderText.js';
+import { AiGeneratedOrderList } from './components/AiGeneratedOrderList.jsx';
+import { analyzeOrderText, ANALYZE_ORDER_TEXT_ERROR_MESSAGE } from './utils/analyzeOrderText.js';
+import { buildDispatchOrderFromAiItem, validateBulkRegisterContext } from './utils/dispatchBulkOrder.js';
 
 const DISPATCH_CUSTOMER_SESSION_KEY = 'haisha_dispatch_customer_id_v1';
 const DISPATCH_AUTH_SESSION_KEY = 'haisha_dispatch_auth_customer_id_v1';
@@ -980,6 +977,8 @@ function unloadDurationLabel(value) {
       const [aiAssistText, setAiAssistText] = useState('');
       const [aiAssistLoading, setAiAssistLoading] = useState(false);
       const [aiAssistNotice, setAiAssistNotice] = useState('');
+      const [aiGeneratedOrders, setAiGeneratedOrders] = useState([]);
+      const [aiBulkRegisterLoading, setAiBulkRegisterLoading] = useState(false);
       const orderFormRef = useRef(null);
 
       const selectedProject = useMemo(
@@ -1565,45 +1564,117 @@ function unloadDurationLabel(value) {
         if (!text || aiAssistLoading) return;
         setAiAssistLoading(true);
         setAiAssistNotice('');
+        setAiGeneratedOrders([]);
         setSubmitError('');
         try {
-          const result = await analyzeOrderText(text);
-          if (result.date) {
-            const nextDate = String(result.date);
-            let slot = timeStringToSlotValue(result.time);
-            if (!slot || !TIME_SLOTS.some((s) => s.value === slot)) {
-              slot = TIME_SLOTS[0]?.value ?? '480';
-            }
-            if (isPastPreferredDateTime(nextDate, slot)) {
-              const available = firstAvailableTimeSlotForDate(nextDate);
-              if (available) {
-                setPreferredDate(nextDate);
-                setTimeSlot(available.value);
-              } else {
-                const next = nextAvailableOrderDateTime(nextDate);
-                setPreferredDate(next.date);
-                setTimeSlot(next.slot);
-              }
-            } else {
-              setPreferredDate(nextDate);
-              setTimeSlot(slot);
-            }
-          }
-          if (result.volume != null && result.volume !== '') {
-            setQuantityM3(String(result.volume));
-          }
-          const mix = buildMixTextFromAnalysis(result);
-          if (mix) setMixText(mix);
-          setAiAssistNotice('フォームに自動入力しました！');
-          window.setTimeout(() => setAiAssistNotice(''), 4000);
+          const orders = await analyzeOrderText(text);
+          const stamped = orders.map((o, i) => ({
+            ...o,
+            _key: `ai-${Date.now()}-${i}`,
+          }));
+          setAiGeneratedOrders(stamped);
+          const count = stamped.length;
+          setAiAssistNotice(`${count}件の注文を抽出しました。内容を確認して一括登録してください。`);
+          window.setTimeout(() => setAiAssistNotice(''), 5000);
         } catch (err) {
           console.error('AI注文解析に失敗しました', err);
+          setAiGeneratedOrders([]);
           setSubmitError(ANALYZE_ORDER_TEXT_ERROR_MESSAGE);
           window.alert(ANALYZE_ORDER_TEXT_ERROR_MESSAGE);
         } finally {
           setAiAssistLoading(false);
         }
       }, [aiAssistText, aiAssistLoading]);
+
+      const bulkRegisterContext = useMemo(
+        () => ({
+          orderKind,
+          currentCustomerId,
+          currentCustomer,
+          selectedProject,
+          selectedProjectId,
+          preferredFactoryId,
+          factories,
+          traderName,
+          contractorName,
+          siteName,
+          siteAddress,
+          sitePhone,
+          orderedBy,
+          vehicleType,
+          unloadDuration,
+          hasTest,
+          deliveryLat,
+          deliveryLng,
+        }),
+        [
+          orderKind,
+          currentCustomerId,
+          currentCustomer,
+          selectedProject,
+          selectedProjectId,
+          preferredFactoryId,
+          factories,
+          traderName,
+          contractorName,
+          siteName,
+          siteAddress,
+          sitePhone,
+          orderedBy,
+          vehicleType,
+          unloadDuration,
+          hasTest,
+          deliveryLat,
+          deliveryLng,
+        ],
+      );
+
+      const aiBulkDisabledReason = useMemo(() => {
+        const missing = validateBulkRegisterContext(bulkRegisterContext, aiGeneratedOrders);
+        if (missing.length === 0) return '';
+        return `一括登録には次が必要です: ${missing.join('、')}`;
+      }, [bulkRegisterContext, aiGeneratedOrders]);
+
+      const handleBulkRegisterAiOrders = useCallback(async () => {
+        if (aiBulkRegisterLoading || aiGeneratedOrders.length === 0) return;
+        const missing = validateBulkRegisterContext(bulkRegisterContext, aiGeneratedOrders);
+        if (missing.length) {
+          const message = `次の項目を入力してください: ${missing.join('、')}`;
+          setSubmitError(message);
+          window.alert(message);
+          return;
+        }
+        setAiBulkRegisterLoading(true);
+        setSubmitError('');
+        try {
+          const payloads = aiGeneratedOrders.map((item) => buildDispatchOrderFromAiItem(item, bulkRegisterContext));
+          await db.insertOrdersBulk(payloads);
+          const count = payloads.length;
+          const contractorName =
+            currentCustomer?.company_name || currentCustomer?.name || contractorName.trim() || '新規注文';
+          void sendPushNotificationToRole('factory', `新規注文が${count}件入りました：${contractorName}`);
+          await refreshDashboard();
+          setAiGeneratedOrders([]);
+          setAiAssistNotice('');
+          setSubmitNotice(`${count}件の注文をカレンダーに一括登録しました！`);
+          setCustomerOrderTab('calendar');
+          window.setTimeout(() => setSubmitNotice(null), 6000);
+        } catch (err) {
+          console.error('AI一括登録に失敗しました', err);
+          const message = formatSupabaseError(err, '一括登録に失敗しました');
+          setSubmitError(message);
+          window.alert(message);
+        } finally {
+          setAiBulkRegisterLoading(false);
+        }
+      }, [
+        aiBulkRegisterLoading,
+        aiGeneratedOrders,
+        bulkRegisterContext,
+        contractorName,
+        currentCustomer,
+        refreshDashboard,
+      ]);
 
       const handleSubmit = useCallback(
         async (e) => {
@@ -1981,13 +2052,21 @@ function unloadDurationLabel(value) {
                   </button>
                 </div>
                 <form className="mt-6 grid min-w-0 gap-6 overflow-hidden lg:grid-cols-2 lg:items-start" onSubmit={handleSubmit}>
-              <div className="lg:col-span-2">
+              <div className="lg:col-span-2 grid gap-4">
                 <AiOrderAssistant
                   value={aiAssistText}
                   onChange={setAiAssistText}
                   onSubmit={handleAiOrderAssist}
                   loading={aiAssistLoading}
                   notice={aiAssistNotice}
+                />
+                <AiGeneratedOrderList
+                  orders={aiGeneratedOrders}
+                  onOrdersChange={setAiGeneratedOrders}
+                  onBulkRegister={handleBulkRegisterAiOrders}
+                  bulkLoading={aiBulkRegisterLoading}
+                  bulkDisabled={Boolean(aiBulkDisabledReason)}
+                  bulkDisabledReason={aiBulkDisabledReason}
                 />
               </div>
               <div className="flex flex-col gap-3">
