@@ -3,7 +3,7 @@ import { todayLocalISODate } from '../haishaConstants.js';
 
 export const ANALYZE_ORDER_TEXT_ERROR_MESSAGE = 'AIの解析に失敗しました';
 
-const GEMINI_MODEL = 'gemini-1.5-flash';
+const GEMINI_MODEL = 'gemini-1.5-flash-latest';
 
 const ORDER_ITEM_SCHEMA = {
   type: 'object',
