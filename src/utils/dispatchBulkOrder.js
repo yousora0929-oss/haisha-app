@@ -122,6 +122,17 @@ function validateDeliveryArea(context) {
   return msg ? [msg] : [];
 }
 
+/** 市町村プルダウンと町名・地名（地図待ちでも必須） */
+function validateMunicipalityAndTownName(context) {
+  const missing = [];
+  const area = String(context.deliveryArea || '').trim();
+  const town = String(context.siteAddressDetail ?? '').trim();
+  if (!area) missing.push('納入エリア（市町村）');
+  if (!town) missing.push('町名・地名');
+  missing.push(...validateDeliveryArea(context));
+  return missing;
+}
+
 /** 複数日一括発注フォームのバリデーション */
 export function validateMultiDateOrderForm(context, dates, { today, isPastPreferredDateTime }) {
   const missing = [];
@@ -144,13 +155,10 @@ export function validateMultiDateOrderForm(context, dates, { today, isPastPrefer
     const nameTrim = String(context.siteName || '').trim();
     const addrTrim = String(context.siteAddress || '').trim();
     if (!nameTrim && !addrTrim) missing.push('現場名または現場住所');
-    const area = String(context.deliveryArea || '').trim();
-    if (!area) missing.push('納入エリア（市町村）');
-    missing.push(...validateDeliveryArea(context));
+    missing.push(...validateMunicipalityAndTownName(context));
   }
   if (context.orderKind === 'project') {
-    if (!String(context.deliveryArea || '').trim()) missing.push('納入エリア（市町村）');
-    missing.push(...validateDeliveryArea(context));
+    missing.push(...validateMunicipalityAndTownName(context));
   }
   const timeSlot = String(context.timeSlot || '').trim();
   list.forEach((date, i) => {

@@ -247,3 +247,11 @@ export function filterOrdersForFactory(orders, factoryId, ctx) {
     .map((o) => enrichOrderWithProject(o, ctx.projectById))
     .filter((o) => isOrderVisibleToFactory(o, factoryId, ctx));
 }
+
+/** 管理画面用: 現時点で当該注文を閲覧できる工場 ID 一覧 */
+export function getVisibleFactoryIdsForOrder(order, ctx) {
+  const status = order?.status != null ? String(order.status) : '';
+  if (status === 'deleted' || status === 'pending_association') return [];
+  const ids = ctx?.allFactoryIds || [];
+  return ids.filter((fid) => isOrderVisibleToFactory(order, fid, ctx));
+}

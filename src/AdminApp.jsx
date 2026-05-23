@@ -4,6 +4,9 @@ import { supabase } from './supabaseClient.js';
 import { MapPicker } from './MapPicker.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
+import { OrderVisibilityScopePanel } from './components/OrderVisibilityScopePanel.jsx';
+import { OrderVisibilityScopeBadge } from './components/OrderVisibilityScopeBadge.jsx';
+import { buildOrderVisibilityContext } from './utils/orderVisibilityScope.js';
 import {
   formatDeliveryAreasTextInput,
   getDeliveryAreaValidationMessage,
@@ -368,6 +371,10 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
     }
     if (!area) {
       setAddressError('納入エリア（市町村）を選択してください。');
+      return;
+    }
+    if (!detail) {
+      setAddressError('町名・地名を入力してください（例：横尾。番地・現場名が未定の場合は町名まで）。');
       return;
     }
     setAddressError('');
@@ -1213,7 +1220,7 @@ function AdminSettingsSection() {
   );
 }
 
-function AdminOrderEditModal({ order, open, saving, onClose, onSave }) {
+function AdminOrderDetailModal({ order, open, saving, escalationCtx, factoryNameById, onClose, onSave }) {
   const [preferredDate, setPreferredDate] = useState('');
   const [timeValue, setTimeValue] = useState('');
   const [quantityM3, setQuantityM3] = useState('');
@@ -1233,6 +1240,8 @@ function AdminOrderEditModal({ order, open, saving, onClose, onSave }) {
 
   if (!open || !order) return null;
 
+  const party = orderPartyInfo(order);
+  const st = orderStatus(order);
   const submit = (e) => {
     e.preventDefault();
     const minutes = parseTimeInputToMinutes(timeValue);
@@ -1254,17 +1263,62 @@ function AdminOrderEditModal({ order, open, saving, onClose, onSave }) {
   const inputClass = 'mt-1 min-h-[42px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-bold text-slate-900';
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <form onSubmit={submit} className="w-full max-w-lg rounded-2xl border-2 border-slate-200 bg-white p-4 shadow-2xl">
-        <h3 className="text-lg font-black text-slate-900">注文を編集</h3>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <label className="text-xs font-black text-slate-600">希望日<input type="date" value={preferredDate} onChange={(e) => setPreferredDate(e.target.value)} className={inputClass} /></label>
-          <label className="text-xs font-black text-slate-600">希望時刻<input type="time" value={timeValue} onChange={(e) => setTimeValue(e.target.value)} className={inputClass} /></label>
-          <label className="text-xs font-black text-slate-600">数量<input type="text" value={quantityM3} onChange={(e) => setQuantityM3(e.target.value)} className={inputClass} /></label>
-          <label className="text-xs font-black text-slate-600">配合<input type="text" value={mixText} onChange={(e) => setMixText(e.target.value)} className={inputClass} /></label>
-          <label className="text-xs font-black text-slate-600 sm:col-span-2">現場名<input type="text" value={siteName} onChange={(e) => setSiteName(e.target.value)} className={inputClass} /></label>
+      <form onSubmit={submit} className="flex max-h-[min(92vh,900px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border-2 border-slate-200 bg-white shadow-2xl">
+        <div className="overflow-y-auto p-4 sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h3 className="text-lg font-black text-slate-900">注文詳細</h3>
+              <p className="mt-0.5 font-mono text-xs text-slate-500">{order.id}</p>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              <span className={'inline-flex rounded-full border px-2 py-0.5 text-xs font-black ' + kindBadgeClass(Boolean(order.is_spot))}>
+                {order.is_spot ? 'スポット' : '物件'}
+              </span>
+              <span className={'inline-flex rounded-full border px-2 py-0.5 text-xs font-black ' + statusBadgeClass(st)}>{orderStatusLabel(st)}</span>
+              <LocationPendingBadge order={order} />
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <OrderVisibilityScopePanel
+              order={order}
+              escalationCtx={escalationCtx}
+              factoryNameById={factoryNameById}
+            />
+          </div>
+
+          <dl className="mt-4 grid gap-2 rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-xs font-bold text-slate-500">希望日時</dt>
+              <dd className="font-black text-slate-900">{formatDateJp(orderDeliveryDate(order))} {formatOrderTime(order)}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-bold text-slate-500">業者 / 現場</dt>
+              <dd className="font-bold text-slate-900">{party.contractor} · {party.site}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-bold text-slate-500">数量</dt>
+              <dd className="font-black text-slate-900">{order.quantityM3 ?? order.quantityCube ?? '—'} m³</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-bold text-slate-500">受注工場</dt>
+              <dd className="font-bold text-slate-900">
+                {order.factory_site_id ? factoryNameById[order.factory_site_id] || order.factory_site_id : '—'}
+              </dd>
+            </div>
+          </dl>
+
+          <h4 className="mt-5 text-sm font-black text-slate-800">内容を編集</h4>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            <label className="text-xs font-black text-slate-600">希望日<input type="date" value={preferredDate} onChange={(e) => setPreferredDate(e.target.value)} className={inputClass} /></label>
+            <label className="text-xs font-black text-slate-600">希望時刻<input type="time" value={timeValue} onChange={(e) => setTimeValue(e.target.value)} className={inputClass} /></label>
+            <label className="text-xs font-black text-slate-600">数量<input type="text" value={quantityM3} onChange={(e) => setQuantityM3(e.target.value)} className={inputClass} /></label>
+            <label className="text-xs font-black text-slate-600">配合<input type="text" value={mixText} onChange={(e) => setMixText(e.target.value)} className={inputClass} /></label>
+            <label className="text-xs font-black text-slate-600 sm:col-span-2">現場名<input type="text" value={siteName} onChange={(e) => setSiteName(e.target.value)} className={inputClass} /></label>
+          </div>
         </div>
-        <div className="mt-5 flex gap-2">
-          <button type="button" onClick={onClose} disabled={saving} className="min-h-[44px] flex-1 rounded-lg border-2 border-slate-300 bg-white text-sm font-black text-slate-700">キャンセル</button>
+        <div className="flex shrink-0 gap-2 border-t border-slate-200 bg-white p-4">
+          <button type="button" onClick={onClose} disabled={saving} className="min-h-[44px] flex-1 rounded-lg border-2 border-slate-300 bg-white text-sm font-black text-slate-700">閉じる</button>
           <button type="submit" disabled={saving} className="min-h-[44px] flex-1 rounded-lg border-2 border-indigo-700 bg-indigo-600 text-sm font-black text-white">{saving ? '保存中…' : '保存'}</button>
         </div>
       </form>
@@ -1284,14 +1338,25 @@ function OrdersMonitorSection({
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [editingOrder, setEditingOrder] = useState(null);
+  const [detailOrder, setDetailOrder] = useState(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [projects, setProjects] = useState([]);
+  const [holidays, setHolidays] = useState([]);
+  const [systemSettings, setSystemSettings] = useState({});
 
   const load = useCallback(async () => {
     setError('');
     try {
-      const { orders: rows } = await db.fetchOrdersWithChat();
+      const [{ orders: rows }, projs, hols, settings] = await Promise.all([
+        db.fetchOrdersWithChat(),
+        db.fetchProjects(),
+        db.fetchHolidays(),
+        db.fetchSystemSettings(),
+      ]);
       setOrders(rows);
+      setProjects(projs);
+      setHolidays(hols);
+      setSystemSettings(settings || {});
     } catch (e) {
       console.error(e);
       setError('注文一覧の取得に失敗しました。');
@@ -1299,6 +1364,11 @@ function OrdersMonitorSection({
       setLoading(false);
     }
   }, []);
+
+  const escalationCtx = useMemo(
+    () => buildOrderVisibilityContext(orders, factories, projects, systemSettings, holidays, new Date()),
+    [orders, factories, projects, systemSettings, holidays],
+  );
 
   useEffect(() => {
     let disposed = false;
@@ -1377,7 +1447,7 @@ function OrdersMonitorSection({
       if (updated) {
         setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === orderId ? updated : o)) : prev));
       }
-      setEditingOrder(null);
+      setDetailOrder(null);
     } catch (e) {
       console.error(e);
       setError('注文の編集に失敗しました。');
@@ -1561,6 +1631,7 @@ function OrdersMonitorSection({
                 <th className="px-3 py-2 font-black text-slate-700">現場名</th>
                 <th className="px-3 py-2 font-black text-slate-700">担当者</th>
                 <th className="px-3 py-2 font-black text-slate-700">連絡先</th>
+                <th className="px-3 py-2 font-black text-slate-700">公開範囲</th>
                 <th className="px-3 py-2 font-black text-slate-700">status</th>
                 <th className="px-3 py-2 font-black text-slate-700">受注工場</th>
                 <th className="px-3 py-2 font-black text-slate-700">注文ID</th>
@@ -1570,7 +1641,7 @@ function OrdersMonitorSection({
             <tbody>
               {visibleOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-3 py-8 text-center text-slate-500">注文はありません。</td>
+                  <td colSpan={11} className="px-3 py-8 text-center text-slate-500">注文はありません。</td>
                 </tr>
               ) : (
                 visibleOrders.map((o) => {
@@ -1589,6 +1660,9 @@ function OrdersMonitorSection({
                       <td className="max-w-[16rem] break-words px-3 py-2.5 font-bold text-slate-800" title={party.site}>{party.site}</td>
                       <td className="max-w-[10rem] break-words px-3 py-2.5 text-slate-700">{party.orderedBy}</td>
                       <td className="max-w-[10rem] break-words px-3 py-2.5 font-mono text-xs text-slate-700">{party.phone}</td>
+                      <td className="px-3 py-2.5">
+                        <OrderVisibilityScopeBadge order={o} escalationCtx={escalationCtx} factoryNameById={factoryNameById} />
+                      </td>
                       <td className="px-3 py-2.5">
                         <div className="flex flex-wrap gap-1">
                           <span className={'inline-flex rounded-full border px-2 py-0.5 text-xs font-black ' + statusBadgeClass(st)}>{orderStatusLabel(st)}</span>
@@ -1627,7 +1701,7 @@ function OrdersMonitorSection({
                               {label}
                             </button>
                           ))}
-                          <button type="button" onClick={() => setEditingOrder(o)} className="rounded border border-indigo-300 bg-indigo-50 px-2 py-1 text-xs font-black text-indigo-800 hover:bg-indigo-100">編集</button>
+                          <button type="button" onClick={() => setDetailOrder(o)} className="rounded border border-indigo-300 bg-indigo-50 px-2 py-1 text-xs font-black text-indigo-800 hover:bg-indigo-100">詳細</button>
                           <button type="button" onClick={() => handleDeleteOrder(o)} className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-black text-red-700 hover:bg-red-100">削除</button>
                         </div>
                       </td>
@@ -1683,11 +1757,13 @@ function OrdersMonitorSection({
           )}
         </div>
       ) : null}
-      <AdminOrderEditModal
-        order={editingOrder}
-        open={Boolean(editingOrder)}
+      <AdminOrderDetailModal
+        order={detailOrder}
+        open={Boolean(detailOrder)}
+        escalationCtx={escalationCtx}
+        factoryNameById={factoryNameById}
         saving={savingEdit}
-        onClose={() => setEditingOrder(null)}
+        onClose={() => setDetailOrder(null)}
         onSave={handleSaveEdit}
       />
     </section>
