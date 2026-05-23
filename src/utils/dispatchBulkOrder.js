@@ -1,5 +1,4 @@
 import { TIME_SLOTS } from '../haishaConstants.js';
-import { buildMixTextFromAnalysis, timeStringToSlotValue } from './analyzeOrderText.js';
 
 const UNLOAD_LABELS = {
   '15': '15分',
@@ -14,21 +13,16 @@ function unloadDurationLabel(value) {
 }
 
 /**
- * AI 抽出1件 + 画面の共通入力から発注用 order オブジェクトを組み立てる
+ * 共通フォーム入力 + 1つの納入日から発注用 order オブジェクトを組み立てる
  */
-export function buildDispatchOrderFromAiItem(aiItem, context) {
-  const item = aiItem && typeof aiItem === 'object' ? aiItem : {};
-  const date = String(item.date || '').trim();
-  const time = String(item.time || '').trim();
-  let slot = timeStringToSlotValue(time);
-  if (!slot || !TIME_SLOTS.some((s) => s.value === slot)) {
-    slot = TIME_SLOTS[0]?.value ?? '480';
-  }
+export function buildDispatchOrderForDate(preferredDate, context) {
+  const date = String(preferredDate || '').trim();
+  const slot = String(context.timeSlot || '').trim();
   const slotMeta = TIME_SLOTS.find((s) => s.value === slot);
-  const slotLabel = slotMeta?.label ?? time;
+  const slotLabel = slotMeta?.label ?? '';
   const timeMinutes = parseInt(slot, 10);
-  const qtyTrim = String(item.volume ?? '').trim();
-  const mixText = String(item.mixText || buildMixTextFromAnalysis(item) || '').trim();
+  const qtyTrim = String(context.quantityM3 ?? '').trim();
+  const mixText = String(context.mixText ?? '').trim();
 
   const {
     orderKind,
@@ -111,13 +105,15 @@ export function buildDispatchOrderFromAiItem(aiItem, context) {
   };
 }
 
-export function validateBulkRegisterContext(context, aiOrders) {
+/** 複数日一括発注フォームのバリデーション */
+export function validateMultiDateOrderForm(context, dates, { today, isPastPreferredDateTime }) {
   const missing = [];
-  const list = Array.isArray(aiOrders) ? aiOrders : [];
-  if (list.length === 0) missing.push('AI抽出結果');
+  const list = (Array.isArray(dates) ? dates : []).map((d) => String(d || '').trim()).filter(Boolean);
+  if (list.length === 0) missing.push('納入日（1件以上）');
   if (!String(context.currentCustomerId || '').trim()) missing.push('業者（会社）');
-  if (!String(context.contractorName || '').trim()) missing.push('業者名');
+  if (!String(context.contractorName || '').trim()) missing.push('業者');
   if (!String(context.sitePhone || '').trim()) missing.push('電話番号');
+  if (!String(context.quantityM3 || '').trim()) missing.push('数量（m³）');
   if (context.orderKind === 'project' && !String(context.selectedProjectId || '').trim()) {
     missing.push('物件');
   }
@@ -129,11 +125,12 @@ export function validateBulkRegisterContext(context, aiOrders) {
     const addrTrim = String(context.siteAddress || '').trim();
     if (!nameTrim && !addrTrim) missing.push('現場名または現場住所');
   }
-  for (let i = 0; i < list.length; i += 1) {
-    const o = list[i];
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(o?.date || ''))) missing.push(`注文${i + 1}の日付`);
-    if (!timeStringToSlotValue(o?.time)) missing.push(`注文${i + 1}の時刻`);
-    if (!String(o?.volume ?? '').trim()) missing.push(`注文${i + 1}の数量`);
-  }
+  const timeSlot = String(context.timeSlot || '').trim();
+  list.forEach((date, i) => {
+    if (today && date < today) missing.push(`納入日${i + 1}（過去の日付）`);
+    if (typeof isPastPreferredDateTime === 'function' && isPastPreferredDateTime(date, timeSlot)) {
+      missing.push(`納入日${i + 1}（過去の日時）`);
+    }
+  });
   return missing;
 }

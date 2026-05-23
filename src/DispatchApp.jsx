@@ -19,10 +19,7 @@ import {
   setupNotificationClickRedirect,
 } from './utils/notification.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
-import { AiOrderAssistant } from './components/AiOrderAssistant.jsx';
-import { AiGeneratedOrderList } from './components/AiGeneratedOrderList.jsx';
-import { analyzeOrderText, ANALYZE_ORDER_TEXT_ERROR_MESSAGE } from './utils/analyzeOrderText.js';
-import { buildDispatchOrderFromAiItem, validateBulkRegisterContext } from './utils/dispatchBulkOrder.js';
+import { buildDispatchOrderForDate, validateMultiDateOrderForm } from './utils/dispatchBulkOrder.js';
 
 const DISPATCH_CUSTOMER_SESSION_KEY = 'haisha_dispatch_customer_id_v1';
 const DISPATCH_AUTH_SESSION_KEY = 'haisha_dispatch_auth_customer_id_v1';
@@ -883,8 +880,13 @@ function unloadDurationLabel(value) {
       const today = todayLocalISODate();
       const initialOrderDateTime = useMemo(() => nextAvailableOrderDateTime(today), [today]);
 
-      const [preferredDate, setPreferredDate] = useState(initialOrderDateTime.date);
+      const [orderDates, setOrderDates] = useState(['']);
       const [timeSlot, setTimeSlot] = useState(initialOrderDateTime.slot);
+
+      const primaryOrderDate = useMemo(
+        () => orderDates.map((d) => String(d || '').trim()).find(Boolean) || '',
+        [orderDates],
+      );
 
       useEffect(() => {
         if (!TIME_SLOTS.some((s) => s.value === timeSlot)) {
@@ -892,22 +894,30 @@ function unloadDurationLabel(value) {
         }
       }, [timeSlot]);
       useEffect(() => {
-        if (preferredDate && preferredDate < today) {
-          setPreferredDate(initialOrderDateTime.date);
+        if (!primaryOrderDate) return;
+        if (primaryOrderDate < today) {
+          setOrderDates([initialOrderDateTime.date]);
           setTimeSlot(initialOrderDateTime.slot);
           return;
         }
-        if (isPastPreferredDateTime(preferredDate, timeSlot)) {
-          const nextSlot = firstAvailableTimeSlotForDate(preferredDate);
+        if (isPastPreferredDateTime(primaryOrderDate, timeSlot)) {
+          const nextSlot = firstAvailableTimeSlotForDate(primaryOrderDate);
           if (nextSlot) {
             setTimeSlot(nextSlot.value);
           } else {
-            const next = nextAvailableOrderDateTime(preferredDate);
-            setPreferredDate(next.date);
+            const next = nextAvailableOrderDateTime(primaryOrderDate);
+            setOrderDates((prev) => {
+              const copy = [...prev];
+              const idx = copy.findIndex((d) => String(d || '').trim() === primaryOrderDate);
+              if (idx >= 0) copy[idx] = next.date;
+              else if (copy.length) copy[0] = next.date;
+              else copy.push(next.date);
+              return copy;
+            });
             setTimeSlot(next.slot);
           }
         }
-      }, [preferredDate, timeSlot, today, initialOrderDateTime.date, initialOrderDateTime.slot]);
+      }, [primaryOrderDate, timeSlot, today, initialOrderDateTime.date, initialOrderDateTime.slot]);
       const [vehicleType, setVehicleType] = useState('large');
       const [mixText, setMixText] = useState('');
       const [quantityM3, setQuantityM3] = useState('');
@@ -923,7 +933,7 @@ function unloadDurationLabel(value) {
       const [submitError, setSubmitError] = useState('');
       const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
       const [showConfirmModal, setShowConfirmModal] = useState(false);
-      const [confirmOrder, setConfirmOrder] = useState(null);
+      const [confirmOrders, setConfirmOrders] = useState([]);
       const [isLoggedIn, setIsLoggedIn] = useState(() => {
         try {
           return Boolean(sessionStorage.getItem(DISPATCH_AUTH_SESSION_KEY));
@@ -974,11 +984,6 @@ function unloadDurationLabel(value) {
       const [addressSearchLoading, setAddressSearchLoading] = useState(false);
       const [addressSearchError, setAddressSearchError] = useState('');
       const [preferredFactoryId, setPreferredFactoryId] = useState('');
-      const [aiAssistText, setAiAssistText] = useState('');
-      const [aiAssistLoading, setAiAssistLoading] = useState(false);
-      const [aiAssistNotice, setAiAssistNotice] = useState('');
-      const [aiGeneratedOrders, setAiGeneratedOrders] = useState([]);
-      const [aiBulkRegisterLoading, setAiBulkRegisterLoading] = useState(false);
       const orderFormRef = useRef(null);
 
       const selectedProject = useMemo(
@@ -1445,7 +1450,7 @@ function unloadDurationLabel(value) {
         setSelectedProjectId('');
         setPreferredFactoryId('');
         setShowConfirmModal(false);
-        setConfirmOrder(null);
+        setConfirmOrders([]);
         setLoginPassword('');
         setLoginError('');
         try {
@@ -1553,40 +1558,13 @@ function unloadDurationLabel(value) {
             delivery_lat: isSpot ? item.delivery_lat ?? item.deliveryLat ?? null : null,
             delivery_lng: isSpot ? item.delivery_lng ?? item.deliveryLng ?? null : null,
           };
-          setConfirmOrder(repeatOrder);
+          setConfirmOrders([repeatOrder]);
           setShowConfirmModal(true);
         },
         [currentCustomer, currentCustomerId, repeatPreferredDate, repeatTimeSlot],
       );
 
-      const handleAiOrderAssist = useCallback(async () => {
-        const text = String(aiAssistText || '').trim();
-        if (!text || aiAssistLoading) return;
-        setAiAssistLoading(true);
-        setAiAssistNotice('');
-        setAiGeneratedOrders([]);
-        setSubmitError('');
-        try {
-          const orders = await analyzeOrderText(text);
-          const stamped = orders.map((o, i) => ({
-            ...o,
-            _key: `ai-${Date.now()}-${i}`,
-          }));
-          setAiGeneratedOrders(stamped);
-          const count = stamped.length;
-          setAiAssistNotice(`${count}件の注文を抽出しました。内容を確認して一括登録してください。`);
-          window.setTimeout(() => setAiAssistNotice(''), 5000);
-        } catch (err) {
-          console.error('AI注文解析に失敗しました', err);
-          setAiGeneratedOrders([]);
-          setSubmitError(ANALYZE_ORDER_TEXT_ERROR_MESSAGE);
-          window.alert(ANALYZE_ORDER_TEXT_ERROR_MESSAGE);
-        } finally {
-          setAiAssistLoading(false);
-        }
-      }, [aiAssistText, aiAssistLoading]);
-
-      const bulkRegisterContext = useMemo(
+      const multiDateFormContext = useMemo(
         () => ({
           orderKind,
           currentCustomerId,
@@ -1606,6 +1584,9 @@ function unloadDurationLabel(value) {
           hasTest,
           deliveryLat,
           deliveryLng,
+          timeSlot,
+          quantityM3,
+          mixText,
         }),
         [
           orderKind,
@@ -1626,197 +1607,67 @@ function unloadDurationLabel(value) {
           hasTest,
           deliveryLat,
           deliveryLng,
+          timeSlot,
+          quantityM3,
+          mixText,
         ],
       );
 
-      const aiBulkDisabledReason = useMemo(() => {
-        const missing = validateBulkRegisterContext(bulkRegisterContext, aiGeneratedOrders);
-        if (missing.length === 0) return '';
-        return `一括登録には次が必要です: ${missing.join('、')}`;
-      }, [bulkRegisterContext, aiGeneratedOrders]);
-
-      const handleBulkRegisterAiOrders = useCallback(async () => {
-        if (aiBulkRegisterLoading || aiGeneratedOrders.length === 0) return;
-        const missing = validateBulkRegisterContext(bulkRegisterContext, aiGeneratedOrders);
-        if (missing.length) {
-          const message = `次の項目を入力してください: ${missing.join('、')}`;
-          setSubmitError(message);
-          window.alert(message);
-          return;
-        }
-        setAiBulkRegisterLoading(true);
-        setSubmitError('');
-        try {
-          const payloads = aiGeneratedOrders.map((item) => buildDispatchOrderFromAiItem(item, bulkRegisterContext));
-          await db.insertOrdersBulk(payloads);
-          const count = payloads.length;
-          const contractorName =
-            currentCustomer?.company_name || currentCustomer?.name || contractorName.trim() || '新規注文';
-          void sendPushNotificationToRole('factory', `新規注文が${count}件入りました：${contractorName}`);
-          await refreshDashboard();
-          setAiGeneratedOrders([]);
-          setAiAssistNotice('');
-          setSubmitNotice(`${count}件の注文をカレンダーに一括登録しました！`);
-          setCustomerOrderTab('calendar');
-          window.setTimeout(() => setSubmitNotice(null), 6000);
-        } catch (err) {
-          console.error('AI一括登録に失敗しました', err);
-          const message = formatSupabaseError(err, '一括登録に失敗しました');
-          setSubmitError(message);
-          window.alert(message);
-        } finally {
-          setAiBulkRegisterLoading(false);
-        }
-      }, [
-        aiBulkRegisterLoading,
-        aiGeneratedOrders,
-        bulkRegisterContext,
-        contractorName,
-        currentCustomer,
-        refreshDashboard,
-      ]);
+      const filledOrderDateCount = useMemo(
+        () => orderDates.map((d) => String(d || '').trim()).filter(Boolean).length,
+        [orderDates],
+      );
 
       const handleSubmit = useCallback(
         async (e) => {
           e.preventDefault();
           if (isSubmittingOrder) return;
-          if (isPastPreferredDateTime(preferredDate, timeSlot)) {
-            const message = '現在より過去の日時は指定できません。正しい希望日時を入力してください。';
-            setSubmitError(message);
-            window.alert(message);
-            return;
-          }
-          const missing = [];
-          const nameTrim = siteName.trim();
-          const addrTrim = siteAddress.trim();
-          if (!String(quantityM3).trim()) missing.push('数量（m³）');
-          if (!contractorName.trim()) missing.push('業者');
-          if (!sitePhone.trim()) missing.push('電話番号');
-          if (orderKind === 'spot' && !nameTrim && !addrTrim) {
-            missing.push('現場名または現場住所');
-          }
-          if (orderKind === 'project' && !String(selectedProjectId || '').trim()) {
-            missing.push('物件');
-          }
-          if (!String(currentCustomerId || '').trim()) {
-            missing.push('業者（会社）');
-          }
-          if (orderKind === 'spot') {
-            const la = parseFloat(String(deliveryLat).trim());
-            const ln = parseFloat(String(deliveryLng).trim());
-            if (!Number.isFinite(la) || !Number.isFinite(ln)) {
-              missing.push('地図上の現場位置（クリックで指定）');
-            }
-          }
+          const dates = [...new Set(orderDates.map((d) => String(d || '').trim()).filter(Boolean))];
+          const missing = validateMultiDateOrderForm(multiDateFormContext, dates, {
+            today,
+            isPastPreferredDateTime,
+          });
           if (missing.length) {
-            setSubmitError(`次の項目を入力してください: ${missing.join('、')}`);
+            const message = `次の項目を入力してください: ${missing.join('、')}`;
+            setSubmitError(message);
+            if (missing.some((m) => m.includes('過去'))) window.alert(message);
             return;
           }
           setSubmitError('');
-          const slotMeta = TIME_SLOTS.find((s) => s.value === timeSlot);
-          const slotLabel = slotMeta?.label ?? '';
-          const timeMinutes = parseInt(timeSlot, 10);
-          const qtyTrim = String(quantityM3).trim();
-          const resolvedSiteName =
-            orderKind === 'project' && selectedProject?.name
-              ? nameTrim || String(selectedProject.name)
-              : nameTrim || addrTrim;
-          const prefFidRaw = String(preferredFactoryId || '').trim();
-          const prefFid =
-            prefFidRaw && (Array.isArray(factories) ? factories : []).some((f) => f && String(f.id) === prefFidRaw)
-              ? prefFidRaw
-              : '';
-          const preferredFactoryName =
-            prefFid && (Array.isArray(factories) ? factories : []).find((f) => f && f.id === prefFid)?.name?.trim();
-          const isSpot = orderKind === 'spot';
-          const spotLat = isSpot ? parseFloat(String(deliveryLat).trim()) : null;
-          const spotLng = isSpot ? parseFloat(String(deliveryLng).trim()) : null;
-          const order = {
-            createdAt: new Date().toISOString(),
-            is_spot: isSpot,
-            customer_id: currentCustomerId || null,
-            customerName: currentCustomer?.company_name || currentCustomer?.name || '',
-            phone_number: currentCustomer?.phone_number || '',
-            customerPhone: currentCustomer?.phone_number || '',
-            trading_company_name: selectedProject?.trading_company_name || selectedProject?.trading_company || traderName.trim(),
-            projectTradingCompanyName: selectedProject?.trading_company_name || selectedProject?.trading_company || traderName.trim(),
-            ordered_by: orderedBy.trim(),
-            orderedBy: orderedBy.trim(),
-            project_id: !isSpot && selectedProjectId ? String(selectedProjectId) : null,
-            projectName: selectedProject?.name || '',
-            delivery_lat: isSpot && Number.isFinite(spotLat) ? spotLat : null,
-            delivery_lng: isSpot && Number.isFinite(spotLng) ? spotLng : null,
-            preferred_factory_id: prefFid || null,
-            preferredFactoryId: prefFid || null,
-            preferredFactoryName: preferredFactoryName || '',
-            preferredDate,
-            timeSlot,
-            timeSlotMinutes: Number.isFinite(timeMinutes) ? timeMinutes : null,
-            timeSlotLabel: slotLabel,
-            timePointLabel: slotLabel,
-            scheduleMatchDate: preferredDate,
-            scheduleMatchMinutes: Number.isFinite(timeMinutes) ? timeMinutes : null,
-            vehicleType,
-            vehicleLabel: vehicleType === 'large' ? '大型' : '小型',
-            quantityM3: qtyTrim,
-            unloadDuration,
-            unloadDurationMinutes: unloadDuration,
-            unloadDurationLabel: unloadDurationLabel(unloadDuration),
-            traderName: traderName.trim(),
-            contractorName: contractorName.trim(),
-            mixText: mixText.trim(),
-            siteName: resolvedSiteName,
-            siteAddress: addrTrim,
-            sitePhone: sitePhone.trim(),
-            has_test: hasTest,
-          };
-          setConfirmOrder(order);
+          const orders = dates.map((date) => buildDispatchOrderForDate(date, multiDateFormContext));
+          setConfirmOrders(orders);
           setShowConfirmModal(true);
         },
-        [
-          isSubmittingOrder,
-          preferredDate,
-          timeSlot,
-          vehicleType,
-          quantityM3,
-          unloadDuration,
-          traderName,
-          contractorName,
-          mixText,
-          siteName,
-          siteAddress,
-          sitePhone,
-          orderedBy,
-          hasTest,
-          currentCustomerId,
-          currentCustomer,
-          preferredFactoryId,
-          factories,
-          selectedProject,
-          orderKind,
-          selectedProjectId,
-          deliveryLat,
-          deliveryLng,
-        ],
+        [isSubmittingOrder, orderDates, multiDateFormContext, today],
       );
 
       const executeConfirmedOrder = useCallback(async () => {
-        if (!confirmOrder || isSubmittingOrder) return;
+        if (!confirmOrders?.length || isSubmittingOrder) return;
         setIsSubmittingOrder(true);
         setSubmitError('');
         try {
-          await db.insertOrder(confirmOrder);
-          const contractorName = confirmOrder?.customerName || confirmOrder?.contractorName || currentCustomer?.company_name || currentCustomer?.name || '新規注文';
-          void sendPushNotificationToRole('factory', `新規注文が入りました：${contractorName}`);
+          const count = confirmOrders.length;
+          await db.insertOrdersBulk(confirmOrders);
+          const contractorName =
+            confirmOrders[0]?.customerName ||
+            confirmOrders[0]?.contractorName ||
+            currentCustomer?.company_name ||
+            currentCustomer?.name ||
+            '新規注文';
+          void sendPushNotificationToRole(
+            'factory',
+            count > 1 ? `新規注文が${count}件入りました：${contractorName}` : `新規注文が入りました：${contractorName}`,
+          );
           await refreshDashboard();
-          setCustomerOrderTab('active');
+          setCustomerOrderTab(count > 1 ? 'calendar' : 'active');
           setExpandedHistoryOrderId('');
           setShowConfirmModal(false);
-          setConfirmOrder(null);
+          setConfirmOrders([]);
           setSelectedProjectId('');
           setPreferredFactoryId('');
           setDeliveryLat('');
           setDeliveryLng('');
+          setOrderDates(['']);
           setQuantityM3('');
           setUnloadDuration('30');
           setTraderName('');
@@ -1827,7 +1678,11 @@ function unloadDurationLabel(value) {
           setSitePhone('');
           setOrderedBy('');
           setHasTest(false);
-          setSubmitNotice('発注を送信しました。「進行中」タブに反映され、工場画面でも新着として表示されます。');
+          setSubmitNotice(
+            count > 1
+              ? `${count}件の注文をカレンダーに一括登録しました！`
+              : '発注を送信しました。「進行中」タブに反映され、工場画面でも新着として表示されます。',
+          );
           window.setTimeout(() => setSubmitNotice(null), 6000);
         } catch (err) {
           console.error('注文保存に失敗しました', err);
@@ -1837,14 +1692,15 @@ function unloadDurationLabel(value) {
         } finally {
           setIsSubmittingOrder(false);
         }
-      }, [confirmOrder, isSubmittingOrder, refreshDashboard]);
+      }, [confirmOrders, isSubmittingOrder, refreshDashboard, currentCustomer]);
 
       const btnBase =
         'min-h-[56px] flex-1 rounded-xl border-2 px-4 py-3.5 text-base font-bold transition-colors';
-      const confirmMix = parseMixDetails(confirmOrder?.mixText);
+      const confirmSample = confirmOrders[0] || null;
+      const confirmMix = parseMixDetails(confirmSample?.mixText);
       const confirmMixLabel = confirmMix
         ? `強度${confirmMix.strength} / スランプ${confirmMix.slump} / 骨材${confirmMix.aggregate} / セメント${confirmMix.cement}`
-        : confirmOrder?.mixText || '—';
+        : confirmSample?.mixText || '—';
       const adminPhoneNumber = String(adminSettings?.phone_number || '').trim();
       const adminTelHref = adminPhoneNumber ? `tel:${adminPhoneNumber.replace(/[^\d+]/g, '')}` : '';
       const adminDisplayName = String(adminSettings?.admin_name || '').trim() || '管理者';
@@ -2052,23 +1908,6 @@ function unloadDurationLabel(value) {
                   </button>
                 </div>
                 <form className="mt-6 grid min-w-0 gap-6 overflow-hidden lg:grid-cols-2 lg:items-start" onSubmit={handleSubmit}>
-              <div className="lg:col-span-2 grid gap-4">
-                <AiOrderAssistant
-                  value={aiAssistText}
-                  onChange={setAiAssistText}
-                  onSubmit={handleAiOrderAssist}
-                  loading={aiAssistLoading}
-                  notice={aiAssistNotice}
-                />
-                <AiGeneratedOrderList
-                  orders={aiGeneratedOrders}
-                  onOrdersChange={setAiGeneratedOrders}
-                  onBulkRegister={handleBulkRegisterAiOrders}
-                  bulkLoading={aiBulkRegisterLoading}
-                  bulkDisabled={Boolean(aiBulkDisabledReason)}
-                  bulkDisabledReason={aiBulkDisabledReason}
-                />
-              </div>
               <div className="flex flex-col gap-3">
                 <span className="text-sm font-semibold text-slate-700">注文種別</span>
                 <p className="text-xs leading-relaxed text-slate-500">
@@ -2246,36 +2085,54 @@ function unloadDurationLabel(value) {
               ) : null}
 
               <div className="flex min-w-0 max-w-full flex-col gap-3 overflow-hidden lg:col-start-1">
-                <Label htmlFor="preferred-date">希望日</Label>
-                <div className="w-full min-w-0 max-w-full overflow-hidden">
-                  <input
-                    id="preferred-date"
-                    type="date"
-                    min={today}
-                    value={preferredDate}
-                    onChange={(e) => {
-                      const nextDate = e.target.value;
-                      const nextSlot = firstAvailableTimeSlotForDate(nextDate);
-                      if (nextSlot) {
-                        setPreferredDate(nextDate);
-                        if (isPastPreferredDateTime(nextDate, timeSlot)) setTimeSlot(nextSlot.value);
-                      } else {
-                        const next = nextAvailableOrderDateTime(nextDate);
-                        setPreferredDate(next.date);
-                        setTimeSlot(next.slot);
-                      }
-                      setSubmitError('');
-                    }}
-                    className="block box-border min-h-[56px] min-w-0 w-full max-w-full appearance-none rounded-xl border-2 border-slate-200 bg-white px-3 py-3 text-base text-slate-900 outline-none ring-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
-                    style={{
-                      width: '100%',
-                      minWidth: 0,
-                      maxWidth: '100%',
-                      WebkitAppearance: 'none',
-                      appearance: 'none',
-                    }}
-                  />
-                </div>
+                <Label>納入日（複数日の一括発注）</Label>
+                <p className="text-xs leading-relaxed text-slate-500">
+                  同じ配合・数量・時刻で、複数の納入日にまとめて発注できます。
+                </p>
+                <ul className="grid gap-2">
+                  {orderDates.map((dateValue, index) => (
+                    <li key={`order-date-${index}`} className="flex items-center gap-2">
+                      <input
+                        id={index === 0 ? 'preferred-date-0' : undefined}
+                        type="date"
+                        min={today}
+                        value={dateValue}
+                        onChange={(e) => {
+                          const nextDate = e.target.value;
+                          setOrderDates((prev) => prev.map((d, i) => (i === index ? nextDate : d)));
+                          if (nextDate) {
+                            const nextSlot = firstAvailableTimeSlotForDate(nextDate);
+                            if (nextSlot && isPastPreferredDateTime(nextDate, timeSlot)) {
+                              setTimeSlot(nextSlot.value);
+                            }
+                          }
+                          setSubmitError('');
+                        }}
+                        className="block box-border min-h-[56px] min-w-0 flex-1 appearance-none rounded-xl border-2 border-slate-200 bg-white px-3 py-3 text-base text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
+                        style={{ WebkitAppearance: 'none', appearance: 'none' }}
+                      />
+                      {index > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setOrderDates((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)))}
+                          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border-2 border-slate-200 bg-white text-lg font-black text-slate-600 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+                          aria-label={`納入日${index + 1}を削除`}
+                        >
+                          ✖
+                        </button>
+                      ) : (
+                        <span className="w-12 shrink-0" aria-hidden="true" />
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  type="button"
+                  onClick={() => setOrderDates((prev) => [...prev, ''])}
+                  className="inline-flex min-h-[52px] w-full items-center justify-center gap-2 rounded-xl border-2 border-indigo-400 bg-indigo-50 px-4 py-3 text-base font-black text-indigo-900 shadow-sm transition hover:border-indigo-500 hover:bg-indigo-100"
+                >
+                  ➕ 別の納入日も追加する
+                </button>
               </div>
 
               <div className="flex flex-col gap-3">
@@ -2300,7 +2157,11 @@ function unloadDurationLabel(value) {
                   }}
                 >
                   {TIME_SLOTS.map((s) => (
-                    <option key={s.value} value={s.value} disabled={isPastPreferredDateTime(preferredDate, s.value)}>
+                    <option
+                      key={s.value}
+                      value={s.value}
+                      disabled={isPastPreferredDateTime(primaryOrderDate || today, s.value)}
+                    >
                       {s.label}
                     </option>
                   ))}
@@ -2537,7 +2398,13 @@ function unloadDurationLabel(value) {
                 disabled={isSubmittingOrder || !hasCurrentCustomer}
                 className="mt-2 flex min-h-[56px] w-full items-center justify-center rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-4 text-base font-bold text-white shadow-lg shadow-orange-500/30 transition hover:from-orange-600 hover:to-amber-600 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 lg:col-span-2"
               >
-                {isSubmittingOrder ? '送信中…' : hasCurrentCustomer ? '発注する（工場へ送信）' : '先に業者を選択してください'}
+                {isSubmittingOrder
+                  ? '送信中…'
+                  : hasCurrentCustomer
+                    ? filledOrderDateCount > 1
+                      ? `発注を確定する（${filledOrderDateCount}日分）`
+                      : '発注する（工場へ送信）'
+                    : '先に業者を選択してください'}
               </button>
               {submitNotice && (
                 <p
@@ -2801,13 +2668,17 @@ function unloadDurationLabel(value) {
               onMarkChatRead={markChatRead}
             />
           ) : null}
-          {showConfirmModal && confirmOrder ? (
+          {showConfirmModal && confirmOrders.length > 0 ? (
             <div className="fixed inset-0 z-[300] flex items-center justify-center overflow-y-auto overflow-x-hidden bg-slate-950/70 px-4 py-[max(1.5rem,env(safe-area-inset-top))]" role="dialog" aria-modal="true" aria-labelledby="dispatch-confirm-title">
               <div className="w-full max-w-lg rounded-2xl border-2 border-slate-200 bg-white p-5 shadow-2xl sm:p-6">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-xs font-black uppercase tracking-wider text-indigo-600">最終確認</p>
-                    <h2 id="dispatch-confirm-title" className="mt-1 break-words text-lg font-black text-slate-900">この内容で発注しますか？</h2>
+                    <h2 id="dispatch-confirm-title" className="mt-1 break-words text-lg font-black text-slate-900">
+                      {confirmOrders.length > 1
+                        ? `${confirmOrders.length}件の納入日で発注しますか？`
+                        : 'この内容で発注しますか？'}
+                    </h2>
                     <p className="mt-1 break-words text-xs font-bold leading-relaxed text-slate-500">
                       内容を確認してから「この内容で発注する」を押してください。
                     </p>
@@ -2825,15 +2696,29 @@ function unloadDurationLabel(value) {
                 <dl className="mt-5 divide-y divide-slate-100 rounded-xl border border-slate-200 bg-slate-50 text-sm">
                   <div className="grid gap-1 px-3 py-3 sm:grid-cols-[7.5rem_1fr] sm:gap-3">
                     <dt className="font-black text-slate-500">業者名</dt>
-                    <dd className="min-w-0 break-words font-bold text-slate-900">{confirmOrder.customerName || '—'}</dd>
+                    <dd className="min-w-0 break-words font-bold text-slate-900">{confirmSample?.customerName || '—'}</dd>
                   </div>
                   <div className="grid gap-1 px-3 py-3 sm:grid-cols-[7.5rem_1fr] sm:gap-3">
                     <dt className="font-black text-slate-500">物件名</dt>
-                    <dd className="min-w-0 break-words font-bold text-slate-900">{confirmOrder.projectName || confirmOrder.siteName || 'スポット注文'}</dd>
+                    <dd className="min-w-0 break-words font-bold text-slate-900">{confirmSample?.projectName || confirmSample?.siteName || 'スポット注文'}</dd>
                   </div>
                   <div className="grid gap-1 px-3 py-3 sm:grid-cols-[7.5rem_1fr] sm:gap-3">
                     <dt className="font-black text-slate-500">納入希望日時</dt>
-                    <dd className="min-w-0 break-words font-bold text-slate-900">{formatOrderDate(confirmOrder)} {confirmOrder.timePointLabel || confirmOrder.timeSlotLabel || '—'}</dd>
+                    <dd className="min-w-0 break-words font-bold text-slate-900">
+                      {confirmOrders.length > 1 ? (
+                        <ul className="list-inside list-disc space-y-1">
+                          {confirmOrders.map((o, i) => (
+                            <li key={`confirm-date-${i}`}>
+                              {formatOrderDate(o)} {o.timePointLabel || o.timeSlotLabel || '—'}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <>
+                          {formatOrderDate(confirmSample)} {confirmSample?.timePointLabel || confirmSample?.timeSlotLabel || '—'}
+                        </>
+                      )}
+                    </dd>
                   </div>
                   <div className="grid gap-1 px-3 py-3 sm:grid-cols-[7.5rem_1fr] sm:gap-3">
                     <dt className="font-black text-slate-500">配合</dt>
@@ -2841,16 +2726,19 @@ function unloadDurationLabel(value) {
                   </div>
                   <div className="grid gap-1 px-3 py-3 sm:grid-cols-[7.5rem_1fr] sm:gap-3">
                     <dt className="font-black text-slate-500">数量</dt>
-                    <dd className="min-w-0 break-words font-bold text-slate-900">{confirmOrder.quantityM3 || '—'} m³</dd>
+                    <dd className="min-w-0 break-words font-bold text-slate-900">{confirmSample?.quantityM3 || '—'} m³</dd>
                   </div>
                   <div className="grid gap-1 px-3 py-3 sm:grid-cols-[7.5rem_1fr] sm:gap-3">
                     <dt className="font-black text-slate-500">荷卸し時間</dt>
-                    <dd className="min-w-0 break-words font-bold text-slate-900">{confirmOrder.unloadDurationLabel || unloadDurationLabel(confirmOrder.unloadDurationMinutes || confirmOrder.unloadDuration)}</dd>
+                    <dd className="min-w-0 break-words font-bold text-slate-900">
+                      {confirmSample?.unloadDurationLabel ||
+                        unloadDurationLabel(confirmSample?.unloadDurationMinutes || confirmSample?.unloadDuration)}
+                    </dd>
                   </div>
                   <div className="grid gap-1 px-3 py-3 sm:grid-cols-[7.5rem_1fr] sm:gap-3">
                     <dt className="font-black text-slate-500">担当者・電話</dt>
                     <dd className="min-w-0 break-words font-bold text-slate-900">
-                      {(confirmOrder.orderedBy || confirmOrder.ordered_by || '—') + ' / ' + (confirmOrder.sitePhone || '—')}
+                      {(confirmSample?.orderedBy || confirmSample?.ordered_by || '—') + ' / ' + (confirmSample?.sitePhone || '—')}
                     </dd>
                   </div>
                 </dl>
