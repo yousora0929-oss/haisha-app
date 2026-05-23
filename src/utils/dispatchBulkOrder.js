@@ -134,3 +134,9 @@ export function validateMultiDateOrderForm(context, dates, { today, isPastPrefer
   });
   return missing;
 }
+
+/** カートに1行追加する前のバリデーション（単一納入日） */
+export function validateCartLineForm(context, preferredDate, { today, isPastPreferredDateTime }) {
+  const date = String(preferredDate || '').trim();
+  return validateMultiDateOrderForm(context, date ? [date] : [], { today, isPastPreferredDateTime });
+}

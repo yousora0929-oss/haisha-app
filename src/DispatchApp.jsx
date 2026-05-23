@@ -19,7 +19,8 @@ import {
   setupNotificationClickRedirect,
 } from './utils/notification.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
-import { buildDispatchOrderForDate, validateMultiDateOrderForm } from './utils/dispatchBulkOrder.js';
+import { OrderCartPreview } from './components/OrderCartPreview.jsx';
+import { buildDispatchOrderForDate, validateCartLineForm } from './utils/dispatchBulkOrder.js';
 
 const DISPATCH_CUSTOMER_SESSION_KEY = 'haisha_dispatch_customer_id_v1';
 const DISPATCH_AUTH_SESSION_KEY = 'haisha_dispatch_auth_customer_id_v1';
@@ -880,13 +881,9 @@ function unloadDurationLabel(value) {
       const today = todayLocalISODate();
       const initialOrderDateTime = useMemo(() => nextAvailableOrderDateTime(today), [today]);
 
-      const [orderDates, setOrderDates] = useState(['']);
+      const [preferredDate, setPreferredDate] = useState(initialOrderDateTime.date);
       const [timeSlot, setTimeSlot] = useState(initialOrderDateTime.slot);
-
-      const primaryOrderDate = useMemo(
-        () => orderDates.map((d) => String(d || '').trim()).find(Boolean) || '',
-        [orderDates],
-      );
+      const [cartItems, setCartItems] = useState([]);
 
       useEffect(() => {
         if (!TIME_SLOTS.some((s) => s.value === timeSlot)) {
@@ -894,30 +891,23 @@ function unloadDurationLabel(value) {
         }
       }, [timeSlot]);
       useEffect(() => {
-        if (!primaryOrderDate) return;
-        if (primaryOrderDate < today) {
-          setOrderDates([initialOrderDateTime.date]);
+        if (!preferredDate) return;
+        if (preferredDate < today) {
+          setPreferredDate(initialOrderDateTime.date);
           setTimeSlot(initialOrderDateTime.slot);
           return;
         }
-        if (isPastPreferredDateTime(primaryOrderDate, timeSlot)) {
-          const nextSlot = firstAvailableTimeSlotForDate(primaryOrderDate);
+        if (isPastPreferredDateTime(preferredDate, timeSlot)) {
+          const nextSlot = firstAvailableTimeSlotForDate(preferredDate);
           if (nextSlot) {
             setTimeSlot(nextSlot.value);
           } else {
-            const next = nextAvailableOrderDateTime(primaryOrderDate);
-            setOrderDates((prev) => {
-              const copy = [...prev];
-              const idx = copy.findIndex((d) => String(d || '').trim() === primaryOrderDate);
-              if (idx >= 0) copy[idx] = next.date;
-              else if (copy.length) copy[0] = next.date;
-              else copy.push(next.date);
-              return copy;
-            });
+            const next = nextAvailableOrderDateTime(preferredDate);
+            setPreferredDate(next.date);
             setTimeSlot(next.slot);
           }
         }
-      }, [primaryOrderDate, timeSlot, today, initialOrderDateTime.date, initialOrderDateTime.slot]);
+      }, [preferredDate, timeSlot, today, initialOrderDateTime.date, initialOrderDateTime.slot]);
       const [vehicleType, setVehicleType] = useState('large');
       const [mixText, setMixText] = useState('');
       const [quantityM3, setQuantityM3] = useState('');
@@ -932,8 +922,6 @@ function unloadDurationLabel(value) {
       const [submitNotice, setSubmitNotice] = useState(null);
       const [submitError, setSubmitError] = useState('');
       const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
-      const [showConfirmModal, setShowConfirmModal] = useState(false);
-      const [confirmOrders, setConfirmOrders] = useState([]);
       const [isLoggedIn, setIsLoggedIn] = useState(() => {
         try {
           return Boolean(sessionStorage.getItem(DISPATCH_AUTH_SESSION_KEY));
@@ -1564,7 +1552,7 @@ function unloadDurationLabel(value) {
         [currentCustomer, currentCustomerId, repeatPreferredDate, repeatTimeSlot],
       );
 
-      const multiDateFormContext = useMemo(
+      const orderFormContext = useMemo(
         () => ({
           orderKind,
           currentCustomerId,
@@ -1613,17 +1601,32 @@ function unloadDurationLabel(value) {
         ],
       );
 
-      const filledOrderDateCount = useMemo(
-        () => orderDates.map((d) => String(d || '').trim()).filter(Boolean).length,
-        [orderDates],
-      );
+      const resetOrderForm = useCallback(() => {
+        const next = nextAvailableOrderDateTime(today);
+        setPreferredDate(next.date);
+        setTimeSlot(next.slot);
+        setSelectedProjectId('');
+        setPreferredFactoryId('');
+        setDeliveryLat('');
+        setDeliveryLng('');
+        setQuantityM3('');
+        setUnloadDuration('30');
+        setTraderName('');
+        setContractorName('');
+        setMixText('');
+        setSiteName('');
+        setSiteAddress('');
+        setSitePhone('');
+        setOrderedBy('');
+        setHasTest(false);
+        setVehicleType('large');
+      }, [today]);
 
-      const handleSubmit = useCallback(
-        async (e) => {
-          e.preventDefault();
-          if (isSubmittingOrder) return;
-          const dates = [...new Set(orderDates.map((d) => String(d || '').trim()).filter(Boolean))];
-          const missing = validateMultiDateOrderForm(multiDateFormContext, dates, {
+      const handleAddToCart = useCallback(
+        (e) => {
+          e?.preventDefault?.();
+          const date = String(preferredDate || '').trim();
+          const missing = validateCartLineForm(orderFormContext, date, {
             today,
             isPastPreferredDateTime,
           });
@@ -1634,23 +1637,30 @@ function unloadDurationLabel(value) {
             return;
           }
           setSubmitError('');
-          const orders = dates.map((date) => buildDispatchOrderForDate(date, multiDateFormContext));
-          setConfirmOrders(orders);
-          setShowConfirmModal(true);
+          const order = buildDispatchOrderForDate(date, orderFormContext);
+          const cartId = `cart_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+          setCartItems((prev) => [...prev, { cartId, order }]);
+          setSubmitNotice('リストに追加しました。日付や配合を変えて続けて追加できます。');
+          window.setTimeout(() => setSubmitNotice(null), 2500);
         },
-        [isSubmittingOrder, orderDates, multiDateFormContext, today],
+        [preferredDate, orderFormContext, today],
       );
 
-      const executeConfirmedOrder = useCallback(async () => {
-        if (!confirmOrders?.length || isSubmittingOrder) return;
+      const handleRemoveFromCart = useCallback((cartId) => {
+        setCartItems((prev) => prev.filter((item) => item.cartId !== cartId));
+      }, []);
+
+      const handleCartBulkConfirm = useCallback(async () => {
+        if (!cartItems.length || isSubmittingOrder) return;
         setIsSubmittingOrder(true);
         setSubmitError('');
         try {
-          const count = confirmOrders.length;
-          await db.insertOrdersBulk(confirmOrders);
+          const orders = cartItems.map((item) => item.order);
+          const count = orders.length;
+          await db.insertOrdersBulk(orders);
           const contractorName =
-            confirmOrders[0]?.customerName ||
-            confirmOrders[0]?.contractorName ||
+            orders[0]?.customerName ||
+            orders[0]?.contractorName ||
             currentCustomer?.company_name ||
             currentCustomer?.name ||
             '新規注文';
@@ -1659,48 +1669,26 @@ function unloadDurationLabel(value) {
             count > 1 ? `新規注文が${count}件入りました：${contractorName}` : `新規注文が入りました：${contractorName}`,
           );
           await refreshDashboard();
+          setCartItems([]);
+          resetOrderForm();
           setCustomerOrderTab(count > 1 ? 'calendar' : 'active');
           setExpandedHistoryOrderId('');
-          setShowConfirmModal(false);
-          setConfirmOrders([]);
-          setSelectedProjectId('');
-          setPreferredFactoryId('');
-          setDeliveryLat('');
-          setDeliveryLng('');
-          setOrderDates(['']);
-          setQuantityM3('');
-          setUnloadDuration('30');
-          setTraderName('');
-          setContractorName('');
-          setMixText('');
-          setSiteName('');
-          setSiteAddress('');
-          setSitePhone('');
-          setOrderedBy('');
-          setHasTest(false);
-          setSubmitNotice(
-            count > 1
-              ? `${count}件の注文をカレンダーに一括登録しました！`
-              : '発注を送信しました。「進行中」タブに反映され、工場画面でも新着として表示されます。',
-          );
+          const message = `${count}件の注文を確定しました`;
+          setSubmitNotice(message);
+          window.alert(message);
           window.setTimeout(() => setSubmitNotice(null), 6000);
         } catch (err) {
-          console.error('注文保存に失敗しました', err);
-          const message = formatSupabaseError(err, '発注の保存に失敗しました');
+          console.error('カート一括登録に失敗しました', err);
+          const message = formatSupabaseError(err, '一括登録に失敗しました');
           setSubmitError(message);
           window.alert(message);
         } finally {
           setIsSubmittingOrder(false);
         }
-      }, [confirmOrders, isSubmittingOrder, refreshDashboard, currentCustomer]);
+      }, [cartItems, isSubmittingOrder, refreshDashboard, currentCustomer, resetOrderForm]);
 
       const btnBase =
         'min-h-[56px] flex-1 rounded-xl border-2 px-4 py-3.5 text-base font-bold transition-colors';
-      const confirmSample = confirmOrders[0] || null;
-      const confirmMix = parseMixDetails(confirmSample?.mixText);
-      const confirmMixLabel = confirmMix
-        ? `強度${confirmMix.strength} / スランプ${confirmMix.slump} / 骨材${confirmMix.aggregate} / セメント${confirmMix.cement}`
-        : confirmSample?.mixText || '—';
       const adminPhoneNumber = String(adminSettings?.phone_number || '').trim();
       const adminTelHref = adminPhoneNumber ? `tel:${adminPhoneNumber.replace(/[^\d+]/g, '')}` : '';
       const adminDisplayName = String(adminSettings?.admin_name || '').trim() || '管理者';
@@ -1907,7 +1895,10 @@ function unloadDurationLabel(value) {
                     発注スタイル選択へ戻る
                   </button>
                 </div>
-                <form className="mt-6 grid min-w-0 gap-6 overflow-hidden lg:grid-cols-2 lg:items-start" onSubmit={handleSubmit}>
+                <form
+                  className="mt-6 grid min-w-0 gap-6 overflow-hidden lg:grid-cols-2 lg:items-start"
+                  onSubmit={(e) => e.preventDefault()}
+                >
               <div className="flex flex-col gap-3">
                 <span className="text-sm font-semibold text-slate-700">注文種別</span>
                 <p className="text-xs leading-relaxed text-slate-500">
@@ -2085,54 +2076,33 @@ function unloadDurationLabel(value) {
               ) : null}
 
               <div className="flex min-w-0 max-w-full flex-col gap-3 overflow-hidden lg:col-start-1">
-                <Label>納入日（複数日の一括発注）</Label>
+                <Label htmlFor="preferred-date">希望日（納入日）</Label>
                 <p className="text-xs leading-relaxed text-slate-500">
-                  同じ配合・数量・時刻で、複数の納入日にまとめて発注できます。
+                  日付や試験の有無などを変えながら「リストに追加」でカートへ溜め、最後に一括確定できます。
                 </p>
-                <ul className="grid gap-2">
-                  {orderDates.map((dateValue, index) => (
-                    <li key={`order-date-${index}`} className="flex items-center gap-2">
-                      <input
-                        id={index === 0 ? 'preferred-date-0' : undefined}
-                        type="date"
-                        min={today}
-                        value={dateValue}
-                        onChange={(e) => {
-                          const nextDate = e.target.value;
-                          setOrderDates((prev) => prev.map((d, i) => (i === index ? nextDate : d)));
-                          if (nextDate) {
-                            const nextSlot = firstAvailableTimeSlotForDate(nextDate);
-                            if (nextSlot && isPastPreferredDateTime(nextDate, timeSlot)) {
-                              setTimeSlot(nextSlot.value);
-                            }
-                          }
-                          setSubmitError('');
-                        }}
-                        className="block box-border min-h-[56px] min-w-0 flex-1 appearance-none rounded-xl border-2 border-slate-200 bg-white px-3 py-3 text-base text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
-                        style={{ WebkitAppearance: 'none', appearance: 'none' }}
-                      />
-                      {index > 0 ? (
-                        <button
-                          type="button"
-                          onClick={() => setOrderDates((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)))}
-                          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border-2 border-slate-200 bg-white text-lg font-black text-slate-600 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
-                          aria-label={`納入日${index + 1}を削除`}
-                        >
-                          ✖
-                        </button>
-                      ) : (
-                        <span className="w-12 shrink-0" aria-hidden="true" />
-                      )}
-                    </li>
-                  ))}
-                </ul>
-                <button
-                  type="button"
-                  onClick={() => setOrderDates((prev) => [...prev, ''])}
-                  className="inline-flex min-h-[52px] w-full items-center justify-center gap-2 rounded-xl border-2 border-indigo-400 bg-indigo-50 px-4 py-3 text-base font-black text-indigo-900 shadow-sm transition hover:border-indigo-500 hover:bg-indigo-100"
-                >
-                  ➕ 別の納入日も追加する
-                </button>
+                <div className="w-full min-w-0 max-w-full overflow-hidden">
+                  <input
+                    id="preferred-date"
+                    type="date"
+                    min={today}
+                    value={preferredDate}
+                    onChange={(e) => {
+                      const nextDate = e.target.value;
+                      const nextSlot = firstAvailableTimeSlotForDate(nextDate);
+                      if (nextSlot) {
+                        setPreferredDate(nextDate);
+                        if (isPastPreferredDateTime(nextDate, timeSlot)) setTimeSlot(nextSlot.value);
+                      } else {
+                        const next = nextAvailableOrderDateTime(nextDate);
+                        setPreferredDate(next.date);
+                        setTimeSlot(next.slot);
+                      }
+                      setSubmitError('');
+                    }}
+                    className="block box-border min-h-[56px] min-w-0 w-full max-w-full appearance-none rounded-xl border-2 border-slate-200 bg-white px-3 py-3 text-base text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
+                    style={{ WebkitAppearance: 'none', appearance: 'none' }}
+                  />
+                </div>
               </div>
 
               <div className="flex flex-col gap-3">
@@ -2160,7 +2130,7 @@ function unloadDurationLabel(value) {
                     <option
                       key={s.value}
                       value={s.value}
-                      disabled={isPastPreferredDateTime(primaryOrderDate || today, s.value)}
+                      disabled={isPastPreferredDateTime(preferredDate || today, s.value)}
                     >
                       {s.label}
                     </option>
@@ -2385,6 +2355,13 @@ function unloadDurationLabel(value) {
                 />
               </div>
 
+              <OrderCartPreview
+                items={cartItems}
+                onRemove={handleRemoveFromCart}
+                onConfirmBulk={() => void handleCartBulkConfirm()}
+                bulkLoading={isSubmittingOrder}
+              />
+
               {submitError ? (
                 <p
                   className="rounded-xl border-2 border-red-400 bg-red-50 px-4 py-3 text-sm font-bold text-red-700 shadow-sm lg:col-span-2"
@@ -2394,17 +2371,12 @@ function unloadDurationLabel(value) {
                 </p>
               ) : null}
               <button
-                type="submit"
+                type="button"
+                onClick={handleAddToCart}
                 disabled={isSubmittingOrder || !hasCurrentCustomer}
                 className="mt-2 flex min-h-[56px] w-full items-center justify-center rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-4 text-base font-bold text-white shadow-lg shadow-orange-500/30 transition hover:from-orange-600 hover:to-amber-600 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 lg:col-span-2"
               >
-                {isSubmittingOrder
-                  ? '送信中…'
-                  : hasCurrentCustomer
-                    ? filledOrderDateCount > 1
-                      ? `発注を確定する（${filledOrderDateCount}日分）`
-                      : '発注する（工場へ送信）'
-                    : '先に業者を選択してください'}
+                {hasCurrentCustomer ? '➕ この内容でリスト（カート）に追加' : '先に業者を選択してください'}
               </button>
               {submitNotice && (
                 <p
@@ -2667,102 +2639,6 @@ function unloadDurationLabel(value) {
               onSendMessage={handleSendMasterChat}
               onMarkChatRead={markChatRead}
             />
-          ) : null}
-          {showConfirmModal && confirmOrders.length > 0 ? (
-            <div className="fixed inset-0 z-[300] flex items-center justify-center overflow-y-auto overflow-x-hidden bg-slate-950/70 px-4 py-[max(1.5rem,env(safe-area-inset-top))]" role="dialog" aria-modal="true" aria-labelledby="dispatch-confirm-title">
-              <div className="w-full max-w-lg rounded-2xl border-2 border-slate-200 bg-white p-5 shadow-2xl sm:p-6">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-xs font-black uppercase tracking-wider text-indigo-600">最終確認</p>
-                    <h2 id="dispatch-confirm-title" className="mt-1 break-words text-lg font-black text-slate-900">
-                      {confirmOrders.length > 1
-                        ? `${confirmOrders.length}件の納入日で発注しますか？`
-                        : 'この内容で発注しますか？'}
-                    </h2>
-                    <p className="mt-1 break-words text-xs font-bold leading-relaxed text-slate-500">
-                      内容を確認してから「この内容で発注する」を押してください。
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowConfirmModal(false)}
-                    className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1 text-sm font-black text-slate-500 hover:bg-slate-50"
-                    aria-label="確認モーダルを閉じる"
-                  >
-                    ×
-                  </button>
-                </div>
-
-                <dl className="mt-5 divide-y divide-slate-100 rounded-xl border border-slate-200 bg-slate-50 text-sm">
-                  <div className="grid gap-1 px-3 py-3 sm:grid-cols-[7.5rem_1fr] sm:gap-3">
-                    <dt className="font-black text-slate-500">業者名</dt>
-                    <dd className="min-w-0 break-words font-bold text-slate-900">{confirmSample?.customerName || '—'}</dd>
-                  </div>
-                  <div className="grid gap-1 px-3 py-3 sm:grid-cols-[7.5rem_1fr] sm:gap-3">
-                    <dt className="font-black text-slate-500">物件名</dt>
-                    <dd className="min-w-0 break-words font-bold text-slate-900">{confirmSample?.projectName || confirmSample?.siteName || 'スポット注文'}</dd>
-                  </div>
-                  <div className="grid gap-1 px-3 py-3 sm:grid-cols-[7.5rem_1fr] sm:gap-3">
-                    <dt className="font-black text-slate-500">納入希望日時</dt>
-                    <dd className="min-w-0 break-words font-bold text-slate-900">
-                      {confirmOrders.length > 1 ? (
-                        <ul className="list-inside list-disc space-y-1">
-                          {confirmOrders.map((o, i) => (
-                            <li key={`confirm-date-${i}`}>
-                              {formatOrderDate(o)} {o.timePointLabel || o.timeSlotLabel || '—'}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <>
-                          {formatOrderDate(confirmSample)} {confirmSample?.timePointLabel || confirmSample?.timeSlotLabel || '—'}
-                        </>
-                      )}
-                    </dd>
-                  </div>
-                  <div className="grid gap-1 px-3 py-3 sm:grid-cols-[7.5rem_1fr] sm:gap-3">
-                    <dt className="font-black text-slate-500">配合</dt>
-                    <dd className="min-w-0 break-words font-bold text-slate-900">{confirmMixLabel}</dd>
-                  </div>
-                  <div className="grid gap-1 px-3 py-3 sm:grid-cols-[7.5rem_1fr] sm:gap-3">
-                    <dt className="font-black text-slate-500">数量</dt>
-                    <dd className="min-w-0 break-words font-bold text-slate-900">{confirmSample?.quantityM3 || '—'} m³</dd>
-                  </div>
-                  <div className="grid gap-1 px-3 py-3 sm:grid-cols-[7.5rem_1fr] sm:gap-3">
-                    <dt className="font-black text-slate-500">荷卸し時間</dt>
-                    <dd className="min-w-0 break-words font-bold text-slate-900">
-                      {confirmSample?.unloadDurationLabel ||
-                        unloadDurationLabel(confirmSample?.unloadDurationMinutes || confirmSample?.unloadDuration)}
-                    </dd>
-                  </div>
-                  <div className="grid gap-1 px-3 py-3 sm:grid-cols-[7.5rem_1fr] sm:gap-3">
-                    <dt className="font-black text-slate-500">担当者・電話</dt>
-                    <dd className="min-w-0 break-words font-bold text-slate-900">
-                      {(confirmSample?.orderedBy || confirmSample?.ordered_by || '—') + ' / ' + (confirmSample?.sitePhone || '—')}
-                    </dd>
-                  </div>
-                </dl>
-
-                <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowConfirmModal(false)}
-                    disabled={isSubmittingOrder}
-                    className="min-h-[48px] rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    キャンセル（戻る）
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void executeConfirmedOrder()}
-                    disabled={isSubmittingOrder}
-                    className="min-h-[48px] rounded-xl border-2 border-blue-700 bg-blue-600 px-4 text-sm font-black text-white shadow hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    {isSubmittingOrder ? '送信中…' : 'この内容で発注する'}
-                  </button>
-                </div>
-              </div>
-            </div>
           ) : null}
         </div>
       );
