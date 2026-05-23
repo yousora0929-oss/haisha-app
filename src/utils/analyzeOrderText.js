@@ -195,18 +195,17 @@ function parseAndNormalizeOrders(rawText) {
  * @returns {Promise<Array<{ date: string, time: string, volume: number, strength: number, slump: number, aggregate_size: number, mixText: string }>>}
  */
 export async function analyzeOrderText(text) {
-  const envApiKey = import.meta.env.VITE_GEMINI_API_KEY;
-  if (envApiKey === undefined || envApiKey === null || String(envApiKey).trim() === '') {
-    console.error('【エラー】APIキーが読み込まれていません。ローカルサーバーを再起動してください。');
-    throw new Error(ANALYZE_ORDER_TEXT_ERROR_MESSAGE);
-  }
+  // TODO(デバッグ用・一時): .env バイパス。本番前に import.meta.env.VITE_GEMINI_API_KEY に戻すこと
+  const apiKey = 'AIzaSyBJgG3fKYQhEztd_AlkPpgX6DSU3GUdk8A';
+  // if (envApiKey === undefined || envApiKey === null || String(envApiKey).trim() === '') {
+  //   console.error('【エラー】APIキーが読み込まれていません。ローカルサーバーを再起動してください。');
+  //   throw new Error(ANALYZE_ORDER_TEXT_ERROR_MESSAGE);
+  // }
 
   const userText = String(text || '').trim();
   if (!userText) {
     failAnalyze(new Error('Empty input'));
   }
-
-  const apiKey = String(envApiKey).trim();
 
   try {
     const rawText = await callGeminiGenerateContent(apiKey, userText);
