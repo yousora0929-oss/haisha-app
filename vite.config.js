@@ -5,8 +5,24 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
+/** /map-editor/:order_id → MapEditor.html（開発サーバー用） */
+function mapEditorDevFallback() {
+  return {
+    name: 'map-editor-dev-fallback',
+    configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        const url = req.url?.split('?')[0] || '';
+        if (/^\/map-editor\/[^/]+\/?$/.test(url)) {
+          req.url = '/MapEditor.html';
+        }
+        next();
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), mapEditorDevFallback()],
   build: {
     rollupOptions: {
       input: {
@@ -14,6 +30,7 @@ export default defineConfig({
         dispatch: resolve(__dirname, 'DispatchOrderPrototype.html'),
         factory: resolve(__dirname, 'FactoryTabletPrototype.html'),
         admin: resolve(__dirname, 'AdminPrototype.html'),
+        mapEditor: resolve(__dirname, 'MapEditor.html'),
       },
     },
   },

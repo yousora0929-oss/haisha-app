@@ -1,3 +1,4 @@
+import { MAP_STORAGE_BUCKET, MAP_STAMP_TYPES } from './mapEditorConstants.js';
 import { supabase } from './supabaseClient.js';
 import {
   DISPATCH_DEFAULT_FACTORY_SITE_ID,
@@ -9,7 +10,7 @@ import {
 } from './haishaConstants.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids';
+  'id, order_data, chat_messages, created_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -202,6 +203,14 @@ export function normalizeOrderRow(row) {
       : Array.isArray(od.rejected_factory_ids)
         ? od.rejected_factory_ids.map((x) => String(x)).filter(Boolean)
         : [],
+    override_map_image_url:
+      row.override_map_image_url != null
+        ? String(row.override_map_image_url).trim()
+        : od.override_map_image_url != null
+          ? String(od.override_map_image_url).trim()
+          : od.map_image_url != null
+            ? String(od.map_image_url).trim()
+            : '',
   };
 }
 
@@ -1167,4 +1176,226 @@ export async function updateSystemSettings({ start_time, end_time }) {
     .single();
   if (error) throw error;
   return mapSystemSettingsRow(data);
+}
+
+// -----------------------------------------------------------------------------
+// 地図スタンプエディタ（/map-editor/:order_id）ハイブリッド連携
+// -----------------------------------------------------------------------------
+
+const PROJECT_MAP_SELECT = 'id, name, default_map_image_url, map_base_image_url';
+
+function dataUrlToBlob(dataUrl) {
+  const raw = String(dataUrl || '');
+  const comma = raw.indexOf(',');
+  const base64 = comma >= 0 ? raw.slice(comma + 1) : raw;
+  const meta = comma >= 0 ? raw.slice(0, comma) : '';
+  const mimeMatch = meta.match(/data:([^;]+);/);
+  const mime = mimeMatch?.[1] || 'image/png';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+export function getMapsStoragePublicUrl(storagePath) {
+  const path = String(storagePath || '').replace(/^\//, '');
+  const { data } = supabase.storage.from(MAP_STORAGE_BUCKET).getPublicUrl(path);
+  return data?.publicUrl ? String(data.publicUrl) : '';
+}
+
+function pickProjectDefaultMapUrl(project) {
+  if (!project) return '';
+  return String(
+    project.default_map_image_url ?? project.map_base_image_url ?? project.mapBaseImageUrl ?? '',
+  ).trim();
+}
+
+function pickOrderOverrideMapUrl(order, orderRow) {
+  const fromCol = orderRow?.override_map_image_url != null ? String(orderRow.override_map_image_url).trim() : '';
+  if (fromCol) return fromCol;
+  return String(order?.override_map_image_url ?? order?.map_image_url ?? order?.mapImageUrl ?? '').trim();
+}
+
+/**
+ * 表示する背景地図の優先順位
+ * 1. orders.override_map_image_url
+ * 2. projects.default_map_image_url
+ * 3. なし（白紙キャンバス）
+ */
+export function resolveMapDisplayUrl(order, project, orderRow) {
+  const overrideUrl = pickOrderOverrideMapUrl(order, orderRow);
+  if (overrideUrl) {
+    return { url: overrideUrl, source: 'override' };
+  }
+  const defaultUrl = pickProjectDefaultMapUrl(project);
+  if (defaultUrl) {
+    return { url: defaultUrl, source: 'default' };
+  }
+  return { url: '', source: 'none' };
+}
+
+/** @deprecated resolveMapDisplayUrl を使用 */
+export function resolveMapBaseImageUrl(order, project) {
+  return resolveMapDisplayUrl(order, project, null).url;
+}
+
+function normalizeMapStamps(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((s) => s && typeof s === 'object')
+    .map((s) => ({
+      type: String(s.type || ''),
+      x: Number(s.x),
+      y: Number(s.y),
+    }))
+    .filter((s) => MAP_STAMP_TYPES.includes(s.type) && Number.isFinite(s.x) && Number.isFinite(s.y));
+}
+
+async function uploadMapPngToStorage(storagePath, imageDataUrl) {
+  if (!imageDataUrl) throw new Error('画像データがありません');
+  const blob = dataUrlToBlob(imageDataUrl);
+  const path = String(storagePath || '').replace(/^\//, '');
+  const { error: uploadError } = await supabase.storage.from(MAP_STORAGE_BUCKET).upload(path, blob, {
+    contentType: 'image/png',
+    cacheControl: '3600',
+    upsert: false,
+  });
+  if (uploadError) {
+    console.error('uploadMapPngToStorage failed', uploadError);
+    throw uploadError;
+  }
+  return getMapsStoragePublicUrl(path);
+}
+
+/** 地図エディタ用: 単一注文 + 表示用背景URL（ハイブリッド優先順位） */
+export async function fetchOrderForMapEditor(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id) throw new Error('orderId が必要です');
+
+  const { data: row, error } = await supabase.from('orders').select(ORDER_SELECT).eq('id', id).maybeSingle();
+  if (error) {
+    console.error('fetchOrderForMapEditor failed', error);
+    throw error;
+  }
+  if (!row) return null;
+
+  const order = normalizeOrderRow(row);
+  if (!order || order.status === 'deleted') return null;
+
+  let project = null;
+  const projectId = String(order.project_id || '').trim();
+  if (projectId) {
+    const { data: p, error: pErr } = await supabase
+      .from('projects')
+      .select(PROJECT_MAP_SELECT)
+      .eq('id', projectId)
+      .maybeSingle();
+    if (pErr) console.warn('[fetchOrderForMapEditor] project load failed', pErr);
+    project = p;
+  }
+
+  const { url: displayImageUrl, source: mapSource } = resolveMapDisplayUrl(order, project, row);
+  const existingStamps = normalizeMapStamps(order.map_stamps ?? order.mapStamps);
+  const overrideMapImageUrl = pickOrderOverrideMapUrl(order, row);
+  const defaultMapImageUrl = pickProjectDefaultMapUrl(project);
+
+  return {
+    order,
+    project,
+    projectId,
+    displayImageUrl,
+    mapSource,
+    overrideMapImageUrl,
+    defaultMapImageUrl,
+    existingStamps,
+    title:
+      String(order.siteName || order.projectName || project?.name || '').trim() || `注文 ${id}`,
+  };
+}
+
+/**
+ * プロジェクト基本マップとして保存
+ * Storage: maps/projects/{project_id}_{timestamp}.png
+ */
+export async function saveProjectDefaultMap(projectId, imageDataUrl, stamps) {
+  const pid = String(projectId || '').trim();
+  if (!pid) throw new Error('projectId が必要です（物件に紐づく注文のみ基本マップを保存できます）');
+  if (!imageDataUrl) throw new Error('画像データがありません');
+
+  const normalizedStamps = normalizeMapStamps(stamps);
+  const timestamp = Date.now();
+  const storagePath = `projects/${pid}_${timestamp}.png`;
+  const publicUrl = await uploadMapPngToStorage(storagePath, imageDataUrl);
+
+  const { data, error } = await supabase
+    .from('projects')
+    .update({ default_map_image_url: publicUrl })
+    .eq('id', pid)
+    .select(PROJECT_MAP_SELECT)
+    .single();
+  if (error) {
+    console.error('saveProjectDefaultMap failed', error);
+    throw error;
+  }
+
+  return {
+    publicUrl,
+    storagePath,
+    project: data,
+    map_stamps: normalizedStamps,
+  };
+}
+
+/**
+ * 打設日・注文専用マップとして保存（上書き）
+ * Storage: maps/orders/{order_id}_{timestamp}.png
+ */
+export async function saveOrderOverrideMap(orderId, imageDataUrl, stamps) {
+  const id = String(orderId || '').trim();
+  if (!id) throw new Error('orderId が必要です');
+  if (!imageDataUrl) throw new Error('画像データがありません');
+
+  const normalizedStamps = normalizeMapStamps(stamps);
+  const timestamp = Date.now();
+  const storagePath = `orders/${id}_${timestamp}.png`;
+  const publicUrl = await uploadMapPngToStorage(storagePath, imageDataUrl);
+  const submittedAt = new Date().toISOString();
+
+  const { data: row, error: selErr } = await supabase.from('orders').select(ORDER_SELECT).eq('id', id).maybeSingle();
+  if (selErr) throw selErr;
+  if (!row) throw new Error('注文が見つかりません');
+
+  const currentOrder = normalizeOrderRow(row) || { id };
+  const nextOrderData = sanitizeOrderDataForDb({
+    ...currentOrder,
+    map_stamps: normalizedStamps,
+    map_submitted_at: submittedAt,
+    map_image_url: publicUrl,
+  });
+
+  const { data: updated, error: upErr } = await supabase
+    .from('orders')
+    .update({
+      override_map_image_url: publicUrl,
+      order_data: nextOrderData,
+    })
+    .eq('id', id)
+    .select(ORDER_SELECT)
+    .single();
+  if (upErr) {
+    console.error('saveOrderOverrideMap failed', upErr);
+    throw upErr;
+  }
+
+  return {
+    publicUrl,
+    storagePath,
+    order: normalizeOrderRow(updated),
+    map_stamps: normalizedStamps,
+  };
+}
+
+/** @deprecated saveOrderOverrideMap を使用 */
+export async function uploadMapEditorResult(orderId, imageDataUrl, stamps) {
+  return saveOrderOverrideMap(orderId, imageDataUrl, stamps);
 }
