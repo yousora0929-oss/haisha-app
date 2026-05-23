@@ -1,5 +1,6 @@
 import { MAP_STORAGE_BUCKET, MAP_STAMP_TYPES } from './mapEditorConstants.js';
 import { supabase } from './supabaseClient.js';
+import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils/deliveryAreas.js';
 import {
   DISPATCH_DEFAULT_FACTORY_SITE_ID,
   DISPATCH_DEFAULT_FACTORY_SITE_NAME,
@@ -10,13 +11,13 @@ import {
 } from './haishaConstants.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url';
+  'id, order_data, chat_messages, created_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
 
 const PROJECT_SELECT_MIN =
-  'id, name, customer_id, trading_company_name, trading_company, main_factory_id, sub_factory_ids, lat, lng, contractor, created_at, updated_at';
+  'id, name, customer_id, trading_company_name, trading_company, main_factory_id, sub_factory_ids, lat, lng, contractor, delivery_area, site_address, created_at, updated_at';
 
 /** 物件の url_token が無い場合、紐づく業者（customers）の url_token を補完する */
 function pickSiteUrlToken(project, customer) {
@@ -211,6 +212,10 @@ export function normalizeOrderRow(row) {
           : od.map_image_url != null
             ? String(od.map_image_url).trim()
             : '',
+    is_location_pending:
+      row.is_location_pending === true || od.is_location_pending === true || od.isLocationPending === true,
+    isLocationPending:
+      row.is_location_pending === true || od.is_location_pending === true || od.isLocationPending === true,
   };
 }
 
@@ -375,10 +380,14 @@ function buildOrderInsertRow(order) {
   const deliveryLng = isSpot ? parseDeliveryCoord(order.delivery_lng ?? order.deliveryLng) : null;
   const safeOrder = sanitizeOrderRefs(order);
   const preferredFactoryId = sanitizeRefId(safeOrder.preferred_factory_id);
+  const isLocationPending = Boolean(order.is_location_pending ?? order.isLocationPending);
+  const statusRaw = String(order.status || 'pending').trim() || 'pending';
   const nextOrder = sanitizeOrderDataForDb({
     ...safeOrder,
     id,
     has_test: hasTest,
+    is_location_pending: isLocationPending,
+    isLocationPending,
     customer_id: customerId,
     customerName: safeOrder.customerName ?? '',
     trading_company_name: safeOrder.trading_company_name ?? safeOrder.projectTradingCompanyName ?? '',
@@ -405,7 +414,8 @@ function buildOrderInsertRow(order) {
     delivery_lng: deliveryLng,
     preferred_factory_id: sanitizeRefId(preferredFactoryId),
     factory_site_id: null,
-    status: 'pending',
+    status: statusRaw,
+    is_location_pending: isLocationPending,
     rejected_factory_ids: [],
   };
 }
@@ -461,16 +471,23 @@ export async function updateOrderDetails(orderId, updatedData) {
   const factorySiteId = sanitizeRefId(nextOrder.factory_site_id);
   const customerId = sanitizeRefId(nextOrder.customer_id);
   const orderedBy = String(nextOrder.ordered_by ?? nextOrder.orderedBy ?? '').trim();
+  const updateRow = {
+    order_data: nextOrder,
+    has_test: hasTest,
+    customer_id: customerId,
+    ordered_by: orderedBy || null,
+    factory_site_id: factorySiteId,
+    status: status || 'pending',
+  };
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'is_location_pending') ||
+    Object.prototype.hasOwnProperty.call(patch, 'isLocationPending')
+  ) {
+    updateRow.is_location_pending = Boolean(patch.is_location_pending ?? patch.isLocationPending);
+  }
   const { data: updated, error: upErr } = await supabase
     .from('orders')
-    .update({
-      order_data: nextOrder,
-      has_test: hasTest,
-      customer_id: customerId,
-      ordered_by: orderedBy || null,
-      factory_site_id: factorySiteId,
-      status: status || 'pending',
-    })
+    .update(updateRow)
     .eq('id', id)
     .select(ORDER_SELECT)
     .single();
@@ -495,6 +512,18 @@ export async function adminDeleteOrder(orderId) {
     status: 'deleted',
     factoryResponseStatus: 'deleted',
     factoryResponseLocked: true,
+  });
+}
+
+/** 組合承認待ち（pending_association）を工場配車待ちへ */
+export async function approveOrderForAssociation(orderId) {
+  return updateOrderDetails(orderId, {
+    status: 'pending',
+    factoryResponseStatus: undefined,
+    factoryResponseLocked: false,
+    factoryPendingStartedAt: undefined,
+    factoryPendingByName: undefined,
+    factoryRejectSource: undefined,
   });
 }
 
@@ -833,6 +862,8 @@ function mapProjectRow(row) {
           : '',
     trading_company: row.trading_company != null ? String(row.trading_company) : '',
     contractor: row.contractor != null ? String(row.contractor) : '',
+    delivery_area: row.delivery_area != null ? String(row.delivery_area) : '',
+    site_address: row.site_address != null ? String(row.site_address) : '',
     url_token: row.url_token != null ? String(row.url_token) : '',
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -925,6 +956,8 @@ function mapAdminSettingsRow(row) {
     admin_name: row?.admin_name != null ? String(row.admin_name) : '',
     phone_number: row?.phone_number != null ? String(row.phone_number) : '',
     login_password: row?.login_password != null ? String(row.login_password) : '',
+    allowed_delivery_areas: normalizeAllowedDeliveryAreas(row?.allowed_delivery_areas),
+    spot_threshold_volume: parseSpotThresholdVolume(row?.spot_threshold_volume),
     updated_at: row?.updated_at,
   };
 }
@@ -960,6 +993,12 @@ export async function updateAdminSettings(payload) {
   };
   if (Object.prototype.hasOwnProperty.call(payload || {}, 'login_password')) {
     row.login_password = String(payload?.login_password || '').trim() || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload || {}, 'allowed_delivery_areas')) {
+    row.allowed_delivery_areas = normalizeAllowedDeliveryAreas(payload.allowed_delivery_areas);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload || {}, 'spot_threshold_volume')) {
+    row.spot_threshold_volume = parseSpotThresholdVolume(payload.spot_threshold_volume);
   }
   const { data, error } = await supabase
     .from('admin_settings')
@@ -1018,6 +1057,8 @@ export async function insertProject(payload) {
     trading_company_name: String(payload.trading_company_name || payload.trading_company || '').trim() || null,
     trading_company: String(payload.trading_company || payload.trading_company_name || '').trim() || null,
     contractor: String(payload.contractor || '').trim() || null,
+    delivery_area: String(payload.delivery_area || '').trim() || null,
+    site_address: String(payload.site_address || '').trim() || null,
   };
   const { data, error } = await supabase.from('projects').insert(row).select('*').single();
   if (error) throw error;
@@ -1042,6 +1083,8 @@ export async function updateProject(projectId, payload) {
     trading_company_name: String(payload.trading_company_name || payload.trading_company || '').trim() || null,
     trading_company: String(payload.trading_company || payload.trading_company_name || '').trim() || null,
     contractor: String(payload.contractor || '').trim() || null,
+    delivery_area: String(payload.delivery_area || '').trim() || null,
+    site_address: String(payload.site_address || '').trim() || null,
   };
   const { data, error } = await supabase.from('projects').update(row).eq('id', id).select('*').single();
   if (error) throw error;

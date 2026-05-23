@@ -20,7 +20,10 @@ import {
 } from './utils/notification.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { OrderCartPreview } from './components/OrderCartPreview.jsx';
+import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { buildDispatchOrderForDate, validateCartLineForm } from './utils/dispatchBulkOrder.js';
+import { combineDeliveryAddress, normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
+import { resolveInitialOrderStatus, sumOrderVolumesM3 } from './utils/orderWorkflow.js';
 
 const DISPATCH_CUSTOMER_SESSION_KEY = 'haisha_dispatch_customer_id_v1';
 const DISPATCH_AUTH_SESSION_KEY = 'haisha_dispatch_auth_customer_id_v1';
@@ -214,6 +217,9 @@ function unloadDurationLabel(value) {
       }
       if (st === 'accepted' || order?.factoryResponseStatus === 'accepted') {
         return { key: 'active', label: '受注', className: 'bg-blue-600 text-white border-blue-700' };
+      }
+      if (st === 'pending_association') {
+        return { key: 'active', label: '組合承認待ち', className: 'bg-violet-600 text-white border-violet-700' };
       }
       return { key: 'active', label: '配車待ち', className: 'bg-amber-400 text-amber-950 border-amber-500' };
     }
@@ -915,7 +921,9 @@ function unloadDurationLabel(value) {
       const [traderName, setTraderName] = useState('');
       const [contractorName, setContractorName] = useState('');
       const [siteName, setSiteName] = useState('');
-      const [siteAddress, setSiteAddress] = useState('');
+      const [deliveryArea, setDeliveryArea] = useState('');
+      const [siteAddressDetail, setSiteAddressDetail] = useState('');
+      const [isLocationPending, setIsLocationPending] = useState(false);
       const [sitePhone, setSitePhone] = useState('');
       const [orderedBy, setOrderedBy] = useState('');
       const [hasTest, setHasTest] = useState(false);
@@ -977,6 +985,14 @@ function unloadDurationLabel(value) {
       const selectedProject = useMemo(
         () => (projects || []).find((p) => p && p.id === selectedProjectId) || null,
         [projects, selectedProjectId],
+      );
+      const allowedDeliveryAreas = useMemo(
+        () => normalizeAllowedDeliveryAreas(adminSettings?.allowed_delivery_areas),
+        [adminSettings],
+      );
+      const siteAddress = useMemo(
+        () => combineDeliveryAddress(deliveryArea, siteAddressDetail),
+        [deliveryArea, siteAddressDetail],
       );
       const currentCustomer = useMemo(
         () => (customers || []).find((c) => c && c.id === currentCustomerId) || null,
@@ -1450,7 +1466,7 @@ function unloadDurationLabel(value) {
       }, []);
 
       const handleAddressMapSearch = useCallback(async () => {
-        const addr = siteAddress.trim();
+        const addr = combineDeliveryAddress(deliveryArea, siteAddressDetail).trim();
         if (!addr) {
           setAddressSearchError('現場住所を入力してから検索してください。');
           return;
@@ -1465,7 +1481,7 @@ function unloadDurationLabel(value) {
         } finally {
           setAddressSearchLoading(false);
         }
-      }, [siteAddress]);
+      }, [deliveryArea, siteAddressDetail]);
 
       const openRepeatOrderForm = useCallback((row) => {
         const next = nextAvailableOrderDateTime(today);
@@ -1565,6 +1581,9 @@ function unloadDurationLabel(value) {
           contractorName,
           siteName,
           siteAddress,
+          deliveryArea,
+          siteAddressDetail,
+          allowedDeliveryAreas,
           sitePhone,
           orderedBy,
           vehicleType,
@@ -1572,6 +1591,7 @@ function unloadDurationLabel(value) {
           hasTest,
           deliveryLat,
           deliveryLng,
+          isLocationPending,
           timeSlot,
           quantityM3,
           mixText,
@@ -1588,6 +1608,9 @@ function unloadDurationLabel(value) {
           contractorName,
           siteName,
           siteAddress,
+          deliveryArea,
+          siteAddressDetail,
+          allowedDeliveryAreas,
           sitePhone,
           orderedBy,
           vehicleType,
@@ -1595,6 +1618,7 @@ function unloadDurationLabel(value) {
           hasTest,
           deliveryLat,
           deliveryLng,
+          isLocationPending,
           timeSlot,
           quantityM3,
           mixText,
@@ -1615,7 +1639,9 @@ function unloadDurationLabel(value) {
         setContractorName('');
         setMixText('');
         setSiteName('');
-        setSiteAddress('');
+        setDeliveryArea('');
+        setSiteAddressDetail('');
+        setIsLocationPending(false);
         setSitePhone('');
         setOrderedBy('');
         setHasTest(false);
@@ -1655,7 +1681,17 @@ function unloadDurationLabel(value) {
         setIsSubmittingOrder(true);
         setSubmitError('');
         try {
-          const orders = cartItems.map((item) => item.order);
+          const isSpot = orderKind === 'spot';
+          const totalVol = sumOrderVolumesM3(cartItems.map((item) => item.order));
+          const bulkStatus = resolveInitialOrderStatus({
+            isSpot,
+            totalVolumeM3: totalVol,
+            spotThresholdVolume: adminSettings?.spot_threshold_volume,
+          });
+          const orders = cartItems.map((item) => ({
+            ...item.order,
+            status: bulkStatus,
+          }));
           const count = orders.length;
           await db.insertOrdersBulk(orders);
           const contractorName =
@@ -1664,16 +1700,21 @@ function unloadDurationLabel(value) {
             currentCustomer?.company_name ||
             currentCustomer?.name ||
             '新規注文';
-          void sendPushNotificationToRole(
-            'factory',
-            count > 1 ? `新規注文が${count}件入りました：${contractorName}` : `新規注文が入りました：${contractorName}`,
-          );
+          if (bulkStatus !== 'pending_association') {
+            void sendPushNotificationToRole(
+              'factory',
+              count > 1 ? `新規注文が${count}件入りました：${contractorName}` : `新規注文が入りました：${contractorName}`,
+            );
+          }
           await refreshDashboard();
           setCartItems([]);
           resetOrderForm();
           setCustomerOrderTab(count > 1 ? 'calendar' : 'active');
           setExpandedHistoryOrderId('');
-          const message = `${count}件の注文を確定しました`;
+          const message =
+            bulkStatus === 'pending_association'
+              ? `${count}件を登録しました（スポット数量が上限を超えるため、組合承認後に工場へ配車されます）`
+              : `${count}件の注文を確定しました`;
           setSubmitNotice(message);
           window.alert(message);
           window.setTimeout(() => setSubmitNotice(null), 6000);
@@ -1685,7 +1726,7 @@ function unloadDurationLabel(value) {
         } finally {
           setIsSubmittingOrder(false);
         }
-      }, [cartItems, isSubmittingOrder, refreshDashboard, currentCustomer, resetOrderForm]);
+      }, [cartItems, isSubmittingOrder, refreshDashboard, currentCustomer, resetOrderForm, orderKind, adminSettings]);
 
       const btnBase =
         'min-h-[56px] flex-1 rounded-xl border-2 px-4 py-3.5 text-base font-bold transition-colors';
@@ -1846,7 +1887,9 @@ function unloadDurationLabel(value) {
                         setOrderKind('project');
                         setDeliveryLat('');
                         setDeliveryLng('');
-                        setSiteAddress('');
+                        setDeliveryArea('');
+                        setSiteAddressDetail('');
+                        setIsLocationPending(false);
                         setNewOrderMode('form');
                       },
                     },
@@ -1911,7 +1954,9 @@ function unloadDurationLabel(value) {
                       setOrderKind('project');
                       setDeliveryLat('');
                       setDeliveryLng('');
-                      setSiteAddress('');
+                      setDeliveryArea('');
+                      setSiteAddressDetail('');
+                      setIsLocationPending(false);
                       setSubmitError('');
                     }}
                     aria-pressed={orderKind === 'project'}
@@ -1962,6 +2007,8 @@ function unloadDurationLabel(value) {
                         if (p.contractor) setContractorName(String(p.contractor));
                         if (p.name) setSiteName(String(p.name));
                         if (p.main_factory_id) setPreferredFactoryId(String(p.main_factory_id));
+                        setDeliveryArea(String(p.delivery_area || '').trim());
+                        setSiteAddressDetail(String(p.site_address || '').trim());
                       } else {
                         setPreferredFactoryId('');
                       }
@@ -2018,42 +2065,63 @@ function unloadDurationLabel(value) {
                       className="min-h-[56px] w-full rounded-xl border-2 border-slate-200 px-4 py-3 text-base font-semibold text-slate-900 placeholder:text-slate-400 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
                     />
                   </div>
-                  <div className="flex flex-col gap-3">
-                    <Label htmlFor="site-address">現場住所</Label>
-                    <div className="flex flex-col gap-2 lg:flex-row lg:items-stretch">
-                      <textarea
-                        id="site-address"
-                        rows={4}
-                        placeholder="市区町村・番地・現場名など"
-                        value={siteAddress}
-                        onChange={(e) => {
-                          setSiteAddress(e.target.value);
-                          setAddressSearchError('');
-                        }}
-                        className="min-h-[120px] min-w-0 flex-1 resize-y rounded-xl border-2 border-slate-200 px-4 py-3 text-base leading-relaxed placeholder:text-slate-400 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void handleAddressMapSearch()}
-                        disabled={addressSearchLoading}
-                        className="min-h-[52px] shrink-0 rounded-xl border-2 border-sky-600 bg-sky-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60 lg:min-h-0 lg:self-stretch lg:px-5"
-                      >
-                        {addressSearchLoading ? '検索中…' : '地図を検索'}
-                      </button>
-                    </div>
+                  <DeliveryAreaAddressField
+                    idPrefix="dispatch-spot"
+                    allowedAreas={allowedDeliveryAreas}
+                    deliveryArea={deliveryArea}
+                    onDeliveryAreaChange={(v) => {
+                      setDeliveryArea(v);
+                      setAddressSearchError('');
+                      setSubmitError('');
+                    }}
+                    addressDetail={siteAddressDetail}
+                    onAddressDetailChange={(v) => {
+                      setSiteAddressDetail(v);
+                      setAddressSearchError('');
+                    }}
+                  />
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleAddressMapSearch()}
+                      disabled={addressSearchLoading || isLocationPending}
+                      className="min-h-[52px] w-full rounded-xl border-2 border-sky-600 bg-sky-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {addressSearchLoading ? '検索中…' : '住所から地図を検索'}
+                    </button>
                     {addressSearchError ? (
                       <p className="text-xs font-bold text-red-700" role="alert">
                         {addressSearchError}
                       </p>
                     ) : null}
-                    <p className="text-xs leading-relaxed text-slate-500">
-                      「地図を検索」で表示位置を移動します。確定するには地図上をクリックしてください。
-                    </p>
                   </div>
+                  <label className="flex cursor-pointer items-start gap-3 rounded-xl border-2 border-amber-200 bg-amber-50/80 p-4">
+                    <input
+                      type="checkbox"
+                      checked={isLocationPending}
+                      onChange={(e) => {
+                        setIsLocationPending(e.target.checked);
+                        if (e.target.checked) {
+                          setDeliveryLat('');
+                          setDeliveryLng('');
+                        }
+                        setSubmitError('');
+                      }}
+                      className="mt-1 h-5 w-5 shrink-0 rounded border-amber-400 text-amber-600"
+                    />
+                    <span className="text-sm font-bold leading-relaxed text-amber-950">
+                      あとから地図を送る（詳細未定・枠のみ確保）
+                      <span className="mt-1 block text-xs font-medium text-amber-900/90">
+                        チェック時は地図の指定は不要です。工場画面に「⚠️地図待ち」と表示されます。
+                      </span>
+                    </span>
+                  </label>
                   <div className="flex min-h-[360px] flex-col gap-2 lg:row-span-3">
                     <Label>現場位置（地図）</Label>
                     <p className="text-xs leading-relaxed text-slate-500">
-                      地図をクリックして緯度・経度を指定してください。納入場所からご指定、または近隣の工場へ確認を行います。
+                      {isLocationPending
+                        ? '地図待ちのため、確定時点では位置の指定は不要です。後から地図を送付してください。'
+                        : '地図をクリックして緯度・経度を指定してください。納入場所からご指定、または近隣の工場へ確認を行います。'}
                     </p>
                     {deliveryLat || deliveryLng ? (
                       <p className="font-mono text-xs font-bold text-slate-600">
@@ -2064,8 +2132,10 @@ function unloadDurationLabel(value) {
                       lat={deliveryLat}
                       lng={deliveryLng}
                       panTarget={mapPanTarget}
-                      className="min-h-[320px]"
+                      interactive={!isLocationPending}
+                      className={'min-h-[320px]' + (isLocationPending ? ' opacity-60' : '')}
                       onPositionChange={(la, ln) => {
+                        if (isLocationPending) return;
                         setDeliveryLat(la);
                         setDeliveryLng(ln);
                         setSubmitError('');
@@ -2073,6 +2143,18 @@ function unloadDurationLabel(value) {
                     />
                   </div>
                 </>
+              ) : null}
+
+              {orderKind === 'project' ? (
+                <DeliveryAreaAddressField
+                  idPrefix="dispatch-project"
+                  label="現場住所（納入エリア）"
+                  allowedAreas={allowedDeliveryAreas}
+                  deliveryArea={deliveryArea}
+                  onDeliveryAreaChange={setDeliveryArea}
+                  addressDetail={siteAddressDetail}
+                  onAddressDetailChange={setSiteAddressDetail}
+                />
               ) : null}
 
               <div className="flex min-w-0 max-w-full flex-col gap-3 overflow-hidden lg:col-start-1">

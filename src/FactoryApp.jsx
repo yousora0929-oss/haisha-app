@@ -22,6 +22,7 @@ import {
   computeScheduleAutoRejectReason,
 } from './haishaConstants.js';
 import { registerOneSignalUser, sendPushNotification } from './utils/notification.js';
+import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 
 const todayLocalISO = todayLocalISODate;
@@ -1551,6 +1552,7 @@ function orderPartyInfo(order) {
                 管理者変更あり
               </span>
             ) : null}
+            <LocationPendingBadge order={order} />
           </div>
         </div>
       );
@@ -2567,6 +2569,7 @@ function orderPartyInfo(order) {
                         return (
                           <span key={order.id} className={'block truncate rounded-md px-1.5 py-0.5 text-[10px] font-black ' + getOrderKindClass(order)}>
                             {party.site || '現場未設定'}: {factoryOrderQuantity(order)}㎡
+                            {order.is_location_pending ? ' ⚠️' : ''}
                           </span>
                         );
                       })}
@@ -2598,6 +2601,9 @@ function orderPartyInfo(order) {
                     >
                       <p className="text-sm font-black text-slate-900">{getOrderTimeDisplay(order)} ・ {party.site || '現場未設定'}</p>
                       <p className="mt-1 text-xs font-bold text-slate-600">{party.contractor} / {factoryOrderQuantity(order)}㎡ / {order.mixText || order.confirmedMixText || '配合未入力'}</p>
+                      <div className="mt-1">
+                        <LocationPendingBadge order={order} />
+                      </div>
                       <p className="mt-2 text-[10px] font-black text-indigo-600">ダブルタップで注文詳細へ</p>
                     </li>
                   );

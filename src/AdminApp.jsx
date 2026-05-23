@@ -2,6 +2,15 @@ import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import * as db from './haishaDb.js';
 import { supabase } from './supabaseClient.js';
 import { MapPicker } from './MapPicker.jsx';
+import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
+import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
+import {
+  formatDeliveryAreasTextInput,
+  getDeliveryAreaValidationMessage,
+  normalizeAllowedDeliveryAreas,
+  parseDeliveryAreasTextInput,
+  parseSpotThresholdVolume,
+} from './utils/deliveryAreas.js';
 import { SCHEDULE_BLOCK_IDS, normalizeDayBlockSchedule, todayLocalISODate } from './haishaConstants.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 
@@ -85,6 +94,7 @@ function orderStatusLabel(status) {
   if (status === 'completed') return '完了';
   if (status === 'customer_cancelled') return 'キャンセル';
   if (status === 'rejected') return '見送り';
+  if (status === 'pending_association') return '組合承認待ち';
   return '配車待ち';
 }
 
@@ -93,6 +103,7 @@ function statusBadgeClass(status) {
   if (status === 'completed') return 'border-slate-300 bg-slate-100 text-slate-700';
   if (status === 'accepted') return 'border-emerald-300 bg-emerald-50 text-emerald-800';
   if (status === 'rejected') return 'border-red-300 bg-red-50 text-red-800';
+  if (status === 'pending_association') return 'border-violet-400 bg-violet-50 text-violet-900';
   return 'border-amber-300 bg-amber-50 text-amber-900';
 }
 
@@ -309,15 +320,18 @@ function FactoryAvailabilitySection({ factories, schedulesByFactoryId, scheduleD
   );
 }
 
-function ProjectForm({ factories, customers, initial, onSave, onCancel, saving }) {
+function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial, onSave, onCancel, saving }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [customerId, setCustomerId] = useState(initial?.customer_id ?? '');
   const [tradingCompany, setTradingCompany] = useState(initial?.trading_company_name ?? initial?.trading_company ?? '');
   const [contractor, setContractor] = useState(initial?.contractor ?? '');
   const [mainFactoryId, setMainFactoryId] = useState(initial?.main_factory_id ?? '');
   const [subIds, setSubIds] = useState(() => new Set(initial?.sub_factory_ids ?? []));
+  const [deliveryArea, setDeliveryArea] = useState(initial?.delivery_area ?? '');
+  const [siteAddressDetail, setSiteAddressDetail] = useState(initial?.site_address ?? '');
   const [lat, setLat] = useState(initial?.lat != null && Number.isFinite(initial.lat) ? String(initial.lat) : '');
   const [lng, setLng] = useState(initial?.lng != null && Number.isFinite(initial.lng) ? String(initial.lng) : '');
+  const [addressError, setAddressError] = useState('');
 
   useEffect(() => {
     setName(initial?.name ?? '');
@@ -326,8 +340,11 @@ function ProjectForm({ factories, customers, initial, onSave, onCancel, saving }
     setContractor(initial?.contractor ?? '');
     setMainFactoryId(initial?.main_factory_id ?? '');
     setSubIds(new Set(initial?.sub_factory_ids ?? []));
+    setDeliveryArea(initial?.delivery_area ?? '');
+    setSiteAddressDetail(initial?.site_address ?? '');
     setLat(initial?.lat != null && Number.isFinite(initial.lat) ? String(initial.lat) : '');
     setLng(initial?.lng != null && Number.isFinite(initial.lng) ? String(initial.lng) : '');
+    setAddressError('');
   }, [initial]);
 
   const toggleSub = (fid) => {
@@ -341,6 +358,19 @@ function ProjectForm({ factories, customers, initial, onSave, onCancel, saving }
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    const area = String(deliveryArea || '').trim();
+    const detail = String(siteAddressDetail || '').trim();
+    const full = area && detail ? `${area} ${detail}` : area || detail;
+    const msg = getDeliveryAreaValidationMessage(full, allowedDeliveryAreas);
+    if (msg) {
+      setAddressError(msg);
+      return;
+    }
+    if (!area) {
+      setAddressError('納入エリア（市町村）を選択してください。');
+      return;
+    }
+    setAddressError('');
     onSave({
       name: name.trim(),
       customer_id: customerId,
@@ -349,6 +379,8 @@ function ProjectForm({ factories, customers, initial, onSave, onCancel, saving }
       contractor: contractor.trim(),
       main_factory_id: mainFactoryId,
       sub_factory_ids: [...subIds].filter((id) => id && id !== mainFactoryId),
+      delivery_area: area,
+      site_address: detail,
       lat: lat.trim(),
       lng: lng.trim(),
     });
@@ -427,6 +459,19 @@ function ProjectForm({ factories, customers, initial, onSave, onCancel, saving }
           </ul>
         )}
       </fieldset>
+      <DeliveryAreaAddressField
+        idPrefix="proj"
+        allowedAreas={allowedDeliveryAreas}
+        deliveryArea={deliveryArea}
+        onDeliveryAreaChange={setDeliveryArea}
+        addressDetail={siteAddressDetail}
+        onAddressDetailChange={setSiteAddressDetail}
+      />
+      {addressError ? (
+        <p className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-bold text-red-800" role="alert">
+          {addressError}
+        </p>
+      ) : null}
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="text-xs font-bold text-slate-600" htmlFor="proj-lat">緯度（lat）</label>
@@ -457,6 +502,7 @@ function ProjectForm({ factories, customers, initial, onSave, onCancel, saving }
 function ProjectsSection({ factories, factoryNameById }) {
   const [projects, setProjects] = useState([]);
   const [customers, setCustomers] = useState([]);
+  const [allowedDeliveryAreas, setAllowedDeliveryAreas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [formMode, setFormMode] = useState(null);
@@ -467,9 +513,14 @@ function ProjectsSection({ factories, factoryNameById }) {
     setLoading(true);
     setError('');
     try {
-      const [rows, customerRows] = await Promise.all([db.fetchProjects(), db.fetchCustomers()]);
+      const [rows, customerRows, settings] = await Promise.all([
+        db.fetchProjects(),
+        db.fetchCustomers(),
+        db.fetchAdminSettings(),
+      ]);
       setProjects(rows);
       setCustomers(customerRows);
+      setAllowedDeliveryAreas(normalizeAllowedDeliveryAreas(settings?.allowed_delivery_areas));
     } catch (e) {
       console.error('物件取得エラー', e);
       setError(formatSupabaseError(e, '物件一覧の取得に失敗しました'));
@@ -540,7 +591,15 @@ function ProjectsSection({ factories, factoryNameById }) {
       {error ? <p className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-bold text-red-800" role="alert">{error}</p> : null}
       {formMode ? (
         <div className="mt-4">
-          <ProjectForm factories={factories} customers={customers} initial={editing} onSave={handleSave} onCancel={() => { setFormMode(null); setEditing(null); }} saving={saving} />
+          <ProjectForm
+            factories={factories}
+            customers={customers}
+            allowedDeliveryAreas={allowedDeliveryAreas}
+            initial={editing}
+            onSave={handleSave}
+            onCancel={() => { setFormMode(null); setEditing(null); }}
+            saving={saving}
+          />
         </div>
       ) : null}
       {loading ? <p className="mt-4 text-sm text-slate-500">読み込み中…</p> : null}
@@ -983,6 +1042,8 @@ function HolidaysAndSettingsSection() {
 function AdminSettingsSection() {
   const [adminName, setAdminName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [deliveryAreasText, setDeliveryAreasText] = useState('');
+  const [spotThresholdVolume, setSpotThresholdVolume] = useState('50');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newPasswordConfirm, setNewPasswordConfirm] = useState('');
@@ -998,6 +1059,8 @@ function AdminSettingsSection() {
       const settings = await db.fetchAdminSettings();
       setAdminName(settings.admin_name || '');
       setPhoneNumber(settings.phone_number || '');
+      setDeliveryAreasText(formatDeliveryAreasTextInput(settings.allowed_delivery_areas));
+      setSpotThresholdVolume(String(parseSpotThresholdVolume(settings.spot_threshold_volume)));
       setCurrentPassword('');
       setNewPassword('');
       setNewPasswordConfirm('');
@@ -1035,6 +1098,8 @@ function AdminSettingsSection() {
       await db.updateAdminSettings({
         admin_name: adminName.trim(),
         phone_number: phoneNumber.trim(),
+        allowed_delivery_areas: parseDeliveryAreasTextInput(deliveryAreasText),
+        spot_threshold_volume: parseSpotThresholdVolume(spotThresholdVolume),
       });
       if (wantsPasswordChange) {
         await db.updateAdminPassword(currentPassword.trim(), newPassword.trim());
@@ -1070,6 +1135,35 @@ function AdminSettingsSection() {
           <div>
             <label className="text-xs font-bold text-slate-600" htmlFor="admin-setting-phone">管理者の電話番号</label>
             <input id="admin-setting-phone" type="tel" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} className={fieldClass} placeholder="例: 097-123-4567" />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="text-xs font-bold text-slate-600" htmlFor="admin-setting-delivery-areas">
+              納入可能エリア（市町村）
+            </label>
+            <p className="mt-0.5 text-[11px] font-medium text-slate-500">1行1件、またはカンマ区切りで入力（例: 大分市、由布市）</p>
+            <textarea
+              id="admin-setting-delivery-areas"
+              rows={5}
+              value={deliveryAreasText}
+              onChange={(e) => setDeliveryAreasText(e.target.value)}
+              className={fieldClass + ' min-h-[120px] font-mono'}
+              placeholder={'大分市\n由布市\n杵築市'}
+            />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-slate-600" htmlFor="admin-setting-spot-threshold">
+              スポット数量の組合承認しきい値（m³）
+            </label>
+            <input
+              id="admin-setting-spot-threshold"
+              type="number"
+              min="1"
+              step="0.1"
+              value={spotThresholdVolume}
+              onChange={(e) => setSpotThresholdVolume(e.target.value)}
+              className={fieldClass}
+            />
+            <p className="mt-1 text-[11px] font-medium text-slate-500">スポット注文でカート合計がこの値を超えると「組合承認待ち」になります。</p>
           </div>
           <div>
             <label className="text-xs font-bold text-slate-600" htmlFor="admin-setting-current-password">現在のパスワード</label>
@@ -1266,6 +1360,11 @@ function OrdersMonitorSection({
 
   const visibleOrders = useMemo(() => orders.filter((o) => orderStatus(o) !== 'deleted'), [orders]);
   const pendingCount = visibleOrders.filter((o) => orderStatus(o) === 'pending').length;
+  const pendingAssociationCount = visibleOrders.filter((o) => orderStatus(o) === 'pending_association').length;
+  const pendingAssociationOrders = useMemo(
+    () => visibleOrders.filter((o) => orderStatus(o) === 'pending_association'),
+    [visibleOrders],
+  );
   const acceptedCount = visibleOrders.filter((o) => orderStatus(o) === 'accepted').length;
   const completedCount = visibleOrders.filter((o) => orderStatus(o) === 'completed').length;
   const cancelledCount = visibleOrders.filter((o) => orderStatus(o) === 'customer_cancelled').length;
@@ -1297,6 +1396,19 @@ function OrdersMonitorSection({
     } catch (e) {
       console.error(e);
       setError('注文の削除に失敗しました。');
+    }
+  };
+
+  const handleApproveAssociation = async (order) => {
+    if (!order?.id) return;
+    if (!window.confirm('この注文を組合承認し、工場の配車待ち一覧へ回しますか？')) return;
+    setError('');
+    try {
+      const updated = await db.approveOrderForAssociation(order.id);
+      if (updated) setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === order.id ? updated : o)) : prev));
+    } catch (e) {
+      console.error(e);
+      setError('組合承認に失敗しました。');
     }
   };
 
@@ -1370,10 +1482,14 @@ function OrdersMonitorSection({
         </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-5">
+      <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-6">
         <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
           <p className="text-xs font-bold text-slate-500">全注文</p>
           <p className="mt-1 text-2xl font-black text-slate-900">{visibleOrders.length}</p>
+        </div>
+        <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-3">
+          <p className="text-xs font-bold text-violet-700">組合承認待ち</p>
+          <p className="mt-1 text-2xl font-black text-violet-900">{pendingAssociationCount}</p>
         </div>
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
           <p className="text-xs font-bold text-amber-700">pending</p>
@@ -1400,6 +1516,39 @@ function OrdersMonitorSection({
 
       {error ? <p className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-bold text-red-800" role="alert">{error}</p> : null}
       {loading ? <p className="mt-4 text-sm text-slate-500">読み込み中…</p> : null}
+
+      {!loading && activeMonitorTab === 'orders' && pendingAssociationOrders.length > 0 ? (
+        <div className="mt-4 rounded-xl border-2 border-violet-300 bg-violet-50/60 p-4">
+          <h3 className="text-base font-black text-violet-950">組合承認が必要なスポット注文（{pendingAssociationOrders.length}件）</h3>
+          <p className="mt-1 text-xs font-medium text-violet-900/90">
+            数量上限を超えるスポット注文です。承認するまで工場の通常配車リストには表示されません。
+          </p>
+          <ul className="mt-3 space-y-2">
+            {pendingAssociationOrders.map((o) => {
+              const party = orderPartyInfo(o);
+              return (
+                <li key={o.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-black text-slate-900">
+                      {formatDateJp(orderDeliveryDate(o))} {formatOrderTime(o)} · {party.site}
+                    </p>
+                    <p className="text-xs font-bold text-slate-600">
+                      {o.quantityM3 ?? o.quantityCube ?? '—'} m³ · {party.contractor}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleApproveAssociation(o)}
+                    className="min-h-[40px] rounded-lg bg-violet-700 px-3 text-sm font-black text-white hover:bg-violet-800"
+                  >
+                    組合承認して配車待ちへ
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
 
       {!loading && activeMonitorTab === 'orders' ? (
         <div className="mt-4 overflow-x-auto">
@@ -1446,12 +1595,22 @@ function OrdersMonitorSection({
                           {o.is_admin_modified ? (
                             <span className="inline-flex rounded-full border border-violet-300 bg-violet-50 px-2 py-0.5 text-xs font-black text-violet-800">管理者変更</span>
                           ) : null}
+                          <LocationPendingBadge order={o} className="text-xs" />
                         </div>
                       </td>
                       <td className="px-3 py-2.5 font-bold text-slate-700">{fid ? factoryNameById[fid] || fid : '—'}</td>
                       <td className="max-w-[14rem] break-all px-3 py-2.5 font-mono text-xs text-slate-500" title={String(o.id || '')}>{o.id}</td>
                       <td className="px-3 py-2.5">
                         <div className="flex flex-wrap gap-1">
+                          {st === 'pending_association' ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleApproveAssociation(o)}
+                              className="rounded border border-violet-400 bg-violet-100 px-2 py-1 text-xs font-black text-violet-900 hover:bg-violet-200"
+                            >
+                              組合承認
+                            </button>
+                          ) : null}
                           {[
                             ['pending', '配車待ち'],
                             ['accepted', '受注'],

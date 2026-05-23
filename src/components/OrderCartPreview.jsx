@@ -1,4 +1,5 @@
 import React from 'react';
+import { LocationPendingBadge } from './LocationPendingBadge.jsx';
 
 function formatOrderDateLabel(order) {
   const raw = String(order?.preferredDate || '').trim();
@@ -47,7 +48,10 @@ export function OrderCartPreview({ items, onRemove, onConfirmBulk, bulkLoading }
               >
                 ✖
               </button>
-              <p className="text-sm font-black text-slate-900">注文 {index + 1}</p>
+              <p className="flex flex-wrap items-center gap-2 text-sm font-black text-slate-900">
+                注文 {index + 1}
+                <LocationPendingBadge order={o} />
+              </p>
               <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
                 <div>
                   <dt className="text-xs font-bold text-slate-500">日付</dt>
@@ -64,6 +68,10 @@ export function OrderCartPreview({ items, onRemove, onConfirmBulk, bulkLoading }
                 <div>
                   <dt className="text-xs font-bold text-slate-500">配合</dt>
                   <dd className="font-mono font-black text-slate-900">{o.mixText || '—'}</dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-xs font-bold text-slate-500">現場住所</dt>
+                  <dd className="break-words font-bold text-slate-800">{o.siteAddress || '—'}</dd>
                 </div>
                 <div className="sm:col-span-2">
                   <dt className="text-xs font-bold text-slate-500">試験</dt>

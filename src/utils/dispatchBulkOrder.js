@@ -1,4 +1,9 @@
 import { TIME_SLOTS } from '../haishaConstants.js';
+import {
+  combineDeliveryAddress,
+  getDeliveryAreaValidationMessage,
+  normalizeAllowedDeliveryAreas,
+} from './deliveryAreas.js';
 
 const UNLOAD_LABELS = {
   '15': '15分',
@@ -43,9 +48,11 @@ export function buildDispatchOrderForDate(preferredDate, context) {
     hasTest,
     deliveryLat,
     deliveryLng,
+    isLocationPending,
   } = context;
 
   const isSpot = orderKind === 'spot';
+  const locationPending = Boolean(isLocationPending);
   const nameTrim = String(siteName || '').trim();
   const addrTrim = String(siteAddress || '').trim();
   const resolvedSiteName =
@@ -102,7 +109,17 @@ export function buildDispatchOrderForDate(preferredDate, context) {
     siteAddress: addrTrim,
     sitePhone: String(sitePhone || '').trim(),
     has_test: Boolean(hasTest),
+    is_location_pending: locationPending,
+    isLocationPending: locationPending,
   };
+}
+
+function validateDeliveryArea(context) {
+  const areas = normalizeAllowedDeliveryAreas(context.allowedDeliveryAreas);
+  if (!areas.length) return [];
+  const full = combineDeliveryAddress(context.deliveryArea, context.siteAddressDetail ?? context.siteAddress);
+  const msg = getDeliveryAreaValidationMessage(full, areas);
+  return msg ? [msg] : [];
 }
 
 /** 複数日一括発注フォームのバリデーション */
@@ -118,12 +135,22 @@ export function validateMultiDateOrderForm(context, dates, { today, isPastPrefer
     missing.push('物件');
   }
   if (context.orderKind === 'spot') {
-    const la = parseFloat(String(context.deliveryLat).trim());
-    const ln = parseFloat(String(context.deliveryLng).trim());
-    if (!Number.isFinite(la) || !Number.isFinite(ln)) missing.push('地図上の現場位置');
+    const locationPending = Boolean(context.isLocationPending);
+    if (!locationPending) {
+      const la = parseFloat(String(context.deliveryLat).trim());
+      const ln = parseFloat(String(context.deliveryLng).trim());
+      if (!Number.isFinite(la) || !Number.isFinite(ln)) missing.push('地図上の現場位置');
+    }
     const nameTrim = String(context.siteName || '').trim();
     const addrTrim = String(context.siteAddress || '').trim();
     if (!nameTrim && !addrTrim) missing.push('現場名または現場住所');
+    const area = String(context.deliveryArea || '').trim();
+    if (!area) missing.push('納入エリア（市町村）');
+    missing.push(...validateDeliveryArea(context));
+  }
+  if (context.orderKind === 'project') {
+    if (!String(context.deliveryArea || '').trim()) missing.push('納入エリア（市町村）');
+    missing.push(...validateDeliveryArea(context));
   }
   const timeSlot = String(context.timeSlot || '').trim();
   list.forEach((date, i) => {

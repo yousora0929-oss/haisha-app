@@ -151,6 +151,7 @@ export function isOrderVisibleToFactory(order, factoryId, ctx) {
   const assigned = orderFactoryId(order);
   const status = order?.status != null ? String(order.status) : '';
   if (status === 'deleted') return false;
+  if (status === 'pending_association') return false;
   const isSpot = Boolean(order.is_spot);
   const pid = orderProjectId(order);
   const project = !isSpot && pid ? ctx.projectById[pid] : null;
