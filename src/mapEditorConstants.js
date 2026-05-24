@@ -26,10 +26,17 @@ export const MAP_STAMP_EMOJI = Object.fromEntries(MAP_STAMP_DEFS.map((d) => [d.t
 export const MAP_STORAGE_BUCKET = 'maps';
 
 /** 注文に紐づく地図エディタURL（Vite dev / 静的ホストで /map-editor/:id にルーティング） */
-export function buildMapEditorUrl(orderId) {
+export function buildMapEditorUrl(orderId, baseOrigin) {
   const id = String(orderId || '').trim();
   if (!id) return '';
-  const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
+  const envOrigin =
+    typeof import.meta !== 'undefined' && import.meta.env?.VITE_PUBLIC_APP_ORIGIN
+      ? String(import.meta.env.VITE_PUBLIC_APP_ORIGIN).replace(/\/$/, '')
+      : '';
+  const origin =
+    (baseOrigin && String(baseOrigin).replace(/\/$/, '')) ||
+    envOrigin ||
+    (typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '');
   return `${origin}/map-editor/${encodeURIComponent(id)}`;
 }
 

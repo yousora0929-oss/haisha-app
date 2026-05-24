@@ -23,6 +23,7 @@ import {
 } from './haishaConstants.js';
 import { registerOneSignalUser, sendPushNotification } from './utils/notification.js';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
+import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 
 const todayLocalISO = todayLocalISODate;
@@ -1594,6 +1595,12 @@ function orderPartyInfo(order) {
               この注文には地図座標が保存されていません。現場住所: {addr || '—'}
             </div>
           )}
+
+          {!isToast && order.id ? (
+            <div className="mt-3">
+              <OrderMapEditorUrlActions orderId={order.id} siteName={party.site} order={order} variant="compact" />
+            </div>
+          ) : null}
 
           {!isToast && order.id ? (
             <FactoryOrderChatPanel

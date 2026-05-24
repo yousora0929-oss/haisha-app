@@ -1,0 +1,3 @@
+{
+  "rewrites": [{ "source": "/map-editor/:path*", "destination": "/MapEditor.html" }]
+}

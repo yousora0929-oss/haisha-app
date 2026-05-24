@@ -6,6 +6,7 @@ import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { OrderVisibilityScopePanel } from './components/OrderVisibilityScopePanel.jsx';
 import { OrderVisibilityScopeBadge } from './components/OrderVisibilityScopeBadge.jsx';
+import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { buildOrderVisibilityContext } from './utils/orderVisibilityScope.js';
 import {
   formatDeliveryAreasTextInput,
@@ -1285,6 +1286,10 @@ function AdminOrderDetailModal({ order, open, saving, escalationCtx, factoryName
               escalationCtx={escalationCtx}
               factoryNameById={factoryNameById}
             />
+          </div>
+
+          <div className="mt-4">
+            <OrderMapEditorUrlActions orderId={order.id} siteName={party.site} order={order} />
           </div>
 
           <dl className="mt-4 grid gap-2 rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-sm sm:grid-cols-2">

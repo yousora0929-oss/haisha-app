@@ -20,6 +20,8 @@ import {
 } from './utils/notification.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { OrderCartPreview } from './components/OrderCartPreview.jsx';
+import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
+import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { buildDispatchOrderForDate, validateCartLineForm } from './utils/dispatchBulkOrder.js';
 import { combineDeliveryAddress, normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
@@ -666,12 +668,17 @@ function unloadDurationLabel(value) {
                     管理者変更あり
                   </span>
                 ) : null}
+                <LocationPendingBadge order={order} />
               </div>
             </div>
             <div className="min-w-0 text-left sm:text-right">
               <p className={lbl}>希望日 · 時刻</p>
               <p className="mt-1 break-words text-sm font-black leading-tight text-slate-900 sm:text-base">{timeSummary}</p>
             </div>
+          </div>
+
+          <div className="mt-4">
+            <OrderMapEditorUrlActions orderId={order.id} siteName={party.site} order={order} />
           </div>
 
           <dl className="mt-4 grid gap-2 rounded-2xl border-2 border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-bold sm:grid-cols-2">
@@ -1711,12 +1718,16 @@ function unloadDurationLabel(value) {
           resetOrderForm();
           setCustomerOrderTab(count > 1 ? 'calendar' : 'active');
           setExpandedHistoryOrderId('');
+          const hasMapPending = orders.some((o) => o.is_location_pending);
           const message =
             bulkStatus === 'pending_association'
               ? `${count}件を登録しました（スポット数量が上限を超えるため、組合承認後に工場へ配車されます）`
               : `${count}件の注文を確定しました`;
-          setSubmitNotice(message);
-          window.alert(message);
+          const mapHint = hasMapPending
+            ? '\n\n⚠️ 地図待ちの注文があります。「進行中」タブの「現場地図URL」から図面を送付してください。'
+            : '';
+          setSubmitNotice(message + mapHint);
+          window.alert(message + mapHint);
           window.setTimeout(() => setSubmitNotice(null), 6000);
         } catch (err) {
           console.error('カート一括登録に失敗しました', err);
@@ -2109,10 +2120,10 @@ function unloadDurationLabel(value) {
                       }}
                       className="mt-1 h-5 w-5 shrink-0 rounded border-amber-400 text-amber-600"
                     />
-                    <span className="text-sm font-bold leading-relaxed text-amber-950">
+                      <span className="text-sm font-bold leading-relaxed text-amber-950">
                       あとから地図を送る（詳細未定・枠のみ確保）
                       <span className="mt-1 block text-xs font-medium text-amber-900/90">
-                        チェック時は地図の指定は不要です。工場画面に「⚠️地図待ち」と表示されます。
+                        チェック時は地図の指定は不要です。発注確定後「進行中」タブに表示される現場地図URLから、スマホで図面を送付できます。
                       </span>
                     </span>
                   </label>

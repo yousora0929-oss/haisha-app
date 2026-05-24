@@ -1420,6 +1420,7 @@ export async function saveOrderOverrideMap(orderId, imageDataUrl, stamps) {
     .from('orders')
     .update({
       override_map_image_url: publicUrl,
+      is_location_pending: false,
       order_data: nextOrderData,
     })
     .eq('id', id)
