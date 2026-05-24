@@ -19,6 +19,7 @@ import {
   parseSpotThresholdVolume,
 } from './utils/deliveryAreas.js';
 import { SCHEDULE_BLOCK_IDS, normalizeDayBlockSchedule, todayLocalISODate } from './haishaConstants.js';
+import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 
 const ADMIN_AUTH_SESSION_KEY = 'concrete_link_admin_auth_v1';
@@ -75,13 +76,14 @@ function orderDeliveryDate(order) {
 }
 
 function orderSiteName(order) {
-  return String(order?.siteName ?? order?.site_name ?? order?.projectName ?? order?.project_name ?? '').trim() || '（現場名未入力）';
+  const name = resolveOrderSiteDisplayName(order);
+  return name || '（現場名未入力）';
 }
 
 function orderPartyInfo(order) {
   const tradingCompany = String(order?.trading_company_name ?? order?.projectTradingCompanyName ?? order?.projectTradingCompany ?? order?.tradingCompanyName ?? order?.traderName ?? '').trim();
   const contractor = String(order?.customerName ?? order?.customer_name ?? order?.contractorName ?? order?.contractor_name ?? '').trim();
-  const site = String(order?.projectName ?? order?.project_name ?? orderSiteName(order)).trim();
+  const site = resolveOrderSiteDisplayName(order);
   const orderedBy = String(order?.ordered_by ?? order?.orderedBy ?? '').trim();
   const phone = String(order?.sitePhone ?? order?.phone ?? '').trim();
   return {

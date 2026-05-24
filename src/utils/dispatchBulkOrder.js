@@ -4,6 +4,7 @@ import {
   getDeliveryAreaValidationMessage,
   normalizeAllowedDeliveryAreas,
 } from './deliveryAreas.js';
+import { looksLikeUrlText, sanitizeSiteNameValue } from './siteNameDisplay.js';
 
 const UNLOAD_LABELS = {
   '15': '15分',
@@ -53,10 +54,12 @@ export function buildDispatchOrderForDate(preferredDate, context) {
 
   const isSpot = orderKind === 'spot';
   const locationPending = Boolean(isLocationPending);
-  const nameTrim = String(siteName || '').trim();
+  const nameTrim = sanitizeSiteNameValue(siteName);
   const addrTrim = String(siteAddress || '').trim();
+  const projectName = sanitizeSiteNameValue(selectedProject?.name);
+  const addrForName = looksLikeUrlText(addrTrim) ? '' : addrTrim;
   const resolvedSiteName =
-    !isSpot && selectedProject?.name ? nameTrim || String(selectedProject.name) : nameTrim || addrTrim;
+    !isSpot && projectName ? nameTrim || projectName : nameTrim || addrForName;
 
   const prefFidRaw = String(preferredFactoryId || '').trim();
   const prefFid =
@@ -152,9 +155,10 @@ export function validateMultiDateOrderForm(context, dates, { today, isPastPrefer
       const ln = parseFloat(String(context.deliveryLng).trim());
       if (!Number.isFinite(la) || !Number.isFinite(ln)) missing.push('地図上の現場位置');
     }
-    const nameTrim = String(context.siteName || '').trim();
+    const nameTrim = sanitizeSiteNameValue(context.siteName);
     const addrTrim = String(context.siteAddress || '').trim();
-    if (!nameTrim && !addrTrim) missing.push('現場名または現場住所');
+    const addrOk = addrTrim && !looksLikeUrlText(addrTrim);
+    if (!nameTrim && !addrOk) missing.push('現場名または現場住所');
     missing.push(...validateMunicipalityAndTownName(context));
   }
   if (context.orderKind === 'project') {

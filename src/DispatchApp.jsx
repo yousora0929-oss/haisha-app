@@ -26,6 +26,7 @@ import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.
 import { buildDispatchOrderForDate, validateCartLineForm } from './utils/dispatchBulkOrder.js';
 import { combineDeliveryAddress, normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
 import { isLocationPendingOrder, resolveInitialOrderStatus, sumOrderVolumesM3 } from './utils/orderWorkflow.js';
+import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
 import { parseSiteOrderTokenFromPath } from './utils/siteOrderUrl.js';
@@ -109,7 +110,7 @@ function unloadDurationLabel(value) {
       const tradingCompany = String(order?.trading_company_name ?? order?.projectTradingCompanyName ?? order?.projectTradingCompany ?? order?.tradingCompanyName ?? order?.traderName ?? '').trim();
       const contractor = String(order?.customerName ?? order?.customer_name ?? order?.contractorName ?? order?.contractor_name ?? order?.displayContractorName ?? order?.contractorName ?? '').trim();
       const contractorBase = contractor || String(order?.contractorName ?? '').trim();
-      const site = String(order?.projectName ?? order?.project_name ?? order?.siteName ?? '').trim();
+      const site = resolveOrderSiteDisplayName(order);
       const orderedBy = String(order?.ordered_by ?? order?.orderedBy ?? '').trim();
       const phone = String(order?.sitePhone ?? order?.phone ?? '').trim();
       return {
@@ -482,7 +483,7 @@ function unloadDurationLabel(value) {
               </button>
               <div className="min-w-0">
                 <h2 className="truncate text-base font-black text-slate-900">{factoryName} との質疑応答</h2>
-                <p className="mt-0.5 truncate text-xs font-bold text-slate-500">{order.siteName || order.projectName || '注文チャット'}</p>
+                <p className="mt-0.5 truncate text-xs font-bold text-slate-500">{resolveOrderSiteDisplayName(order) || '注文チャット'}</p>
               </div>
             </div>
           </header>
@@ -1656,7 +1657,11 @@ function unloadDurationLabel(value) {
             trading_company_name: item.trading_company_name || item.projectTradingCompanyName || item.traderName || '',
             projectTradingCompanyName: item.projectTradingCompanyName || item.trading_company_name || item.traderName || '',
             contractorName: item.contractorName || item.customerName || item.customer_name || row.contractor || '',
-            siteName: item.siteName || item.projectName || row.site || '',
+            siteName:
+              sanitizeSiteNameValue(item.siteName) ||
+              sanitizeSiteNameValue(item.projectName) ||
+              sanitizeSiteNameValue(row.site) ||
+              '',
             siteAddress: item.siteAddress || row.siteAddress || '',
             sitePhone: item.sitePhone || item.phone || row.phone || currentCustomer?.phone_number || '',
             ordered_by: item.ordered_by || item.orderedBy || row.orderedBy || '',
@@ -2118,7 +2123,7 @@ function unloadDurationLabel(value) {
                       if (p) {
                         if (p.trading_company_name || p.trading_company) setTraderName(String(p.trading_company_name || p.trading_company));
                         if (p.contractor) setContractorName(String(p.contractor));
-                        if (p.name) setSiteName(String(p.name));
+                        if (p.name) setSiteName(sanitizeSiteNameValue(p.name));
                         if (p.main_factory_id) setPreferredFactoryId(String(p.main_factory_id));
                         setDeliveryArea(String(p.delivery_area || '').trim());
                         setSiteAddressDetail(String(p.site_address || '').trim());

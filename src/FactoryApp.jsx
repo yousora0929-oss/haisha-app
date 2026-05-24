@@ -27,6 +27,7 @@ import { ProjectExternalUrlActions } from './components/ProjectExternalUrlAction
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
 import { isValidSiteOrderUrlToken } from './utils/urlValidation.js';
 import { isLocationPendingOrder } from './utils/orderWorkflow.js';
+import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { MAP_EDITOR_ORDER_SAVED_DOM_EVENT, MAP_EDITOR_ORDER_SAVED_EVENT_KEY } from './mapEditorConstants.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 
@@ -376,7 +377,7 @@ function isUnreadForFactory(messages, readKey) {
 function orderPartyInfo(order) {
   const tradingCompany = String(order?.trading_company_name ?? order?.projectTradingCompanyName ?? order?.projectTradingCompany ?? order?.tradingCompanyName ?? order?.traderName ?? '').trim();
   const contractor = String(order?.customerName ?? order?.customer_name ?? order?.contractorName ?? order?.contractor_name ?? order?.displayContractorName ?? '').trim();
-  const site = String(order?.projectName ?? order?.project_name ?? order?.siteName ?? '').trim();
+  const site = resolveOrderSiteDisplayName(order);
   const orderedBy = String(order?.ordered_by ?? order?.orderedBy ?? '').trim();
   const phone = String(order?.sitePhone ?? order?.phone ?? '').trim();
   return {
@@ -830,7 +831,10 @@ function orderPartyInfo(order) {
           unloadDuration: String(order.unloadDurationMinutes || order.unloadDuration || order.unloadingTime || '30'),
           traderName: order.traderName != null ? String(order.traderName) : '',
           contractorName: order.contractorName != null ? String(order.contractorName) : '',
-          siteName: order.siteName != null ? String(order.siteName) : '',
+          siteName:
+            sanitizeSiteNameValue(order.siteName) ||
+            sanitizeSiteNameValue(order.projectName) ||
+            '',
           siteAddress: order.siteAddress != null ? String(order.siteAddress) : '',
           sitePhone: order.sitePhone != null ? String(order.sitePhone) : '',
           mixText: order.mixText != null ? String(order.mixText) : '',
@@ -875,7 +879,7 @@ function orderPartyInfo(order) {
           unloadDurationLabel: factoryUnloadDurationLabel({ unloadDuration: editData.unloadDuration }),
           traderName: editData.traderName.trim(),
           contractorName: editData.contractorName.trim(),
-          siteName: editData.siteName.trim(),
+          siteName: sanitizeSiteNameValue(editData.siteName),
           siteAddress: editData.siteAddress.trim(),
           sitePhone: editData.sitePhone.trim(),
           mixText: editData.mixText.trim(),
@@ -969,17 +973,19 @@ function orderPartyInfo(order) {
                     <input id="foe-trader" name="traderName" type="text" value={editData.traderName} onChange={handleInputChange} className={fieldInput} />
                   </div>
                   <div>
-                    <div className="flex flex-wrap items-end justify-between gap-2">
-                      <label className={fieldLabel} htmlFor="foe-site">
-                        現場名
-                      </label>
+                    <label className={fieldLabel} htmlFor="foe-site">
+                      現場名
+                    </label>
+                    <input id="foe-site" name="siteName" type="text" value={editData.siteName} onChange={handleInputChange} className={fieldInput} placeholder="例：〇〇ビル新築工事" />
+                    <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                      <p className="text-[10px] font-bold text-slate-500">専用発注URL（現場名とは別）</p>
                       <SiteOrderUrlActions
                         urlToken={resolveSiteUrlToken(order, projectById, customerById)}
-                        siteName={editData.siteName || order?.siteName}
+                        siteName={editData.siteName || resolveOrderSiteDisplayName(order)}
                         onCopied={onSiteUrlCopied}
+                        compact
                       />
                     </div>
-                    <input id="foe-site" name="siteName" type="text" value={editData.siteName} onChange={handleInputChange} className={fieldInput} />
                   </div>
                   <div>
                     <label className={fieldLabel} htmlFor="foe-addr">現場住所</label>

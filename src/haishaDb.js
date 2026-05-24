@@ -9,6 +9,7 @@ import { normalizeExternalUrl } from './utils/urlValidation.js';
 import { supabase } from './supabaseClient.js';
 import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils/deliveryAreas.js';
 import { isValidSiteOrderUrlToken } from './utils/urlValidation.js';
+import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import {
   DISPATCH_DEFAULT_FACTORY_SITE_ID,
   DISPATCH_DEFAULT_FACTORY_SITE_NAME,
@@ -124,8 +125,14 @@ function sanitizeOrderRefs(order) {
 
 function sanitizeOrderDataForDb(order) {
   const o = sanitizeOrderRefs(order);
+  const siteName = sanitizeSiteNameValue(o.siteName ?? o.site_name);
+  const projectName = sanitizeSiteNameValue(o.projectName ?? o.project_name);
   return {
     ...o,
+    siteName,
+    site_name: siteName,
+    projectName,
+    project_name: projectName,
     factory_site_id: sanitizeRefId(o.factory_site_id),
     factorySiteId: sanitizeRefId(o.factorySiteId),
     preferred_factory_id: sanitizeRefId(o.preferred_factory_id),
@@ -224,6 +231,10 @@ export function normalizeOrderRow(row) {
             : '',
     is_location_pending: resolveOrderLocationPending(row, od),
     isLocationPending: resolveOrderLocationPending(row, od),
+    siteName: sanitizeSiteNameValue(od.siteName ?? od.site_name),
+    site_name: sanitizeSiteNameValue(od.siteName ?? od.site_name),
+    projectName: sanitizeSiteNameValue(od.projectName ?? od.project_name),
+    project_name: sanitizeSiteNameValue(od.projectName ?? od.project_name),
   };
 }
 
@@ -262,7 +273,10 @@ export async function fetchOrdersWithChat() {
       customerName: o.customerName || (c?.company_name != null ? String(c.company_name) : ''),
       phone_number: o.phone_number || o.customerPhone || (c?.phone_number != null ? String(c.phone_number) : ''),
       customerPhone: o.customerPhone || o.phone_number || (c?.phone_number != null ? String(c.phone_number) : ''),
-      projectName: o.projectName || (p?.name != null ? String(p.name) : ''),
+      projectName:
+        sanitizeSiteNameValue(o.projectName) ||
+        sanitizeSiteNameValue(p?.name) ||
+        '',
       trading_company_name:
         o.trading_company_name ||
         o.projectTradingCompanyName ||
@@ -1536,7 +1550,7 @@ export async function fetchOrderForMapEditor(orderId) {
     initialFlyTarget,
     existingStamps: legacyStamps,
     title:
-      String(order.siteName || order.projectName || project?.name || '').trim() || `注文 ${id}`,
+      resolveOrderSiteDisplayName(order, project) || `注文 ${id}`,
   };
 }
 
