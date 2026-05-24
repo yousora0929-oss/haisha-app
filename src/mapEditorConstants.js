@@ -40,6 +40,33 @@ export const MAP_STORAGE_BUCKET = 'maps';
 
 export const MAP_EDITOR_RETURN_SESSION_KEY = 'haisha_map_editor_return_url_v1';
 
+/** 地図保存完了を他タブ（工場画面など）へ通知 */
+export const MAP_EDITOR_ORDER_SAVED_EVENT_KEY = 'haisha_map_editor_order_saved_v1';
+export const MAP_EDITOR_ORDER_SAVED_DOM_EVENT = 'haisha-map-order-saved';
+
+export function publishMapEditorOrderSaved(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id || typeof window === 'undefined') return;
+  const payload = JSON.stringify({ orderId: id, at: Date.now() });
+  try {
+    localStorage.setItem(MAP_EDITOR_ORDER_SAVED_EVENT_KEY, payload);
+  } catch {
+    /* ignore */
+  }
+  try {
+    window.dispatchEvent(new CustomEvent(MAP_EDITOR_ORDER_SAVED_DOM_EVENT, { detail: { orderId: id } }));
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage({ type: 'haisha_map_editor_saved', orderId: id }, window.location.origin);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 /** 地図エディタを開く直前に呼び、保存後の戻り先 URL を記憶する */
 export function rememberMapEditorReturnUrl() {
   if (typeof window === 'undefined') return;

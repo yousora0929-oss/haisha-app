@@ -1,6 +1,29 @@
 import { parseSpotThresholdVolume } from './deliveryAreas.js';
 
+/** 現場地図が送付済みか（地図待ちバッジ解除の判定用） */
+export function hasSubmittedSiteMap(order) {
+  if (!order || typeof order !== 'object') return false;
+  const url = String(
+    order.override_map_image_url ?? order.overrideMapImageUrl ?? order.map_image_url ?? order.mapImageUrl ?? '',
+  ).trim();
+  if (url) return true;
+  if (order.map_submitted_at || order.mapSubmittedAt) return true;
+  const ann = order.map_annotations ?? order.mapAnnotations;
+  if (ann && typeof ann === 'object') {
+    if (String(ann.imageOverlay?.url || '').trim()) return true;
+    const n =
+      (Array.isArray(ann.stamps) ? ann.stamps.length : 0) +
+      (Array.isArray(ann.unloadPoints) ? ann.unloadPoints.length : 0) +
+      (Array.isArray(ann.comments) ? ann.comments.length : 0);
+    if (n > 0) return true;
+  }
+  const legacyStamps = order.map_stamps ?? order.mapStamps;
+  if (Array.isArray(legacyStamps) && legacyStamps.length > 0) return true;
+  return false;
+}
+
 export function isLocationPendingOrder(order) {
+  if (hasSubmittedSiteMap(order)) return false;
   return Boolean(order?.is_location_pending ?? order?.isLocationPending);
 }
 

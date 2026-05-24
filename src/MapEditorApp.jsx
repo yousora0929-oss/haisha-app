@@ -291,13 +291,22 @@ export function MapEditorApp() {
         }
         setAnnotations(result.map_annotations || payload);
         setConfirmMode(null);
-        if (result.savedFully) {
+        if (result.locationPendingCleared) {
+          if (result.savedFully) {
+            showToast('変更を保存しました（地図待ちを解除しました）');
+            scheduleNavigateBack();
+          } else if (result.storageUploadFailed && result.storageWarning) {
+            showToast(`地図待ちを解除しました。${result.storageWarning}`);
+          } else {
+            showToast('地図待ちを解除しました');
+          }
+        } else if (result.savedFully) {
           showToast('変更を保存しました');
           scheduleNavigateBack();
         } else if (result.storageUploadFailed && result.storageWarning) {
           showToast(`注釈データは保存しました。${result.storageWarning}`);
         } else {
-          showToast('変更を保存しました（地図待ちを解除しました）');
+          showToast('変更を保存しました');
         }
       }
     } catch (err) {

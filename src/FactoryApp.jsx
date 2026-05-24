@@ -26,6 +26,8 @@ import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
 import { isValidSiteOrderUrlToken } from './utils/urlValidation.js';
+import { isLocationPendingOrder } from './utils/orderWorkflow.js';
+import { MAP_EDITOR_ORDER_SAVED_DOM_EVENT, MAP_EDITOR_ORDER_SAVED_EVENT_KEY } from './mapEditorConstants.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 
 const todayLocalISO = todayLocalISODate;
@@ -2421,7 +2423,7 @@ function orderPartyInfo(order) {
                         return (
                           <span key={order.id} className={'block truncate rounded-md px-1.5 py-0.5 text-[10px] font-black ' + getOrderKindClass(order)}>
                             {party.site || '現場未設定'}: {factoryOrderQuantity(order)}㎡
-                            {order.is_location_pending ? ' ⚠️' : ''}
+                            {isLocationPendingOrder(order) ? ' ⚠️' : ''}
                           </span>
                         );
                       })}
@@ -2770,6 +2772,30 @@ function orderPartyInfo(order) {
         },
         [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById],
       );
+
+      useEffect(() => {
+        const refreshAfterMapSave = () => {
+          void syncFromStorage({ playSound: false });
+        };
+        const onStorage = (e) => {
+          if (e.key === MAP_EDITOR_ORDER_SAVED_EVENT_KEY) refreshAfterMapSave();
+        };
+        const onMessage = (e) => {
+          if (e?.data?.type === 'haisha_map_editor_saved') refreshAfterMapSave();
+        };
+        const onDom = () => refreshAfterMapSave();
+        const onFocus = () => refreshAfterMapSave();
+        window.addEventListener('storage', onStorage);
+        window.addEventListener('message', onMessage);
+        window.addEventListener(MAP_EDITOR_ORDER_SAVED_DOM_EVENT, onDom);
+        window.addEventListener('focus', onFocus);
+        return () => {
+          window.removeEventListener('storage', onStorage);
+          window.removeEventListener('message', onMessage);
+          window.removeEventListener(MAP_EDITOR_ORDER_SAVED_DOM_EVENT, onDom);
+          window.removeEventListener('focus', onFocus);
+        };
+      }, [syncFromStorage]);
 
       const handleFactoryRefresh = useCallback(async () => {
         await syncFromStorage({ playSound: false });

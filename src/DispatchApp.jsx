@@ -25,7 +25,7 @@ import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { buildDispatchOrderForDate, validateCartLineForm } from './utils/dispatchBulkOrder.js';
 import { combineDeliveryAddress, normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
-import { resolveInitialOrderStatus, sumOrderVolumesM3 } from './utils/orderWorkflow.js';
+import { isLocationPendingOrder, resolveInitialOrderStatus, sumOrderVolumesM3 } from './utils/orderWorkflow.js';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
 import { parseSiteOrderTokenFromPath } from './utils/siteOrderUrl.js';
@@ -1814,7 +1814,7 @@ function unloadDurationLabel(value) {
           resetOrderForm();
           setCustomerOrderTab(count > 1 ? 'calendar' : 'active');
           setExpandedHistoryOrderId('');
-          const hasMapPending = orders.some((o) => o.is_location_pending);
+          const hasMapPending = orders.some((o) => isLocationPendingOrder(o));
           const message =
             bulkStatus === 'pending_association'
               ? `${count}件を登録しました（スポット数量が上限を超えるため、組合承認後に工場へ配車されます）`

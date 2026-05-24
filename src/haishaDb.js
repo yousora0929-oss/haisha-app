@@ -1,4 +1,4 @@
-import { MAP_STORAGE_BUCKET, MAP_STAMP_TYPES } from './mapEditorConstants.js';
+import { MAP_STORAGE_BUCKET, MAP_STAMP_TYPES, publishMapEditorOrderSaved } from './mapEditorConstants.js';
 import {
   annotationsToLegacyStamps,
   boundsFromCenter,
@@ -222,10 +222,8 @@ export function normalizeOrderRow(row) {
           : od.map_image_url != null
             ? String(od.map_image_url).trim()
             : '',
-    is_location_pending:
-      row.is_location_pending === true || od.is_location_pending === true || od.isLocationPending === true,
-    isLocationPending:
-      row.is_location_pending === true || od.is_location_pending === true || od.isLocationPending === true,
+    is_location_pending: resolveOrderLocationPending(row, od),
+    isLocationPending: resolveOrderLocationPending(row, od),
   };
 }
 
@@ -1363,6 +1361,31 @@ function normalizeMapStamps(raw) {
     });
 }
 
+/** 地図送付済みなら地図待ちフラグは常に false */
+function resolveOrderLocationPending(row, orderData) {
+  const od = orderData && typeof orderData === 'object' ? orderData : {};
+  const hasMap =
+    Boolean(String(row?.override_map_image_url || '').trim()) ||
+    Boolean(String(od.override_map_image_url ?? od.overrideMapImageUrl ?? od.map_image_url ?? '').trim()) ||
+    Boolean(od.map_submitted_at ?? od.mapSubmittedAt) ||
+    (od.map_annotations && typeof od.map_annotations === 'object') ||
+    (row?.map_annotations && typeof row.map_annotations === 'object') ||
+    (Array.isArray(od.map_stamps ?? od.mapStamps) && (od.map_stamps ?? od.mapStamps).length > 0);
+  if (hasMap) return false;
+  if (row?.is_location_pending === false) return false;
+  if (od.is_location_pending === false || od.isLocationPending === false) return false;
+  return row?.is_location_pending === true || od.is_location_pending === true || od.isLocationPending === true;
+}
+
+function applyLocationPendingClearedToOrder(order) {
+  const base = order && typeof order === 'object' ? { ...order } : {};
+  return {
+    ...base,
+    is_location_pending: false,
+    isLocationPending: false,
+  };
+}
+
 function pickMapEditorCenter(order, project) {
   const plat = project?.lat != null ? Number(project.lat) : NaN;
   const plng = project?.lng != null ? Number(project.lng) : NaN;
@@ -1626,15 +1649,15 @@ export async function saveOrderOverrideMap(orderId, imageDataUrl, mapAnnotations
   const savedAnnotations = withImageOverlay({ ...normalized }, publicUrl || normalized?.imageOverlay?.url || '');
   const legacyStamps = annotationsToLegacyStamps(savedAnnotations);
 
-  const nextOrderData = sanitizeOrderDataForDb({
-    ...currentOrder,
-    map_stamps: legacyStamps,
-    map_annotations: savedAnnotations,
-    map_submitted_at: submittedAt,
-    is_location_pending: false,
-    isLocationPending: false,
-    ...(upload.ok && publicUrl ? { map_image_url: publicUrl } : {}),
-  });
+  const nextOrderData = sanitizeOrderDataForDb(
+    applyLocationPendingClearedToOrder({
+      ...currentOrder,
+      map_stamps: legacyStamps,
+      map_annotations: savedAnnotations,
+      map_submitted_at: submittedAt,
+      ...(upload.ok && publicUrl ? { map_image_url: publicUrl, override_map_image_url: publicUrl } : {}),
+    }),
+  );
 
   const updateRow = {
     is_location_pending: false,
@@ -1666,6 +1689,8 @@ export async function saveOrderOverrideMap(orderId, imageDataUrl, mapAnnotations
     throw upErr;
   }
 
+  publishMapEditorOrderSaved(id);
+
   const storageWarning = upload.ok ? '' : formatMapStorageErrorMessage(upload.error);
 
   return {
@@ -1675,6 +1700,7 @@ export async function saveOrderOverrideMap(orderId, imageDataUrl, mapAnnotations
     storageWarning,
     dbSaved: true,
     savedFully: upload.ok,
+    locationPendingCleared: true,
     order: normalizeOrderRow(updated),
     map_annotations: savedAnnotations,
     map_stamps: legacyStamps,
