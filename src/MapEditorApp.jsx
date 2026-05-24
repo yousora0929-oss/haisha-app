@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MapEditorInteractive } from './components/MapEditorInteractive.jsx';
 import { MapEditorToolbar } from './components/MapEditorToolbar.jsx';
 import {
