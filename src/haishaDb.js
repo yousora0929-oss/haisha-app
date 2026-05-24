@@ -1,4 +1,9 @@
 import { MAP_STORAGE_BUCKET, MAP_STAMP_TYPES } from './mapEditorConstants.js';
+import {
+  annotationsToLegacyStamps,
+  boundsFromCenter,
+  normalizeMapAnnotations,
+} from './utils/mapAnnotations.js';
 import { normalizeExternalUrl } from './utils/urlValidation.js';
 import { supabase } from './supabaseClient.js';
 import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils/deliveryAreas.js';
@@ -13,7 +18,7 @@ import {
 } from './haishaConstants.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending';
+  'id, order_data, chat_messages, created_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -1268,7 +1273,8 @@ export async function updateSystemSettings({ start_time, end_time }) {
 // 地図スタンプエディタ（/map-editor/:order_id）ハイブリッド連携
 // -----------------------------------------------------------------------------
 
-const PROJECT_MAP_SELECT = 'id, name, default_map_image_url, map_base_image_url';
+const PROJECT_MAP_SELECT =
+  'id, name, default_map_image_url, map_base_image_url, lat, lng, map_annotations';
 
 function dataUrlToBlob(dataUrl) {
   const raw = String(dataUrl || '');
@@ -1329,12 +1335,62 @@ function normalizeMapStamps(raw) {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((s) => s && typeof s === 'object')
-    .map((s) => ({
-      type: String(s.type || ''),
-      x: Number(s.x),
-      y: Number(s.y),
-    }))
-    .filter((s) => MAP_STAMP_TYPES.includes(s.type) && Number.isFinite(s.x) && Number.isFinite(s.y));
+    .map((s) => {
+      const type = String(s.type || '');
+      const scale = Number(s.scale);
+      const lat = Number(s.lat);
+      const lng = Number(s.lng);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        return {
+          type,
+          lat,
+          lng,
+          scale: Number.isFinite(scale) && scale > 0 ? scale : 1,
+        };
+      }
+      return {
+        type,
+        x: Number(s.x),
+        y: Number(s.y),
+        scale: Number.isFinite(scale) && scale > 0 ? scale : 1,
+      };
+    })
+    .filter((s) => {
+      if (!MAP_STAMP_TYPES.includes(s.type)) return false;
+      if (Number.isFinite(s.lat) && Number.isFinite(s.lng)) return true;
+      return Number.isFinite(s.x) && Number.isFinite(s.y);
+    });
+}
+
+function pickMapEditorCenter(order, project) {
+  const plat = project?.lat != null ? Number(project.lat) : NaN;
+  const plng = project?.lng != null ? Number(project.lng) : NaN;
+  if (Number.isFinite(plat) && Number.isFinite(plng)) {
+    return { lat: plat, lng: plng, zoom: 17 };
+  }
+  const dlat = order?.delivery_lat != null ? Number(order.delivery_lat) : NaN;
+  const dlng = order?.delivery_lng != null ? Number(order.delivery_lng) : NaN;
+  if (Number.isFinite(dlat) && Number.isFinite(dlng)) {
+    return { lat: dlat, lng: dlng, zoom: 17 };
+  }
+  return null;
+}
+
+function withImageOverlay(annotations, imageUrl) {
+  const url = String(imageUrl || '').trim();
+  if (!url) return annotations;
+  const center = annotations?.center;
+  const bounds =
+    annotations?.imageOverlay?.bounds ||
+    boundsFromCenter(center?.lat, center?.lng);
+  if (!bounds) return annotations;
+  return {
+    ...annotations,
+    imageOverlay: {
+      url: annotations?.imageOverlay?.url || url,
+      bounds,
+    },
+  };
 }
 
 async function uploadMapPngToStorage(storagePath, imageDataUrl) {
@@ -1358,7 +1414,18 @@ export async function fetchOrderForMapEditor(orderId) {
   const id = String(orderId || '').trim();
   if (!id) throw new Error('orderId が必要です');
 
-  const { data: row, error } = await supabase.from('orders').select(ORDER_SELECT).eq('id', id).maybeSingle();
+  let row;
+  let error;
+  ({ data: row, error } = await supabase.from('orders').select(ORDER_SELECT).eq('id', id).maybeSingle());
+  if (error && isMissingRelationOrColumnError(error)) {
+    ({ data: row, error } = await supabase
+      .from('orders')
+      .select(
+        'id, order_data, chat_messages, created_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending',
+      )
+      .eq('id', id)
+      .maybeSingle());
+  }
   if (error) {
     console.error('fetchOrderForMapEditor failed', error);
     throw error;
@@ -1371,17 +1438,31 @@ export async function fetchOrderForMapEditor(orderId) {
   let project = null;
   const projectId = String(order.project_id || '').trim();
   if (projectId) {
-    const { data: p, error: pErr } = await supabase
-      .from('projects')
-      .select(PROJECT_MAP_SELECT)
-      .eq('id', projectId)
-      .maybeSingle();
+    let p;
+    let pErr;
+    ({ data: p, error: pErr } = await supabase.from('projects').select(PROJECT_MAP_SELECT).eq('id', projectId).maybeSingle());
+    if (pErr && isMissingRelationOrColumnError(pErr)) {
+      ({ data: p, error: pErr } = await supabase
+        .from('projects')
+        .select('id, name, default_map_image_url, map_base_image_url, lat, lng')
+        .eq('id', projectId)
+        .maybeSingle());
+    }
     if (pErr) console.warn('[fetchOrderForMapEditor] project load failed', pErr);
     project = p;
   }
 
   const { url: displayImageUrl, source: mapSource } = resolveMapDisplayUrl(order, project, row);
-  const existingStamps = normalizeMapStamps(order.map_stamps ?? order.mapStamps);
+  const legacyStamps = normalizeMapStamps(order.map_stamps ?? order.mapStamps);
+  const projectCenter = pickMapEditorCenter(order, project);
+  const rawAnnotations =
+    row.map_annotations ?? order.map_annotations ?? order.mapAnnotations ?? order.order_data?.map_annotations;
+  let mapAnnotations = normalizeMapAnnotations(rawAnnotations, {
+    legacyStamps,
+    projectCenter,
+    imageUrl: displayImageUrl,
+  });
+  mapAnnotations = withImageOverlay(mapAnnotations, displayImageUrl);
   const overrideMapImageUrl = pickOrderOverrideMapUrl(order, row);
   const defaultMapImageUrl = pickProjectDefaultMapUrl(project);
 
@@ -1393,7 +1474,8 @@ export async function fetchOrderForMapEditor(orderId) {
     mapSource,
     overrideMapImageUrl,
     defaultMapImageUrl,
-    existingStamps,
+    mapAnnotations,
+    existingStamps: legacyStamps,
     title:
       String(order.siteName || order.projectName || project?.name || '').trim() || `注文 ${id}`,
   };
@@ -1403,22 +1485,35 @@ export async function fetchOrderForMapEditor(orderId) {
  * プロジェクト基本マップとして保存
  * Storage: maps/projects/{project_id}_{timestamp}.png
  */
-export async function saveProjectDefaultMap(projectId, imageDataUrl, stamps) {
+export async function saveProjectDefaultMap(projectId, imageDataUrl, mapAnnotations) {
   const pid = String(projectId || '').trim();
   if (!pid) throw new Error('projectId が必要です（物件に紐づく注文のみ基本マップを保存できます）');
   if (!imageDataUrl) throw new Error('画像データがありません');
 
-  const normalizedStamps = normalizeMapStamps(stamps);
+  const normalized = withImageOverlay(
+    normalizeMapAnnotations(mapAnnotations, { imageUrl: '' }),
+    '',
+  );
   const timestamp = Date.now();
   const storagePath = `projects/${pid}_${timestamp}.png`;
   const publicUrl = await uploadMapPngToStorage(storagePath, imageDataUrl);
+  const savedAnnotations = withImageOverlay(
+    { ...normalized, center: normalized.center },
+    publicUrl,
+  );
 
-  const { data, error } = await supabase
-    .from('projects')
-    .update({ default_map_image_url: publicUrl })
-    .eq('id', pid)
-    .select(PROJECT_MAP_SELECT)
-    .single();
+  const row = { default_map_image_url: publicUrl, map_annotations: savedAnnotations };
+  let data;
+  let error;
+  ({ data, error } = await supabase.from('projects').update(row).eq('id', pid).select(PROJECT_MAP_SELECT).single());
+  if (error && isMissingRelationOrColumnError(error)) {
+    ({ data, error } = await supabase
+      .from('projects')
+      .update({ default_map_image_url: publicUrl })
+      .eq('id', pid)
+      .select('id, name, default_map_image_url, map_base_image_url, lat, lng')
+      .single());
+  }
   if (error) {
     console.error('saveProjectDefaultMap failed', error);
     throw error;
@@ -1428,7 +1523,8 @@ export async function saveProjectDefaultMap(projectId, imageDataUrl, stamps) {
     publicUrl,
     storagePath,
     project: data,
-    map_stamps: normalizedStamps,
+    map_annotations: savedAnnotations,
+    map_stamps: annotationsToLegacyStamps(savedAnnotations),
   };
 }
 
@@ -1436,39 +1532,68 @@ export async function saveProjectDefaultMap(projectId, imageDataUrl, stamps) {
  * 打設日・注文専用マップとして保存（上書き）
  * Storage: maps/orders/{order_id}_{timestamp}.png
  */
-export async function saveOrderOverrideMap(orderId, imageDataUrl, stamps) {
+export async function saveOrderOverrideMap(orderId, imageDataUrl, mapAnnotations) {
   const id = String(orderId || '').trim();
   if (!id) throw new Error('orderId が必要です');
   if (!imageDataUrl) throw new Error('画像データがありません');
 
-  const normalizedStamps = normalizeMapStamps(stamps);
+  const normalized = normalizeMapAnnotations(mapAnnotations);
   const timestamp = Date.now();
   const storagePath = `orders/${id}_${timestamp}.png`;
   const publicUrl = await uploadMapPngToStorage(storagePath, imageDataUrl);
   const submittedAt = new Date().toISOString();
+  const savedAnnotations = withImageOverlay({ ...normalized }, publicUrl);
+  const legacyStamps = annotationsToLegacyStamps(savedAnnotations);
 
   const { data: row, error: selErr } = await supabase.from('orders').select(ORDER_SELECT).eq('id', id).maybeSingle();
-  if (selErr) throw selErr;
-  if (!row) throw new Error('注文が見つかりません');
+  if (selErr && !isMissingRelationOrColumnError(selErr)) throw selErr;
+  const { data: rowFallback, error: selErr2 } =
+    selErr && isMissingRelationOrColumnError(selErr)
+      ? await supabase
+          .from('orders')
+          .select(
+            'id, order_data, chat_messages, created_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending',
+          )
+          .eq('id', id)
+          .maybeSingle()
+      : { data: row, error: selErr };
+  const orderRow = rowFallback ?? row;
+  if (selErr2) throw selErr2;
+  if (!orderRow) throw new Error('注文が見つかりません');
 
-  const currentOrder = normalizeOrderRow(row) || { id };
+  const currentOrder = normalizeOrderRow(orderRow) || { id };
   const nextOrderData = sanitizeOrderDataForDb({
     ...currentOrder,
-    map_stamps: normalizedStamps,
+    map_stamps: legacyStamps,
+    map_annotations: savedAnnotations,
     map_submitted_at: submittedAt,
     map_image_url: publicUrl,
   });
 
-  const { data: updated, error: upErr } = await supabase
-    .from('orders')
-    .update({
-      override_map_image_url: publicUrl,
-      is_location_pending: false,
-      order_data: nextOrderData,
-    })
-    .eq('id', id)
-    .select(ORDER_SELECT)
-    .single();
+  const updateRow = {
+    override_map_image_url: publicUrl,
+    is_location_pending: false,
+    order_data: nextOrderData,
+    map_annotations: savedAnnotations,
+  };
+
+  let updated;
+  let upErr;
+  ({ data: updated, error: upErr } = await supabase.from('orders').update(updateRow).eq('id', id).select(ORDER_SELECT).single());
+  if (upErr && isMissingRelationOrColumnError(upErr)) {
+    ({ data: updated, error: upErr } = await supabase
+      .from('orders')
+      .update({
+        override_map_image_url: publicUrl,
+        is_location_pending: false,
+        order_data: nextOrderData,
+      })
+      .eq('id', id)
+      .select(
+        'id, order_data, chat_messages, created_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending',
+      )
+      .single());
+  }
   if (upErr) {
     console.error('saveOrderOverrideMap failed', upErr);
     throw upErr;
@@ -1478,11 +1603,12 @@ export async function saveOrderOverrideMap(orderId, imageDataUrl, stamps) {
     publicUrl,
     storagePath,
     order: normalizeOrderRow(updated),
-    map_stamps: normalizedStamps,
+    map_annotations: savedAnnotations,
+    map_stamps: legacyStamps,
   };
 }
 
 /** @deprecated saveOrderOverrideMap を使用 */
-export async function uploadMapEditorResult(orderId, imageDataUrl, stamps) {
-  return saveOrderOverrideMap(orderId, imageDataUrl, stamps);
+export async function uploadMapEditorResult(orderId, imageDataUrl, mapAnnotations) {
+  return saveOrderOverrideMap(orderId, imageDataUrl, mapAnnotations);
 }

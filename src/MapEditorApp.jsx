@@ -1,12 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { MapEditorCanvas, MapStampPalette } from './components/MapEditorCanvas.jsx';
+import { MapEditorInteractive } from './components/MapEditorInteractive.jsx';
+import { MapEditorToolbar } from './components/MapEditorToolbar.jsx';
 import {
   fetchOrderForMapEditor,
   saveOrderOverrideMap,
   saveProjectDefaultMap,
 } from './haishaDb.js';
+import { MAP_EDITOR_TOOLS } from './mapEditorConstants.js';
 import { parseMapEditorOrderId } from './mapEditorConstants.js';
 import { isValidExternalUrl, normalizeExternalUrl } from './utils/urlValidation.js';
+import { geocodeAddress } from './utils/nominatimGeocode.js';
+import { boundsFromCenter, emptyMapAnnotations } from './utils/mapAnnotations.js';
 
 const MAP_SOURCE_LABEL = {
   override: 'この打設日の専用マップ',
@@ -15,9 +19,21 @@ const MAP_SOURCE_LABEL = {
   upload: 'アップロードしたベース画像',
 };
 
+function withImageOverlayLocal(annotations, imageUrl) {
+  const url = String(imageUrl || '').trim();
+  if (!url) return annotations;
+  const bounds =
+    annotations?.imageOverlay?.bounds ||
+    boundsFromCenter(annotations?.center?.lat, annotations?.center?.lng);
+  return {
+    ...annotations,
+    imageOverlay: { url, bounds },
+  };
+}
+
 export function MapEditorApp() {
   const orderId = parseMapEditorOrderId();
-  const canvasRef = useRef(null);
+  const editorRef = useRef(null);
   const baseUploadRef = useRef(null);
   const localBlobUrlRef = useRef(null);
 
@@ -31,8 +47,14 @@ export function MapEditorApp() {
   const [overrideMapUrl, setOverrideMapUrl] = useState('');
   const [defaultMapUrl, setDefaultMapUrl] = useState('');
 
-  const [stamps, setStamps] = useState([]);
-  const [selectedType, setSelectedType] = useState('PUMP');
+  const [annotations, setAnnotations] = useState(() => emptyMapAnnotations());
+  const [activeTool, setActiveTool] = useState(MAP_EDITOR_TOOLS.PAN);
+  const [selectedStampType, setSelectedStampType] = useState('PUMP');
+  const [unloadRadius, setUnloadRadius] = useState(12);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [flyTarget, setFlyTarget] = useState(null);
+
   const [saving, setSaving] = useState(false);
   const [confirmMode, setConfirmMode] = useState(null);
   const [toast, setToast] = useState('');
@@ -84,7 +106,7 @@ export function MapEditorApp() {
         setMapSource(result.mapSource || 'none');
         setOverrideMapUrl(result.overrideMapImageUrl || '');
         setDefaultMapUrl(result.defaultMapImageUrl || '');
-        setStamps(result.existingStamps?.length ? result.existingStamps : []);
+        setAnnotations(result.mapAnnotations || emptyMapAnnotations());
       } catch (err) {
         if (!cancelled) {
           setLoadError(err?.message || 'データの読み込みに失敗しました');
@@ -111,45 +133,91 @@ export function MapEditorApp() {
     localBlobUrlRef.current = url;
     setBaseImageUrl(url);
     setMapSource('upload');
+    setAnnotations((prev) => withImageOverlayLocal(prev, url));
     e.target.value = '';
   };
 
-  const handleUndo = () => {
-    if (stamps.length === 0) {
-      showToast('戻すスタンプがありません');
+  const handleSearch = async (e) => {
+    e?.preventDefault?.();
+    const q = searchQuery.trim();
+    if (!q) {
+      showToast('町名・地名を入力してください');
       return;
     }
-    setStamps((prev) => prev.slice(0, -1));
+    setSearchLoading(true);
+    try {
+      const { lat, lng, displayName } = await geocodeAddress(q);
+      setFlyTarget({ lat, lng, zoom: 17, key: Date.now() });
+      setAnnotations((prev) => ({
+        ...prev,
+        center: { lat, lng, zoom: 17 },
+      }));
+      showToast(`「${displayName.slice(0, 40)}」付近へ移動しました`);
+    } catch (err) {
+      showToast(err?.message || '検索に失敗しました');
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const handleUndo = () => {
+    const stamps = annotations.stamps || [];
+    const unloads = annotations.unloadPoints || [];
+    const comments = annotations.comments || [];
+    if (!stamps.length && !unloads.length && !comments.length) {
+      showToast('戻す項目がありません');
+      return;
+    }
+    if (comments.length) {
+      setAnnotations((prev) => ({ ...prev, comments: comments.slice(0, -1) }));
+    } else if (unloads.length) {
+      setAnnotations((prev) => ({ ...prev, unloadPoints: unloads.slice(0, -1) }));
+    } else {
+      setAnnotations((prev) => ({ ...prev, stamps: stamps.slice(0, -1) }));
+    }
   };
 
   const handleClear = () => {
-    if (stamps.length === 0) return;
-    if (!window.confirm('配置したスタンプをすべて消去しますか？')) return;
-    setStamps([]);
+    const total =
+      (annotations.stamps?.length || 0) +
+      (annotations.unloadPoints?.length || 0) +
+      (annotations.comments?.length || 0);
+    if (total === 0) return;
+    if (!window.confirm('配置したマーカー・コメントをすべて消去しますか？')) return;
+    setAnnotations((prev) => ({
+      ...prev,
+      stamps: [],
+      unloadPoints: [],
+      comments: [],
+    }));
   };
 
   const runSave = async (mode) => {
     if (saving || !resolvedOrderId) return;
     setSaving(true);
     try {
-      const dataUrl = canvasRef.current?.toDataURL?.('image/png');
+      const dataUrl = await editorRef.current?.toDataURL?.();
       if (!dataUrl) throw new Error('画像の生成に失敗しました');
+
+      const payload = withImageOverlayLocal(annotations, baseImageUrl);
 
       if (mode === 'project') {
         if (!projectId) {
           throw new Error('スポット注文など、物件に紐づいていないため基本マップは保存できません');
         }
-        const result = await saveProjectDefaultMap(projectId, dataUrl, stamps);
+        const result = await saveProjectDefaultMap(projectId, dataUrl, payload);
         setDefaultMapUrl(result.publicUrl);
         setLastSavedUrl(result.publicUrl);
+        setAnnotations(result.map_annotations || payload);
         showToast('プロジェクトの基本マップを保存しました');
       } else {
-        const result = await saveOrderOverrideMap(resolvedOrderId, dataUrl, stamps);
+        const result = await saveOrderOverrideMap(resolvedOrderId, dataUrl, payload);
         setOverrideMapUrl(result.publicUrl);
         setBaseImageUrl(result.publicUrl);
         setMapSource('override');
         setLastSavedUrl(result.publicUrl);
-        showToast('この打設日用マップを保存しました');
+        setAnnotations(result.map_annotations || payload);
+        showToast('変更を保存しました（打設日用マップ）');
       }
       setConfirmMode(null);
     } catch (err) {
@@ -183,8 +251,11 @@ export function MapEditorApp() {
     );
   }
 
-  const useBlankCanvas = !baseImageUrl;
   const sourceLabel = MAP_SOURCE_LABEL[mapSource] || mapSource;
+  const annCount =
+    (annotations.stamps?.length || 0) +
+    (annotations.unloadPoints?.length || 0) +
+    (annotations.comments?.length || 0);
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-slate-100 text-slate-900">
@@ -192,7 +263,9 @@ export function MapEditorApp() {
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-sm font-black sm:text-base">{title}</h1>
-            <p className="mt-0.5 text-[10px] font-bold text-slate-500 sm:text-xs">表示中: {sourceLabel}</p>
+            <p className="mt-0.5 text-[10px] font-bold text-slate-500 sm:text-xs">
+              {sourceLabel} · 注釈 {annCount} 件
+            </p>
           </div>
           <div className="flex shrink-0 flex-wrap justify-end gap-1">
             <button
@@ -213,6 +286,25 @@ export function MapEditorApp() {
             </button>
           </div>
         </div>
+
+        <form onSubmit={handleSearch} className="mt-2 flex gap-1.5">
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="町名・地名で検索（例: 福岡市博多区博多駅前）"
+            className="min-h-[40px] min-w-0 flex-1 rounded-lg border-2 border-slate-200 bg-white px-3 text-xs font-medium outline-none focus:border-indigo-400 sm:text-sm"
+            disabled={saving || searchLoading}
+          />
+          <button
+            type="submit"
+            disabled={saving || searchLoading}
+            className="shrink-0 rounded-lg bg-sky-600 px-3 py-2 text-xs font-black text-white disabled:opacity-50"
+          >
+            {searchLoading ? '検索中' : '🔍 検索'}
+          </button>
+        </form>
+
         <div className="mt-2 flex flex-wrap gap-1.5">
           <button
             type="button"
@@ -248,34 +340,38 @@ export function MapEditorApp() {
           onClick={() => baseUploadRef.current?.click()}
           className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-700 active:scale-95 sm:text-xs"
         >
-          📷 ベース画像をアップロード
+          📷 図面画像を重ねる
         </button>
-        {useBlankCanvas ? (
-          <span className="text-[10px] font-bold text-amber-700 sm:text-xs">
-            基本・専用マップが未設定です。白紙で編集するか、画像をアップロードしてください。
-          </span>
-        ) : null}
+        <p className="text-[10px] font-bold text-slate-500">
+          左のツールで荷下ろし・スタンプ・コメントを配置 → タップで追加
+        </p>
       </div>
 
-      {(overrideMapUrl || defaultMapUrl) && (
-        <p className="shrink-0 bg-slate-100 px-3 py-1 text-center text-[10px] font-bold text-slate-500">
-          {overrideMapUrl ? '専用マップあり' : '専用マップなし'}
-          {' · '}
-          {defaultMapUrl ? '基本マップあり' : '基本マップなし'}
-        </p>
-      )}
-
-      <MapEditorCanvas
-        ref={canvasRef}
-        baseImageUrl={baseImageUrl}
-        blankCanvas
-        stamps={stamps}
-        onStampsChange={setStamps}
-        selectedType={selectedType}
-        disabled={saving}
-      />
-
-      <MapStampPalette selectedType={selectedType} onSelectType={setSelectedType} disabled={saving} />
+      <div className="flex min-h-0 flex-1">
+        <MapEditorToolbar
+          activeTool={activeTool}
+          onToolChange={setActiveTool}
+          selectedStampType={selectedStampType}
+          onStampTypeChange={(t) => {
+            setSelectedStampType(t);
+            setActiveTool(MAP_EDITOR_TOOLS.STAMP);
+          }}
+          selectedUnloadRadius={unloadRadius}
+          onUnloadRadiusChange={setUnloadRadius}
+          disabled={saving}
+        />
+        <MapEditorInteractive
+          ref={editorRef}
+          annotations={annotations}
+          onAnnotationsChange={setAnnotations}
+          activeTool={activeTool}
+          selectedStampType={selectedStampType}
+          defaultUnloadRadius={unloadRadius}
+          flyTarget={flyTarget}
+          disabled={saving}
+          className="flex-1"
+        />
+      </div>
 
       {confirmMode ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-6">
@@ -284,9 +380,7 @@ export function MapEditorApp() {
               {confirmMode === 'project' ? '基本マップとして保存' : '打設日用として保存'}
             </h2>
             <p className="mt-2 text-sm font-bold leading-relaxed text-slate-600">
-              {confirmMode === 'project'
-                ? 'このキャンバス内容を物件の基本マップ（default_map_image_url）として保存します。今後の注文のデフォルト背景になります。'
-                : 'このキャンバス内容をこの注文専用の上書きマップ（override_map_image_url）として保存します。基本マップより優先して表示されます。'}
+              地図上の注釈（赤〇・スタンプ・コメント）と合成画像を保存します。
             </p>
             <div className="mt-5 flex gap-3">
               <button
@@ -311,8 +405,8 @@ export function MapEditorApp() {
       ) : null}
 
       {lastSavedUrl ? (
-        <div className="pointer-events-none fixed top-20 left-1/2 z-40 max-w-[90vw] -translate-x-1/2 rounded-lg bg-emerald-800 px-3 py-2 text-center text-[11px] font-bold text-white shadow-lg">
-          保存完了
+        <div className="pointer-events-none fixed bottom-4 right-4 z-40 max-w-[min(90vw,280px)] rounded-lg bg-emerald-800 px-3 py-2 text-[11px] font-bold text-white shadow-lg">
+          変更を保存しました
           {isValidExternalUrl(lastSavedUrl) ? (
             <a
               className="pointer-events-auto ml-1 underline"
@@ -322,14 +416,12 @@ export function MapEditorApp() {
             >
               画像を開く
             </a>
-          ) : (
-            <span className="pointer-events-auto ml-1 text-amber-200">（画像URLが不正のため開けません）</span>
-          )}
+          ) : null}
         </div>
       ) : null}
 
       {toast ? (
-        <div className="pointer-events-none fixed bottom-24 left-1/2 z-40 -translate-x-1/2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-bold text-white shadow-lg">
+        <div className="pointer-events-none fixed bottom-20 left-1/2 z-40 -translate-x-1/2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-bold text-white shadow-lg">
           {toast}
         </div>
       ) : null}

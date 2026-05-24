@@ -1,6 +1,8 @@
 /** 地図エディタで使うスタンプ種別 */
 export const MAP_STAMP_TYPES = [
   'PUMP',
+  'MIXER',
+  'EXCAVATOR',
   'ARROW_UP',
   'ARROW_DOWN',
   'ARROW_LEFT',
@@ -11,7 +13,9 @@ export const MAP_STAMP_TYPES = [
 ];
 
 export const MAP_STAMP_DEFS = [
-  { type: 'PUMP', emoji: '🏗️', label: '打設・ポンプ車' },
+  { type: 'PUMP', emoji: '🏗️', label: 'ポンプ車' },
+  { type: 'MIXER', emoji: '🚛', label: 'ミキサー車' },
+  { type: 'EXCAVATOR', emoji: '🚜', label: '重機' },
   { type: 'ARROW_UP', emoji: '⬆️', label: '進入・上' },
   { type: 'ARROW_DOWN', emoji: '⬇️', label: '進入・下' },
   { type: 'ARROW_LEFT', emoji: '⬅️', label: '進入・左' },
@@ -20,6 +24,14 @@ export const MAP_STAMP_DEFS = [
   { type: 'WASH', emoji: '🚰', label: '洗い場' },
   { type: 'FORBIDDEN', emoji: '⛔', label: '進入禁止' },
 ];
+
+/** 地図エディタの操作モード */
+export const MAP_EDITOR_TOOLS = {
+  PAN: 'pan',
+  STAMP: 'stamp',
+  UNLOAD: 'unload',
+  COMMENT: 'comment',
+};
 
 export const MAP_STAMP_EMOJI = Object.fromEntries(MAP_STAMP_DEFS.map((d) => [d.type, d.emoji]));
 
