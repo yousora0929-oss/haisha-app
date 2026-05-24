@@ -5,15 +5,17 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
-/** /map-editor/:order_id → MapEditor.html（開発サーバー用） */
-function mapEditorDevFallback() {
+/** /map-editor/:id および /order/:token を各 HTML にフォールバック（開発サーバー用） */
+function spaHtmlFallback() {
   return {
-    name: 'map-editor-dev-fallback',
+    name: 'spa-html-fallback',
     configureServer(server) {
       server.middlewares.use((req, _res, next) => {
         const url = req.url?.split('?')[0] || '';
         if (/^\/map-editor\/[^/]+\/?$/.test(url)) {
           req.url = '/MapEditor.html';
+        } else if (/^\/order\/[^/]+\/?$/.test(url)) {
+          req.url = '/DispatchOrderPrototype.html';
         }
         next();
       });
@@ -22,7 +24,7 @@ function mapEditorDevFallback() {
 }
 
 export default defineConfig({
-  plugins: [react(), mapEditorDevFallback()],
+  plugins: [react(), spaHtmlFallback()],
   build: {
     rollupOptions: {
       input: {

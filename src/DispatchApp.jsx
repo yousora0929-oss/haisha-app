@@ -26,8 +26,12 @@ import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.
 import { buildDispatchOrderForDate, validateCartLineForm } from './utils/dispatchBulkOrder.js';
 import { combineDeliveryAddress, normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
 import { resolveInitialOrderStatus, sumOrderVolumesM3 } from './utils/orderWorkflow.js';
+import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
+import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
+import { parseSiteOrderTokenFromPath } from './utils/siteOrderUrl.js';
 
 const DISPATCH_CUSTOMER_SESSION_KEY = 'haisha_dispatch_customer_id_v1';
+const SITE_ORDER_PENDING_SESSION_KEY = 'haisha_site_order_pending_v1';
 const DISPATCH_AUTH_SESSION_KEY = 'haisha_dispatch_auth_customer_id_v1';
 const UNLOAD_DURATION_OPTIONS = [
   { value: '15', label: '15分' },
@@ -987,6 +991,7 @@ function unloadDurationLabel(value) {
       const [addressSearchLoading, setAddressSearchLoading] = useState(false);
       const [addressSearchError, setAddressSearchError] = useState('');
       const [preferredFactoryId, setPreferredFactoryId] = useState('');
+      const [siteOrderLinkNotice, setSiteOrderLinkNotice] = useState('');
       const orderFormRef = useRef(null);
 
       const selectedProject = useMemo(
@@ -1164,6 +1169,97 @@ function unloadDurationLabel(value) {
         void setupNotificationClickRedirect();
         clearAppBadge();
       }, []);
+
+      useEffect(() => {
+        const token = parseSiteOrderTokenFromPath();
+        if (!token) return undefined;
+        let cancelled = false;
+        (async () => {
+          try {
+            const ctx = await db.fetchSiteOrderContextByUrlToken(token);
+            if (cancelled) return;
+            if (!ctx) {
+              setSiteOrderLinkNotice('専用発注URLが無効です。リンクを確認してください。');
+              return;
+            }
+            const pending = {
+              customerId: ctx.customer?.id ? String(ctx.customer.id) : '',
+              projectId: ctx.project?.id ? String(ctx.project.id) : '',
+              label: ctx.project?.name || ctx.customer?.company_name || ctx.customer?.name || '',
+            };
+            try {
+              sessionStorage.setItem(SITE_ORDER_PENDING_SESSION_KEY, JSON.stringify(pending));
+            } catch {
+              /* ignore */
+            }
+            if (pending.customerId) {
+              setCurrentCustomerId(pending.customerId);
+              try {
+                sessionStorage.setItem(DISPATCH_CUSTOMER_SESSION_KEY, pending.customerId);
+              } catch {
+                /* ignore */
+              }
+            }
+            if (pending.projectId) {
+              setOrderKind('project');
+              setSelectedProjectId(pending.projectId);
+            }
+            setSiteOrderLinkNotice(
+              pending.label
+                ? `「${pending.label}」の専用発注リンクです。ログインして発注を続けてください。`
+                : '専用発注リンクから開きました。ログインして発注を続けてください。',
+            );
+            const basePath = window.location.pathname.includes('DispatchOrderPrototype')
+              ? '/DispatchOrderPrototype.html'
+              : window.location.pathname.replace(/\/order\/[^/]+\/?$/, '') || '/';
+            window.history.replaceState({}, '', `${basePath}${window.location.hash || ''}`);
+          } catch (e) {
+            console.error('専用発注URLの解決に失敗しました', e);
+            if (!cancelled) setSiteOrderLinkNotice('専用発注URLの読み込みに失敗しました。');
+          }
+        })();
+        return () => {
+          cancelled = true;
+        };
+      }, []);
+
+      useEffect(() => {
+        if (!isLoggedIn) return;
+        let pending = null;
+        try {
+          const raw = sessionStorage.getItem(SITE_ORDER_PENDING_SESSION_KEY);
+          if (raw) pending = JSON.parse(raw);
+        } catch {
+          pending = null;
+        }
+        if (!pending || typeof pending !== 'object') return;
+        const cid = String(pending.customerId || '').trim();
+        const pid = String(pending.projectId || '').trim();
+        if (cid && (customers || []).some((c) => c && String(c.id) === cid)) {
+          setCurrentCustomerId(cid);
+        }
+        if (pid && (projects || []).some((p) => p && String(p.id) === pid)) {
+          setOrderKind('project');
+          setSelectedProjectId(pid);
+          const p = (projects || []).find((x) => x && String(x.id) === pid);
+          if (p) {
+            if (p.trading_company_name || p.trading_company) setTraderName(String(p.trading_company_name || p.trading_company));
+            if (p.contractor) setContractorName(String(p.contractor));
+            if (p.name) setSiteName(String(p.name));
+            if (p.main_factory_id) setPreferredFactoryId(String(p.main_factory_id));
+            setDeliveryArea(String(p.delivery_area || '').trim());
+            setSiteAddressDetail(String(p.site_address || '').trim());
+          }
+        }
+        try {
+          sessionStorage.removeItem(SITE_ORDER_PENDING_SESSION_KEY);
+        } catch {
+          /* ignore */
+        }
+        if (pending.label) {
+          setSiteOrderLinkNotice(`「${pending.label}」を選択しました。`);
+        }
+      }, [isLoggedIn, customers, projects]);
 
       useEffect(() => {
         if (!isLoggedIn || !currentCustomerPhone) return;
@@ -1755,6 +1851,12 @@ function unloadDurationLabel(value) {
                 管理画面で登録された電話番号とパスワードを入力してください。
               </p>
 
+              {siteOrderLinkNotice ? (
+                <p className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-bold text-indigo-900" role="status">
+                  {siteOrderLinkNotice}
+                </p>
+              ) : null}
+
               <label className="mt-6 block text-sm font-black text-slate-700" htmlFor="dispatch-login-phone">
                 電話番号
               </label>
@@ -2037,6 +2139,23 @@ function unloadDurationLabel(value) {
                     <p className="text-xs font-bold text-amber-800">ログイン中の業者情報を確認できません。再ログインしてください。</p>
                   ) : filteredProjects.length === 0 ? (
                     <p className="text-xs font-bold text-amber-800">この業者に紐づく物件がありません。管理画面で物件に業者（会社）を設定するか、スポット注文を選んでください。</p>
+                  ) : null}
+                  {selectedProject ? (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <p className="text-xs font-black text-slate-600">物件リンク</p>
+                      <div className="mt-2 grid gap-2">
+                        <ProjectExternalUrlActions
+                          folderUrl={selectedProject.folder_url}
+                          sheetUrl={selectedProject.sheet_url}
+                          variant="inline"
+                        />
+                        <SiteOrderUrlActions
+                          urlToken={selectedProject.url_token}
+                          siteName={selectedProject.name}
+                          compact
+                        />
+                      </div>
+                    </div>
                   ) : null}
                 </div>
               ) : null}

@@ -6,6 +6,7 @@ import {
   saveProjectDefaultMap,
 } from './haishaDb.js';
 import { parseMapEditorOrderId } from './mapEditorConstants.js';
+import { isValidExternalUrl, normalizeExternalUrl } from './utils/urlValidation.js';
 
 const MAP_SOURCE_LABEL = {
   override: 'この打設日の専用マップ',
@@ -312,9 +313,18 @@ export function MapEditorApp() {
       {lastSavedUrl ? (
         <div className="pointer-events-none fixed top-20 left-1/2 z-40 max-w-[90vw] -translate-x-1/2 rounded-lg bg-emerald-800 px-3 py-2 text-center text-[11px] font-bold text-white shadow-lg">
           保存完了
-          <a className="pointer-events-auto ml-1 underline" href={lastSavedUrl} target="_blank" rel="noreferrer">
-            画像を開く
-          </a>
+          {isValidExternalUrl(lastSavedUrl) ? (
+            <a
+              className="pointer-events-auto ml-1 underline"
+              href={normalizeExternalUrl(lastSavedUrl)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              画像を開く
+            </a>
+          ) : (
+            <span className="pointer-events-auto ml-1 text-amber-200">（画像URLが不正のため開けません）</span>
+          )}
         </div>
       ) : null}
 

@@ -1,5 +1,4 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
 import * as db from './haishaDb.js';
 import { supabase } from './supabaseClient.js';
 import { MapPicker } from './MapPicker.jsx';
@@ -24,6 +23,9 @@ import {
 import { registerOneSignalUser, sendPushNotification } from './utils/notification.js';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
+import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
+import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
+import { isValidSiteOrderUrlToken } from './utils/urlValidation.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 
 const todayLocalISO = todayLocalISODate;
@@ -42,52 +44,17 @@ const SPLIT_MIN_LEFT_PX = 260;
 const SPLIT_MIN_RIGHT_PX = 300;
 const SPLIT_GRIP_PX = 12;
 
-function buildSiteOrderUrl(urlToken) {
-  const token = String(urlToken || '').trim();
-  if (!token) return '';
-  const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
-  return `${origin}/order/${token}`;
-}
-
 function resolveSiteUrlToken(order, projectById, customerById) {
   const pid = String(order?.project_id ?? order?.projectId ?? '').trim();
   const cid = String(order?.customer_id ?? order?.customerId ?? '').trim();
   const project = pid ? projectById?.[pid] : null;
   const customer = cid ? customerById?.[cid] : null;
   const fromProject = String(project?.url_token ?? '').trim();
-  if (fromProject) return fromProject;
+  if (isValidSiteOrderUrlToken(fromProject)) return fromProject;
   const fromCustomer = String(customer?.url_token ?? '').trim();
-  if (fromCustomer) return fromCustomer;
-  return String(order?.url_token ?? order?.urlToken ?? '').trim();
-}
-
-const SITE_ORDER_URL_BTN_CLASS =
-  'inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:text-sm';
-
-class SiteOrderQrCodeBoundary extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { failed: false };
-  }
-
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-
-  componentDidCatch(err) {
-    console.error('QRコードの描画に失敗しました', err);
-  }
-
-  render() {
-    if (this.state.failed) {
-      return (
-        <p className="max-w-[256px] text-center text-sm font-bold text-amber-800">
-          QRの描画に失敗しました。下のURLをご利用ください。
-        </p>
-      );
-    }
-    return this.props.children;
-  }
+  if (isValidSiteOrderUrlToken(fromCustomer)) return fromCustomer;
+  const fromOrder = String(order?.url_token ?? order?.urlToken ?? '').trim();
+  return isValidSiteOrderUrlToken(fromOrder) ? fromOrder : '';
 }
 
 function csvCell(value) {
@@ -637,139 +604,6 @@ function orderPartyInfo(order) {
       );
     }
 
-    function SiteOrderUrlQrModal({ open, siteName, url, onClose }) {
-      useEffect(() => {
-        if (!open) return undefined;
-        const style = document.createElement('style');
-        style.id = 'site-order-qr-print-style';
-        style.textContent = `
-          @media print {
-            body * { visibility: hidden !important; }
-            #site-order-qr-print, #site-order-qr-print * { visibility: visible !important; }
-            #site-order-qr-print {
-              position: fixed !important;
-              inset: 0 !important;
-              display: flex !important;
-              align-items: center !important;
-              justify-content: center !important;
-              background: white !important;
-              padding: 24px !important;
-            }
-          }
-        `;
-        document.head.appendChild(style);
-        return () => {
-          style.remove();
-        };
-      }, [open]);
-
-      if (!open) return null;
-
-      const displayName = String(siteName || '').trim() || '現場';
-
-      return (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 print:bg-white"
-          role="presentation"
-          onClick={onClose}
-        >
-          <div
-            id="site-order-qr-print"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="site-order-qr-title"
-            className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-5 shadow-2xl print:max-w-none print:border-0 print:shadow-none"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 id="site-order-qr-title" className="text-center text-lg font-black text-slate-900 sm:text-xl">
-              専用発注URL（QRコード）
-            </h2>
-            <p className="mt-2 text-center text-sm font-bold text-slate-700">対象の現場名</p>
-            <p className="mt-0.5 break-words text-center text-base font-black text-indigo-900">{displayName}</p>
-            <div className="mt-4 flex justify-center rounded-lg border border-slate-200 bg-white p-4">
-              {url ? (
-                <SiteOrderQrCodeBoundary>
-                  <QRCodeSVG value={url} size={256} level="M" includeMargin />
-                </SiteOrderQrCodeBoundary>
-              ) : null}
-            </div>
-            {url ? (
-              <p className="mt-3 break-all text-center font-mono text-[10px] leading-snug text-slate-600 sm:text-xs">{url}</p>
-            ) : null}
-            <p className="mt-2 text-center text-xs text-slate-500">スマートフォンで読み取り、専用発注画面を開けます</p>
-            <div className="mt-5 grid grid-cols-2 gap-2 print:hidden">
-              <button
-                type="button"
-                onClick={onClose}
-                className="min-h-[44px] rounded-lg border-2 border-slate-300 bg-white text-sm font-black text-slate-800 hover:bg-slate-50"
-              >
-                閉じる
-              </button>
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="min-h-[44px] rounded-lg border-2 border-indigo-700 bg-indigo-600 text-sm font-black text-white hover:bg-indigo-700"
-              >
-                印刷する
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    function SiteOrderUrlActions({ urlToken, siteName, onCopied }) {
-      const [copied, setCopied] = useState(false);
-      const [qrOpen, setQrOpen] = useState(false);
-      const token = String(urlToken || '').trim();
-      const url = token ? buildSiteOrderUrl(token) : '';
-
-      const handleCopy = async (e) => {
-        e?.stopPropagation?.();
-        if (!token || !url) {
-          window.alert('この現場には url_token が未設定のため、専用URLをコピーできません。');
-          return;
-        }
-        try {
-          await navigator.clipboard.writeText(url);
-          setCopied(true);
-          onCopied?.();
-          window.setTimeout(() => setCopied(false), 2000);
-        } catch (err) {
-          console.error('専用URLのコピーに失敗しました', err);
-          window.alert('クリップボードへのコピーに失敗しました。');
-        }
-      };
-
-      const openQr = (e) => {
-        e?.stopPropagation?.();
-        if (!token || !url) {
-          window.alert('この現場には url_token が未設定のため、QRコードを表示できません。');
-          return;
-        }
-        setQrOpen(true);
-      };
-
-      return (
-        <>
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-            <button type="button" onClick={handleCopy} className={SITE_ORDER_URL_BTN_CLASS}>
-              {copied ? '🔗 コピー完了' : '🔗 専用URLコピー'}
-            </button>
-            <button type="button" onClick={openQr} className={SITE_ORDER_URL_BTN_CLASS}>
-              📱 QR表示
-            </button>
-          </div>
-          <SiteOrderUrlQrModal
-            open={qrOpen}
-            siteName={siteName}
-            url={url}
-            onClose={() => setQrOpen(false)}
-          />
-        </>
-      );
-    }
-
     function formatProjectLocation(project) {
       const lat = project?.lat;
       const lng = project?.lng;
@@ -786,9 +620,12 @@ function orderPartyInfo(order) {
       const trader = String(project?.trading_company_name || project?.trading_company || '').trim() || '—';
       const phone = String(customer?.phone_number || '').trim() || '—';
       const contact = String(customer?.manager_name || '').trim();
+      const pt = String(project?.url_token || '').trim();
+      const ct = String(customer?.url_token || '').trim();
+      const urlToken = isValidSiteOrderUrlToken(pt) ? pt : isValidSiteOrderUrlToken(ct) ? ct : '';
       return {
         ...project,
-        url_token: String(project?.url_token || customer?.url_token || '').trim(),
+        url_token: urlToken,
         displayContractor: contractor,
         displayTrader: trader,
         displayPhone: phone,
@@ -838,11 +675,19 @@ function orderPartyInfo(order) {
                 </div>
               </dl>
             </div>
-            <SiteOrderUrlActions
-              urlToken={project?.url_token ?? ''}
-              siteName={project?.name ?? ''}
-              onCopied={onUrlCopied}
-            />
+            <div className="flex min-w-[10rem] flex-col items-stretch gap-2">
+              <SiteOrderUrlActions
+                urlToken={project?.url_token ?? ''}
+                siteName={project?.name ?? ''}
+                onCopied={onUrlCopied}
+                compact
+              />
+              <ProjectExternalUrlActions
+                folderUrl={project?.folder_url}
+                sheetUrl={project?.sheet_url}
+                variant="compact"
+              />
+            </div>
           </div>
         </li>
       );

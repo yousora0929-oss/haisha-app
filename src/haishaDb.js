@@ -1,6 +1,8 @@
 import { MAP_STORAGE_BUCKET, MAP_STAMP_TYPES } from './mapEditorConstants.js';
+import { normalizeExternalUrl } from './utils/urlValidation.js';
 import { supabase } from './supabaseClient.js';
 import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils/deliveryAreas.js';
+import { isValidSiteOrderUrlToken } from './utils/urlValidation.js';
 import {
   DISPATCH_DEFAULT_FACTORY_SITE_ID,
   DISPATCH_DEFAULT_FACTORY_SITE_NAME,
@@ -22,8 +24,10 @@ const PROJECT_SELECT_MIN =
 /** 物件の url_token が無い場合、紐づく業者（customers）の url_token を補完する */
 function pickSiteUrlToken(project, customer) {
   const fromProject = String(project?.url_token ?? '').trim();
-  if (fromProject) return fromProject;
-  return String(customer?.url_token ?? '').trim();
+  if (isValidSiteOrderUrlToken(fromProject)) return fromProject;
+  const fromCustomer = String(customer?.url_token ?? '').trim();
+  if (isValidSiteOrderUrlToken(fromCustomer)) return fromCustomer;
+  return '';
 }
 
 async function enrichProjectsWithCustomerUrlTokens(projects) {
@@ -864,7 +868,12 @@ function mapProjectRow(row) {
     contractor: row.contractor != null ? String(row.contractor) : '',
     delivery_area: row.delivery_area != null ? String(row.delivery_area) : '',
     site_address: row.site_address != null ? String(row.site_address) : '',
-    url_token: row.url_token != null ? String(row.url_token) : '',
+    url_token:
+      row.url_token != null && isValidSiteOrderUrlToken(String(row.url_token))
+        ? String(row.url_token).trim()
+        : '',
+    folder_url: normalizeExternalUrl(row.folder_url),
+    sheet_url: normalizeExternalUrl(row.sheet_url),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -880,7 +889,10 @@ function mapCustomerRow(row) {
     manager_name: row.manager_name != null ? String(row.manager_name) : '',
     phone_number: row.phone_number != null ? String(row.phone_number) : '',
     login_password: row.login_password != null ? String(row.login_password) : '',
-    url_token: row.url_token != null ? String(row.url_token) : '',
+    url_token:
+      row.url_token != null && isValidSiteOrderUrlToken(String(row.url_token))
+        ? String(row.url_token).trim()
+        : '',
     created_at: row.created_at,
   };
 }
@@ -1033,6 +1045,33 @@ export async function updateAdminPassword(currentPassword, newPassword) {
   return mapAdminSettingsRow(data);
 }
 
+/** 専用発注URLトークンから物件・業者を解決（/order/:token 用） */
+export async function fetchSiteOrderContextByUrlToken(urlToken) {
+  const token = String(urlToken || '').trim();
+  if (!isValidSiteOrderUrlToken(token)) return null;
+
+  const { data: projectRow, error: pErr } = await supabase.from('projects').select('*').eq('url_token', token).maybeSingle();
+  if (pErr) throw pErr;
+  if (projectRow) {
+    const project = mapProjectRow(projectRow);
+    let customer = null;
+    if (project?.customer_id) {
+      const { data: cRow, error: cErr } = await supabase.from('customers').select('*').eq('id', project.customer_id).maybeSingle();
+      if (cErr) throw cErr;
+      customer = cRow ? mapCustomerRow(cRow) : null;
+    }
+    return { token, project, customer, match: 'project' };
+  }
+
+  const { data: customerRow, error: cErr } = await supabase.from('customers').select('*').eq('url_token', token).maybeSingle();
+  if (cErr) throw cErr;
+  if (customerRow) {
+    return { token, project: null, customer: mapCustomerRow(customerRow), match: 'customer' };
+  }
+
+  return null;
+}
+
 /** 物件マスタ一覧 */
 export async function fetchProjects() {
   const { data, error } = await supabase.from('projects').select('*').order('name', { ascending: true });
@@ -1059,6 +1098,8 @@ export async function insertProject(payload) {
     contractor: String(payload.contractor || '').trim() || null,
     delivery_area: String(payload.delivery_area || '').trim() || null,
     site_address: String(payload.site_address || '').trim() || null,
+    folder_url: normalizeExternalUrl(payload.folder_url) || null,
+    sheet_url: normalizeExternalUrl(payload.sheet_url) || null,
   };
   const { data, error } = await supabase.from('projects').insert(row).select('*').single();
   if (error) throw error;
@@ -1085,6 +1126,8 @@ export async function updateProject(projectId, payload) {
     contractor: String(payload.contractor || '').trim() || null,
     delivery_area: String(payload.delivery_area || '').trim() || null,
     site_address: String(payload.site_address || '').trim() || null,
+    folder_url: normalizeExternalUrl(payload.folder_url) || null,
+    sheet_url: normalizeExternalUrl(payload.sheet_url) || null,
   };
   const { data, error } = await supabase.from('projects').update(row).eq('id', id).select('*').single();
   if (error) throw error;
@@ -1266,11 +1309,11 @@ function pickOrderOverrideMapUrl(order, orderRow) {
  * 3. なし（白紙キャンバス）
  */
 export function resolveMapDisplayUrl(order, project, orderRow) {
-  const overrideUrl = pickOrderOverrideMapUrl(order, orderRow);
+  const overrideUrl = normalizeExternalUrl(pickOrderOverrideMapUrl(order, orderRow));
   if (overrideUrl) {
     return { url: overrideUrl, source: 'override' };
   }
-  const defaultUrl = pickProjectDefaultMapUrl(project);
+  const defaultUrl = normalizeExternalUrl(pickProjectDefaultMapUrl(project));
   if (defaultUrl) {
     return { url: defaultUrl, source: 'default' };
   }

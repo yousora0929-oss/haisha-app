@@ -1,3 +1,6 @@
 {
-  "rewrites": [{ "source": "/map-editor/:path*", "destination": "/MapEditor.html" }]
+  "rewrites": [
+    { "source": "/map-editor/:path*", "destination": "/MapEditor.html" },
+    { "source": "/order/:path*", "destination": "/DispatchOrderPrototype.html" }
+  ]
 }
