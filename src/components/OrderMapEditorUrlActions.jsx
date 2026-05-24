@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { buildMapEditorUrl } from '../mapEditorConstants.js';
+import { buildMapEditorUrl, rememberMapEditorReturnUrl } from '../mapEditorConstants.js';
 import { isLocationPendingOrder } from '../utils/orderWorkflow.js';
 
 function MapEditorQrModal({ open, siteName, url, onClose }) {
@@ -113,7 +113,9 @@ export function OrderMapEditorUrlActions({
 
   const openEditor = (e) => {
     e?.stopPropagation?.();
-    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    if (!url) return;
+    rememberMapEditorReturnUrl();
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   const btn =

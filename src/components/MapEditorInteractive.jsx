@@ -7,7 +7,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { Circle, ImageOverlay, MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet';
+import { Circle, ImageOverlay, MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { MAP_EDITOR_TOOLS, MAP_STAMP_EMOJI } from '../mapEditorConstants.js';
@@ -18,6 +18,44 @@ import {
   DEFAULT_UNLOAD_RADIUS_M,
 } from '../utils/mapAnnotations.js';
 import { renderAnnotationsSnapshot } from '../utils/mapEditorSnapshot.js';
+
+/** Leaflet divIcon のデフォルト枠を消す（ズーム時のズレ防止のため iconAnchor を中心に合わせる） */
+const LEAFLET_DIV_ICON_CLASS = 'map-editor-leaflet-div-icon';
+
+function createStampDivIcon(emoji, scale, selected) {
+  const size = Math.max(24, Math.round(36 * (Number(scale) > 0 ? Number(scale) : 1)));
+  const ring = selected
+    ? 'box-shadow:0 0 0 3px rgba(99,102,241,0.55);border-radius:10px;'
+    : '';
+  return L.divIcon({
+    className: LEAFLET_DIV_ICON_CLASS,
+    html: `<div style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.88)}px;line-height:1;display:flex;align-items:center;justify-content:center;${ring}">${emoji}</div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
+}
+
+function createCommentDivIcon(text, selected) {
+  const label = String(text || '').slice(0, 80);
+  const border = selected ? '#6366f1' : '#334155';
+  const html = `<div style="max-width:200px;padding:6px 8px;border:2px solid ${border};border-radius:8px;background:rgba(255,255,255,0.96);font-size:11px;font-weight:700;line-height:1.35;color:#0f172a;box-shadow:0 2px 6px rgba(0,0,0,0.15);white-space:pre-wrap;">${escapeHtml(label)}</div>`;
+  const iconW = Math.min(200, Math.max(80, label.length * 7));
+  const iconH = 36;
+  return L.divIcon({
+    className: LEAFLET_DIV_ICON_CLASS,
+    html,
+    iconSize: [iconW, iconH],
+    iconAnchor: [iconW / 2, iconH],
+  });
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 
 function MapInstanceBinder({ mapRef }) {
   const map = useMap();
@@ -78,248 +116,55 @@ function UnloadCircles({ points, selectedId, onSelect }) {
   );
 }
 
-function AnnotationOverlay({
-  mapRef,
-  annotations,
-  selected,
-  onSelect,
-  onUpdateStamp,
-  onUpdateUnload,
-  onUpdateComment,
-  onDeleteSelected,
-  disabled,
-}) {
-  const overlayRef = useRef(null);
-  const [, setTick] = useState(0);
-  const dragRef = useRef(null);
+function StampMarkers({ stamps, selected, disabled, onSelect, onMove }) {
+  return (stamps || []).map((s) => {
+    const isSel = selected?.kind === 'stamp' && selected.id === s.id;
+    const emoji = MAP_STAMP_EMOJI[s.type] || '❓';
+    return (
+      <Marker
+        key={s.id}
+        position={[s.lat, s.lng]}
+        draggable={!disabled}
+        icon={createStampDivIcon(emoji, s.scale, isSel)}
+        zIndexOffset={isSel ? 1200 : 400}
+        eventHandlers={{
+          click: (e) => {
+            L.DomEvent.stopPropagation(e);
+            onSelect?.({ kind: 'stamp', id: s.id });
+          },
+          dragend: (e) => {
+            const ll = e.target.getLatLng();
+            onMove?.(s.id, { lat: ll.lat, lng: ll.lng });
+          },
+        }}
+      />
+    );
+  });
+}
 
-  const rerender = useCallback(() => setTick((n) => n + 1), []);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return undefined;
-    const onMove = () => rerender();
-    map.on('move zoom resize', onMove);
-    return () => {
-      map.off('move zoom resize', onMove);
-    };
-  }, [mapRef, rerender]);
-
-  const latLngToContainer = useCallback(
-    (lat, lng) => {
-      const map = mapRef.current;
-      if (!map) return null;
-      const pt = map.latLngToContainerPoint([lat, lng]);
-      return { x: pt.x, y: pt.y };
-    },
-    [mapRef],
-  );
-
-  const clientToLatLng = useCallback((map, clientX, clientY) => {
-    const rect = map.getContainer().getBoundingClientRect();
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
-    return map.containerPointToLatLng([x, y]);
-  }, []);
-
-  useEffect(() => {
-    const onMove = (e) => {
-      const d = dragRef.current;
-      const map = mapRef.current;
-      if (!d || !map) return;
-      if (d.mode === 'move' && d.origin) {
-        const cur = clientToLatLng(map, e.clientX, e.clientY);
-        const dLat = cur.lat - d.startLatLng.lat;
-        const dLng = cur.lng - d.startLatLng.lng;
-        if (d.kind === 'stamp') {
-          onUpdateStamp?.(d.id, { lat: d.origin.lat + dLat, lng: d.origin.lng + dLng });
-        } else if (d.kind === 'unload') {
-          onUpdateUnload?.(d.id, { lat: d.origin.lat + dLat, lng: d.origin.lng + dLng });
-        } else if (d.kind === 'comment') {
-          onUpdateComment?.(d.id, { lat: d.origin.lat + dLat, lng: d.origin.lng + dLng });
-        }
-      } else if (d.mode === 'resize-stamp') {
-        const dx = e.clientX - d.start.x;
-        const dy = e.clientY - d.start.y;
-        const delta = Math.max(dx, dy);
-        const nextScale = Math.min(3, Math.max(0.4, d.startScale + delta / 80));
-        onUpdateStamp?.(d.id, { scale: nextScale });
-      } else if (d.mode === 'resize-unload') {
-        const dx = e.clientX - d.start.x;
-        const stamp = annotations.unloadPoints.find((x) => x.id === d.id);
-        if (stamp) {
-          const nextR = Math.min(50, Math.max(4, d.startRadius + dx / 4));
-          onUpdateUnload?.(d.id, { radiusM: nextR });
-        }
-      }
-      rerender();
-    };
-    const onUp = () => {
-      dragRef.current = null;
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    return () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    };
-  }, [annotations, clientToLatLng, mapRef, onUpdateComment, onUpdateStamp, onUpdateUnload, rerender]);
-
-  const sel = selected;
-
-  return (
-    <div ref={overlayRef} className="pointer-events-none absolute inset-0 z-[500] overflow-hidden">
-      {(annotations.stamps || []).map((s) => {
-        const pos = latLngToContainer(s.lat, s.lng);
-        if (!pos) return null;
-        const scale = Number(s.scale) > 0 ? Number(s.scale) : 1;
-        const size = 36 * scale;
-        const isSel = sel?.kind === 'stamp' && sel.id === s.id;
-        return (
-          <div
-            key={s.id}
-            className="pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 select-none"
-            style={{ left: pos.x, top: pos.y, width: size, height: size, fontSize: size * 0.85 }}
-            onPointerDown={(e) => {
-              if (disabled) return;
-              e.stopPropagation();
-              onSelect?.({ kind: 'stamp', id: s.id });
-              const map = mapRef.current;
-              if (!map) return;
-              dragRef.current = {
-                kind: 'stamp',
-                id: s.id,
-                mode: 'move',
-                startLatLng: clientToLatLng(map, e.clientX, e.clientY),
-                origin: { lat: s.lat, lng: s.lng },
-              };
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect?.({ kind: 'stamp', id: s.id });
-            }}
-          >
-            <span
-              className={
-                'flex h-full w-full items-center justify-center drop-shadow-md ' +
-                (isSel ? 'ring-2 ring-indigo-500 ring-offset-1 rounded-lg' : '')
-              }
-            >
-              {MAP_STAMP_EMOJI[s.type] || '❓'}
-            </span>
-            {isSel ? (
-              <>
-                <button
-                  type="button"
-                  className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border-2 border-red-500 bg-white text-xs font-black text-red-600 shadow"
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDeleteSelected?.();
-                  }}
-                >
-                  ✕
-                </button>
-                <span
-                  className="absolute -bottom-2 -right-2 h-4 w-4 cursor-se-resize rounded-sm border-2 border-indigo-600 bg-white"
-                  onPointerDown={(e) => {
-                    e.stopPropagation();
-                    dragRef.current = {
-                      kind: 'stamp',
-                      id: s.id,
-                      mode: 'resize-stamp',
-                      start: { x: e.clientX, y: e.clientY },
-                      startScale: scale,
-                    };
-                  }}
-                />
-              </>
-            ) : null}
-          </div>
-        );
-      })}
-
-      {(annotations.comments || []).map((c) => {
-        const pos = latLngToContainer(c.lat, c.lng);
-        if (!pos) return null;
-        const isSel = sel?.kind === 'comment' && sel.id === c.id;
-        return (
-          <div
-            key={c.id}
-            className="pointer-events-auto absolute max-w-[200px] -translate-x-1/2"
-            style={{ left: pos.x, top: pos.y - 8 }}
-            onPointerDown={(e) => {
-              if (disabled) return;
-              e.stopPropagation();
-              onSelect?.({ kind: 'comment', id: c.id });
-              const map = mapRef.current;
-              if (!map) return;
-              dragRef.current = {
-                kind: 'comment',
-                id: c.id,
-                mode: 'move',
-                startLatLng: clientToLatLng(map, e.clientX, e.clientY),
-                origin: { lat: c.lat, lng: c.lng },
-              };
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect?.({ kind: 'comment', id: c.id });
-            }}
-          >
-            <div
-              className={
-                'relative rounded-lg border-2 bg-white px-2 py-1 text-[11px] font-bold leading-snug text-slate-900 shadow-md ' +
-                (isSel ? 'border-indigo-500' : 'border-slate-600')
-              }
-            >
-              {c.text}
-              {isSel ? (
-                <button
-                  type="button"
-                  className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full border border-red-400 bg-white text-[10px] font-black text-red-600"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDeleteSelected?.();
-                  }}
-                >
-                  ✕
-                </button>
-              ) : null}
-            </div>
-          </div>
-        );
-      })}
-
-      {sel?.kind === 'unload'
-        ? (() => {
-            const u = annotations.unloadPoints.find((x) => x.id === sel.id);
-            if (!u) return null;
-            const pos = latLngToContainer(u.lat, u.lng);
-            if (!pos) return null;
-            return (
-              <div
-                className="pointer-events-auto absolute h-5 w-5 -translate-x-1/2 -translate-y-1/2 cursor-se-resize rounded-sm border-2 border-red-600 bg-white shadow"
-                style={{
-                  left: pos.x + 28,
-                  top: pos.y,
-                }}
-                onPointerDown={(e) => {
-                  e.stopPropagation();
-                  dragRef.current = {
-                    kind: 'unload',
-                    id: u.id,
-                    mode: 'resize-unload',
-                    start: { x: e.clientX, y: e.clientY },
-                    startRadius: u.radiusM,
-                  };
-                }}
-              />
-            );
-          })()
-        : null}
-    </div>
-  );
+function CommentMarkers({ comments, selected, disabled, onSelect, onMove }) {
+  return (comments || []).map((c) => {
+    const isSel = selected?.kind === 'comment' && selected.id === c.id;
+    return (
+      <Marker
+        key={c.id}
+        position={[c.lat, c.lng]}
+        draggable={!disabled}
+        icon={createCommentDivIcon(c.text, isSel)}
+        zIndexOffset={isSel ? 1100 : 300}
+        eventHandlers={{
+          click: (e) => {
+            L.DomEvent.stopPropagation(e);
+            onSelect?.({ kind: 'comment', id: c.id });
+          },
+          dragend: (e) => {
+            const ll = e.target.getLatLng();
+            onMove?.(c.id, { lat: ll.lat, lng: ll.lng });
+          },
+        }}
+      />
+    );
+  });
 }
 
 export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
@@ -331,12 +176,16 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
     defaultUnloadRadius = DEFAULT_UNLOAD_RADIUS_M,
     flyTarget = null,
     disabled = false,
+    selected = null,
+    onSelectionChange,
     className = '',
   },
   ref,
 ) {
   const mapRef = useRef(null);
-  const [selected, setSelected] = useState(null);
+  const [internalSelected, setInternalSelected] = useState(null);
+  const selection = onSelectionChange ? selected : internalSelected;
+  const setSelection = onSelectionChange || setInternalSelected;
 
   const center = annotations?.center || DEFAULT_MAP_CENTER;
   const mapCenter = useMemo(
@@ -386,16 +235,16 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
   );
 
   const deleteSelected = useCallback(() => {
-    if (!selected) return;
-    if (selected.kind === 'stamp') {
-      patchAnnotations({ stamps: (annotations.stamps || []).filter((s) => s.id !== selected.id) });
-    } else if (selected.kind === 'unload') {
-      patchAnnotations({ unloadPoints: (annotations.unloadPoints || []).filter((u) => u.id !== selected.id) });
-    } else if (selected.kind === 'comment') {
-      patchAnnotations({ comments: (annotations.comments || []).filter((c) => c.id !== selected.id) });
+    if (!selection) return;
+    if (selection.kind === 'stamp') {
+      patchAnnotations({ stamps: (annotations.stamps || []).filter((s) => s.id !== selection.id) });
+    } else if (selection.kind === 'unload') {
+      patchAnnotations({ unloadPoints: (annotations.unloadPoints || []).filter((u) => u.id !== selection.id) });
+    } else if (selection.kind === 'comment') {
+      patchAnnotations({ comments: (annotations.comments || []).filter((c) => c.id !== selection.id) });
     }
-    setSelected(null);
-  }, [annotations, patchAnnotations, selected]);
+    setSelection(null);
+  }, [annotations, patchAnnotations, selection, setSelection]);
 
   const placeAt = useCallback(
     (lat, lng) => {
@@ -423,7 +272,7 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
             { id, lat, lng, radiusM: defaultUnloadRadius },
           ],
         });
-        setSelected({ kind: 'unload', id });
+        setSelection({ kind: 'unload', id });
         return;
       }
       if (activeTool === MAP_EDITOR_TOOLS.COMMENT) {
@@ -445,6 +294,7 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
       disabled,
       patchAnnotations,
       selectedStampType,
+      setSelection,
     ],
   );
 
@@ -452,7 +302,7 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
     useMapEvents({
       click(e) {
         if (activeTool === MAP_EDITOR_TOOLS.PAN) {
-          setSelected(null);
+          setSelection(null);
           return;
         }
         if (
@@ -470,7 +320,7 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selected && document.activeElement?.tagName !== 'INPUT') {
+        if (selection && document.activeElement?.tagName !== 'INPUT') {
           e.preventDefault();
           deleteSelected();
         }
@@ -478,7 +328,7 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [deleteSelected, selected]);
+  }, [deleteSelected, selection]);
 
   useImperativeHandle(ref, () => ({
     async toDataURL() {
@@ -487,6 +337,7 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
       });
     },
     getMap: () => mapRef.current,
+    deleteSelected,
   }));
 
   const cursorClass =
@@ -500,6 +351,15 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
 
   return (
     <div className={'relative min-h-0 flex-1 ' + className}>
+      <style>{`
+        .${LEAFLET_DIV_ICON_CLASS} {
+          background: transparent !important;
+          border: none !important;
+        }
+        .${LEAFLET_DIV_ICON_CLASS} > div {
+          transform-origin: center center;
+        }
+      `}</style>
       <MapContainer
         center={mapCenter}
         zoom={mapZoom}
@@ -519,23 +379,25 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
         ) : null}
         <UnloadCircles
           points={annotations.unloadPoints}
-          selectedId={selected?.kind === 'unload' ? selected.id : null}
-          onSelect={setSelected}
+          selectedId={selection?.kind === 'unload' ? selection.id : null}
+          onSelect={setSelection}
+        />
+        <StampMarkers
+          stamps={annotations.stamps}
+          selected={selection}
+          disabled={disabled}
+          onSelect={setSelection}
+          onMove={updateStamp}
+        />
+        <CommentMarkers
+          comments={annotations.comments}
+          selected={selection}
+          disabled={disabled}
+          onSelect={setSelection}
+          onMove={updateComment}
         />
         <MapClickLayer />
       </MapContainer>
-
-      <AnnotationOverlay
-        mapRef={mapRef}
-        annotations={annotations}
-        selected={selected}
-        onSelect={setSelected}
-        onUpdateStamp={updateStamp}
-        onUpdateUnload={updateUnload}
-        onUpdateComment={updateComment}
-        onDeleteSelected={deleteSelected}
-        disabled={disabled}
-      />
     </div>
   );
 });

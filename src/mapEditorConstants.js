@@ -35,7 +35,50 @@ export const MAP_EDITOR_TOOLS = {
 
 export const MAP_STAMP_EMOJI = Object.fromEntries(MAP_STAMP_DEFS.map((d) => [d.type, d.emoji]));
 
+/** Supabase Storage の公開バケット名（現場図 PNG 保存先） */
 export const MAP_STORAGE_BUCKET = 'maps';
+
+export const MAP_EDITOR_RETURN_SESSION_KEY = 'haisha_map_editor_return_url_v1';
+
+/** 地図エディタを開く直前に呼び、保存後の戻り先 URL を記憶する */
+export function rememberMapEditorReturnUrl() {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(MAP_EDITOR_RETURN_SESSION_KEY, window.location.href);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 保存成功後に前画面へ戻る（return クエリ / sessionStorage / history.back / window.close） */
+export function navigateAfterMapEditorSave() {
+  if (typeof window === 'undefined') return false;
+  try {
+    const q = new URLSearchParams(window.location.search).get('return');
+    const fromSession = sessionStorage.getItem(MAP_EDITOR_RETURN_SESSION_KEY);
+    sessionStorage.removeItem(MAP_EDITOR_RETURN_SESSION_KEY);
+    const target = (q && decodeURIComponent(q)) || fromSession || '';
+    if (target && target !== window.location.href) {
+      window.location.assign(target);
+      return true;
+    }
+  } catch {
+    /* ignore */
+  }
+  if (window.history.length > 1) {
+    window.history.back();
+    return true;
+  }
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.close();
+      return true;
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
 
 /** 注文に紐づく地図エディタURL（Vite dev / 静的ホストで /map-editor/:id にルーティング） */
 export function buildMapEditorUrl(orderId, baseOrigin) {

@@ -12,6 +12,10 @@ export function MapEditorToolbar({
   onStampTypeChange,
   selectedUnloadRadius,
   onUnloadRadiusChange,
+  selection = null,
+  selectedStampScale = 1,
+  onStampScaleChange,
+  onDeleteSelection,
   disabled = false,
 }) {
   const toolActive = (t) =>
@@ -82,6 +86,44 @@ export function MapEditorToolbar({
           <p className="mt-0.5 text-center text-[10px] font-black text-red-800">
             {selectedUnloadRadius ?? DEFAULT_UNLOAD_RADIUS_M} m
           </p>
+        </div>
+      ) : null}
+
+      {selection ? (
+        <div className="mt-1 rounded-lg border border-indigo-200 bg-indigo-50 p-2">
+          <p className="text-[10px] font-black text-indigo-900">選択中</p>
+          {selection.kind === 'stamp' ? (
+            <div className="mt-1">
+              <label className="text-[10px] font-bold text-slate-700" htmlFor="stamp-scale">
+                スタンプサイズ
+              </label>
+              <input
+                id="stamp-scale"
+                type="range"
+                min={0.4}
+                max={3}
+                step={0.1}
+                disabled={disabled}
+                value={selectedStampScale}
+                onChange={(e) => onStampScaleChange?.(Number(e.target.value))}
+                className="mt-1 w-full"
+              />
+            </div>
+          ) : null}
+          {selection.kind === 'unload' ? (
+            <p className="mt-1 text-[10px] font-bold text-red-800">荷下ろし地点 · 半径スライダーで調整</p>
+          ) : null}
+          {selection.kind === 'comment' ? (
+            <p className="mt-1 text-[10px] font-bold text-slate-700">コメント · ドラッグで移動</p>
+          ) : null}
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={onDeleteSelection}
+            className="mt-2 w-full rounded-lg border-2 border-red-400 bg-white py-1.5 text-[10px] font-black text-red-700"
+          >
+            ✕ 削除
+          </button>
         </div>
       ) : null}
 

@@ -1393,20 +1393,51 @@ function withImageOverlay(annotations, imageUrl) {
   };
 }
 
-async function uploadMapPngToStorage(storagePath, imageDataUrl) {
-  if (!imageDataUrl) throw new Error('画像データがありません');
-  const blob = dataUrlToBlob(imageDataUrl);
-  const path = String(storagePath || '').replace(/^\//, '');
-  const { error: uploadError } = await supabase.storage.from(MAP_STORAGE_BUCKET).upload(path, blob, {
-    contentType: 'image/png',
-    cacheControl: '3600',
-    upsert: false,
-  });
-  if (uploadError) {
-    console.error('uploadMapPngToStorage failed', uploadError);
-    throw uploadError;
+function isMapStorageUploadError(error) {
+  const msg = String(error?.message || '').toLowerCase();
+  const code = error?.statusCode != null ? String(error.statusCode) : '';
+  return (
+    code === '404' ||
+    msg.includes('bucket') ||
+    msg.includes('not found') ||
+    msg.includes('does not exist') ||
+    msg.includes('invalid bucket')
+  );
+}
+
+function formatMapStorageErrorMessage(error) {
+  const raw = error?.message ? String(error.message) : '不明なエラー';
+  if (isMapStorageUploadError(error)) {
+    return `Storage バケット「${MAP_STORAGE_BUCKET}」が見つからないか、権限がありません。Supabase で公開バケット「${MAP_STORAGE_BUCKET}」を作成してください。`;
   }
-  return getMapsStoragePublicUrl(path);
+  return `Storage（バケット「${MAP_STORAGE_BUCKET}」）への画像保存に失敗しました: ${raw}`;
+}
+
+/**
+ * PNG を Supabase Storage バケット `maps` にアップロード
+ * @returns {{ ok: true, publicUrl: string, storagePath: string } | { ok: false, publicUrl: '', storagePath: string, error: Error }}
+ */
+async function uploadMapPngToStorageOptional(storagePath, imageDataUrl) {
+  const path = String(storagePath || '').replace(/^\//, '');
+  if (!imageDataUrl) {
+    return { ok: false, publicUrl: '', storagePath: path, error: new Error('画像データがありません') };
+  }
+  try {
+    const blob = dataUrlToBlob(imageDataUrl);
+    const { error: uploadError } = await supabase.storage.from(MAP_STORAGE_BUCKET).upload(path, blob, {
+      contentType: 'image/png',
+      cacheControl: '3600',
+      upsert: false,
+    });
+    if (uploadError) {
+      console.error(`[Storage:${MAP_STORAGE_BUCKET}] upload failed`, uploadError);
+      return { ok: false, publicUrl: '', storagePath: path, error: uploadError };
+    }
+    return { ok: true, publicUrl: getMapsStoragePublicUrl(path), storagePath: path, error: null };
+  } catch (err) {
+    console.error(`[Storage:${MAP_STORAGE_BUCKET}] upload exception`, err);
+    return { ok: false, publicUrl: '', storagePath: path, error: err };
+  }
 }
 
 /** 地図エディタ用: 単一注文 + 表示用背景URL（ハイブリッド優先順位） */
@@ -1488,40 +1519,62 @@ export async function fetchOrderForMapEditor(orderId) {
 export async function saveProjectDefaultMap(projectId, imageDataUrl, mapAnnotations) {
   const pid = String(projectId || '').trim();
   if (!pid) throw new Error('projectId が必要です（物件に紐づく注文のみ基本マップを保存できます）');
-  if (!imageDataUrl) throw new Error('画像データがありません');
 
-  const normalized = withImageOverlay(
-    normalizeMapAnnotations(mapAnnotations, { imageUrl: '' }),
-    '',
-  );
+  const normalized = normalizeMapAnnotations(mapAnnotations, { imageUrl: '' });
   const timestamp = Date.now();
   const storagePath = `projects/${pid}_${timestamp}.png`;
-  const publicUrl = await uploadMapPngToStorage(storagePath, imageDataUrl);
-  const savedAnnotations = withImageOverlay(
-    { ...normalized, center: normalized.center },
-    publicUrl,
-  );
+  const upload = imageDataUrl
+    ? await uploadMapPngToStorageOptional(storagePath, imageDataUrl)
+    : { ok: false, publicUrl: '', storagePath, error: null };
 
-  const row = { default_map_image_url: publicUrl, map_annotations: savedAnnotations };
+  let existingUrl = '';
+  const { data: existingProject } = await supabase
+    .from('projects')
+    .select('default_map_image_url, map_base_image_url')
+    .eq('id', pid)
+    .maybeSingle();
+  if (existingProject) {
+    existingUrl = String(existingProject.default_map_image_url || existingProject.map_base_image_url || '').trim();
+  }
+
+  const publicUrl = upload.ok ? upload.publicUrl : existingUrl;
+  const savedAnnotations = withImageOverlay({ ...normalized, center: normalized.center }, publicUrl);
+
+  const row = { map_annotations: savedAnnotations };
+  if (upload.ok && publicUrl) row.default_map_image_url = publicUrl;
+
   let data;
   let error;
   ({ data, error } = await supabase.from('projects').update(row).eq('id', pid).select(PROJECT_MAP_SELECT).single());
   if (error && isMissingRelationOrColumnError(error)) {
-    ({ data, error } = await supabase
-      .from('projects')
-      .update({ default_map_image_url: publicUrl })
-      .eq('id', pid)
-      .select('id, name, default_map_image_url, map_base_image_url, lat, lng')
-      .single());
+    const fallbackRow = upload.ok && publicUrl ? { default_map_image_url: publicUrl } : {};
+    if (Object.keys(fallbackRow).length === 0) {
+      ({ data, error } = await supabase
+        .from('projects')
+        .select('id, name, default_map_image_url, map_base_image_url, lat, lng')
+        .eq('id', pid)
+        .single());
+    } else {
+      ({ data, error } = await supabase
+        .from('projects')
+        .update(fallbackRow)
+        .eq('id', pid)
+        .select('id, name, default_map_image_url, map_base_image_url, lat, lng')
+        .single());
+    }
   }
   if (error) {
     console.error('saveProjectDefaultMap failed', error);
     throw error;
   }
 
+  const storageWarning = upload.ok ? '' : formatMapStorageErrorMessage(upload.error);
+
   return {
-    publicUrl,
-    storagePath,
+    publicUrl: upload.ok ? publicUrl : '',
+    storagePath: upload.storagePath,
+    storageUploadFailed: !upload.ok,
+    storageWarning,
     project: data,
     map_annotations: savedAnnotations,
     map_stamps: annotationsToLegacyStamps(savedAnnotations),
@@ -1535,15 +1588,13 @@ export async function saveProjectDefaultMap(projectId, imageDataUrl, mapAnnotati
 export async function saveOrderOverrideMap(orderId, imageDataUrl, mapAnnotations) {
   const id = String(orderId || '').trim();
   if (!id) throw new Error('orderId が必要です');
-  if (!imageDataUrl) throw new Error('画像データがありません');
 
   const normalized = normalizeMapAnnotations(mapAnnotations);
   const timestamp = Date.now();
   const storagePath = `orders/${id}_${timestamp}.png`;
-  const publicUrl = await uploadMapPngToStorage(storagePath, imageDataUrl);
-  const submittedAt = new Date().toISOString();
-  const savedAnnotations = withImageOverlay({ ...normalized }, publicUrl);
-  const legacyStamps = annotationsToLegacyStamps(savedAnnotations);
+  const upload = imageDataUrl
+    ? await uploadMapPngToStorageOptional(storagePath, imageDataUrl)
+    : { ok: false, publicUrl: '', storagePath, error: null };
 
   const { data: row, error: selErr } = await supabase.from('orders').select(ORDER_SELECT).eq('id', id).maybeSingle();
   if (selErr && !isMissingRelationOrColumnError(selErr)) throw selErr;
@@ -1562,32 +1613,39 @@ export async function saveOrderOverrideMap(orderId, imageDataUrl, mapAnnotations
   if (!orderRow) throw new Error('注文が見つかりません');
 
   const currentOrder = normalizeOrderRow(orderRow) || { id };
+  const existingUrl = pickOrderOverrideMapUrl(currentOrder, orderRow);
+  const publicUrl = upload.ok ? upload.publicUrl : existingUrl;
+  const submittedAt = new Date().toISOString();
+  const savedAnnotations = withImageOverlay({ ...normalized }, publicUrl || normalized?.imageOverlay?.url || '');
+  const legacyStamps = annotationsToLegacyStamps(savedAnnotations);
+
   const nextOrderData = sanitizeOrderDataForDb({
     ...currentOrder,
     map_stamps: legacyStamps,
     map_annotations: savedAnnotations,
     map_submitted_at: submittedAt,
-    map_image_url: publicUrl,
+    ...(upload.ok && publicUrl ? { map_image_url: publicUrl } : {}),
   });
 
   const updateRow = {
-    override_map_image_url: publicUrl,
     is_location_pending: false,
     order_data: nextOrderData,
     map_annotations: savedAnnotations,
   };
+  if (upload.ok && publicUrl) updateRow.override_map_image_url = publicUrl;
 
   let updated;
   let upErr;
   ({ data: updated, error: upErr } = await supabase.from('orders').update(updateRow).eq('id', id).select(ORDER_SELECT).single());
   if (upErr && isMissingRelationOrColumnError(upErr)) {
+    const fallbackUpdate = {
+      is_location_pending: false,
+      order_data: nextOrderData,
+    };
+    if (upload.ok && publicUrl) fallbackUpdate.override_map_image_url = publicUrl;
     ({ data: updated, error: upErr } = await supabase
       .from('orders')
-      .update({
-        override_map_image_url: publicUrl,
-        is_location_pending: false,
-        order_data: nextOrderData,
-      })
+      .update(fallbackUpdate)
       .eq('id', id)
       .select(
         'id, order_data, chat_messages, created_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending',
@@ -1599,9 +1657,13 @@ export async function saveOrderOverrideMap(orderId, imageDataUrl, mapAnnotations
     throw upErr;
   }
 
+  const storageWarning = upload.ok ? '' : formatMapStorageErrorMessage(upload.error);
+
   return {
-    publicUrl,
-    storagePath,
+    publicUrl: upload.ok ? publicUrl : '',
+    storagePath: upload.storagePath,
+    storageUploadFailed: !upload.ok,
+    storageWarning,
     order: normalizeOrderRow(updated),
     map_annotations: savedAnnotations,
     map_stamps: legacyStamps,

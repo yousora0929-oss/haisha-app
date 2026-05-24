@@ -6,8 +6,11 @@ import {
   saveOrderOverrideMap,
   saveProjectDefaultMap,
 } from './haishaDb.js';
-import { MAP_EDITOR_TOOLS } from './mapEditorConstants.js';
-import { parseMapEditorOrderId } from './mapEditorConstants.js';
+import {
+  MAP_EDITOR_TOOLS,
+  navigateAfterMapEditorSave,
+  parseMapEditorOrderId,
+} from './mapEditorConstants.js';
 import { isValidExternalUrl, normalizeExternalUrl } from './utils/urlValidation.js';
 import { geocodeAddress } from './utils/nominatimGeocode.js';
 import { boundsFromCenter, emptyMapAnnotations } from './utils/mapAnnotations.js';
@@ -59,6 +62,8 @@ export function MapEditorApp() {
   const [confirmMode, setConfirmMode] = useState(null);
   const [toast, setToast] = useState('');
   const [lastSavedUrl, setLastSavedUrl] = useState('');
+  const [selection, setSelection] = useState(null);
+  const navigateTimerRef = useRef(null);
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -76,6 +81,58 @@ export function MapEditorApp() {
   useEffect(() => {
     return () => revokeLocalBlob();
   }, [revokeLocalBlob]);
+
+  useEffect(() => {
+    return () => {
+      if (navigateTimerRef.current != null) window.clearTimeout(navigateTimerRef.current);
+    };
+  }, []);
+
+  const selectedStamp = useMemo(() => {
+    if (selection?.kind !== 'stamp') return null;
+    return (annotations.stamps || []).find((s) => s.id === selection.id) || null;
+  }, [annotations.stamps, selection]);
+
+  const selectedUnload = useMemo(() => {
+    if (selection?.kind !== 'unload') return null;
+    return (annotations.unloadPoints || []).find((u) => u.id === selection.id) || null;
+  }, [annotations.unloadPoints, selection]);
+
+  useEffect(() => {
+    if (selectedUnload?.radiusM != null) setUnloadRadius(selectedUnload.radiusM);
+  }, [selectedUnload?.id, selectedUnload?.radiusM]);
+
+  const handleStampScaleChange = (scale) => {
+    if (!selectedStamp) return;
+    setAnnotations((prev) => ({
+      ...prev,
+      stamps: (prev.stamps || []).map((s) => (s.id === selectedStamp.id ? { ...s, scale } : s)),
+    }));
+  };
+
+  const handleUnloadRadiusChange = (radiusM) => {
+    setUnloadRadius(radiusM);
+    if (selectedUnload) {
+      setAnnotations((prev) => ({
+        ...prev,
+        unloadPoints: (prev.unloadPoints || []).map((u) =>
+          u.id === selectedUnload.id ? { ...u, radiusM } : u,
+        ),
+      }));
+    }
+  };
+
+  const handleDeleteSelection = () => {
+    editorRef.current?.deleteSelected?.();
+  };
+
+  const scheduleNavigateBack = useCallback(() => {
+    if (navigateTimerRef.current != null) window.clearTimeout(navigateTimerRef.current);
+    navigateTimerRef.current = window.setTimeout(() => {
+      navigateTimerRef.current = null;
+      navigateAfterMapEditorSave();
+    }, 1500);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -206,20 +263,33 @@ export function MapEditorApp() {
           throw new Error('スポット注文など、物件に紐づいていないため基本マップは保存できません');
         }
         const result = await saveProjectDefaultMap(projectId, dataUrl, payload);
-        setDefaultMapUrl(result.publicUrl);
-        setLastSavedUrl(result.publicUrl);
+        if (result.publicUrl) {
+          setDefaultMapUrl(result.publicUrl);
+          setLastSavedUrl(result.publicUrl);
+        }
         setAnnotations(result.map_annotations || payload);
-        showToast('プロジェクトの基本マップを保存しました');
+        if (result.storageUploadFailed && result.storageWarning) {
+          showToast(`注釈データは保存しました。${result.storageWarning}`);
+        } else {
+          showToast('変更を保存しました（基本マップ）');
+        }
       } else {
         const result = await saveOrderOverrideMap(resolvedOrderId, dataUrl, payload);
-        setOverrideMapUrl(result.publicUrl);
-        setBaseImageUrl(result.publicUrl);
-        setMapSource('override');
-        setLastSavedUrl(result.publicUrl);
+        if (result.publicUrl) {
+          setOverrideMapUrl(result.publicUrl);
+          setBaseImageUrl(result.publicUrl);
+          setMapSource('override');
+          setLastSavedUrl(result.publicUrl);
+        }
         setAnnotations(result.map_annotations || payload);
-        showToast('変更を保存しました（打設日用マップ）');
+        if (result.storageUploadFailed && result.storageWarning) {
+          showToast(`注釈データは保存しました。${result.storageWarning}`);
+        } else {
+          showToast('変更を保存しました');
+        }
       }
       setConfirmMode(null);
+      scheduleNavigateBack();
     } catch (err) {
       showToast(err?.message || '保存に失敗しました');
     } finally {
@@ -357,7 +427,11 @@ export function MapEditorApp() {
             setActiveTool(MAP_EDITOR_TOOLS.STAMP);
           }}
           selectedUnloadRadius={unloadRadius}
-          onUnloadRadiusChange={setUnloadRadius}
+          onUnloadRadiusChange={handleUnloadRadiusChange}
+          selection={selection}
+          selectedStampScale={selectedStamp?.scale ?? 1}
+          onStampScaleChange={handleStampScaleChange}
+          onDeleteSelection={handleDeleteSelection}
           disabled={saving}
         />
         <MapEditorInteractive
@@ -369,6 +443,8 @@ export function MapEditorApp() {
           defaultUnloadRadius={unloadRadius}
           flyTarget={flyTarget}
           disabled={saving}
+          selected={selection}
+          onSelectionChange={setSelection}
           className="flex-1"
         />
       </div>
