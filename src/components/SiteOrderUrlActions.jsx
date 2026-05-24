@@ -62,8 +62,14 @@ function SiteOrderQrModal({ open, siteName, url, onClose }) {
   );
 }
 
-const BTN =
-  'inline-flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-bold shadow-sm transition sm:text-sm disabled:cursor-not-allowed disabled:opacity-50';
+const BTN_BASE =
+  'inline-flex w-auto max-w-none shrink-0 items-center justify-center whitespace-nowrap rounded border font-bold shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50';
+
+function actionBtnClass(compact) {
+  return compact
+    ? BTN_BASE + ' px-1.5 py-0.5 text-[10px] leading-tight sm:px-2 sm:py-1 sm:text-[11px]'
+    : BTN_BASE + ' px-2 py-1 text-xs sm:px-2.5 sm:py-1 sm:text-sm';
+}
 
 /**
  * 物件専用発注URL（/order/:url_token）のコピー・QR・ブラウザで開く
@@ -75,6 +81,10 @@ export function SiteOrderUrlActions({ urlToken, siteName, onCopied, compact = fa
   const valid = isValidSiteOrderUrlToken(token);
   const url = useMemo(() => (valid ? buildSiteOrderUrl(token) : ''), [valid, token]);
   const guardMsg = siteOrderUrlValidationMessage(token);
+  const btnClass = actionBtnClass(compact);
+  const openLabel = compact ? '開く' : 'URLを開く';
+  const copyLabel = copied ? (compact ? '済' : 'コピー済み') : compact ? 'コピー' : 'URLコピー';
+  const qrLabel = compact ? 'QR' : 'QR表示';
 
   const requireValid = (e) => {
     e?.stopPropagation?.();
@@ -103,7 +113,13 @@ export function SiteOrderUrlActions({ urlToken, siteName, onCopied, compact = fa
 
   return (
     <>
-      <div className={'flex shrink-0 flex-wrap items-center justify-end gap-1.5 ' + (compact ? '' : 'flex-col sm:items-stretch')}>
+      <div
+        className={
+          'flex min-w-0 max-w-full shrink-0 flex-wrap items-center gap-1 ' +
+          (compact ? 'justify-start' : 'justify-end gap-1.5')
+        }
+        onClick={(e) => e.stopPropagation()}
+      >
         {!compact && guardMsg && !valid ? (
           <p className="w-full rounded-lg border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs font-bold text-amber-900">{guardMsg}</p>
         ) : null}
@@ -114,18 +130,21 @@ export function SiteOrderUrlActions({ urlToken, siteName, onCopied, compact = fa
           type="button"
           disabled={!valid}
           onClick={openUrl}
-          className={BTN + ' border-emerald-500 bg-emerald-50 text-emerald-900 hover:bg-emerald-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400'}
+          className={btnClass + ' border-emerald-500 bg-emerald-50 text-emerald-900 hover:bg-emerald-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400'}
           title={valid ? url : guardMsg}
+          aria-label={compact ? '専用発注URLを開く' : undefined}
         >
-          URLを開く
+          {openLabel}
         </button>
         <button
           type="button"
           disabled={!valid}
           onClick={(e) => void handleCopy(e)}
-          className={BTN + ' border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}
+          className={btnClass + ' border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}
+          title={valid ? 'URLをコピー' : guardMsg}
+          aria-label={compact ? '専用発注URLをコピー' : undefined}
         >
-          {copied ? 'コピー済み' : 'URLコピー'}
+          {copyLabel}
         </button>
         <button
           type="button"
@@ -134,9 +153,11 @@ export function SiteOrderUrlActions({ urlToken, siteName, onCopied, compact = fa
             if (!requireValid(e)) return;
             setQrOpen(true);
           }}
-          className={BTN + ' border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}
+          className={btnClass + ' border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}
+          title={valid ? 'QRコードを表示' : guardMsg}
+          aria-label={compact ? '専用発注URLのQRを表示' : undefined}
         >
-          QR表示
+          {qrLabel}
         </button>
       </div>
       <SiteOrderQrModal open={qrOpen} siteName={siteName} url={url} onClose={() => setQrOpen(false)} />

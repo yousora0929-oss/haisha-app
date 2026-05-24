@@ -678,7 +678,7 @@ function orderPartyInfo(order) {
                 </div>
               </dl>
             </div>
-            <div className="flex min-w-[10rem] flex-col items-stretch gap-2">
+            <div className="flex shrink-0 flex-col items-end gap-1.5">
               <SiteOrderUrlActions
                 urlToken={project?.url_token ?? ''}
                 siteName={project?.name ?? ''}
@@ -1360,6 +1360,7 @@ function orderPartyInfo(order) {
                       urlToken={resolveSiteUrlToken(order, projectById, customerById)}
                       siteName={party.site}
                       onCopied={onSiteUrlCopied}
+                      compact
                     />
                   ) : null}
                 </div>
