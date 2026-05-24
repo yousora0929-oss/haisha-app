@@ -2,6 +2,7 @@ import { MAP_STORAGE_BUCKET, MAP_STAMP_TYPES } from './mapEditorConstants.js';
 import {
   annotationsToLegacyStamps,
   boundsFromCenter,
+  getInitialMapViewFromAnnotations,
   normalizeMapAnnotations,
 } from './utils/mapAnnotations.js';
 import { normalizeExternalUrl } from './utils/urlValidation.js';
@@ -1494,6 +1495,9 @@ export async function fetchOrderForMapEditor(orderId) {
     imageUrl: displayImageUrl,
   });
   mapAnnotations = withImageOverlay(mapAnnotations, displayImageUrl);
+  const { annotations: viewAnnotations, flyTarget: initialFlyTarget } =
+    getInitialMapViewFromAnnotations(mapAnnotations);
+  mapAnnotations = viewAnnotations;
   const overrideMapImageUrl = pickOrderOverrideMapUrl(order, row);
   const defaultMapImageUrl = pickProjectDefaultMapUrl(project);
 
@@ -1506,6 +1510,7 @@ export async function fetchOrderForMapEditor(orderId) {
     overrideMapImageUrl,
     defaultMapImageUrl,
     mapAnnotations,
+    initialFlyTarget,
     existingStamps: legacyStamps,
     title:
       String(order.siteName || order.projectName || project?.name || '').trim() || `注文 ${id}`,
@@ -1575,6 +1580,8 @@ export async function saveProjectDefaultMap(projectId, imageDataUrl, mapAnnotati
     storagePath: upload.storagePath,
     storageUploadFailed: !upload.ok,
     storageWarning,
+    dbSaved: true,
+    savedFully: upload.ok,
     project: data,
     map_annotations: savedAnnotations,
     map_stamps: annotationsToLegacyStamps(savedAnnotations),
@@ -1624,6 +1631,8 @@ export async function saveOrderOverrideMap(orderId, imageDataUrl, mapAnnotations
     map_stamps: legacyStamps,
     map_annotations: savedAnnotations,
     map_submitted_at: submittedAt,
+    is_location_pending: false,
+    isLocationPending: false,
     ...(upload.ok && publicUrl ? { map_image_url: publicUrl } : {}),
   });
 
@@ -1664,6 +1673,8 @@ export async function saveOrderOverrideMap(orderId, imageDataUrl, mapAnnotations
     storagePath: upload.storagePath,
     storageUploadFailed: !upload.ok,
     storageWarning,
+    dbSaved: true,
+    savedFully: upload.ok,
     order: normalizeOrderRow(updated),
     map_annotations: savedAnnotations,
     map_stamps: legacyStamps,

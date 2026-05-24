@@ -131,7 +131,7 @@ export function MapEditorApp() {
     navigateTimerRef.current = window.setTimeout(() => {
       navigateTimerRef.current = null;
       navigateAfterMapEditorSave();
-    }, 1500);
+    }, 1200);
   }, []);
 
   useEffect(() => {
@@ -163,7 +163,11 @@ export function MapEditorApp() {
         setMapSource(result.mapSource || 'none');
         setOverrideMapUrl(result.overrideMapImageUrl || '');
         setDefaultMapUrl(result.defaultMapImageUrl || '');
-        setAnnotations(result.mapAnnotations || emptyMapAnnotations());
+        const loaded = result.mapAnnotations || emptyMapAnnotations();
+        setAnnotations(loaded);
+        if (result.initialFlyTarget) {
+          setFlyTarget({ ...result.initialFlyTarget, key: Date.now() });
+        }
       } catch (err) {
         if (!cancelled) {
           setLoadError(err?.message || 'データの読み込みに失敗しました');
@@ -268,7 +272,11 @@ export function MapEditorApp() {
           setLastSavedUrl(result.publicUrl);
         }
         setAnnotations(result.map_annotations || payload);
-        if (result.storageUploadFailed && result.storageWarning) {
+        setConfirmMode(null);
+        if (result.savedFully) {
+          showToast('変更を保存しました（基本マップ）');
+          scheduleNavigateBack();
+        } else if (result.storageUploadFailed && result.storageWarning) {
           showToast(`注釈データは保存しました。${result.storageWarning}`);
         } else {
           showToast('変更を保存しました（基本マップ）');
@@ -282,14 +290,16 @@ export function MapEditorApp() {
           setLastSavedUrl(result.publicUrl);
         }
         setAnnotations(result.map_annotations || payload);
-        if (result.storageUploadFailed && result.storageWarning) {
+        setConfirmMode(null);
+        if (result.savedFully) {
+          showToast('変更を保存しました');
+          scheduleNavigateBack();
+        } else if (result.storageUploadFailed && result.storageWarning) {
           showToast(`注釈データは保存しました。${result.storageWarning}`);
         } else {
-          showToast('変更を保存しました');
+          showToast('変更を保存しました（地図待ちを解除しました）');
         }
       }
-      setConfirmMode(null);
-      scheduleNavigateBack();
     } catch (err) {
       showToast(err?.message || '保存に失敗しました');
     } finally {

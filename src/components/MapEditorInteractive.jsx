@@ -12,6 +12,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { MAP_EDITOR_TOOLS, MAP_STAMP_EMOJI } from '../mapEditorConstants.js';
 import {
+  applyInitialViewCenter,
   boundsFromCenter,
   createAnnotationId,
   DEFAULT_MAP_CENTER,
@@ -187,17 +188,23 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
   const selection = onSelectionChange ? selected : internalSelected;
   const setSelection = onSelectionChange || setInternalSelected;
 
-  const center = annotations?.center || DEFAULT_MAP_CENTER;
-  const mapCenter = useMemo(
-    () => [Number(center.lat) || DEFAULT_MAP_CENTER.lat, Number(center.lng) || DEFAULT_MAP_CENTER.lng],
-    [center.lat, center.lng],
+  const displayCenter = useMemo(
+    () => applyInitialViewCenter(annotations)?.center || DEFAULT_MAP_CENTER,
+    [annotations],
   );
-  const mapZoom = Number(center.zoom) || DEFAULT_MAP_CENTER.zoom;
+  const mapCenter = useMemo(
+    () => [
+      Number(displayCenter.lat) || DEFAULT_MAP_CENTER.lat,
+      Number(displayCenter.lng) || DEFAULT_MAP_CENTER.lng,
+    ],
+    [displayCenter.lat, displayCenter.lng],
+  );
+  const mapZoom = Number(displayCenter.zoom) || DEFAULT_MAP_CENTER.zoom;
 
   const overlayBounds = useMemo(() => {
     if (annotations?.imageOverlay?.bounds) return annotations.imageOverlay.bounds;
-    return boundsFromCenter(center.lat, center.lng);
-  }, [annotations?.imageOverlay?.bounds, center.lat, center.lng]);
+    return boundsFromCenter(displayCenter.lat, displayCenter.lng);
+  }, [annotations?.imageOverlay?.bounds, displayCenter.lat, displayCenter.lng]);
 
   const patchAnnotations = useCallback(
     (patch) => {

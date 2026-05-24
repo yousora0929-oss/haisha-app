@@ -194,13 +194,45 @@ export function normalizeMapAnnotations(raw, options = {}) {
     .map((c) => normalizeComment(c))
     .filter(Boolean);
 
-  return {
+  return applyInitialViewCenter({
     version: MAP_ANNOTATION_VERSION,
     center,
     imageOverlay: imageOverlay?.url && imageOverlay.bounds ? imageOverlay : null,
     stamps,
     unloadPoints,
     comments,
+  });
+}
+
+/**
+ * 荷下ろし地点（赤〇）があれば初期表示の中心にする（1件目を基準）
+ * @returns {{ annotations: object, flyTarget: { lat: number, lng: number, zoom: number } | null }}
+ */
+export function getInitialMapViewFromAnnotations(annotations) {
+  const ann = applyInitialViewCenter(annotations || emptyMapAnnotations());
+  const first = ann.unloadPoints?.[0];
+  const flyTarget =
+    first && Number.isFinite(first.lat) && Number.isFinite(first.lng)
+      ? {
+          lat: first.lat,
+          lng: first.lng,
+          zoom: Number(ann.center?.zoom) || 17,
+        }
+      : null;
+  return { annotations: ann, flyTarget };
+}
+
+/** unloadPoints 先頭の座標を center に反映（地図起動時の表示用） */
+export function applyInitialViewCenter(annotations) {
+  if (!annotations || typeof annotations !== 'object') return annotations;
+  const first = (annotations.unloadPoints || []).find(
+    (u) => u && Number.isFinite(u.lat) && Number.isFinite(u.lng),
+  );
+  if (!first) return annotations;
+  const zoom = Number(annotations.center?.zoom) || 17;
+  return {
+    ...annotations,
+    center: { lat: first.lat, lng: first.lng, zoom },
   };
 }
 
