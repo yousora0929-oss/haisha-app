@@ -20,12 +20,12 @@ export function MapEditorToolbar({
 }) {
   const toolActive = (t) =>
     activeTool === t
-      ? 'border-indigo-500 bg-indigo-50 text-indigo-900 shadow-[0_0_0_2px_rgba(99,102,241,0.2)]'
-      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50';
+      ? 'border-indigo-500 bg-indigo-50 text-indigo-900 shadow-[0_0_0_2px_rgba(99,102,241,0.2)] dark:border-indigo-400 dark:bg-indigo-950/50 dark:text-indigo-100'
+      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700';
 
   return (
-    <aside className="map-editor-no-print flex w-[4.5rem] shrink-0 flex-col gap-2 border-r border-slate-200 bg-slate-50 p-2 sm:w-52 sm:p-3">
-      <p className="hidden text-[10px] font-black uppercase tracking-wide text-slate-500 sm:block">ツール</p>
+    <aside className="map-editor-toolbar map-editor-no-print flex w-[4.5rem] shrink-0 flex-col gap-2 border-r border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-900 sm:w-52 sm:p-3">
+      <p className="hidden text-[10px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400 sm:block">ツール</p>
       <button
         type="button"
         disabled={disabled}

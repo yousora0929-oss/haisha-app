@@ -21,6 +21,7 @@ import {
 import { SCHEDULE_BLOCK_IDS, normalizeDayBlockSchedule, todayLocalISODate } from './haishaConstants.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
+import { ThemeToggle } from './components/ThemeToggle.jsx';
 
 const ADMIN_AUTH_SESSION_KEY = 'concrete_link_admin_auth_v1';
 
@@ -2045,7 +2046,7 @@ export function AdminApp() {
     <button
       type="button"
       onClick={() => setTab(id)}
-      className={'min-h-[44px] rounded-lg border-2 px-4 text-sm font-black transition ' + (tab === id ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-300')}
+      className={'min-h-[44px] rounded-lg border-2 px-4 text-sm font-black transition ' + (tab === id ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-300 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-indigo-500')}
     >
       {label}
     </button>
@@ -2056,8 +2057,8 @@ export function AdminApp() {
   }
 
   return (
-    <div className="min-h-[100dvh] w-full overflow-x-hidden bg-slate-100 pt-11 pb-[max(2.5rem,env(safe-area-inset-bottom))]">
-      <header className="border-b border-slate-200 bg-white shadow-sm">
+    <div className="min-h-[100dvh] w-full overflow-x-hidden bg-slate-100 pt-11 pb-[max(2.5rem,env(safe-area-inset-bottom))] dark:bg-slate-950 dark:text-slate-100">
+      <header className="border-b border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
         <div className="mx-auto flex max-w-6xl flex-wrap items-start justify-between gap-3 px-4 py-5 sm:px-6">
           <div className="min-w-0">
             <a href="/" className="inline-flex w-fit items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label="CONCRETE LINK トップへ戻る">
@@ -2066,9 +2067,12 @@ export function AdminApp() {
             <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{adminDisplayName}</p>
             <p className="mt-2 text-sm text-slate-500">全注文の監視・工場別スケジュール・物件マスタ・休日設定（Supabase 連携）</p>
           </div>
-          <button type="button" onClick={handleAdminLogout} className="min-h-[40px] rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-black text-slate-700 shadow-sm transition hover:border-red-300 hover:bg-red-50 hover:text-red-700">
-            ログアウト
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <ThemeToggle />
+            <button type="button" onClick={handleAdminLogout} className="min-h-[40px] rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-black text-slate-700 shadow-sm transition hover:border-red-300 hover:bg-red-50 hover:text-red-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:border-red-500 dark:hover:bg-red-950/50">
+              ログアウト
+            </button>
+          </div>
         </div>
       </header>
       <main id="admin-dashboard" className="mx-auto w-full max-w-[1600px] space-y-6 px-4 py-8 sm:px-6">

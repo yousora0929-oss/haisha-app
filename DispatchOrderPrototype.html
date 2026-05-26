@@ -4,20 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>生コン発注システム — カスタマー注文</title>
+  <script src="/theme-bootstrap.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: {
-            sans: ['"Hiragino Sans"', '"Hiragino Kaku Gothic ProN"', 'Meiryo', 'system-ui', 'sans-serif'],
-          },
-        },
-      },
-    };
+    tailwind.config = window.__CONCRETE_LINK_TAILWIND_CONFIG || { darkMode: 'class' };
   </script>
 </head>
-<body class="min-h-screen bg-slate-100 antialiased text-slate-900">
+<body class="min-h-screen bg-slate-100 antialiased text-slate-900 dark:bg-slate-950 dark:text-slate-100">
   <div id="root"></div>
     <script type="module" src="/src/dispatch-entry.jsx"></script>
 </body>

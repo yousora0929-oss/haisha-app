@@ -15,6 +15,7 @@ import {
 import { isValidExternalUrl, normalizeExternalUrl } from './utils/urlValidation.js';
 import { geocodeAddress } from './utils/nominatimGeocode.js';
 import { boundsFromCenter, emptyMapAnnotations } from './utils/mapAnnotations.js';
+import { ThemeToggle } from './components/ThemeToggle.jsx';
 
 const MAP_SOURCE_LABEL = {
   override: 'この打設日の専用マップ',
@@ -375,7 +376,7 @@ export function MapEditorApp() {
   const siteSubtitle = siteLabel.trim() || '（現場名未設定）';
 
   return (
-    <div className="map-editor-app flex h-[100dvh] flex-col overflow-hidden bg-slate-100 text-slate-900">
+    <div className="map-editor-app flex h-[100dvh] flex-col overflow-hidden bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <div className="map-editor-print-only map-editor-print-header">
         <h1>現場地図</h1>
         <p>
@@ -383,7 +384,7 @@ export function MapEditorApp() {
         </p>
       </div>
 
-      <header className="map-editor-no-print shrink-0 border-b border-slate-200 bg-white px-3 py-2">
+      <header className="map-editor-no-print shrink-0 border-b border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <h1 className="text-sm font-black sm:text-base">現場地図</h1>
@@ -395,6 +396,7 @@ export function MapEditorApp() {
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap justify-end gap-1">
+            <ThemeToggle compact />
             <button
               type="button"
               onClick={handleCloseEditor}
@@ -471,7 +473,7 @@ export function MapEditorApp() {
         </div>
       </header>
 
-      <div className="map-editor-no-print flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
+      <div className="map-editor-no-print flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-900">
         <input
           ref={baseUploadRef}
           type="file"

@@ -4,20 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>現場地図</title>
+  <script src="/theme-bootstrap.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: {
-            sans: ['"Hiragino Sans"', '"Hiragino Kaku Gothic ProN"', 'Meiryo', 'system-ui', 'sans-serif'],
-          },
-        },
-      },
-    };
+    tailwind.config = window.__CONCRETE_LINK_TAILWIND_CONFIG || { darkMode: 'class' };
   </script>
 </head>
-<body class="min-h-[100dvh] overflow-hidden bg-slate-100 antialiased text-slate-900">
+<body class="min-h-[100dvh] overflow-hidden bg-slate-100 antialiased text-slate-900 dark:bg-slate-950 dark:text-slate-100">
   <div id="root"></div>
   <script type="module" src="/src/map-editor-entry.jsx"></script>
 </body>

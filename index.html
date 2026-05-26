@@ -4,33 +4,42 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CONCRETE LINK</title>
+    <script src="/theme-bootstrap.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = window.__CONCRETE_LINK_TAILWIND_CONFIG || { darkMode: 'class' };
+    </script>
+    <link rel="stylesheet" href="/src/theme.css" />
   </head>
-  <body class="min-h-[100dvh] bg-gradient-to-br from-slate-100 via-white to-indigo-50 font-sans text-slate-800">
+  <body class="min-h-[100dvh] bg-gradient-to-br from-slate-100 via-white to-indigo-50 font-sans text-slate-800 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 dark:text-slate-100">
     <main class="mx-auto flex min-h-[100dvh] w-full max-w-5xl flex-col items-center justify-center px-4 py-10">
-      <section class="w-full rounded-3xl border border-slate-200 bg-white/95 p-6 text-center shadow-2xl sm:p-10">
+      <section class="w-full rounded-3xl border border-slate-200 bg-white/95 p-6 text-center shadow-2xl dark:border-slate-600 dark:bg-slate-800/95 sm:p-10">
         <img src="/src/assets/concrete-link-logo.svg" alt="CONCRETE LINK" class="mx-auto h-16 w-auto sm:h-20" />
-        <p class="mx-auto mt-5 max-w-2xl text-sm font-bold leading-relaxed text-slate-500">
+        <p class="mx-auto mt-5 max-w-2xl text-sm font-bold leading-relaxed text-slate-500 dark:text-slate-400">
           管理者・工場・カスタマーの3層で、発注から配車状況の共有までをリアルタイムに接続します。
         </p>
         <div class="mt-8 grid gap-4 md:grid-cols-3">
-          <a class="rounded-2xl border-2 border-orange-200 bg-orange-50 px-4 py-5 text-left shadow-sm transition hover:bg-orange-100 active:scale-[0.98]" href="/DispatchOrderPrototype.html">
-            <span class="block text-xs font-black uppercase tracking-widest text-orange-600">Customer / Smartphone</span>
-            <span class="mt-2 block text-lg font-black text-slate-900">カスタマー注文</span>
-            <span class="mt-2 block text-sm font-bold text-slate-500">現場から片手で発注</span>
+          <a class="rounded-2xl border-2 border-orange-200 bg-orange-50 px-4 py-5 text-left shadow-sm transition hover:bg-orange-100 active:scale-[0.98] dark:border-orange-700 dark:hover:bg-orange-950/50" href="/DispatchOrderPrototype.html">
+            <span class="block text-xs font-black uppercase tracking-widest text-orange-600 dark:text-orange-300">Customer / Smartphone</span>
+            <span class="mt-2 block text-lg font-black text-slate-900 dark:text-slate-100">カスタマー注文</span>
+            <span class="mt-2 block text-sm font-bold text-slate-500 dark:text-slate-400">現場から片手で発注</span>
           </a>
-          <a class="rounded-2xl border-2 border-indigo-200 bg-indigo-50 px-4 py-5 text-left shadow-sm transition hover:bg-indigo-100 active:scale-[0.98]" href="/FactoryTabletPrototype.html">
-            <span class="block text-xs font-black uppercase tracking-widest text-indigo-600">Factory / Tablet</span>
-            <span class="mt-2 block text-lg font-black text-slate-900">工場用配車モニターへ</span>
-            <span class="mt-2 block text-sm font-bold text-slate-500">出荷室でタッチ操作</span>
+          <a class="rounded-2xl border-2 border-indigo-200 bg-indigo-50 px-4 py-5 text-left shadow-sm transition hover:bg-indigo-100 active:scale-[0.98] dark:border-indigo-700 dark:hover:bg-indigo-950/50" href="/FactoryTabletPrototype.html">
+            <span class="block text-xs font-black uppercase tracking-widest text-indigo-600 dark:text-indigo-300">Factory / Tablet</span>
+            <span class="mt-2 block text-lg font-black text-slate-900 dark:text-slate-100">工場用配車モニターへ</span>
+            <span class="mt-2 block text-sm font-bold text-slate-500 dark:text-slate-400">出荷室でタッチ操作</span>
           </a>
-          <a class="rounded-2xl border-2 border-slate-300 bg-slate-50 px-4 py-5 text-left shadow-sm transition hover:bg-slate-100 active:scale-[0.98]" href="/AdminPrototype.html">
-            <span class="block text-xs font-black uppercase tracking-widest text-slate-500">Admin / PC</span>
-            <span class="mt-2 block text-lg font-black text-slate-900">管理者メニュー</span>
-            <span class="mt-2 block text-sm font-bold text-slate-500">全体管理・マスタ設定</span>
+          <a class="rounded-2xl border-2 border-slate-300 bg-slate-50 px-4 py-5 text-left shadow-sm transition hover:bg-slate-100 active:scale-[0.98] dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700" href="/AdminPrototype.html">
+            <span class="block text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Admin / PC</span>
+            <span class="mt-2 block text-lg font-black text-slate-900 dark:text-slate-100">管理者メニュー</span>
+            <span class="mt-2 block text-sm font-bold text-slate-500 dark:text-slate-400">全体管理・マスタ設定</span>
           </a>
         </div>
       </section>
     </main>
+    <script type="module">
+      import { initTheme } from '/src/utils/theme.js';
+      initTheme();
+    </script>
   </body>
 </html>

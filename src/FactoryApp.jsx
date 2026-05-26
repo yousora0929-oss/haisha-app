@@ -35,6 +35,7 @@ import { isLocationPendingOrder } from './utils/orderWorkflow.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { MAP_EDITOR_ORDER_SAVED_DOM_EVENT, MAP_EDITOR_ORDER_SAVED_EVENT_KEY } from './mapEditorConstants.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
+import { ThemeToggle } from './components/ThemeToggle.jsx';
 
 const todayLocalISO = todayLocalISODate;
 
@@ -3435,13 +3436,13 @@ function orderPartyInfo(order) {
       }
 
       return (
-        <div id="factory-dashboard" className="flex h-[100dvh] min-h-[100dvh] w-full max-w-full flex-col overflow-hidden overflow-x-hidden bg-slate-50 pt-3 antialiased sm:pt-4">
+        <div id="factory-dashboard" className="flex h-[100dvh] min-h-[100dvh] w-full max-w-full flex-col overflow-hidden overflow-x-hidden bg-slate-50 pt-3 antialiased dark:bg-slate-950 dark:text-slate-100 sm:pt-4">
           {activeFactoryMissing ? (
             <div className="shrink-0 border-b-4 border-red-700 bg-red-100 px-4 py-3 text-center text-lg font-black text-red-700 shadow sm:text-2xl">
               ⚠️警告: 工場ID【{activeFactoryId}】はデータベースに存在しません
             </div>
           ) : null}
-          <div className="flex shrink-0 flex-wrap items-center justify-between gap-1.5 border-b border-slate-200 bg-white px-2 py-1 shadow-sm">
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-1.5 border-b border-slate-200 bg-white px-2 py-1 shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <div className="flex min-w-0 items-center gap-2">
               <a href="/" className="inline-flex w-fit shrink-0 items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label="CONCRETE LINK トップへ戻る">
                 <img src={concreteLinkLogo} alt="CONCRETE LINK" className="h-7 w-auto sm:h-8" />
@@ -3452,7 +3453,7 @@ function orderPartyInfo(order) {
               </div>
             </div>
             <div className="flex flex-1 flex-wrap items-center justify-end gap-1.5">
-              <div className="grid min-w-full flex-1 grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 sm:grid-cols-4 sm:min-w-[32rem] sm:flex-none lg:min-w-[40rem]">
+              <div className="grid min-w-full flex-1 grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800 sm:grid-cols-4 sm:min-w-[32rem] sm:flex-none lg:min-w-[40rem]">
                 {[
                   ['schedule', '⚙️ スケジュール'],
                   ['orders', '🚚 注文'],
@@ -3467,7 +3468,7 @@ function orderPartyInfo(order) {
                       onClick={() => setActiveTab(id)}
                       className={
                         'min-h-[36px] rounded-lg px-2 py-1.5 text-[11px] font-black transition sm:min-h-[40px] sm:px-4 sm:text-xs lg:text-sm ' +
-                        (active ? 'bg-indigo-600 text-white shadow ring-2 ring-indigo-200' : 'text-slate-500 hover:bg-white hover:text-slate-900')
+                        (active ? 'bg-indigo-600 text-white shadow ring-2 ring-indigo-200' : 'text-slate-500 hover:bg-white hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white')
                       }
                     >
                       <span className="inline-flex items-center justify-center">
@@ -3482,6 +3483,7 @@ function orderPartyInfo(order) {
                   );
                 })}
               </div>
+            <ThemeToggle compact />
             <button
               type="button"
               onClick={handleDownloadFactoryCsv}

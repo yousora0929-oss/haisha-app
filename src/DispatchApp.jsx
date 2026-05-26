@@ -19,6 +19,7 @@ import {
   setupNotificationClickRedirect,
 } from './utils/notification.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
+import { ThemeToggle } from './components/ThemeToggle.jsx';
 import { OrderCartPreview } from './components/OrderCartPreview.jsx';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
@@ -1924,8 +1925,8 @@ function unloadDurationLabel(value) {
       }
 
       return (
-        <div className="min-h-[100dvh] w-full overflow-x-hidden bg-slate-100 pt-11 pb-[max(7rem,env(safe-area-inset-bottom))] lg:pb-[max(2.5rem,env(safe-area-inset-bottom))]">
-          <header className="border-b border-slate-200 bg-white shadow-sm">
+        <div className="min-h-[100dvh] w-full overflow-x-hidden bg-slate-100 pt-11 pb-[max(7rem,env(safe-area-inset-bottom))] dark:bg-slate-950 dark:text-slate-100 lg:pb-[max(2.5rem,env(safe-area-inset-bottom))]">
+          <header className="border-b border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <div className="mx-auto w-full max-w-6xl px-4 py-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
@@ -1935,6 +1936,7 @@ function unloadDurationLabel(value) {
                   <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{adminDisplayName}</p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
+                  <ThemeToggle compact />
                   <button
                     type="button"
                     onClick={handleCustomerLogout}
@@ -1950,9 +1952,9 @@ function unloadDurationLabel(value) {
             </div>
           </header>
 
-          <div className="sticky top-0 z-30 hidden border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur lg:block">
+          <div className="sticky top-0 z-30 hidden border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 lg:block">
             <div className="mx-auto w-full max-w-6xl overflow-x-auto">
-            <div className="grid min-w-[32rem] grid-cols-4 gap-1 rounded-2xl bg-slate-100 p-1">
+            <div className="grid min-w-[32rem] grid-cols-4 gap-1 rounded-2xl bg-slate-100 p-1 dark:bg-slate-800">
               {[
                 ['new', '新規発注'],
                 ['active', '進行中'],

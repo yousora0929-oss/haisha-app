@@ -1,6 +1,11 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { DispatchApp } from './DispatchApp.jsx';
+import { ThemeProvider } from './components/ThemeProvider.jsx';
+import './theme.css';
+import { initTheme } from './utils/theme.js';
+
+initTheme();
 
 const rootEl = document.getElementById('root');
 if (!rootEl) {
@@ -9,6 +14,8 @@ if (!rootEl) {
 
 createRoot(rootEl).render(
   <React.StrictMode>
-    <DispatchApp />
+    <ThemeProvider>
+      <DispatchApp />
+    </ThemeProvider>
   </React.StrictMode>,
 );
