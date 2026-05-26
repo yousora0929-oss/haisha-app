@@ -21,6 +21,11 @@ import {
   computeScheduleAutoRejectReason,
 } from './haishaConstants.js';
 import { registerOneSignalUser, sendPushNotification } from './utils/notification.js';
+import {
+  primeNotificationAlarm,
+  startNotificationAlarm,
+  stopNotificationAlarm,
+} from './utils/notificationAlarm.js';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
@@ -1763,38 +1768,6 @@ function orderPartyInfo(order) {
     }
 
 
-    function playPiloonChime() {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;
-      const ctx = new AC();
-      const done = () => {
-        try {
-          ctx.close();
-        } catch {
-          /* ignore */
-        }
-      };
-      ctx
-        .resume()
-        .then(() => {
-          const t0 = ctx.currentTime;
-          const osc = ctx.createOscillator();
-          const g = ctx.createGain();
-          osc.type = 'sine';
-          osc.connect(g);
-          g.connect(ctx.destination);
-          osc.frequency.setValueAtTime(880, t0);
-          osc.frequency.exponentialRampToValueAtTime(1318, t0 + 0.2);
-          g.gain.setValueAtTime(0.0001, t0);
-          g.gain.exponentialRampToValueAtTime(0.1, t0 + 0.035);
-          g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.42);
-          osc.start(t0);
-          osc.stop(t0 + 0.42);
-          osc.onended = done;
-        })
-        .catch(done);
-    }
-
     function DispatchInbox({
       orders,
       currentFactoryId,
@@ -2609,6 +2582,7 @@ function orderPartyInfo(order) {
             setActiveFactoryId(fid);
             setActiveFactoryName(displayName);
             setIsFactoryAuthenticated(true);
+            primeNotificationAlarm();
             void registerOneSignalUser(fid, { role: 'factory', factory_id: fid });
             setLoginPassword('');
             setHiddenOrderIds(new Set());
@@ -2629,7 +2603,30 @@ function orderPartyInfo(order) {
         [factories, loginFactoryId, loginPassword],
       );
 
+      const dismissNewOrderToast = useCallback(() => {
+        stopNotificationAlarm();
+        setToastOrder(null);
+      }, []);
+
+      useEffect(() => {
+        if (toastOrder) {
+          startNotificationAlarm();
+          return () => stopNotificationAlarm();
+        }
+        stopNotificationAlarm();
+        return undefined;
+      }, [toastOrder?.id]);
+
+      useEffect(() => {
+        if (!isFactoryAuthenticated) return undefined;
+        const onGesture = () => primeNotificationAlarm();
+        window.addEventListener('pointerdown', onGesture, { once: true, passive: true });
+        return () => window.removeEventListener('pointerdown', onGesture);
+      }, [isFactoryAuthenticated]);
+
       const handleFactoryLogout = useCallback(() => {
+        stopNotificationAlarm();
+        setToastOrder(null);
         try {
           sessionStorage.removeItem(FACTORY_AUTH_STORAGE_KEY);
         } catch {
@@ -2689,7 +2686,6 @@ function orderPartyInfo(order) {
             return true;
           }) ?? null;
           if (head && playSound) {
-            playPiloonChime();
             setToastOrder(head);
             lastNotifiedHeadIdRef.current = head.id;
             notifiedOrderIds.current.add(head.id);
@@ -3586,7 +3582,7 @@ function orderPartyInfo(order) {
             </div>
           </PullToRefresh>
 
-          <NewOrderToast order={toastOrder} onDismiss={() => setToastOrder(null)} />
+          <NewOrderToast order={toastOrder} onDismiss={dismissNewOrderToast} />
           {actionNotice ? (
             <div
               className="fixed bottom-4 left-4 z-[95] rounded-2xl border-2 border-emerald-600 bg-white px-4 py-3 text-sm font-black text-emerald-800 shadow-2xl sm:left-6 sm:text-base"

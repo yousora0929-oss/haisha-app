@@ -693,6 +693,7 @@ function mapFactoryRow(row) {
     phone_number: row.phone_number != null ? String(row.phone_number) : '',
     latitude,
     longitude,
+    allowed_delivery_areas: normalizeAllowedDeliveryAreas(row?.allowed_delivery_areas),
     raw: row,
   };
 }

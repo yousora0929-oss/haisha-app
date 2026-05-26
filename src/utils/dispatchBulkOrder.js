@@ -55,7 +55,10 @@ export function buildDispatchOrderForDate(preferredDate, context) {
   const isSpot = orderKind === 'spot';
   const locationPending = Boolean(isLocationPending);
   const nameTrim = sanitizeSiteNameValue(siteName);
-  const addrTrim = String(siteAddress || '').trim();
+  const deliveryAreaTrim = String(context.deliveryArea || '').trim();
+  const addressDetailTrim = String(context.siteAddressDetail ?? '').trim();
+  const addrTrim =
+    String(siteAddress || '').trim() || combineDeliveryAddress(deliveryAreaTrim, addressDetailTrim);
   const projectName = sanitizeSiteNameValue(selectedProject?.name);
   const addrForName = looksLikeUrlText(addrTrim) ? '' : addrTrim;
   const resolvedSiteName =
@@ -110,6 +113,10 @@ export function buildDispatchOrderForDate(preferredDate, context) {
     mixText,
     siteName: resolvedSiteName,
     siteAddress: addrTrim,
+    delivery_area: deliveryAreaTrim || null,
+    deliveryArea: deliveryAreaTrim || null,
+    site_address_detail: addressDetailTrim || null,
+    siteAddressDetail: addressDetailTrim || null,
     sitePhone: String(sitePhone || '').trim(),
     has_test: Boolean(hasTest),
     is_location_pending: locationPending,

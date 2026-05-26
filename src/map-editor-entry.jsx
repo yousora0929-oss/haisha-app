@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { MapEditorApp } from './MapEditorApp.jsx';
+import './mapEditorPrint.css';
 
 const rootEl = document.getElementById('root');
 if (!rootEl) {

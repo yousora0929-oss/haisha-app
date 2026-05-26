@@ -1,0 +1,97 @@
+/* 現場地図エディタ — 印刷用レイアウト */
+.map-editor-print-only {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: landscape;
+    margin: 8mm;
+  }
+
+  html,
+  body {
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .map-editor-no-print {
+    display: none !important;
+  }
+
+  .map-editor-print-only {
+    display: block !important;
+  }
+
+  .map-editor-app {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  .map-editor-print-header {
+    margin: 0 0 4mm;
+    padding: 0 0 2mm;
+    border-bottom: 1px solid #cbd5e1;
+  }
+
+  .map-editor-print-header h1 {
+    margin: 0;
+    font-size: 14pt;
+    font-weight: 800;
+    color: #0f172a;
+  }
+
+  .map-editor-print-header p {
+    margin: 2mm 0 0;
+    font-size: 10pt;
+    font-weight: 600;
+    color: #475569;
+  }
+
+  .map-editor-workspace {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
+  .map-editor-print-map {
+    position: relative !important;
+    display: block !important;
+    width: 100% !important;
+    height: 72vh !important;
+    min-height: 72vh !important;
+    max-height: none !important;
+    flex: none !important;
+    overflow: hidden !important;
+    page-break-inside: avoid;
+    border: 1px solid #e2e8f0;
+    border-radius: 2px;
+  }
+
+  .map-editor-print-map .leaflet-container {
+    width: 100% !important;
+    height: 72vh !important;
+    min-height: 72vh !important;
+  }
+
+  .map-editor-print-map .leaflet-pane,
+  .map-editor-print-map .leaflet-tile-pane,
+  .map-editor-print-map .leaflet-overlay-pane,
+  .map-editor-print-map .leaflet-marker-pane,
+  .map-editor-print-map .leaflet-shadow-pane {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .leaflet-control-container {
+    display: none !important;
+  }
+}

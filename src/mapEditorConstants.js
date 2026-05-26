@@ -77,25 +77,48 @@ export function rememberMapEditorReturnUrl() {
   }
 }
 
-/** 保存成功後に前画面へ戻る（return クエリ / sessionStorage / history.back / window.close） */
-export function navigateAfterMapEditorSave() {
+function isUsableMapEditorReturnUrl(raw) {
+  if (!raw || typeof raw !== 'string') return false;
+  try {
+    const u = new URL(raw, typeof window !== 'undefined' ? window.location.origin : undefined);
+    const path = (u.pathname || '/').toLowerCase();
+    if (path === '/' || path === '/index.html') return false;
+    if (/\/map-editor\//i.test(path)) return false;
+    if (typeof window !== 'undefined' && raw === window.location.href) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 保存せず閉じる・戻る用: 遷移元へ必ず戻す（トップ `/` へは飛ばさない）
+ */
+export function navigateBackFromMapEditor() {
   if (typeof window === 'undefined') return false;
+
+  let target = '';
   try {
     const q = new URLSearchParams(window.location.search).get('return');
-    const fromSession = sessionStorage.getItem(MAP_EDITOR_RETURN_SESSION_KEY);
-    sessionStorage.removeItem(MAP_EDITOR_RETURN_SESSION_KEY);
-    const target = (q && decodeURIComponent(q)) || fromSession || '';
-    if (target && target !== window.location.href) {
-      window.location.assign(target);
-      return true;
+    if (q) target = decodeURIComponent(q);
+    if (!isUsableMapEditorReturnUrl(target)) {
+      target = sessionStorage.getItem(MAP_EDITOR_RETURN_SESSION_KEY) || '';
     }
+    sessionStorage.removeItem(MAP_EDITOR_RETURN_SESSION_KEY);
   } catch {
     /* ignore */
   }
+
+  if (isUsableMapEditorReturnUrl(target)) {
+    window.location.assign(target);
+    return true;
+  }
+
   if (window.history.length > 1) {
     window.history.back();
     return true;
   }
+
   try {
     if (window.opener && !window.opener.closed) {
       window.close();
@@ -104,7 +127,13 @@ export function navigateAfterMapEditorSave() {
   } catch {
     /* ignore */
   }
+
   return false;
+}
+
+/** 保存成功後に前画面へ戻る */
+export function navigateAfterMapEditorSave() {
+  return navigateBackFromMapEditor();
 }
 
 /** 注文に紐づく地図エディタURL（Vite dev / 静的ホストで /map-editor/:id にルーティング） */
@@ -119,7 +148,14 @@ export function buildMapEditorUrl(orderId, baseOrigin) {
     (baseOrigin && String(baseOrigin).replace(/\/$/, '')) ||
     envOrigin ||
     (typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '');
-  return `${origin}/map-editor/${encodeURIComponent(id)}`;
+  let url = `${origin}/map-editor/${encodeURIComponent(id)}`;
+  if (typeof window !== 'undefined') {
+    const ret = window.location.href;
+    if (ret && !/\/map-editor\//i.test(ret)) {
+      url += `?return=${encodeURIComponent(ret)}`;
+    }
+  }
+  return url;
 }
 
 /** URL パスまたはクエリから order_id を取得 */

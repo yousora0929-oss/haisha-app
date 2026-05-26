@@ -9,6 +9,7 @@ import {
 import {
   MAP_EDITOR_TOOLS,
   navigateAfterMapEditorSave,
+  navigateBackFromMapEditor,
   parseMapEditorOrderId,
 } from './mapEditorConstants.js';
 import { isValidExternalUrl, normalizeExternalUrl } from './utils/urlValidation.js';
@@ -42,7 +43,7 @@ export function MapEditorApp() {
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [title, setTitle] = useState('地図スタンプ配置');
+  const [siteLabel, setSiteLabel] = useState('');
   const [resolvedOrderId, setResolvedOrderId] = useState('');
   const [projectId, setProjectId] = useState('');
   const [baseImageUrl, setBaseImageUrl] = useState('');
@@ -126,6 +127,16 @@ export function MapEditorApp() {
     editorRef.current?.deleteSelected?.();
   };
 
+  const handlePrint = useCallback(() => {
+    const map = editorRef.current?.getMap?.();
+    if (map) {
+      map.invalidateSize();
+      window.setTimeout(() => window.print(), 150);
+    } else {
+      window.print();
+    }
+  }, []);
+
   const scheduleNavigateBack = useCallback(() => {
     if (navigateTimerRef.current != null) window.clearTimeout(navigateTimerRef.current);
     navigateTimerRef.current = window.setTimeout(() => {
@@ -158,7 +169,7 @@ export function MapEditorApp() {
         revokeLocalBlob();
         setResolvedOrderId(result.order.id);
         setProjectId(result.projectId || '');
-        setTitle(result.title);
+        setSiteLabel(result.title);
         setBaseImageUrl(result.displayImageUrl || '');
         setMapSource(result.mapSource || 'none');
         setOverrideMapUrl(result.overrideMapImageUrl || '');
@@ -251,6 +262,21 @@ export function MapEditorApp() {
       unloadPoints: [],
       comments: [],
     }));
+  };
+
+  const handleCloseEditor = () => {
+    if (saving) return;
+    const stampCount =
+      (annotations.stamps?.length || 0) +
+      (annotations.unloadPoints?.length || 0) +
+      (annotations.comments?.length || 0);
+    const dirty = stampCount > 0 || mapSource === 'upload';
+    if (dirty && !window.confirm('保存していません。地図エディタを閉じて前の画面に戻りますか？')) {
+      return;
+    }
+    if (!navigateBackFromMapEditor()) {
+      window.alert('戻り先が見つかりません。ブラウザの「戻る」で前の画面を開いてください。');
+    }
   };
 
   const runSave = async (mode) => {
@@ -346,12 +372,24 @@ export function MapEditorApp() {
     (annotations.unloadPoints?.length || 0) +
     (annotations.comments?.length || 0);
 
+  const siteSubtitle = siteLabel.trim() || '（現場名未設定）';
+
   return (
-    <div className="flex h-[100dvh] flex-col overflow-hidden bg-slate-100 text-slate-900">
-      <header className="shrink-0 border-b border-slate-200 bg-white px-3 py-2">
+    <div className="map-editor-app flex h-[100dvh] flex-col overflow-hidden bg-slate-100 text-slate-900">
+      <div className="map-editor-print-only map-editor-print-header">
+        <h1>現場地図</h1>
+        <p>
+          {siteSubtitle} · {sourceLabel} · 注釈 {annCount} 件
+        </p>
+      </div>
+
+      <header className="map-editor-no-print shrink-0 border-b border-slate-200 bg-white px-3 py-2">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-sm font-black sm:text-base">{title}</h1>
+            <h1 className="text-sm font-black sm:text-base">現場地図</h1>
+            <p className="mt-0.5 truncate text-[10px] font-bold text-slate-600 sm:text-xs" title={siteSubtitle}>
+              {siteSubtitle}
+            </p>
             <p className="mt-0.5 text-[10px] font-bold text-slate-500 sm:text-xs">
               {sourceLabel} · 注釈 {annCount} 件
             </p>
@@ -359,11 +397,29 @@ export function MapEditorApp() {
           <div className="flex shrink-0 flex-wrap justify-end gap-1">
             <button
               type="button"
+              onClick={handleCloseEditor}
+              disabled={saving}
+              className="rounded-lg border border-slate-400 bg-slate-100 px-2 py-1.5 text-[11px] font-bold text-slate-800 active:scale-95 sm:text-xs"
+              title="保存せず前の画面へ戻る"
+            >
+              ✕ 閉じる
+            </button>
+            <button
+              type="button"
+              onClick={handlePrint}
+              disabled={saving}
+              className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[11px] font-bold text-slate-800 active:scale-95 sm:text-xs"
+              title="地図を印刷"
+            >
+              🖨️ 印刷
+            </button>
+            <button
+              type="button"
               onClick={handleUndo}
               disabled={saving}
               className="rounded-lg bg-slate-100 px-2 py-1.5 text-[11px] font-bold text-slate-800 active:scale-95 sm:text-xs"
             >
-              ↩️ 戻る
+              ↩️ 1つ戻す
             </button>
             <button
               type="button"
@@ -415,7 +471,7 @@ export function MapEditorApp() {
         </div>
       </header>
 
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
+      <div className="map-editor-no-print flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
         <input
           ref={baseUploadRef}
           type="file"
@@ -436,7 +492,7 @@ export function MapEditorApp() {
         </p>
       </div>
 
-      <div className="flex min-h-0 flex-1">
+      <div className="map-editor-workspace flex min-h-0 flex-1">
         <MapEditorToolbar
           activeTool={activeTool}
           onToolChange={setActiveTool}
@@ -464,12 +520,12 @@ export function MapEditorApp() {
           disabled={saving}
           selected={selection}
           onSelectionChange={setSelection}
-          className="flex-1"
+          className="map-editor-print-map flex-1"
         />
       </div>
 
       {confirmMode ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-6">
+        <div className="map-editor-no-print fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-6">
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-xl">
             <h2 className="text-base font-black">
               {confirmMode === 'project' ? '基本マップとして保存' : '打設日用として保存'}
@@ -500,7 +556,7 @@ export function MapEditorApp() {
       ) : null}
 
       {lastSavedUrl ? (
-        <div className="pointer-events-none fixed bottom-4 right-4 z-40 max-w-[min(90vw,280px)] rounded-lg bg-emerald-800 px-3 py-2 text-[11px] font-bold text-white shadow-lg">
+        <div className="map-editor-no-print pointer-events-none fixed bottom-4 right-4 z-40 max-w-[min(90vw,280px)] rounded-lg bg-emerald-800 px-3 py-2 text-[11px] font-bold text-white shadow-lg">
           変更を保存しました
           {isValidExternalUrl(lastSavedUrl) ? (
             <a
@@ -516,7 +572,7 @@ export function MapEditorApp() {
       ) : null}
 
       {toast ? (
-        <div className="pointer-events-none fixed bottom-20 left-1/2 z-40 -translate-x-1/2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-bold text-white shadow-lg">
+        <div className="map-editor-no-print pointer-events-none fixed bottom-20 left-1/2 z-40 -translate-x-1/2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-bold text-white shadow-lg">
           {toast}
         </div>
       ) : null}

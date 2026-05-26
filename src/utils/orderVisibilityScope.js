@@ -3,6 +3,7 @@ import {
   getEffectiveEscalationMinutes,
   getVisibleFactoryIdsForOrder,
 } from './escalationUtils.js';
+import { getOrderDeliveryAreaContext } from './deliveryAreaEscalation.js';
 
 function orderStatus(order) {
   return String(order?.status || 'pending').trim();
@@ -124,6 +125,11 @@ export function getOrderVisibilityScope(order, ctx, factoryNameById = {}) {
   const visibleFactoryIds = getVisibleFactoryIdsForOrder(order, ctx);
   const visibleFactoryNames = visibleFactoryIds.map((id) => factoryName(factoryNameById, id));
   const allCount = (ctx?.allFactoryIds || []).length;
+  const addrCtx = getOrderDeliveryAreaContext(order, ctx?.projectById);
+  const areaBasedNote =
+    addrCtx.locationPending && !order?.delivery_lat && !order?.delivery_lng && addrCtx.deliveryArea
+      ? `（地図待ち・${addrCtx.deliveryArea}エリアで工場を選定）`
+      : '';
 
   const chips = visibleFactoryIds.map((id) => {
     let role = 'visible';
@@ -162,12 +168,13 @@ export function getOrderVisibilityScope(order, ctx, factoryNameById = {}) {
     };
   }
 
-  if (allCount > 0 && visibleFactoryIds.length >= allCount) {
+  const areaPoolSize = ctx?.areaFactoryIdsByOrder?.get(order.id)?.length ?? allCount;
+  if (areaPoolSize > 0 && visibleFactoryIds.length >= areaPoolSize) {
     return {
       ...base,
       kind: 'area_all',
       summary: '管轄エリア内の全工場に表示中',
-      detail: `登録工場 ${allCount} 社すべてが閲覧可能です（エスカレーション ${escalationTierLabel}）。`,
+      detail: `エリア内 ${areaPoolSize} 工場すべてが閲覧可能です（エスカレーション ${escalationTierLabel}）${areaBasedNote}`,
       visibleFactoryIds,
       visibleFactoryNames,
       listIcon: { emoji: '🌐', count: visibleFactoryIds.length, shortLabel: '全域共有' },

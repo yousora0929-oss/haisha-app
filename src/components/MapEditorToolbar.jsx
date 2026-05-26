@@ -24,7 +24,7 @@ export function MapEditorToolbar({
       : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50';
 
   return (
-    <aside className="flex w-[4.5rem] shrink-0 flex-col gap-2 border-r border-slate-200 bg-slate-50 p-2 sm:w-52 sm:p-3">
+    <aside className="map-editor-no-print flex w-[4.5rem] shrink-0 flex-col gap-2 border-r border-slate-200 bg-slate-50 p-2 sm:w-52 sm:p-3">
       <p className="hidden text-[10px] font-black uppercase tracking-wide text-slate-500 sm:block">ツール</p>
       <button
         type="button"

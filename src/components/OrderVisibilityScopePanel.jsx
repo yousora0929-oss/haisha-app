@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { getOrderVisibilityScope, chipRoleLabel } from '../utils/orderVisibilityScope.js';
+import { OrderVisibilityScopePopover } from './OrderVisibilityScopePopover.jsx';
 
 const CHIP_CLASS =
   'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-black';
@@ -33,9 +34,16 @@ export function OrderVisibilityScopePanel({ order, escalationCtx, factoryNameByI
       }
       aria-labelledby="order-visibility-scope-title"
     >
-      <h4 id="order-visibility-scope-title" className="text-sm font-black text-sky-950 sm:text-base">
-        👀 現在の公開・エスカレーション範囲
-      </h4>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <h4 id="order-visibility-scope-title" className="text-sm font-black text-sky-950 sm:text-base">
+          👀 現在の公開・エスカレーション範囲
+        </h4>
+        <OrderVisibilityScopePopover
+          order={order}
+          escalationCtx={escalationCtx}
+          factoryNameById={factoryNameById}
+        />
+      </div>
       <p className="mt-2 text-sm font-bold leading-relaxed text-slate-900">{scope.summary}</p>
       {scope.detail ? <p className="mt-1 text-xs font-medium leading-relaxed text-slate-600">{scope.detail}</p> : null}
       {scope.escalationMinutes != null ? (

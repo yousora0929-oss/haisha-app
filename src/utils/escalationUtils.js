@@ -1,5 +1,10 @@
 import { getElapsedMinutesSinceEffectiveStart } from './dateUtils.js';
 import { calculateDistance } from './geoUtils.js';
+import { normalizeAllowedDeliveryAreas } from './deliveryAreas.js';
+import {
+  getOrderDeliveryAreaContext,
+  rankFactoryIdsByDeliveryArea,
+} from './deliveryAreaEscalation.js';
 
 function orderCreatedAt(order) {
   return order?.createdAt ?? order?.created_at ?? null;
@@ -97,6 +102,22 @@ export function getOrderSiteCoords(order, projectById) {
   return null;
 }
 
+function orderHasUsableCoords(order, projectById) {
+  return Boolean(getOrderSiteCoords(order, projectById));
+}
+
+/** 注文ごとのエスカレーション対象工場 ID（距離 or 市町村ベース） */
+export function rankFactoryIdsForOrder(order, projectById, factories, globalAllowedAreas) {
+  if (orderHasUsableCoords(order, projectById)) {
+    return rankFactoryIdsByDistance(getOrderSiteCoords(order, projectById), factories);
+  }
+  const { locationPending, deliveryArea, fullAddress } = getOrderDeliveryAreaContext(order, projectById);
+  if (locationPending || deliveryArea || fullAddress) {
+    return rankFactoryIdsByDeliveryArea(order, projectById, factories, globalAllowedAreas);
+  }
+  return rankFactoryIdsByDistance(null, factories);
+}
+
 /** 距離の近い順に工場 ID を並べる */
 export function rankFactoryIdsByDistance(siteCoords, factories) {
   const list = Array.isArray(factories) ? factories : [];
@@ -170,7 +191,8 @@ export function isOrderVisibleToFactory(order, factoryId, ctx) {
   const preferredId = orderPreferredFactoryId(order);
   const ranked = ctx.topNByOrderId.get(order.id) || { top3: [], top6: [] };
   const { top3, top6 } = ranked;
-  const allIds = ctx.allFactoryIds || [];
+  const areaIds = ctx.areaFactoryIdsByOrder?.get(order.id) || ctx.allFactoryIds || [];
+  const allIds = areaIds;
 
   const effectiveMinutes = getEffectiveEscalationMinutes(order, ctx.projectById, ctx.settings, ctx.holidays, ctx.now);
 
@@ -221,24 +243,28 @@ export function buildEscalationContext(orders, factories, projects, settings, ho
   const projectById = Object.fromEntries(
     (projects || []).filter((p) => p && p.id).map((p) => [String(p.id), p]),
   );
+  const globalAllowedAreas = normalizeAllowedDeliveryAreas(settings?.allowed_delivery_areas);
   const allFactoryIds = (factories || [])
     .map((f) => (f?.id != null ? String(f.id) : ''))
     .filter(Boolean);
   const topNByOrderId = new Map();
+  const areaFactoryIdsByOrder = new Map();
   for (const o of orders || []) {
     if (!o?.id) continue;
-    const site = getOrderSiteCoords(o, projectById);
-    const ranked = rankFactoryIdsByDistance(site, factories);
+    const ranked = rankFactoryIdsForOrder(o, projectById, factories, globalAllowedAreas);
     topNByOrderId.set(o.id, { top3: ranked.slice(0, 3), top6: ranked.slice(0, 6) });
+    areaFactoryIdsByOrder.set(o.id, ranked);
   }
   return {
     projectById,
     topNByOrderId,
+    areaFactoryIdsByOrder,
     settings: settings || {},
     holidays: holidays || [],
     now,
     factories,
     allFactoryIds,
+    globalAllowedAreas,
   };
 }
 
