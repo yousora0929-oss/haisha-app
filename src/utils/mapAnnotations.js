@@ -204,15 +204,114 @@ export function normalizeMapAnnotations(raw, options = {}) {
   });
 }
 
+const MIN_BOUNDS_SPAN_DEG = 0.00045; /* 約50m — 単一点でも fitBounds 可能に */
+
+function metersToLatDelta(m) {
+  return Number(m) / 111320;
+}
+
+function metersToLngDelta(m, lat) {
+  const la = Number(lat);
+  const cos = Number.isFinite(la) ? Math.cos((la * Math.PI) / 180) : 1;
+  return Number(m) / (111320 * Math.max(0.2, Math.abs(cos)));
+}
+
+/** stamps / unloadPoints / comments に緯度経度付きの要素があるか */
+export function hasAnnotationGeoFeatures(annotations) {
+  if (!annotations || typeof annotations !== 'object') return false;
+  const hasStamp = (annotations.stamps || []).some(
+    (s) => s && Number.isFinite(s.lat) && Number.isFinite(s.lng),
+  );
+  const hasUnload = (annotations.unloadPoints || []).some(
+    (u) => u && Number.isFinite(u.lat) && Number.isFinite(u.lng),
+  );
+  const hasComment = (annotations.comments || []).some(
+    (c) => c && Number.isFinite(c.lat) && Number.isFinite(c.lng),
+  );
+  return hasStamp || hasUnload || hasComment;
+}
+
 /**
- * 荷下ろし地点（赤〇）があれば初期表示の中心にする（1件目を基準）
+ * スタンプ・荷下ろし（半径込み）・コメントの LatLng から Leaflet fitBounds 用 bounds
+ * @returns {[[number, number], [number, number]] | null} [[south, west], [north, east]]
+ */
+export function boundsFromAnnotations(annotations) {
+  if (!annotations || typeof annotations !== 'object') return null;
+
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLng = Infinity;
+  let maxLng = -Infinity;
+
+  const include = (lat, lng) => {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    minLat = Math.min(minLat, lat);
+    maxLat = Math.max(maxLat, lat);
+    minLng = Math.min(minLng, lng);
+    maxLng = Math.max(maxLng, lng);
+  };
+
+  for (const s of annotations.stamps || []) {
+    include(Number(s.lat), Number(s.lng));
+  }
+  for (const c of annotations.comments || []) {
+    include(Number(c.lat), Number(c.lng));
+  }
+  for (const u of annotations.unloadPoints || []) {
+    const la = Number(u.lat);
+    const ln = Number(u.lng);
+    if (!Number.isFinite(la) || !Number.isFinite(ln)) continue;
+    const r = Number(u.radiusM ?? u.radius);
+    const radiusM = Number.isFinite(r) && r > 0 ? r : DEFAULT_UNLOAD_RADIUS_M;
+    include(la, ln);
+    include(la + metersToLatDelta(radiusM), ln);
+    include(la - metersToLatDelta(radiusM), ln);
+    include(la, ln + metersToLngDelta(radiusM, la));
+    include(la, ln - metersToLngDelta(radiusM, la));
+  }
+
+  if (!Number.isFinite(minLat)) return null;
+
+  if (maxLat - minLat < MIN_BOUNDS_SPAN_DEG) {
+    const pad = (MIN_BOUNDS_SPAN_DEG - (maxLat - minLat)) / 2;
+    minLat -= pad;
+    maxLat += pad;
+  }
+  if (maxLng - minLng < MIN_BOUNDS_SPAN_DEG) {
+    const pad = (MIN_BOUNDS_SPAN_DEG - (maxLng - minLng)) / 2;
+    minLng -= pad;
+    maxLng += pad;
+  }
+
+  return [
+    [minLat, minLng],
+    [maxLat, maxLng],
+  ];
+}
+
+/** fitBounds 用パディング（px）とモバイル時の追加ズームアウト */
+export function getAnnotationFitBoundsOptions(annotations, { isMobile = false } = {}) {
+  const savedZoom = Number(annotations?.center?.zoom);
+  const maxZoom = Number.isFinite(savedZoom) && savedZoom > 0 ? savedZoom : 18;
+  return {
+    padding: isMobile ? [56, 56] : [36, 36],
+    maxZoom: isMobile ? Math.max(10, maxZoom - 1) : maxZoom,
+    extraZoomOut: isMobile ? 1 : 0,
+  };
+}
+
+/**
+ * 荷下ろし地点（赤〇）があれば center に反映。flyTarget はアノテーションが無いときのみ（全体 fitBounds と競合しない）
  * @returns {{ annotations: object, flyTarget: { lat: number, lng: number, zoom: number } | null }}
  */
 export function getInitialMapViewFromAnnotations(annotations) {
   const ann = applyInitialViewCenter(annotations || emptyMapAnnotations());
   const first = ann.unloadPoints?.[0];
   const flyTarget =
-    first && Number.isFinite(first.lat) && Number.isFinite(first.lng)
+    !hasAnnotationGeoFeatures(ann) &&
+    first &&
+    Number.isFinite(first.lat) &&
+    Number.isFinite(first.lng)
       ? {
           lat: first.lat,
           lng: first.lng,

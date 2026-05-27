@@ -2319,8 +2319,8 @@ function orderPartyInfo(order) {
         const rawType = String(order?.type || order?.order_type || order?.project_type || order?.projectType || '').toLowerCase();
         const isSpot = Boolean(order?.is_spot || order?.isSpot || rawType.includes('spot') || rawType.includes('スポット'));
         return isSpot
-          ? 'bg-amber-500 text-slate-950 shadow-sm'
-          : 'bg-blue-600 text-white shadow-sm';
+          ? 'cl-glare-alert cl-glare-alert--spot bg-amber-500 text-slate-950 shadow-sm'
+          : 'cl-glare-alert cl-glare-alert--project bg-blue-600 text-white shadow-sm';
       };
       const openOrder = (order) => {
         if (!order?.id || typeof onOpenOrder !== 'function') return;

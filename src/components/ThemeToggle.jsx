@@ -6,7 +6,8 @@ const BTN =
   'min-h-[36px] rounded-lg border-2 px-2.5 py-1 text-[11px] font-black shadow-sm transition sm:min-h-[40px] sm:px-3 sm:text-xs';
 
 /**
- * テーマ切替（ライト / ダーク / システム）
+ * テーマ切替（Light / Dark / OS Sync）
+ * デフォルトは OS Sync（prefers-color-scheme に追従）
  */
 export function ThemeToggle({ className = '', compact = false }) {
   const { mode, effective, setMode } = useTheme();
@@ -57,7 +58,7 @@ export function ThemeToggle({ className = '', compact = false }) {
           onClick={(e) => e.stopPropagation()}
         >
           <p className="px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
-            表示テーマ
+            Theme
           </p>
           {THEME_MODES.map((id) => {
             const active = mode === id;
@@ -79,7 +80,7 @@ export function ThemeToggle({ className = '', compact = false }) {
                 }}
               >
                 <span>
-                  {id === 'light' ? '☀️' : id === 'dark' ? '🌙' : '💻'} {THEME_MODE_LABELS[id]}
+                  {id === 'light' ? '☀️' : id === 'dark' ? '🌙' : '🔄'} {THEME_MODE_LABELS[id]}
                 </span>
                 {active ? <span aria-hidden>✓</span> : null}
               </button>

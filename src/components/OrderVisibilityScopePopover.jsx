@@ -41,7 +41,7 @@ export function OrderVisibilityScopePopover({ order, escalationCtx, factoryNameB
   const badgeClass =
     'inline-flex cursor-pointer items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-black transition hover:ring-2 hover:ring-indigo-300/60 sm:text-[11px] ' +
     (isAssociation
-      ? 'border-violet-400 bg-violet-100 text-violet-900'
+      ? 'cl-glare-alert cl-glare-alert--association border-violet-500 bg-violet-600 text-white'
       : count != null && count > 1
         ? 'border-indigo-300 bg-indigo-50 text-indigo-900'
         : count === 1

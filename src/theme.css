@@ -1,80 +1,90 @@
 /* =============================================================================
-   CONCRETE LINK — ダークモード（html.dark + Tailwind CDN darkMode: class）
-   既存コンポーネントの主要ユーティリティを上書きし、常時点灯タブレット向けに視認性を確保
+   CONCRETE LINK — 窓際タブレット向けダークモード
+   - 真っ黒を避け、反射を抑える濃いグレー／スレート系 (#111827 相当)
+   - 本文は高コントラストの明るい白系
+   - 重要フラグは彩度の高い色＋リングで環境光に負けない
    ============================================================================= */
 
 html.dark {
   color-scheme: dark;
+  --cl-bg-base: #111827; /* gray-900 */
+  --cl-bg-raised: #1f2937; /* gray-800 */
+  --cl-bg-overlay: #374151; /* gray-700 */
+  --cl-text-primary: #f9fafb; /* gray-50 */
+  --cl-text-secondary: #f3f4f6; /* gray-100 */
+  --cl-text-muted: #d1d5db; /* gray-300 */
+  --cl-border: #4b5563; /* gray-600 */
 }
 
 html.dark body {
-  background-color: #0f172a;
-  color: #e2e8f0;
+  background-color: var(--cl-bg-base);
+  color: var(--cl-text-secondary);
 }
 
-/* 背景 */
+/* ---------- 背景（黒 #000 は使わない） ---------- */
 html.dark .bg-white {
-  background-color: #1e293b !important;
+  background-color: var(--cl-bg-raised) !important;
 }
 html.dark .bg-white\/95,
 html.dark .bg-white\/90 {
-  background-color: rgb(30 41 59 / 0.95) !important;
+  background-color: rgb(31 41 55 / 0.95) !important;
 }
 html.dark .bg-slate-50 {
-  background-color: #0f172a !important;
+  background-color: var(--cl-bg-base) !important;
 }
 html.dark .bg-slate-50\/80,
 html.dark .bg-slate-50\/90 {
-  background-color: rgb(15 23 42 / 0.9) !important;
+  background-color: rgb(17 24 39 / 0.9) !important;
 }
-html.dark .bg-slate-100 {
-  background-color: #1e293b !important;
-}
+html.dark .bg-slate-100,
 html.dark .bg-gray-50,
 html.dark .bg-gray-100 {
-  background-color: #1e293b !important;
+  background-color: var(--cl-bg-raised) !important;
+}
+html.dark .bg-gray-900 {
+  background-color: var(--cl-bg-base) !important;
 }
 
-/* 淡色アクセント背景（注文カード・バッジ用は色相を維持） */
+/* 淡色アクセント背景（状態カード用・色相は維持） */
 html.dark .bg-indigo-50 {
-  background-color: rgb(49 46 129 / 0.35) !important;
+  background-color: rgb(49 46 129 / 0.4) !important;
 }
 html.dark .bg-sky-50,
 html.dark .bg-sky-50\/70,
 html.dark .bg-sky-50\/80 {
-  background-color: rgb(12 74 110 / 0.35) !important;
+  background-color: rgb(12 74 110 / 0.4) !important;
 }
 html.dark .bg-emerald-50,
 html.dark .bg-emerald-50\/70,
 html.dark .bg-emerald-100 {
-  background-color: rgb(6 78 59 / 0.35) !important;
+  background-color: rgb(6 78 59 / 0.4) !important;
 }
 html.dark .bg-amber-50,
 html.dark .bg-amber-50\/70,
 html.dark .bg-amber-50\/90 {
-  background-color: rgb(120 53 15 / 0.35) !important;
+  background-color: rgb(120 53 15 / 0.45) !important;
 }
 html.dark .bg-orange-50 {
-  background-color: rgb(124 45 18 / 0.35) !important;
+  background-color: rgb(124 45 18 / 0.45) !important;
 }
 html.dark .bg-red-50,
 html.dark .bg-red-50\/30,
 html.dark .bg-red-50\/40,
 html.dark .bg-red-100 {
-  background-color: rgb(127 29 29 / 0.35) !important;
+  background-color: rgb(127 29 29 / 0.45) !important;
 }
 html.dark .bg-violet-50,
 html.dark .bg-violet-50\/70,
 html.dark .bg-violet-100 {
-  background-color: rgb(76 29 149 / 0.35) !important;
+  background-color: rgb(76 29 149 / 0.45) !important;
 }
 html.dark .bg-fuchsia-50,
 html.dark .bg-fuchsia-50\/70,
 html.dark .bg-fuchsia-100 {
-  background-color: rgb(112 26 117 / 0.3) !important;
+  background-color: rgb(112 26 117 / 0.4) !important;
 }
 html.dark .bg-cyan-50 {
-  background-color: rgb(22 78 99 / 0.35) !important;
+  background-color: rgb(22 78 99 / 0.4) !important;
 }
 
 /* グラデーション（ログイン・トップ） */
@@ -82,124 +92,214 @@ html.dark .from-slate-100,
 html.dark .via-white,
 html.dark .to-indigo-50,
 html.dark .via-indigo-50 {
-  --tw-gradient-from: #0f172a var(--tw-gradient-from-position) !important;
-  --tw-gradient-to: rgb(15 23 42 / 0) var(--tw-gradient-to-position) !important;
+  --tw-gradient-from: var(--cl-bg-base) var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: rgb(17 24 39 / 0) var(--tw-gradient-to-position) !important;
   --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
 }
 html.dark .to-slate-100,
 html.dark .to-indigo-50 {
-  --tw-gradient-to: #1e293b var(--tw-gradient-to-position) !important;
+  --tw-gradient-to: var(--cl-bg-raised) var(--tw-gradient-to-position) !important;
 }
 
-/* テキスト */
+/* ---------- テキスト（視認性最優先） ---------- */
+html.dark .text-white,
+html.dark .text-gray-50,
+html.dark .text-gray-100 {
+  color: var(--cl-text-primary) !important;
+}
 html.dark .text-slate-900,
 html.dark .text-slate-800,
-html.dark .text-slate-700 {
-  color: #f1f5f9 !important;
+html.dark .text-slate-700,
+html.dark .text-gray-800,
+html.dark .text-gray-700 {
+  color: var(--cl-text-primary) !important;
 }
 html.dark .text-slate-600,
 html.dark .text-slate-500 {
-  color: #cbd5e1 !important;
+  color: var(--cl-text-muted) !important;
 }
 html.dark .text-slate-400 {
-  color: #94a3b8 !important;
-}
-html.dark .text-gray-700,
-html.dark .text-gray-800 {
-  color: #e2e8f0 !important;
+  color: #9ca3af !important; /* gray-400 */
 }
 
-/* ボーダー */
+/* 彩度の高いアラート色はそのまま（または強調） */
+html.dark .text-red-600,
+html.dark .text-red-700,
+html.dark .text-red-800 {
+  color: #fca5a5 !important; /* red-300 */
+}
+html.dark .text-amber-700,
+html.dark .text-amber-800,
+html.dark .text-amber-900,
+html.dark .text-amber-950 {
+  color: #fde68a !important;
+}
+html.dark .text-violet-700,
+html.dark .text-violet-900,
+html.dark .text-violet-950 {
+  color: #ddd6fe !important;
+}
+html.dark .text-orange-600,
+html.dark .text-orange-700 {
+  color: #fdba74 !important;
+}
+html.dark .text-indigo-700 {
+  color: #a5b4fc !important;
+}
+
+/* ---------- ボーダー ---------- */
 html.dark .border-slate-100,
 html.dark .border-slate-200,
 html.dark .border-slate-200\/80,
 html.dark .border-slate-200\/90,
 html.dark .border-slate-300 {
-  border-color: #475569 !important;
+  border-color: var(--cl-border) !important;
 }
 html.dark .border-slate-800\/15 {
-  border-color: rgb(71 85 105 / 0.5) !important;
+  border-color: rgb(75 85 99 / 0.55) !important;
 }
 html.dark .border-dashed.border-slate-300 {
-  border-color: #64748b !important;
+  border-color: #6b7280 !important;
 }
 
-/* 入力 */
+/* ---------- 入力 ---------- */
 html.dark input:not([type='checkbox']):not([type='radio']),
 html.dark select,
 html.dark textarea {
-  background-color: #0f172a;
-  color: #f1f5f9;
-  border-color: #475569;
+  background-color: var(--cl-bg-base);
+  color: var(--cl-text-primary);
+  border-color: var(--cl-border);
 }
 html.dark input::placeholder,
 html.dark textarea::placeholder {
-  color: #64748b;
+  color: #6b7280;
 }
 
-/* シャドウ内側 */
 html.dark .shadow-inner {
   box-shadow: inset 0 2px 4px 0 rgb(0 0 0 / 0.35);
 }
 
-/* ホバー（非アクティブタブ） */
-html.dark .hover\:bg-white:hover {
-  background-color: #334155 !important;
-}
+html.dark .hover\:bg-white:hover,
 html.dark .hover\:bg-slate-50:hover {
-  background-color: #334155 !important;
+  background-color: var(--cl-bg-overlay) !important;
 }
 html.dark .hover\:text-slate-900:hover,
 html.dark .hover\:text-slate-800:hover {
-  color: #f8fafc !important;
+  color: var(--cl-text-primary) !important;
 }
 
-/* 工場画面・注文カード（状態色は維持しつつ枠を明るく） */
 html.dark .ring-offset-slate-50 {
-  --tw-ring-offset-color: #0f172a !important;
+  --tw-ring-offset-color: var(--cl-bg-base) !important;
 }
 
-/* カレンダー */
 html.dark .rounded-2xl.border-2.border-slate-200.bg-white {
-  background-color: #1e293b !important;
-  border-color: #475569 !important;
+  background-color: var(--cl-bg-raised) !important;
+  border-color: var(--cl-border) !important;
 }
 
-/* MapEditor */
+/* ---------- 重要フラグ（環境光・グレア対策） ---------- */
+html.dark .cl-glare-alert {
+  font-weight: 900;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.55);
+}
+
+html.dark .cl-glare-alert--warning {
+  background-color: #f59e0b !important; /* amber-500 */
+  border-color: #fbbf24 !important; /* amber-400 */
+  color: #1c1917 !important;
+  box-shadow:
+    0 0 0 2px rgb(251 191 36 / 0.65),
+    0 2px 10px rgb(0 0 0 / 0.5);
+}
+
+html.dark .cl-glare-alert--spot {
+  background-color: #f59e0b !important;
+  color: #1c1917 !important;
+  box-shadow:
+    0 0 0 2px rgb(245 158 11 / 0.7),
+    0 2px 8px rgb(0 0 0 / 0.45);
+}
+
+html.dark .cl-glare-alert--project {
+  background-color: #2563eb !important; /* blue-600 */
+  color: #ffffff !important;
+  box-shadow:
+    0 0 0 2px rgb(59 130 246 / 0.55),
+    0 2px 8px rgb(0 0 0 / 0.45);
+}
+
+html.dark .cl-glare-alert--association {
+  background-color: #7c3aed !important; /* violet-600 */
+  border-color: #a78bfa !important;
+  color: #ffffff !important;
+  box-shadow:
+    0 0 0 2px rgb(167 139 250 / 0.65),
+    0 2px 10px rgb(0 0 0 / 0.5);
+}
+
+html.dark .cl-glare-alert--danger {
+  background-color: #dc2626 !important; /* red-600 */
+  border-color: #f87171 !important;
+  color: #ffffff !important;
+  box-shadow:
+    0 0 0 2px rgb(248 113 113 / 0.6),
+    0 2px 10px rgb(0 0 0 / 0.5);
+}
+
+/* 高彩度の実色バッジは上書きしない（工場カレンダー・満車等） */
+html.dark .bg-red-500,
+html.dark .bg-red-600,
+html.dark .bg-orange-500,
+html.dark .bg-orange-600,
+html.dark .bg-amber-400,
+html.dark .bg-amber-500,
+html.dark .bg-amber-600,
+html.dark .bg-yellow-400,
+html.dark .bg-yellow-500,
+html.dark .bg-violet-600,
+html.dark .bg-violet-700,
+html.dark .bg-blue-600,
+html.dark .bg-sky-600,
+html.dark .bg-cyan-600,
+html.dark .bg-cyan-700,
+html.dark .bg-emerald-600,
+html.dark .bg-emerald-700 {
+  filter: saturate(1.12) contrast(1.05);
+}
+
+/* ---------- MapEditor ---------- */
 html.dark .map-editor-app {
-  background-color: #0f172a !important;
-  color: #e2e8f0 !important;
+  background-color: var(--cl-bg-base) !important;
+  color: var(--cl-text-secondary) !important;
 }
 html.dark .map-editor-app header,
 html.dark .map-editor-app .border-b.border-slate-200.bg-white,
 html.dark .map-editor-app .border-b.border-slate-200.bg-slate-50 {
-  background-color: #1e293b !important;
-  border-color: #475569 !important;
+  background-color: var(--cl-bg-raised) !important;
+  border-color: var(--cl-border) !important;
 }
 html.dark .map-editor-toolbar,
 html.dark aside.map-editor-no-print {
-  background-color: #1e293b !important;
-  border-color: #475569 !important;
+  background-color: var(--cl-bg-raised) !important;
+  border-color: var(--cl-border) !important;
 }
 html.dark .map-editor-app .bg-slate-50 {
-  background-color: #0f172a !important;
+  background-color: var(--cl-bg-base) !important;
 }
 
-/* Leaflet（地図タイルはそのまま・UIのみ暗色化） */
 html.dark .leaflet-container {
-  background: #0f172a;
+  background: var(--cl-bg-base);
 }
 html.dark .leaflet-control-attribution {
-  background: rgb(30 41 59 / 0.9) !important;
-  color: #cbd5e1 !important;
+  background: rgb(31 41 55 / 0.92) !important;
+  color: var(--cl-text-muted) !important;
 }
 
-/* 印刷時はライトのまま（mapEditorPrint.css と併用） */
 @media print {
   html.dark,
   html.dark body,
   html.dark .map-editor-app {
     background: white !important;
-    color: #0f172a !important;
+    color: #111827 !important;
   }
 }

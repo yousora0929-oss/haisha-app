@@ -14,7 +14,11 @@ import {
 } from './mapEditorConstants.js';
 import { isValidExternalUrl, normalizeExternalUrl } from './utils/urlValidation.js';
 import { geocodeAddress } from './utils/nominatimGeocode.js';
-import { boundsFromCenter, emptyMapAnnotations } from './utils/mapAnnotations.js';
+import {
+  boundsFromCenter,
+  emptyMapAnnotations,
+  hasAnnotationGeoFeatures,
+} from './utils/mapAnnotations.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
 
 const MAP_SOURCE_LABEL = {
@@ -59,6 +63,7 @@ export function MapEditorApp() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
   const [flyTarget, setFlyTarget] = useState(null);
+  const [mapInitialFitKey, setMapInitialFitKey] = useState(null);
 
   const [saving, setSaving] = useState(false);
   const [confirmMode, setConfirmMode] = useState(null);
@@ -177,8 +182,11 @@ export function MapEditorApp() {
         setDefaultMapUrl(result.defaultMapImageUrl || '');
         const loaded = result.mapAnnotations || emptyMapAnnotations();
         setAnnotations(loaded);
-        if (result.initialFlyTarget) {
+        setMapInitialFitKey(`${result.order.id}-${Date.now()}`);
+        if (result.initialFlyTarget && !hasAnnotationGeoFeatures(loaded)) {
           setFlyTarget({ ...result.initialFlyTarget, key: Date.now() });
+        } else {
+          setFlyTarget(null);
         }
       } catch (err) {
         if (!cancelled) {
@@ -519,6 +527,7 @@ export function MapEditorApp() {
           selectedStampType={selectedStampType}
           defaultUnloadRadius={unloadRadius}
           flyTarget={flyTarget}
+          initialFitKey={mapInitialFitKey}
           disabled={saving}
           selected={selection}
           onSelectionChange={setSelection}

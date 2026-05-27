@@ -227,9 +227,17 @@ function unloadDurationLabel(value) {
         return { key: 'active', label: '受注', className: 'bg-blue-600 text-white border-blue-700' };
       }
       if (st === 'pending_association') {
-        return { key: 'active', label: '組合承認待ち', className: 'bg-violet-600 text-white border-violet-700' };
+        return {
+          key: 'active',
+          label: '組合承認待ち',
+          className: 'cl-glare-alert cl-glare-alert--association bg-violet-600 text-white border-violet-700',
+        };
       }
-      return { key: 'active', label: '配車待ち', className: 'bg-amber-400 text-amber-950 border-amber-500' };
+      return {
+        key: 'active',
+        label: '配車待ち',
+        className: 'cl-glare-alert cl-glare-alert--warning bg-amber-400 text-amber-950 border-amber-500',
+      };
     }
 
     /** 将来のAPI連携用（画面には表示しない） */
