@@ -344,6 +344,10 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
   const [folderUrl, setFolderUrl] = useState(initial?.folder_url ?? '');
   const [sheetUrl, setSheetUrl] = useState(initial?.sheet_url ?? '');
   const [addressError, setAddressError] = useState('');
+  const linkedCustomer = useMemo(
+    () => (customers || []).find((c) => c && String(c.id) === String(customerId || '')),
+    [customers, customerId],
+  );
 
   useEffect(() => {
     setName(initial?.name ?? '');
@@ -551,7 +555,13 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
         <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-3">
           <p className="text-xs font-black text-slate-700">専用発注URL（現場向け）</p>
           <div className="mt-2">
-            <SiteOrderUrlActions urlToken={initial?.url_token} siteName={initial?.name} compact />
+            <SiteOrderUrlActions
+              urlToken={initial?.url_token}
+              siteName={name || initial?.name}
+              customerName={linkedCustomer?.company_name || linkedCustomer?.name || contractor}
+              traderName={tradingCompany}
+              compact
+            />
           </div>
         </div>
       ) : null}

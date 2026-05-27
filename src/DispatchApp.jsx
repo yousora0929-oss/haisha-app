@@ -2195,6 +2195,12 @@ function unloadDurationLabel(value) {
                         <SiteOrderUrlActions
                           urlToken={selectedProject.url_token}
                           siteName={selectedProject.name}
+                          customerName={currentCustomerDisplayName}
+                          traderName={
+                            selectedProject.trading_company_name || selectedProject.trading_company || ''
+                          }
+                          project={selectedProject}
+                          customer={currentCustomer}
                           compact
                         />
                       </div>

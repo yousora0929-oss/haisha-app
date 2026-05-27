@@ -688,6 +688,8 @@ function orderPartyInfo(order) {
               <SiteOrderUrlActions
                 urlToken={project?.url_token ?? ''}
                 siteName={project?.name ?? ''}
+                customerName={project.displayContractor !== '—' ? project.displayContractor : ''}
+                traderName={project.displayTrader !== '—' ? project.displayTrader : ''}
                 onCopied={onUrlCopied}
                 compact
               />
@@ -988,6 +990,13 @@ function orderPartyInfo(order) {
                       <SiteOrderUrlActions
                         urlToken={resolveSiteUrlToken(order, projectById, customerById)}
                         siteName={editData.siteName || resolveOrderSiteDisplayName(order)}
+                        customerName={
+                          customerById?.[String(order?.customer_id ?? order?.customerId ?? '')]?.company_name ||
+                          editData.contractorName
+                        }
+                        traderName={editData.traderName}
+                        project={projectById?.[String(order?.project_id ?? order?.projectId ?? '')]}
+                        customer={customerById?.[String(order?.customer_id ?? order?.customerId ?? '')]}
                         onCopied={onSiteUrlCopied}
                         compact
                       />
@@ -1364,7 +1373,11 @@ function orderPartyInfo(order) {
                   {!isToast ? (
                     <SiteOrderUrlActions
                       urlToken={resolveSiteUrlToken(order, projectById, customerById)}
-                      siteName={party.site}
+                      siteName={party.site !== '—' ? party.site : siteNm}
+                      customerName={contractor}
+                      traderName={trader}
+                      project={projectById?.[String(order?.project_id ?? order?.projectId ?? '')]}
+                      customer={customerById?.[String(order?.customer_id ?? order?.customerId ?? '')]}
                       onCopied={onSiteUrlCopied}
                       compact
                     />

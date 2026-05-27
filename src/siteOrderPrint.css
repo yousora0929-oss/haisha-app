@@ -1,0 +1,123 @@
+/* 専用発注URL（QR）— 印刷用レイアウト */
+
+.site-order-qr-overlay {
+  /* 画面表示用 */
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+
+  html,
+  body {
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  #site-order-qr-print,
+  #site-order-qr-print * {
+    visibility: visible !important;
+  }
+
+  .site-order-qr-overlay {
+    position: fixed !important;
+    inset: 0 !important;
+    display: block !important;
+    background: #fff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    z-index: 99999 !important;
+  }
+
+  .site-order-qr-sheet {
+    position: fixed !important;
+    inset: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: #fff !important;
+  }
+
+  .site-order-qr-no-print {
+    display: none !important;
+  }
+
+  .site-order-qr-print-brand {
+    font-size: 11pt !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.08em !important;
+    color: #4338ca !important;
+    text-transform: uppercase !important;
+  }
+
+  .site-order-qr-vendor {
+    margin-top: 6mm !important;
+    font-size: 16pt !important;
+    font-weight: 800 !important;
+    color: #0f172a !important;
+    text-align: center !important;
+    line-height: 1.35 !important;
+  }
+
+  .site-order-qr-site {
+    margin-top: 3mm !important;
+    font-size: 22pt !important;
+    font-weight: 900 !important;
+    color: #0f172a !important;
+    text-align: center !important;
+    line-height: 1.25 !important;
+  }
+
+  .site-order-qr-code-wrap {
+    margin-top: 10mm !important;
+    padding: 4mm !important;
+    border: 2px solid #cbd5e1 !important;
+    border-radius: 4px !important;
+    background: #fff !important;
+  }
+
+  .site-order-qr-code-wrap svg {
+    width: 72mm !important;
+    height: 72mm !important;
+  }
+
+  .site-order-qr-url-print {
+    display: block !important;
+    margin-top: 8mm !important;
+    max-width: 170mm !important;
+    font-family: ui-monospace, monospace !important;
+    font-size: 9pt !important;
+    font-weight: 600 !important;
+    color: #334155 !important;
+    text-align: center !important;
+    word-break: break-all !important;
+    line-height: 1.4 !important;
+  }
+
+  .site-order-qr-hint-print {
+    display: block !important;
+    margin-top: 5mm !important;
+    font-size: 10pt !important;
+    font-weight: 700 !important;
+    color: #64748b !important;
+    text-align: center !important;
+  }
+}

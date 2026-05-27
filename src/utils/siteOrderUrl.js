@@ -33,3 +33,38 @@ export function siteOrderUrlValidationMessage(urlToken) {
   }
   return '';
 }
+
+/** 物件・業者レコードから表示用の業者名・商社名・現場名を解決 */
+export function resolveSiteOrderPartiesFromProject(project, customer) {
+  const siteName = String(project?.name ?? '').trim();
+  const customerName = String(
+    customer?.company_name ?? customer?.name ?? project?.contractor ?? '',
+  ).trim();
+  const traderName = String(
+    project?.trading_company_name ?? project?.trading_company ?? '',
+  ).trim();
+  return { siteName, customerName, traderName };
+}
+
+/** 業者・商社の表示ラベル（例: 〇〇建設 / △△商社） */
+export function formatSiteOrderVendorLabel({ customerName, traderName, contractorName } = {}) {
+  const customer = String(customerName || contractorName || '').trim();
+  const trader = String(traderName || '').trim();
+  if (customer && trader && customer !== trader) return `${customer} / ${trader}`;
+  return customer || trader || '';
+}
+
+export function withCustomerHonorific(name) {
+  const s = String(name || '').trim();
+  if (!s || s === '—') return '';
+  return s.endsWith('様') ? s : `${s}様`;
+}
+
+/** LINE・メール共有用のコピーテキスト */
+export function buildSiteOrderShareMessage(url, parties = {}) {
+  const site = String(parties.siteName || '').trim() || '現場';
+  const vendor = formatSiteOrderVendorLabel(parties);
+  const vendorPart = withCustomerHonorific(vendor) || '御中';
+  const link = String(url || '').trim();
+  return `${vendorPart} / ${site} の専用発注フォームはこちら: ${link}`;
+}
