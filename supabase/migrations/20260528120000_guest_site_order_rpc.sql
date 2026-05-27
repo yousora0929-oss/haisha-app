@@ -2,6 +2,8 @@
 -- 専用発注URL（ゲスト）向け RPC — anon から RLS をバイパスして安全に取得・登録
 -- 本番RLSマイグレーション（20260527120000）未適用環境でも単体実行できるよう、
 -- get_dispatch_operational_settings もここで定義する。
+--
+-- url_token 列は環境により uuid または text のため、比較は常に ::text 正規化で行う。
 -- =============================================================================
 
 -- 発注画面向け: パスワードを含まない運用設定のみ（SECURITY DEFINER）
@@ -48,19 +50,66 @@ as $$
     );
 $$;
 
-/** text 引数を url_token（uuid 列）比較用に変換。UUID 形式でなければ NULL */
-create or replace function public.site_order_token_as_uuid(p_token text)
+/** text / json 由来の値を uuid に安全変換（失敗時 NULL） */
+create or replace function public.safe_text_to_uuid(p_text text)
 returns uuid
 language plpgsql
 immutable
 as $$
 declare
-  v text := lower(trim(coalesce(p_token, '')));
+  v text := lower(trim(coalesce(p_text, '')));
 begin
   if v = '' then
     return null;
   end if;
   return v::uuid;
+exception
+  when others then
+    return null;
+end;
+$$;
+
+/** @deprecated 互換エイリアス */
+create or replace function public.site_order_token_as_uuid(p_token text)
+returns uuid
+language sql
+immutable
+as $$
+  select public.safe_text_to_uuid(p_token);
+$$;
+
+/**
+ * url_token 列（uuid または text）と URL トークン文字列の一致判定。
+ * uuid = text / text = uuid を避けるため、双方を text に正規化して比較する。
+ */
+create or replace function public.site_order_url_token_equals(p_stored_token text, p_token text)
+returns boolean
+language sql
+immutable
+as $$
+  select
+    coalesce(trim(p_stored_token), '') <> ''
+    and lower(trim(p_stored_token)) = lower(trim(coalesce(p_token, '')));
+$$;
+
+/** jsonb 配列要素（サブ工場 ID 等）を uuid に変換 */
+create or replace function public.jsonb_elem_to_uuid(p_elem jsonb)
+returns uuid
+language plpgsql
+immutable
+as $$
+declare
+  v text;
+begin
+  if p_elem is null or p_elem = 'null'::jsonb then
+    return null;
+  end if;
+  if jsonb_typeof(p_elem) = 'string' then
+    v := trim(both '"' from p_elem::text);
+  else
+    v := trim(p_elem::text);
+  end if;
+  return public.safe_text_to_uuid(v);
 exception
   when others then
     return null;
@@ -75,8 +124,7 @@ security definer
 set search_path = public
 as $$
 declare
-  v_token text := trim(coalesce(p_token, ''));
-  v_token_uuid uuid := public.site_order_token_as_uuid(p_token);
+  v_token text := lower(trim(coalesce(p_token, '')));
   v_project public.projects%rowtype;
   v_customer public.customers%rowtype;
   v_projects jsonb;
@@ -85,52 +133,63 @@ begin
     return null;
   end if;
 
-  if v_token_uuid is not null then
-    select * into v_project from public.projects where url_token = v_token_uuid limit 1;
-    if found then
-      if v_project.customer_id is not null then
-        select * into v_customer from public.customers where id = v_project.customer_id limit 1;
-      end if;
-      return jsonb_build_object(
-        'match', 'project',
-        'token', v_token,
-        'project', to_jsonb(v_project),
-        'customer', case when v_customer.id is not null then
-          jsonb_build_object(
-            'id', v_customer.id,
-            'company_name', v_customer.company_name,
-            'name', coalesce(v_customer.company_name, v_customer.name),
-            'phone_number', v_customer.phone_number,
-            'manager_name', v_customer.manager_name,
-            'url_token', v_customer.url_token::text
-          )
-        else null end,
-        'projects', jsonb_build_array(to_jsonb(v_project))
-      );
+  select * into v_project
+  from public.projects p
+  where p.url_token is not null
+    and public.site_order_url_token_equals(p.url_token::text, v_token)
+  limit 1;
+
+  if found then
+    if v_project.customer_id is not null then
+      select * into v_customer
+      from public.customers c
+      where c.id = v_project.customer_id
+      limit 1;
     end if;
-
-    select * into v_customer from public.customers where url_token = v_token_uuid limit 1;
-    if found then
-      select coalesce(jsonb_agg(to_jsonb(p) order by p.name), '[]'::jsonb)
-      into v_projects
-      from public.projects p
-      where p.customer_id = v_customer.id;
-
-      return jsonb_build_object(
-        'match', 'customer',
-        'token', v_token,
-        'project', null,
-        'customer', jsonb_build_object(
-          'id', v_customer.id,
+    return jsonb_build_object(
+      'match', 'project',
+      'token', v_token,
+      'project', to_jsonb(v_project),
+      'customer', case when v_customer.id is not null then
+        jsonb_build_object(
+          'id', v_customer.id::text,
           'company_name', v_customer.company_name,
           'name', coalesce(v_customer.company_name, v_customer.name),
           'phone_number', v_customer.phone_number,
           'manager_name', v_customer.manager_name,
           'url_token', v_customer.url_token::text
-        ),
-        'projects', coalesce(v_projects, '[]'::jsonb)
-      );
-    end if;
+        )
+      else null end,
+      'projects', jsonb_build_array(to_jsonb(v_project))
+    );
+  end if;
+
+  select * into v_customer
+  from public.customers c
+  where c.url_token is not null
+    and public.site_order_url_token_equals(c.url_token::text, v_token)
+  limit 1;
+
+  if found then
+    select coalesce(jsonb_agg(to_jsonb(p) order by p.name), '[]'::jsonb)
+    into v_projects
+    from public.projects p
+    where p.customer_id = v_customer.id;
+
+    return jsonb_build_object(
+      'match', 'customer',
+      'token', v_token,
+      'project', null,
+      'customer', jsonb_build_object(
+        'id', v_customer.id::text,
+        'company_name', v_customer.company_name,
+        'name', coalesce(v_customer.company_name, v_customer.name),
+        'phone_number', v_customer.phone_number,
+        'manager_name', v_customer.manager_name,
+        'url_token', v_customer.url_token::text
+      ),
+      'projects', coalesce(v_projects, '[]'::jsonb)
+    );
   end if;
 
   return null;
@@ -150,6 +209,7 @@ declare
   v_ids uuid[] := array[]::uuid[];
   v_sub jsonb;
   v_elem jsonb;
+  v_fid uuid;
 begin
   v_ctx := public.get_site_order_context_by_token(p_token);
   if v_ctx is null then
@@ -157,16 +217,18 @@ begin
   end if;
 
   v_project := v_ctx->'project';
-  if v_project is not null and v_project->>'main_factory_id' is not null then
-    v_ids := array_append(v_ids, (v_project->>'main_factory_id')::uuid);
+  if v_project is not null and coalesce(v_project->>'main_factory_id', '') <> '' then
+    v_fid := public.safe_text_to_uuid(v_project->>'main_factory_id');
+    if v_fid is not null then
+      v_ids := array_append(v_ids, v_fid);
+    end if;
     v_sub := v_project->'sub_factory_ids';
     if v_sub is not null and jsonb_typeof(v_sub) = 'array' then
       for v_elem in select value from jsonb_array_elements(v_sub) loop
-        begin
-          v_ids := array_append(v_ids, trim(both '"' from v_elem::text)::uuid);
-        exception when others then
-          null;
-        end;
+        v_fid := public.jsonb_elem_to_uuid(v_elem);
+        if v_fid is not null then
+          v_ids := array_append(v_ids, v_fid);
+        end if;
       end loop;
     end if;
   end if;
@@ -174,7 +236,16 @@ begin
   if coalesce(array_length(v_ids, 1), 0) = 0 then
     return coalesce(
       (
-        select jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'phone_number', f.phone_number, 'latitude', f.latitude, 'longitude', f.longitude) order by f.name)
+        select jsonb_agg(
+          jsonb_build_object(
+            'id', f.id::text,
+            'name', f.name,
+            'phone_number', f.phone_number,
+            'latitude', f.latitude,
+            'longitude', f.longitude
+          )
+          order by f.name
+        )
         from public.factories f
       ),
       '[]'::jsonb
@@ -183,7 +254,16 @@ begin
 
   return coalesce(
     (
-      select jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'phone_number', f.phone_number, 'latitude', f.latitude, 'longitude', f.longitude) order by f.name)
+      select jsonb_agg(
+        jsonb_build_object(
+          'id', f.id::text,
+          'name', f.name,
+          'phone_number', f.phone_number,
+          'latitude', f.latitude,
+          'longitude', f.longitude
+        )
+        order by f.name
+      )
       from public.factories f
       where f.id = any (v_ids)
     ),
@@ -207,6 +287,8 @@ declare
   v_order_id text;
   v_is_spot boolean;
   v_status text;
+  v_elem_project_id uuid;
+  v_elem_pref_factory_id uuid;
   v_inserted jsonb := '[]'::jsonb;
 begin
   v_ctx := public.get_site_order_context_by_token(p_token);
@@ -215,13 +297,13 @@ begin
   end if;
 
   v_match := v_ctx->>'match';
-  v_customer_id := (v_ctx->'customer'->>'id')::uuid;
+  v_customer_id := public.safe_text_to_uuid(v_ctx->'customer'->>'id');
   if v_customer_id is null then
     raise exception 'customer_not_found_for_token' using errcode = 'P0001';
   end if;
 
   if v_match = 'project' and v_ctx->'project' is not null then
-    v_project_id := (v_ctx->'project'->>'id')::uuid;
+    v_project_id := public.safe_text_to_uuid(v_ctx->'project'->>'id');
   end if;
 
   if p_orders is null or jsonb_typeof(p_orders) <> 'array' or jsonb_array_length(p_orders) = 0 then
@@ -237,11 +319,18 @@ begin
       v_is_spot := false;
     end if;
 
-    if v_match = 'customer' and coalesce(nullif(trim(coalesce(v_elem->>'project_id', v_elem->>'projectId', '')), ''), '') <> '' then
+    v_elem_project_id := public.safe_text_to_uuid(
+      coalesce(v_elem->>'project_id', v_elem->>'projectId', '')
+    );
+    v_elem_pref_factory_id := public.safe_text_to_uuid(
+      coalesce(v_elem->>'preferred_factory_id', v_elem->>'preferredFactoryId', '')
+    );
+
+    if v_match = 'customer' and v_elem_project_id is not null then
       if not exists (
         select 1
         from public.projects p
-        where p.id = nullif(trim(coalesce(v_elem->>'project_id', v_elem->>'projectId', '')), '')::uuid
+        where p.id = v_elem_project_id
           and p.customer_id = v_customer_id
       ) then
         raise exception 'project_not_allowed_for_token' using errcode = 'P0001';
@@ -274,11 +363,11 @@ begin
       v_is_spot,
       case
         when v_match = 'project' then v_project_id
-        else nullif(trim(coalesce(v_elem->>'project_id', v_elem->>'projectId', '')), '')::uuid
+        else v_elem_project_id
       end,
       nullif(v_elem->>'delivery_lat', '')::double precision,
       nullif(v_elem->>'delivery_lng', '')::double precision,
-      nullif(trim(coalesce(v_elem->>'preferred_factory_id', v_elem->>'preferredFactoryId', '')), '')::uuid,
+      v_elem_pref_factory_id,
       null,
       v_status,
       coalesce((v_elem->>'is_location_pending')::boolean, (v_elem->>'isLocationPending')::boolean, false),
@@ -293,12 +382,19 @@ end;
 $$;
 
 revoke all on function public.is_valid_site_order_token(text) from public;
+revoke all on function public.safe_text_to_uuid(text) from public;
 revoke all on function public.site_order_token_as_uuid(text) from public;
+revoke all on function public.site_order_url_token_equals(text, text) from public;
+revoke all on function public.jsonb_elem_to_uuid(jsonb) from public;
 revoke all on function public.get_site_order_context_by_token(text) from public;
 revoke all on function public.get_guest_factories_for_token(text) from public;
 revoke all on function public.submit_guest_orders(text, jsonb) from public;
 
 grant execute on function public.is_valid_site_order_token(text) to anon, authenticated;
+grant execute on function public.safe_text_to_uuid(text) to anon, authenticated;
+grant execute on function public.site_order_token_as_uuid(text) to anon, authenticated;
+grant execute on function public.site_order_url_token_equals(text, text) to anon, authenticated;
+grant execute on function public.jsonb_elem_to_uuid(jsonb) to anon, authenticated;
 grant execute on function public.get_site_order_context_by_token(text) to anon, authenticated;
 grant execute on function public.get_guest_factories_for_token(text) to anon, authenticated;
 grant execute on function public.submit_guest_orders(text, jsonb) to anon, authenticated;
