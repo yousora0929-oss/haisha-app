@@ -30,7 +30,7 @@ import { isLocationPendingOrder, resolveInitialOrderStatus, sumOrderVolumesM3 } 
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
-import { parseSiteOrderTokenFromPath } from './utils/siteOrderUrl.js';
+import { formatSiteOrderVendorLabel, parseSiteOrderTokenFromPath } from './utils/siteOrderUrl.js';
 
 const DISPATCH_CUSTOMER_SESSION_KEY = 'haisha_dispatch_customer_id_v1';
 const SITE_ORDER_PENDING_SESSION_KEY = 'haisha_site_order_pending_v1';
@@ -994,6 +994,11 @@ function unloadDurationLabel(value) {
       const [addressSearchError, setAddressSearchError] = useState('');
       const [preferredFactoryId, setPreferredFactoryId] = useState('');
       const [siteOrderLinkNotice, setSiteOrderLinkNotice] = useState('');
+      const [guestOrderToken] = useState(() => parseSiteOrderTokenFromPath());
+      const isGuestSiteOrder = Boolean(guestOrderToken);
+      const [guestSiteOrderCtx, setGuestSiteOrderCtx] = useState(null);
+      const [guestSiteOrderLoading, setGuestSiteOrderLoading] = useState(isGuestSiteOrder);
+      const [guestSiteOrderError, setGuestSiteOrderError] = useState('');
       const orderFormRef = useRef(null);
       const lastAutofillProjectIdRef = useRef('');
 
@@ -1121,6 +1126,7 @@ function unloadDurationLabel(value) {
       }, [factories, preferredFactoryId, currentCustomerId, isOrderForCurrentCustomer]);
 
       useEffect(() => {
+        if (isGuestSiteOrder) return undefined;
         let cancelled = false;
         (async () => {
           try {
@@ -1170,7 +1176,7 @@ function unloadDurationLabel(value) {
         return () => {
           cancelled = true;
         };
-      }, [isLoggedIn]);
+      }, [isGuestSiteOrder, isLoggedIn]);
 
       useEffect(() => {
         try {
@@ -1207,60 +1213,66 @@ function unloadDurationLabel(value) {
       }, []);
 
       useEffect(() => {
-        const token = parseSiteOrderTokenFromPath();
-        if (!token) return undefined;
+        if (!isGuestSiteOrder || !guestOrderToken) return undefined;
         let cancelled = false;
         (async () => {
+          setGuestSiteOrderLoading(true);
+          setGuestSiteOrderError('');
           try {
-            const ctx = await db.fetchSiteOrderContextByUrlToken(token);
+            const [ctx, settings, factoryRows] = await Promise.all([
+              db.fetchSiteOrderContextByUrlToken(guestOrderToken),
+              db.fetchDispatchOperationalSettings(),
+              db.fetchGuestFactoriesForToken(guestOrderToken),
+            ]);
             if (cancelled) return;
             if (!ctx) {
-              setSiteOrderLinkNotice('専用発注URLが無効です。リンクを確認してください。');
+              setGuestSiteOrderError('専用発注URLが無効です。リンクを確認してください。');
               return;
             }
-            const pending = {
-              customerId: ctx.customer?.id ? String(ctx.customer.id) : '',
-              projectId: ctx.project?.id ? String(ctx.project.id) : '',
-              label: ctx.project?.name || ctx.customer?.company_name || ctx.customer?.name || '',
-            };
-            try {
-              sessionStorage.setItem(SITE_ORDER_PENDING_SESSION_KEY, JSON.stringify(pending));
-            } catch {
-              /* ignore */
+            setGuestSiteOrderCtx(ctx);
+            setAdminSettings(settings || { admin_name: '', phone_number: '' });
+            setFactories(factoryRows || []);
+            const customer = ctx.customer;
+            const projectList = Array.isArray(ctx.projects) && ctx.projects.length > 0
+              ? ctx.projects
+              : ctx.project
+                ? [ctx.project]
+                : [];
+            if (customer?.id) {
+              setCurrentCustomerId(String(customer.id));
+              setCustomers([customer]);
             }
-            if (pending.customerId) {
-              setCurrentCustomerId(pending.customerId);
-              try {
-                sessionStorage.setItem(DISPATCH_CUSTOMER_SESSION_KEY, pending.customerId);
-              } catch {
-                /* ignore */
-              }
+            setProjects(projectList);
+            const primaryProject = ctx.project || (projectList.length === 1 ? projectList[0] : null);
+            setOrderKind('project');
+            setNewOrderMode('form');
+            setCustomerOrderTab('new');
+            if (primaryProject?.id) {
+              setSelectedProjectId(String(primaryProject.id));
+              applyProjectSelection(primaryProject);
+            } else {
+              setSelectedProjectId('');
             }
-            if (pending.projectId) {
-              setOrderKind('project');
-              setSelectedProjectId(pending.projectId);
-            }
+            const label = primaryProject?.name || customer?.company_name || customer?.name || '';
             setSiteOrderLinkNotice(
-              pending.label
-                ? `「${pending.label}」の専用発注リンクです。ログインして発注を続けてください。`
-                : '専用発注リンクから開きました。ログインして発注を続けてください。',
+              label ? `「${label}」の専用発注フォームです。` : '専用発注フォームです。',
             );
-            const basePath = window.location.pathname.includes('DispatchOrderPrototype')
-              ? '/DispatchOrderPrototype.html'
-              : window.location.pathname.replace(/\/order\/[^/]+\/?$/, '') || '/';
-            window.history.replaceState({}, '', `${basePath}${window.location.hash || ''}`);
           } catch (e) {
             console.error('専用発注URLの解決に失敗しました', e);
-            if (!cancelled) setSiteOrderLinkNotice('専用発注URLの読み込みに失敗しました。');
+            if (!cancelled) {
+              setGuestSiteOrderError(formatSupabaseError(e, '専用発注URLの読み込みに失敗しました。'));
+            }
+          } finally {
+            if (!cancelled) setGuestSiteOrderLoading(false);
           }
         })();
         return () => {
           cancelled = true;
         };
-      }, []);
+      }, [isGuestSiteOrder, guestOrderToken, applyProjectSelection]);
 
       useEffect(() => {
-        if (!isLoggedIn) return;
+        if (isGuestSiteOrder || !isLoggedIn) return;
         let pending = null;
         try {
           const raw = sessionStorage.getItem(SITE_ORDER_PENDING_SESSION_KEY);
@@ -1288,7 +1300,7 @@ function unloadDurationLabel(value) {
         if (pending.label) {
           setSiteOrderLinkNotice(`「${pending.label}」を選択しました。`);
         }
-      }, [isLoggedIn, customers, projects, applyProjectSelection]);
+      }, [isGuestSiteOrder, isLoggedIn, customers, projects, applyProjectSelection]);
 
       useEffect(() => {
         if (orderKind !== 'project' || !selectedProjectId) return;
@@ -1305,9 +1317,9 @@ function unloadDurationLabel(value) {
       }, [orderKind, selectedProjectId, applyProjectSelection]);
 
       useEffect(() => {
-        if (!isLoggedIn || !currentCustomerPhone) return;
+        if (isGuestSiteOrder || !isLoggedIn || !currentCustomerPhone) return;
         void registerOneSignalUser(currentCustomerPhone, { role: 'customer', customer_id: currentCustomerId || '' });
-      }, [isLoggedIn, currentCustomerPhone, currentCustomerId]);
+      }, [isGuestSiteOrder, isLoggedIn, currentCustomerPhone, currentCustomerId]);
 
       useEffect(() => {
         if (!isLoggedIn || activeChatOrderId) return;
@@ -1392,6 +1404,7 @@ function unloadDurationLabel(value) {
       );
 
       useEffect(() => {
+        if (isGuestSiteOrder || !isLoggedIn) return undefined;
         let disposed = false;
         let timerId = null;
         let running = false;
@@ -1429,10 +1442,10 @@ function unloadDurationLabel(value) {
           if (timerId != null) window.clearTimeout(timerId);
           void supabase.removeChannel(channel);
         };
-      }, [refreshDashboard]);
+      }, [isGuestSiteOrder, isLoggedIn, refreshDashboard]);
 
       useEffect(() => {
-        if (!isLoggedIn || !String(currentCustomerId || '').trim()) return undefined;
+        if (isGuestSiteOrder || !isLoggedIn || !String(currentCustomerId || '').trim()) return undefined;
         let disposed = false;
         let timerId = null;
         let running = false;
@@ -1471,7 +1484,7 @@ function unloadDurationLabel(value) {
           if (timerId != null) window.clearTimeout(timerId);
           void supabase.removeChannel(channel);
         };
-      }, [currentCustomerId, isLoggedIn, isOrderForCurrentCustomer, refreshDashboard]);
+      }, [isGuestSiteOrder, currentCustomerId, isLoggedIn, isOrderForCurrentCustomer, refreshDashboard]);
 
       const handleSendMasterChat = useCallback(
         async (orderId, text) => {
@@ -1844,24 +1857,28 @@ function unloadDurationLabel(value) {
             status: bulkStatus,
           }));
           const count = orders.length;
-          await db.insertOrdersBulk(orders);
-          const contractorName =
-            orders[0]?.customerName ||
-            orders[0]?.contractorName ||
-            currentCustomer?.company_name ||
-            currentCustomer?.name ||
-            '新規注文';
-          if (bulkStatus !== 'pending_association') {
-            void sendPushNotificationToRole(
-              'factory',
-              count > 1 ? `新規注文が${count}件入りました：${contractorName}` : `新規注文が入りました：${contractorName}`,
-            );
+          if (isGuestSiteOrder && guestOrderToken) {
+            await db.submitGuestOrders(guestOrderToken, orders);
+          } else {
+            await db.insertOrdersBulk(orders);
+            const contractorName =
+              orders[0]?.customerName ||
+              orders[0]?.contractorName ||
+              currentCustomer?.company_name ||
+              currentCustomer?.name ||
+              '新規注文';
+            if (bulkStatus !== 'pending_association') {
+              void sendPushNotificationToRole(
+                'factory',
+                count > 1 ? `新規注文が${count}件入りました：${contractorName}` : `新規注文が入りました：${contractorName}`,
+              );
+            }
+            await refreshDashboard();
+            setCustomerOrderTab(count > 1 ? 'calendar' : 'active');
+            setExpandedHistoryOrderId('');
           }
-          await refreshDashboard();
           setCartItems([]);
           resetOrderForm();
-          setCustomerOrderTab(count > 1 ? 'calendar' : 'active');
-          setExpandedHistoryOrderId('');
           const hasMapPending = orders.some((o) => isLocationPendingOrder(o));
           const message =
             bulkStatus === 'pending_association'
@@ -1881,15 +1898,67 @@ function unloadDurationLabel(value) {
         } finally {
           setIsSubmittingOrder(false);
         }
-      }, [cartItems, isSubmittingOrder, refreshDashboard, currentCustomer, resetOrderForm, orderKind, adminSettings]);
+      }, [
+        cartItems,
+        isSubmittingOrder,
+        refreshDashboard,
+        currentCustomer,
+        resetOrderForm,
+        orderKind,
+        adminSettings,
+        isGuestSiteOrder,
+        guestOrderToken,
+      ]);
 
       const btnBase =
         'min-h-[56px] flex-1 rounded-xl border-2 px-4 py-3.5 text-base font-bold transition-colors';
       const adminPhoneNumber = String(adminSettings?.phone_number || '').trim();
       const adminTelHref = adminPhoneNumber ? `tel:${adminPhoneNumber.replace(/[^\d+]/g, '')}` : '';
       const adminDisplayName = String(adminSettings?.admin_name || '').trim() || '管理者';
+      const guestVendorLabel = useMemo(() => {
+        if (!isGuestSiteOrder || !guestSiteOrderCtx) return '';
+        const p = guestSiteOrderCtx.project;
+        const c = guestSiteOrderCtx.customer;
+        return formatSiteOrderVendorLabel({
+          customerName: c?.company_name || c?.name,
+          traderName: p?.trading_company_name || p?.trading_company,
+          contractorName: p?.contractor,
+        });
+      }, [isGuestSiteOrder, guestSiteOrderCtx]);
+      const guestSiteLabel = useMemo(() => {
+        if (!isGuestSiteOrder || !guestSiteOrderCtx) return '';
+        return (
+          guestSiteOrderCtx.project?.name ||
+          selectedProject?.name ||
+          guestSiteOrderCtx.customer?.company_name ||
+          ''
+        );
+      }, [isGuestSiteOrder, guestSiteOrderCtx, selectedProject]);
 
-      if (!isLoggedIn) {
+      const canAccessDispatch = isLoggedIn || (isGuestSiteOrder && guestSiteOrderCtx);
+
+      if (isGuestSiteOrder && guestSiteOrderLoading) {
+        return (
+          <div className="flex min-h-[100dvh] w-full items-center justify-center bg-slate-100 px-4 dark:bg-gray-900">
+            <p className="text-sm font-bold text-slate-600 dark:text-slate-300">専用発注フォームを読み込み中…</p>
+          </div>
+        );
+      }
+
+      if (isGuestSiteOrder && guestSiteOrderError) {
+        return (
+          <div className="flex min-h-[100dvh] w-full items-center justify-center bg-slate-100 px-4 dark:bg-gray-900">
+            <div className="max-w-md rounded-2xl border-2 border-red-200 bg-white p-6 text-center shadow-lg dark:border-red-800 dark:bg-slate-800">
+              <p className="text-sm font-black text-red-700 dark:text-red-300" role="alert">
+                {guestSiteOrderError}
+              </p>
+              <p className="mt-3 text-xs font-medium text-slate-500">URLを確認するか、管理者へお問い合わせください。</p>
+            </div>
+          </div>
+        );
+      }
+
+      if (!canAccessDispatch) {
         return (
           <div className="flex min-h-[100dvh] w-full items-center justify-center overflow-x-hidden bg-gradient-to-br from-slate-100 via-indigo-50 to-slate-100 px-4 py-[max(2rem,env(safe-area-inset-top))]">
             <form onSubmit={handleCustomerLogin} className="w-full max-w-md rounded-3xl border-2 border-slate-200 bg-white p-6 shadow-2xl sm:p-8">
@@ -1972,28 +2041,62 @@ function unloadDurationLabel(value) {
             <div className="mx-auto w-full max-w-6xl px-4 py-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
-                  <a href="/" className="inline-flex w-fit items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label="CONCRETE LINK トップへ戻る">
+                  {isGuestSiteOrder ? (
                     <img src={concreteLinkLogo} alt="CONCRETE LINK" className="h-10 w-auto" />
-                  </a>
-                  <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{adminDisplayName}</p>
+                  ) : (
+                    <a href="/" className="inline-flex w-fit items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label="CONCRETE LINK トップへ戻る">
+                      <img src={concreteLinkLogo} alt="CONCRETE LINK" className="h-10 w-auto" />
+                    </a>
+                  )}
+                  {isGuestSiteOrder ? (
+                    <div className="mt-3 space-y-1">
+                      <p className="text-xs font-black uppercase tracking-wider text-indigo-600">専用発注フォーム</p>
+                      {guestVendorLabel ? (
+                        <p className="text-xl font-bold leading-snug text-slate-900 dark:text-slate-100">
+                          <span className="text-slate-500 text-sm font-bold">業者・商社</span>
+                          <br />
+                          {guestVendorLabel}
+                        </p>
+                      ) : null}
+                      {guestSiteLabel ? (
+                        <p className="text-2xl font-black leading-tight text-slate-900 dark:text-white">
+                          <span className="text-slate-500 text-sm font-bold">現場</span>
+                          <br />
+                          {guestSiteLabel}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{adminDisplayName}</p>
+                  )}
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
                   <ThemeToggle compact />
-                  <button
-                    type="button"
-                    onClick={handleCustomerLogout}
-                    className="rounded-xl border-2 border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 shadow-sm transition hover:border-red-300 hover:bg-red-50 hover:text-red-700 sm:text-sm"
-                  >
-                    ログアウト
-                  </button>
-                  <p className="max-w-[10rem] break-words text-right text-xs font-black leading-snug text-indigo-700">
-                    ログイン中：{currentCustomer?.company_name || currentCustomer?.name || '認証済み業者'}
-                  </p>
+                  {!isGuestSiteOrder ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleCustomerLogout}
+                        className="rounded-xl border-2 border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 shadow-sm transition hover:border-red-300 hover:bg-red-50 hover:text-red-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:border-red-500 sm:text-sm"
+                      >
+                        ログアウト
+                      </button>
+                      <p className="max-w-[10rem] break-words text-right text-xs font-black leading-snug text-indigo-700 dark:text-indigo-300">
+                        ログイン中：{currentCustomer?.company_name || currentCustomer?.name || '認証済み業者'}
+                      </p>
+                    </>
+                  ) : null}
                 </div>
               </div>
+              {isGuestSiteOrder && siteOrderLinkNotice ? (
+                <p className="mt-3 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-bold text-indigo-900 dark:border-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-100" role="status">
+                  {siteOrderLinkNotice}
+                </p>
+              ) : null}
             </div>
           </header>
 
+          {!isGuestSiteOrder ? (
           <div className="sticky top-0 z-30 hidden border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 lg:block">
             <div className="mx-auto w-full max-w-6xl overflow-x-auto">
             <div className="grid min-w-[32rem] grid-cols-4 gap-1 rounded-2xl bg-slate-100 p-1 dark:bg-slate-800">
@@ -2031,11 +2134,12 @@ function unloadDurationLabel(value) {
             </div>
             </div>
           </div>
+          ) : null}
 
-          <PullToRefresh onRefresh={refreshDashboard} className="mx-auto w-full max-w-6xl px-4 py-6">
+          <PullToRefresh onRefresh={isGuestSiteOrder ? async () => {} : refreshDashboard} className="mx-auto w-full max-w-6xl px-4 py-6">
           <main id="dispatch-dashboard">
             <div className="grid min-w-0 gap-6">
-              {customerOrderTab === 'new' && !newOrderMode ? (
+              {customerOrderTab === 'new' && !newOrderMode && !isGuestSiteOrder ? (
               <section className="mx-auto w-full max-w-6xl rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6">
                 <p className="text-xs font-black uppercase tracking-wider text-indigo-700">新規発注</p>
                 <h2 className="mt-1 text-2xl font-black text-slate-900">発注スタイルを選択</h2>
@@ -2096,14 +2200,17 @@ function unloadDurationLabel(value) {
                   数量・業者・電話番号は必須です。商社は任意です。現場名は未入力のとき、現場住所と同じ内容として扱われます。
                 </p>
                   </div>
-                  <button type="button" onClick={() => setNewOrderMode('')} className="rounded-xl border-2 border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
-                    発注スタイル選択へ戻る
-                  </button>
+                  {!isGuestSiteOrder ? (
+                    <button type="button" onClick={() => setNewOrderMode('')} className="rounded-xl border-2 border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+                      発注スタイル選択へ戻る
+                    </button>
+                  ) : null}
                 </div>
                 <form
                   className="mt-6 grid min-w-0 gap-6 overflow-hidden lg:grid-cols-2 lg:items-start"
                   onSubmit={(e) => e.preventDefault()}
                 >
+              {!isGuestSiteOrder ? (
               <div className="flex flex-col gap-3">
                 <span className="text-sm font-semibold text-slate-700">注文種別</span>
                 <p className="text-xs leading-relaxed text-slate-500">
@@ -2154,6 +2261,7 @@ function unloadDurationLabel(value) {
                   </button>
                 </div>
               </div>
+              ) : null}
 
               {orderKind === 'project' ? (
                 <div className="flex flex-col gap-3">
@@ -2161,7 +2269,7 @@ function unloadDurationLabel(value) {
                   <select
                     id="dispatch-project"
                     value={selectedProjectId}
-                    disabled={!hasCurrentCustomer}
+                    disabled={!hasCurrentCustomer || (isGuestSiteOrder && Boolean(guestSiteOrderCtx?.project?.id))}
                     onChange={(e) => {
                       const id = e.target.value;
                       setSelectedProjectId(id);

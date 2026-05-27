@@ -1064,31 +1064,79 @@ export async function updateAdminPassword(currentPassword, newPassword) {
   return mapAdminSettingsRow(data);
 }
 
-/** 専用発注URLトークンから物件・業者を解決（/order/:token 用） */
+/** 専用発注URLトークンから物件・業者を解決（RPC・未ログイン可） */
 export async function fetchSiteOrderContextByUrlToken(urlToken) {
   const token = String(urlToken || '').trim();
   if (!isValidSiteOrderUrlToken(token)) return null;
 
-  const { data: projectRow, error: pErr } = await supabase.from('projects').select('*').eq('url_token', token).maybeSingle();
-  if (pErr) throw pErr;
-  if (projectRow) {
-    const project = mapProjectRow(projectRow);
-    let customer = null;
-    if (project?.customer_id) {
-      const { data: cRow, error: cErr } = await supabase.from('customers').select('*').eq('id', project.customer_id).maybeSingle();
-      if (cErr) throw cErr;
-      customer = cRow ? mapCustomerRow(cRow) : null;
-    }
-    return { token, project, customer, match: 'project' };
-  }
+  const { data, error } = await supabase.rpc('get_site_order_context_by_token', { p_token: token });
+  if (error) throw error;
+  if (!data) return null;
 
-  const { data: customerRow, error: cErr } = await supabase.from('customers').select('*').eq('url_token', token).maybeSingle();
-  if (cErr) throw cErr;
-  if (customerRow) {
-    return { token, project: null, customer: mapCustomerRow(customerRow), match: 'customer' };
-  }
+  const raw = typeof data === 'object' ? data : null;
+  if (!raw) return null;
 
-  return null;
+  const project = raw.project ? mapProjectRow(raw.project) : null;
+  const customer = raw.customer
+    ? mapCustomerRow({ ...raw.customer, login_password: '' })
+    : null;
+  const projects = Array.isArray(raw.projects)
+    ? raw.projects.map((row) => mapProjectRow(row)).filter(Boolean)
+    : project
+      ? [project]
+      : [];
+
+  return {
+    token: String(raw.token || token),
+    project,
+    customer,
+    projects,
+    match: raw.match === 'customer' ? 'customer' : 'project',
+  };
+}
+
+/** 発注画面向け運用設定（login_password なし・未ログイン可） */
+export async function fetchDispatchOperationalSettings() {
+  const { data, error } = await supabase.rpc('get_dispatch_operational_settings');
+  if (!error) {
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return mapAdminSettingsRow({ id: 1, admin_name: '', phone_number: '', login_password: '' });
+    return mapAdminSettingsRow({ ...row, login_password: '' });
+  }
+  // RPC 未作成時（デモ環境で admin_settings が anon 読取可の場合）のフォールバック
+  const missingFn =
+    error.code === '42883' ||
+    /get_dispatch_operational_settings/i.test(String(error.message || ''));
+  if (!missingFn) throw error;
+  const { data: row, error: selErr } = await supabase.from('admin_settings').select('*').eq('id', 1).maybeSingle();
+  if (selErr) throw selErr;
+  return mapAdminSettingsRow(row ? { ...row, login_password: '' } : { id: 1, admin_name: '', phone_number: '', login_password: '' });
+}
+
+/** 専用発注URL向け工場一覧（物件のメイン・サブ工場、未ログイン可） */
+export async function fetchGuestFactoriesForToken(urlToken) {
+  const token = String(urlToken || '').trim();
+  if (!isValidSiteOrderUrlToken(token)) return [];
+  const { data, error } = await supabase.rpc('get_guest_factories_for_token', { p_token: token });
+  if (error) throw error;
+  const list = Array.isArray(data) ? data : [];
+  return list.map((row) => mapFactoryRow(row)).filter(Boolean);
+}
+
+/** ゲスト専用発注の一括登録（RPC） */
+export async function submitGuestOrders(urlToken, orders) {
+  const token = String(urlToken || '').trim();
+  if (!isValidSiteOrderUrlToken(token)) throw new Error('専用発注URLが無効です');
+  const list = Array.isArray(orders) ? orders.filter((o) => o && typeof o === 'object') : [];
+  if (list.length === 0) throw new Error('登録する注文がありません');
+
+  const { data, error } = await supabase.rpc('submit_guest_orders', {
+    p_token: token,
+    p_orders: list,
+  });
+  if (error) throw error;
+  const inserted = Array.isArray(data) ? data : [];
+  return inserted.map((row) => (row && row.id ? { id: String(row.id) } : null)).filter(Boolean);
 }
 
 /** 物件マスタ一覧 */

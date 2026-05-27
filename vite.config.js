@@ -14,7 +14,7 @@ function spaHtmlFallback() {
         const url = req.url?.split('?')[0] || '';
         if (/^\/map-editor\/[^/]+\/?$/.test(url)) {
           req.url = '/MapEditor.html';
-        } else if (/^\/order\/[^/]+\/?$/.test(url)) {
+        } else if (/^\/order\/[^/]+\/?$/.test(url) || /^\/guest-order\/[^/]+\/?$/.test(url)) {
           req.url = '/DispatchOrderPrototype.html';
         }
         next();

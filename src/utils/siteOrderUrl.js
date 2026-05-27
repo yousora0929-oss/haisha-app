@@ -1,9 +1,9 @@
 import { isValidSiteOrderUrlToken } from './urlValidation.js';
 
-/** パス /order/:token からトークンを取得 */
+/** パス /order/:token または /guest-order/:token からトークンを取得 */
 export function parseSiteOrderTokenFromPath() {
   if (typeof window === 'undefined') return '';
-  const pathMatch = window.location.pathname.match(/\/order\/([^/?#]+)/i);
+  const pathMatch = window.location.pathname.match(/\/(?:order|guest-order)\/([^/?#]+)/i);
   if (pathMatch?.[1]) return decodeURIComponent(pathMatch[1]).trim();
   const q = new URLSearchParams(window.location.search).get('token');
   return q ? String(q).trim() : '';
