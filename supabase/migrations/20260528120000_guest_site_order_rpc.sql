@@ -154,7 +154,7 @@ begin
         jsonb_build_object(
           'id', v_customer.id::text,
           'company_name', v_customer.company_name,
-          'name', coalesce(v_customer.company_name, v_customer.name),
+          'name', v_customer.company_name,
           'phone_number', v_customer.phone_number,
           'manager_name', v_customer.manager_name,
           'url_token', v_customer.url_token::text
@@ -183,7 +183,7 @@ begin
       'customer', jsonb_build_object(
         'id', v_customer.id::text,
         'company_name', v_customer.company_name,
-        'name', coalesce(v_customer.company_name, v_customer.name),
+        'name', v_customer.company_name,
         'phone_number', v_customer.phone_number,
         'manager_name', v_customer.manager_name,
         'url_token', v_customer.url_token::text
