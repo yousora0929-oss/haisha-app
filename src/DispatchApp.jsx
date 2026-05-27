@@ -999,6 +999,7 @@ function unloadDurationLabel(value) {
       const [guestSiteOrderCtx, setGuestSiteOrderCtx] = useState(null);
       const [guestSiteOrderLoading, setGuestSiteOrderLoading] = useState(isGuestSiteOrder);
       const [guestSiteOrderError, setGuestSiteOrderError] = useState('');
+      const [guestSiteOrderErrorDetail, setGuestSiteOrderErrorDetail] = useState('');
       const orderFormRef = useRef(null);
       const lastAutofillProjectIdRef = useRef('');
 
@@ -1218,6 +1219,7 @@ function unloadDurationLabel(value) {
         (async () => {
           setGuestSiteOrderLoading(true);
           setGuestSiteOrderError('');
+          setGuestSiteOrderErrorDetail('');
           try {
             const [ctx, settings, factoryRows] = await Promise.all([
               db.fetchSiteOrderContextByUrlToken(guestOrderToken),
@@ -1225,45 +1227,74 @@ function unloadDurationLabel(value) {
               db.fetchGuestFactoriesForToken(guestOrderToken),
             ]);
             if (cancelled) return;
+
             if (!ctx) {
               setGuestSiteOrderError('専用発注URLが無効です。リンクを確認してください。');
+              setGuestSiteOrderErrorDetail('サーバーからコンテキストを取得できませんでした（応答が空です）。');
               return;
             }
-            setGuestSiteOrderCtx(ctx);
-            setAdminSettings(settings || { admin_name: '', phone_number: '' });
-            setFactories(factoryRows || []);
-            const customer = ctx.customer;
-            const projectList = Array.isArray(ctx.projects) && ctx.projects.length > 0
-              ? ctx.projects
-              : ctx.project
-                ? [ctx.project]
-                : [];
-            if (customer?.id) {
-              setCurrentCustomerId(String(customer.id));
-              setCustomers([customer]);
+
+            try {
+              const hasCustomer = Boolean(ctx?.customer?.id);
+              const hasProject = Boolean(ctx?.project?.id);
+              const projectList = Array.isArray(ctx?.projects) && ctx.projects.length > 0 ? ctx.projects : [];
+              const hasProjectsList = projectList.length > 0;
+              if (!hasCustomer && !hasProject && !hasProjectsList) {
+                setGuestSiteOrderError('専用発注データが不完全です。');
+                setGuestSiteOrderErrorDetail('業者または物件の情報が応答に含まれていません。');
+                return;
+              }
+
+              setGuestSiteOrderCtx(ctx);
+              setAdminSettings(settings && typeof settings === 'object' ? settings : { admin_name: '', phone_number: '' });
+              setFactories(Array.isArray(factoryRows) ? factoryRows : []);
+
+              const customer = ctx.customer || null;
+              const mergedProjectList =
+                projectList.length > 0 ? projectList : ctx.project ? [ctx.project] : [];
+              if (customer?.id) {
+                setCurrentCustomerId(String(customer.id));
+                setCustomers([customer]);
+              }
+              setProjects(mergedProjectList);
+
+              const primaryProject = ctx.project || (mergedProjectList.length === 1 ? mergedProjectList[0] : null);
+              setOrderKind('project');
+              setNewOrderMode('form');
+              setCustomerOrderTab('new');
+              if (primaryProject?.id) {
+                setSelectedProjectId(String(primaryProject.id));
+                applyProjectSelection(primaryProject);
+              } else {
+                setSelectedProjectId('');
+                try {
+                  applyProjectSelection(null);
+                } catch (clearErr) {
+                  console.warn('applyProjectSelection(null)', clearErr);
+                }
+              }
+              const label =
+                primaryProject?.name || customer?.company_name || customer?.name || '';
+              setSiteOrderLinkNotice(
+                label ? `「${label}」の専用発注フォームです。` : '専用発注フォームです。',
+              );
+            } catch (procErr) {
+              console.error('専用発注フォームの初期化に失敗しました', procErr);
+              if (!cancelled) {
+                setGuestSiteOrderCtx(null);
+                setGuestSiteOrderError('専用発注フォームの初期化に失敗しました。');
+                setGuestSiteOrderErrorDetail(String(procErr?.message ?? procErr ?? '不明なエラー'));
+              }
             }
-            setProjects(projectList);
-            const primaryProject = ctx.project || (projectList.length === 1 ? projectList[0] : null);
-            setOrderKind('project');
-            setNewOrderMode('form');
-            setCustomerOrderTab('new');
-            if (primaryProject?.id) {
-              setSelectedProjectId(String(primaryProject.id));
-              applyProjectSelection(primaryProject);
-            } else {
-              setSelectedProjectId('');
-            }
-            const label = primaryProject?.name || customer?.company_name || customer?.name || '';
-            setSiteOrderLinkNotice(
-              label ? `「${label}」の専用発注フォームです。` : '専用発注フォームです。',
-            );
           } catch (e) {
             console.error('専用発注URLの解決に失敗しました', e);
             if (!cancelled) {
+              setGuestSiteOrderCtx(null);
               setGuestSiteOrderError(formatSupabaseError(e, '専用発注URLの読み込みに失敗しました。'));
+              setGuestSiteOrderErrorDetail(String(e?.message ?? e ?? '不明なエラー'));
             }
           } finally {
-            if (!cancelled) setGuestSiteOrderLoading(false);
+            setGuestSiteOrderLoading(false);
           }
         })();
         return () => {
@@ -1948,10 +1979,15 @@ function unloadDurationLabel(value) {
       if (isGuestSiteOrder && guestSiteOrderError) {
         return (
           <div className="flex min-h-[100dvh] w-full items-center justify-center bg-slate-100 px-4 dark:bg-gray-900">
-            <div className="max-w-md rounded-2xl border-2 border-red-200 bg-white p-6 text-center shadow-lg dark:border-red-800 dark:bg-slate-800">
+            <div className="max-w-lg rounded-2xl border-2 border-red-200 bg-white p-6 text-center shadow-lg dark:border-red-800 dark:bg-slate-800">
               <p className="text-sm font-black text-red-700 dark:text-red-300" role="alert">
                 {guestSiteOrderError}
               </p>
+              {guestSiteOrderErrorDetail ? (
+                <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-red-100 bg-red-50/80 p-3 text-left text-xs font-bold text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+                  {guestSiteOrderErrorDetail}
+                </pre>
+              ) : null}
               <p className="mt-3 text-xs font-medium text-slate-500">URLを確認するか、管理者へお問い合わせください。</p>
             </div>
           </div>

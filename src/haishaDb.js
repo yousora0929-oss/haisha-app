@@ -1064,6 +1064,28 @@ export async function updateAdminPassword(currentPassword, newPassword) {
   return mapAdminSettingsRow(data);
 }
 
+/** Supabase RPC の json / jsonb 戻り値をオブジェクトに正規化 */
+function normalizeSupabaseRpcJson(data) {
+  if (data == null) return null;
+  if (typeof data === 'string') {
+    try {
+      const parsed = JSON.parse(data);
+      return typeof parsed === 'object' && parsed !== null ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof data === 'object') return data;
+  return null;
+}
+
+function normalizeRpcProjectsArray(raw) {
+  const p = raw?.projects;
+  if (Array.isArray(p)) return p;
+  if (p && typeof p === 'object' && !Array.isArray(p)) return Object.values(p);
+  return [];
+}
+
 /** 専用発注URLトークンから物件・業者を解決（RPC・未ログイン可） */
 export async function fetchSiteOrderContextByUrlToken(urlToken) {
   const token = String(urlToken || '').trim();
@@ -1071,23 +1093,31 @@ export async function fetchSiteOrderContextByUrlToken(urlToken) {
 
   const { data, error } = await supabase.rpc('get_site_order_context_by_token', { p_token: token });
   if (error) throw error;
-  if (!data) return null;
+  if (data == null) return null;
 
-  const raw = typeof data === 'object' ? data : null;
-  if (!raw) return null;
+  const raw = normalizeSupabaseRpcJson(data);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
 
-  const project = raw.project ? mapProjectRow(raw.project) : null;
-  const customer = raw.customer
-    ? mapCustomerRow({ ...raw.customer, login_password: '' })
-    : null;
-  const projects = Array.isArray(raw.projects)
-    ? raw.projects.map((row) => mapProjectRow(row)).filter(Boolean)
-    : project
-      ? [project]
-      : [];
+  let project = null;
+  let customer = null;
+  let projects = [];
+
+  try {
+    project = raw.project && typeof raw.project === 'object' ? mapProjectRow(raw.project) : null;
+    customer =
+      raw.customer && typeof raw.customer === 'object'
+        ? mapCustomerRow({ ...raw.customer, login_password: '' })
+        : null;
+    const rawList = normalizeRpcProjectsArray(raw);
+    projects = rawList.map((row) => (row && typeof row === 'object' ? mapProjectRow(row) : null)).filter(Boolean);
+    if (!projects.length && project) projects = [project];
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`専用発注コンテキストの解釈に失敗しました: ${msg}`);
+  }
 
   return {
-    token: String(raw.token || token),
+    token: String(raw.token ?? token),
     project,
     customer,
     projects,
@@ -1119,8 +1149,13 @@ export async function fetchGuestFactoriesForToken(urlToken) {
   if (!isValidSiteOrderUrlToken(token)) return [];
   const { data, error } = await supabase.rpc('get_guest_factories_for_token', { p_token: token });
   if (error) throw error;
-  const list = Array.isArray(data) ? data : [];
-  return list.map((row) => mapFactoryRow(row)).filter(Boolean);
+  const normalized = normalizeSupabaseRpcJson(data);
+  let list = [];
+  if (Array.isArray(normalized)) list = normalized;
+  else if (normalized && typeof normalized === 'object' && !Array.isArray(normalized)) {
+    list = Object.values(normalized);
+  }
+  return list.map((row) => (row && typeof row === 'object' ? mapFactoryRow(row) : null)).filter(Boolean);
 }
 
 /** ゲスト専用発注の一括登録（RPC） */
