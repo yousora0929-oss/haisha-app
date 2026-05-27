@@ -240,7 +240,6 @@ begin
           jsonb_build_object(
             'id', f.id::text,
             'name', f.name,
-            'phone_number', f.phone_number,
             'latitude', f.latitude,
             'longitude', f.longitude
           )
@@ -258,7 +257,6 @@ begin
         jsonb_build_object(
           'id', f.id::text,
           'name', f.name,
-          'phone_number', f.phone_number,
           'latitude', f.latitude,
           'longitude', f.longitude
         )
