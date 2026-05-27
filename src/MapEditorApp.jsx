@@ -14,11 +14,7 @@ import {
 } from './mapEditorConstants.js';
 import { isValidExternalUrl, normalizeExternalUrl } from './utils/urlValidation.js';
 import { geocodeAddress } from './utils/nominatimGeocode.js';
-import {
-  boundsFromCenter,
-  emptyMapAnnotations,
-  hasAnnotationGeoFeatures,
-} from './utils/mapAnnotations.js';
+import { boundsFromCenter, emptyMapAnnotations } from './utils/mapAnnotations.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
 
 const MAP_SOURCE_LABEL = {
@@ -63,7 +59,6 @@ export function MapEditorApp() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
   const [flyTarget, setFlyTarget] = useState(null);
-  const [mapInitialFitKey, setMapInitialFitKey] = useState(null);
 
   const [saving, setSaving] = useState(false);
   const [confirmMode, setConfirmMode] = useState(null);
@@ -182,11 +177,8 @@ export function MapEditorApp() {
         setDefaultMapUrl(result.defaultMapImageUrl || '');
         const loaded = result.mapAnnotations || emptyMapAnnotations();
         setAnnotations(loaded);
-        setMapInitialFitKey(`${result.order.id}-${Date.now()}`);
-        if (result.initialFlyTarget && !hasAnnotationGeoFeatures(loaded)) {
+        if (result.initialFlyTarget) {
           setFlyTarget({ ...result.initialFlyTarget, key: Date.now() });
-        } else {
-          setFlyTarget(null);
         }
       } catch (err) {
         if (!cancelled) {
@@ -384,7 +376,7 @@ export function MapEditorApp() {
   const siteSubtitle = siteLabel.trim() || '（現場名未設定）';
 
   return (
-    <div className="map-editor-app flex h-[100dvh] flex-col overflow-hidden bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+    <div className="map-editor-app flex h-[100dvh] flex-col overflow-hidden bg-slate-100 text-slate-900 dark:bg-gray-900 dark:text-gray-100">
       <div className="map-editor-print-only map-editor-print-header">
         <h1>現場地図</h1>
         <p>
@@ -527,7 +519,6 @@ export function MapEditorApp() {
           selectedStampType={selectedStampType}
           defaultUnloadRadius={unloadRadius}
           flyTarget={flyTarget}
-          initialFitKey={mapInitialFitKey}
           disabled={saving}
           selected={selection}
           onSelectionChange={setSelection}

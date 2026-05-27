@@ -1523,7 +1523,7 @@ function orderPartyInfo(order) {
                 </button>
               </div>
               {terminalLocked ? (
-                <div className="mt-3 space-y-2 rounded-lg border-2 border-amber-300 bg-amber-50/95 px-3 py-3">
+                <div className="cl-alert-warning-panel mt-3 space-y-2 rounded-lg border-2 border-amber-300 bg-amber-50/95 px-3 py-3">
                   <p className="text-sm font-black text-amber-950 sm:text-base">マスターの許可が必要です</p>
                   <p className="text-xs font-bold leading-relaxed text-amber-900/90 sm:text-sm">
                     受注または拒否を確定したあとは、工場側からは変更できません。訂正が必要な場合はマスターが「ステータス再設定許可」で解除します。
@@ -2319,8 +2319,8 @@ function orderPartyInfo(order) {
         const rawType = String(order?.type || order?.order_type || order?.project_type || order?.projectType || '').toLowerCase();
         const isSpot = Boolean(order?.is_spot || order?.isSpot || rawType.includes('spot') || rawType.includes('スポット'));
         return isSpot
-          ? 'cl-glare-alert cl-glare-alert--spot bg-amber-500 text-slate-950 shadow-sm'
-          : 'cl-glare-alert cl-glare-alert--project bg-blue-600 text-white shadow-sm';
+          ? 'cl-alert-spot bg-amber-500 text-slate-950 shadow-sm'
+          : 'bg-blue-600 text-white shadow-sm';
       };
       const openOrder = (order) => {
         if (!order?.id || typeof onOpenOrder !== 'function') return;
@@ -3436,7 +3436,7 @@ function orderPartyInfo(order) {
       }
 
       return (
-        <div id="factory-dashboard" className="flex h-[100dvh] min-h-[100dvh] w-full max-w-full flex-col overflow-hidden overflow-x-hidden bg-slate-50 pt-3 antialiased dark:bg-slate-950 dark:text-slate-100 sm:pt-4">
+        <div id="factory-dashboard" className="flex h-[100dvh] min-h-[100dvh] w-full max-w-full flex-col overflow-hidden overflow-x-hidden bg-slate-50 pt-3 antialiased dark:bg-gray-900 dark:text-gray-100 sm:pt-4">
           {activeFactoryMissing ? (
             <div className="shrink-0 border-b-4 border-red-700 bg-red-100 px-4 py-3 text-center text-lg font-black text-red-700 shadow sm:text-2xl">
               ⚠️警告: 工場ID【{activeFactoryId}】はデータベースに存在しません

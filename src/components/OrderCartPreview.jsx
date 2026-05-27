@@ -23,7 +23,7 @@ export function OrderCartPreview({ items, onRemove, onConfirmBulk, bulkLoading }
     >
       <h3 id="order-cart-title" className="text-base font-black text-violet-950 sm:text-lg">
         発注リスト（カート）
-        <span className="cl-glare-alert cl-glare-alert--association ml-2 inline-flex rounded-full bg-violet-600 px-2 py-0.5 text-xs font-black text-white">
+        <span className="ml-2 inline-flex rounded-full bg-violet-600 px-2 py-0.5 text-xs font-black text-white">
           {list.length}件
         </span>
       </h3>

@@ -5,7 +5,6 @@ export const THEME_STORAGE_KEY = 'concrete_link_theme_mode_v1';
 /** @type {ThemeMode[]} */
 export const THEME_MODES = ['light', 'dark', 'system'];
 
-/** ヘッダー切替表示用（窓際タブレット向け） */
 export const THEME_MODE_LABELS = {
   light: 'Light',
   dark: 'Dark',

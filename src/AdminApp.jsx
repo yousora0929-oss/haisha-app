@@ -113,10 +113,8 @@ function statusBadgeClass(status) {
   if (status === 'completed') return 'border-slate-300 bg-slate-100 text-slate-700';
   if (status === 'accepted') return 'border-emerald-300 bg-emerald-50 text-emerald-800';
   if (status === 'rejected') return 'border-red-300 bg-red-50 text-red-800';
-  if (status === 'pending_association') {
-    return 'cl-glare-alert cl-glare-alert--association border-violet-500 bg-violet-600 text-white';
-  }
-  return 'border-amber-300 bg-amber-50 text-amber-900';
+  if (status === 'pending_association') return 'cl-alert-association cl-alert-status border-violet-400 bg-violet-50 text-violet-900';
+  return 'cl-alert-status border-amber-300 bg-amber-50 text-amber-900';
 }
 
 function csvCell(value) {
@@ -138,7 +136,7 @@ function downloadCsv(filename, rows) {
 }
 
 function kindBadgeClass(isSpot) {
-  return isSpot ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-indigo-300 bg-indigo-50 text-indigo-800';
+  return isSpot ? 'cl-alert-spot cl-alert-status border-amber-300 bg-amber-50 text-amber-900' : 'border-indigo-300 bg-indigo-50 text-indigo-800';
 }
 
 function orderScheduleSortKey(order) {
@@ -1624,11 +1622,11 @@ function OrdersMonitorSection({
           <p className="text-xs font-bold text-slate-500">全注文</p>
           <p className="mt-1 text-2xl font-black text-slate-900">{visibleOrders.length}</p>
         </div>
-        <div className="cl-glare-alert cl-glare-alert--association rounded-xl border-2 border-violet-400 bg-violet-600 px-3 py-3">
-          <p className="text-xs font-bold text-violet-100">組合承認待ち</p>
-          <p className="mt-1 text-2xl font-black text-white">{pendingAssociationCount}</p>
+        <div className="cl-alert-warning-panel rounded-xl border border-violet-200 bg-violet-50 px-3 py-3">
+          <p className="text-xs font-bold text-violet-700">組合承認待ち</p>
+          <p className="mt-1 text-2xl font-black text-violet-900">{pendingAssociationCount}</p>
         </div>
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
+        <div className="cl-alert-warning-panel rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
           <p className="text-xs font-bold text-amber-700">pending</p>
           <p className="mt-1 text-2xl font-black text-amber-900">{pendingCount}</p>
         </div>
@@ -1655,10 +1653,8 @@ function OrdersMonitorSection({
       {loading ? <p className="mt-4 text-sm text-slate-500">読み込み中…</p> : null}
 
       {!loading && activeMonitorTab === 'orders' && pendingAssociationOrders.length > 0 ? (
-        <div className="mt-4 rounded-xl border-2 border-violet-400 bg-violet-50/60 p-4 dark:border-violet-500">
-          <h3 className="text-base font-black text-violet-950 dark:text-violet-100">
-            組合承認が必要なスポット注文（{pendingAssociationOrders.length}件）
-          </h3>
+        <div className="cl-alert-warning-panel mt-4 rounded-xl border-2 border-violet-300 bg-violet-50/60 p-4">
+          <h3 className="text-base font-black text-violet-950">組合承認が必要なスポット注文（{pendingAssociationOrders.length}件）</h3>
           <p className="mt-1 text-xs font-medium text-violet-900/90">
             数量上限を超えるスポット注文です。承認するまで工場の通常配車リストには表示されません。
           </p>
@@ -2061,7 +2057,7 @@ export function AdminApp() {
   }
 
   return (
-    <div className="min-h-[100dvh] w-full overflow-x-hidden bg-slate-100 pt-11 pb-[max(2.5rem,env(safe-area-inset-bottom))] dark:bg-slate-950 dark:text-slate-100">
+    <div className="min-h-[100dvh] w-full overflow-x-hidden bg-slate-100 pt-11 pb-[max(2.5rem,env(safe-area-inset-bottom))] dark:bg-gray-900 dark:text-gray-100">
       <header className="border-b border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
         <div className="mx-auto flex max-w-6xl flex-wrap items-start justify-between gap-3 px-4 py-5 sm:px-6">
           <div className="min-w-0">

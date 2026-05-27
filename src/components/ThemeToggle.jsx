@@ -44,7 +44,7 @@ export function ThemeToggle({ className = '', compact = false }) {
         }
         aria-expanded={open}
         aria-controls={panelId}
-        title={`表示テーマ: ${THEME_MODE_LABELS[mode]}（${effective === 'dark' ? 'ダーク' : 'ライト'}）`}
+        title={`Theme: ${THEME_MODE_LABELS[mode]} (${effective === 'dark' ? 'Dark' : 'Light'} active)`}
         onClick={() => setOpen((v) => !v)}
       >
         {label}
@@ -80,7 +80,7 @@ export function ThemeToggle({ className = '', compact = false }) {
                 }}
               >
                 <span>
-                  {id === 'light' ? '☀️' : id === 'dark' ? '🌙' : '🔄'} {THEME_MODE_LABELS[id]}
+                  {id === 'light' ? '☀️' : id === 'dark' ? '🌙' : '💻'} {THEME_MODE_LABELS[id]}
                 </span>
                 {active ? <span aria-hidden>✓</span> : null}
               </button>

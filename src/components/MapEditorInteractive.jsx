@@ -13,13 +13,10 @@ import 'leaflet/dist/leaflet.css';
 import { MAP_EDITOR_TOOLS, MAP_STAMP_EMOJI } from '../mapEditorConstants.js';
 import {
   applyInitialViewCenter,
-  boundsFromAnnotations,
   boundsFromCenter,
   createAnnotationId,
   DEFAULT_MAP_CENTER,
   DEFAULT_UNLOAD_RADIUS_M,
-  getAnnotationFitBoundsOptions,
-  hasAnnotationGeoFeatures,
 } from '../utils/mapAnnotations.js';
 import { renderAnnotationsSnapshot } from '../utils/mapEditorSnapshot.js';
 
@@ -91,62 +88,6 @@ function MapResizeFix() {
     const t = setTimeout(() => map.invalidateSize(), 120);
     return () => clearTimeout(t);
   }, [map]);
-  return null;
-}
-
-function isMobileViewport() {
-  if (typeof window === 'undefined') return false;
-  try {
-    return window.matchMedia('(max-width: 640px)').matches;
-  } catch {
-    return false;
-  }
-}
-
-/** 初回表示時にスタンプ・荷下ろし・コメント全体が画面内に収まるよう fitBounds */
-function MapInitialFitBounds({ annotations, fitKey }) {
-  const map = useMap();
-  const fittedKeyRef = useRef(null);
-
-  useEffect(() => {
-    if (!fitKey) return;
-    const bounds = boundsFromAnnotations(annotations);
-    if (!bounds) return;
-
-    let cancelled = false;
-    let retryTimer = null;
-
-    const runFit = () => {
-      if (cancelled || fittedKeyRef.current === fitKey) return;
-      map.invalidateSize();
-      const isMobile = isMobileViewport();
-      const { padding, maxZoom, extraZoomOut } = getAnnotationFitBoundsOptions(annotations, {
-        isMobile,
-      });
-      map.fitBounds(bounds, { padding, maxZoom });
-      if (extraZoomOut > 0) {
-        const z = map.getZoom();
-        if (Number.isFinite(z) && z > map.getMinZoom()) {
-          map.setZoom(Math.max(map.getMinZoom(), z - extraZoomOut));
-        }
-      }
-      fittedKeyRef.current = fitKey;
-    };
-
-    const scheduleFit = () => {
-      runFit();
-      retryTimer = setTimeout(runFit, 280);
-    };
-
-    if (map._loaded) scheduleFit();
-    else map.whenReady(scheduleFit);
-
-    return () => {
-      cancelled = true;
-      if (retryTimer != null) clearTimeout(retryTimer);
-    };
-  }, [annotations, fitKey, map]);
-
   return null;
 }
 
@@ -235,8 +176,6 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
     selectedStampType,
     defaultUnloadRadius = DEFAULT_UNLOAD_RADIUS_M,
     flyTarget = null,
-    /** 注文読込ごとに変えるキー（初回 fitBounds 用） */
-    initialFitKey = null,
     disabled = false,
     selected = null,
     onSelectionChange,
@@ -261,11 +200,6 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
     [displayCenter.lat, displayCenter.lng],
   );
   const mapZoom = Number(displayCenter.zoom) || DEFAULT_MAP_CENTER.zoom;
-
-  const shouldInitialFit = useMemo(
-    () => Boolean(initialFitKey) && hasAnnotationGeoFeatures(annotations),
-    [annotations, initialFitKey],
-  );
 
   const overlayBounds = useMemo(() => {
     if (annotations?.imageOverlay?.bounds) return annotations.imageOverlay.bounds;
@@ -442,9 +376,6 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
       >
         <MapInstanceBinder mapRef={mapRef} />
         <MapResizeFix />
-        {shouldInitialFit ? (
-          <MapInitialFitBounds annotations={annotations} fitKey={initialFitKey} />
-        ) : null}
         <MapFlyTo target={flyTarget} />
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'

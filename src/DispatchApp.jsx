@@ -25,7 +25,7 @@ import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { buildDispatchOrderForDate, validateCartLineForm } from './utils/dispatchBulkOrder.js';
-import { combineDeliveryAddress, normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
+import { combineDeliveryAddress, extractProjectAddressFields, normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
 import { isLocationPendingOrder, resolveInitialOrderStatus, sumOrderVolumesM3 } from './utils/orderWorkflow.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
@@ -227,17 +227,9 @@ function unloadDurationLabel(value) {
         return { key: 'active', label: '受注', className: 'bg-blue-600 text-white border-blue-700' };
       }
       if (st === 'pending_association') {
-        return {
-          key: 'active',
-          label: '組合承認待ち',
-          className: 'cl-glare-alert cl-glare-alert--association bg-violet-600 text-white border-violet-700',
-        };
+        return { key: 'active', label: '組合承認待ち', className: 'cl-alert-association bg-violet-600 text-white border-violet-700' };
       }
-      return {
-        key: 'active',
-        label: '配車待ち',
-        className: 'cl-glare-alert cl-glare-alert--warning bg-amber-400 text-amber-950 border-amber-500',
-      };
+      return { key: 'active', label: '配車待ち', className: 'bg-amber-400 text-amber-950 border-amber-500' };
     }
 
     /** 将来のAPI連携用（画面には表示しない） */
@@ -1003,6 +995,7 @@ function unloadDurationLabel(value) {
       const [preferredFactoryId, setPreferredFactoryId] = useState('');
       const [siteOrderLinkNotice, setSiteOrderLinkNotice] = useState('');
       const orderFormRef = useRef(null);
+      const lastAutofillProjectIdRef = useRef('');
 
       const selectedProject = useMemo(
         () => (projects || []).find((p) => p && p.id === selectedProjectId) || null,
@@ -1016,6 +1009,35 @@ function unloadDurationLabel(value) {
         () => combineDeliveryAddress(deliveryArea, siteAddressDetail),
         [deliveryArea, siteAddressDetail],
       );
+
+      /** 物件選択時: 住所・関連フィールドをオートフィル（未選択時はクリア） */
+      const applyProjectSelection = useCallback(
+        (project) => {
+          if (!project) {
+            setDeliveryArea('');
+            setSiteAddressDetail('');
+            setPreferredFactoryId('');
+            lastAutofillProjectIdRef.current = '';
+            return;
+          }
+          const { deliveryArea: area, siteAddressDetail: detail } = extractProjectAddressFields(
+            project,
+            allowedDeliveryAreas,
+          );
+          setDeliveryArea(area);
+          setSiteAddressDetail(detail);
+          setAddressSearchError('');
+          if (project.trading_company_name || project.trading_company) {
+            setTraderName(String(project.trading_company_name || project.trading_company));
+          }
+          if (project.contractor) setContractorName(String(project.contractor));
+          if (project.name) setSiteName(sanitizeSiteNameValue(project.name));
+          if (project.main_factory_id) setPreferredFactoryId(String(project.main_factory_id));
+          lastAutofillProjectIdRef.current = String(project.id || '');
+        },
+        [allowedDeliveryAreas],
+      );
+
       const currentCustomer = useMemo(
         () => (customers || []).find((c) => c && c.id === currentCustomerId) || null,
         [customers, currentCustomerId],
@@ -1159,7 +1181,11 @@ function unloadDurationLabel(value) {
         setSelectedProjectId((cur) => {
           if (!cur) return cur;
           const p = (projects || []).find((x) => x && x.id === cur);
-          return p && String(p.customer_id || '') === String(currentCustomerId || '') ? cur : '';
+          const valid = p && String(p.customer_id || '') === String(currentCustomerId || '');
+          if (!valid) {
+            lastAutofillProjectIdRef.current = '';
+          }
+          return valid ? cur : '';
         });
       }, [currentCustomerId, projects]);
 
@@ -1252,14 +1278,7 @@ function unloadDurationLabel(value) {
           setOrderKind('project');
           setSelectedProjectId(pid);
           const p = (projects || []).find((x) => x && String(x.id) === pid);
-          if (p) {
-            if (p.trading_company_name || p.trading_company) setTraderName(String(p.trading_company_name || p.trading_company));
-            if (p.contractor) setContractorName(String(p.contractor));
-            if (p.name) setSiteName(String(p.name));
-            if (p.main_factory_id) setPreferredFactoryId(String(p.main_factory_id));
-            setDeliveryArea(String(p.delivery_area || '').trim());
-            setSiteAddressDetail(String(p.site_address || '').trim());
-          }
+          if (p) applyProjectSelection(p);
         }
         try {
           sessionStorage.removeItem(SITE_ORDER_PENDING_SESSION_KEY);
@@ -1269,7 +1288,21 @@ function unloadDurationLabel(value) {
         if (pending.label) {
           setSiteOrderLinkNotice(`「${pending.label}」を選択しました。`);
         }
-      }, [isLoggedIn, customers, projects]);
+      }, [isLoggedIn, customers, projects, applyProjectSelection]);
+
+      useEffect(() => {
+        if (orderKind !== 'project' || !selectedProjectId) return;
+        if (lastAutofillProjectIdRef.current === selectedProjectId) return;
+        const p = (projects || []).find((x) => x && String(x.id) === String(selectedProjectId));
+        if (!p) return;
+        if (String(p.customer_id || '') !== String(currentCustomerId || '')) return;
+        applyProjectSelection(p);
+      }, [orderKind, selectedProjectId, projects, currentCustomerId, applyProjectSelection]);
+
+      useEffect(() => {
+        if (orderKind !== 'project' || selectedProjectId) return;
+        if (lastAutofillProjectIdRef.current) applyProjectSelection(null);
+      }, [orderKind, selectedProjectId, applyProjectSelection]);
 
       useEffect(() => {
         if (!isLoggedIn || !currentCustomerPhone) return;
@@ -1759,6 +1792,7 @@ function unloadDurationLabel(value) {
         setDeliveryArea('');
         setSiteAddressDetail('');
         setIsLocationPending(false);
+        lastAutofillProjectIdRef.current = '';
         setSitePhone('');
         setOrderedBy('');
         setHasTest(false);
@@ -1933,7 +1967,7 @@ function unloadDurationLabel(value) {
       }
 
       return (
-        <div className="min-h-[100dvh] w-full overflow-x-hidden bg-slate-100 pt-11 pb-[max(7rem,env(safe-area-inset-bottom))] dark:bg-slate-950 dark:text-slate-100 lg:pb-[max(2.5rem,env(safe-area-inset-bottom))]">
+        <div className="min-h-[100dvh] w-full overflow-x-hidden bg-slate-100 pt-11 pb-[max(7rem,env(safe-area-inset-bottom))] dark:bg-gray-900 dark:text-gray-100 lg:pb-[max(2.5rem,env(safe-area-inset-bottom))]">
           <header className="border-b border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <div className="mx-auto w-full max-w-6xl px-4 py-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
@@ -2103,6 +2137,9 @@ function unloadDurationLabel(value) {
                       setOrderKind('spot');
                       setSelectedProjectId('');
                       setPreferredFactoryId('');
+                      setDeliveryArea('');
+                      setSiteAddressDetail('');
+                      lastAutofillProjectIdRef.current = '';
                       setSubmitError('');
                     }}
                     aria-pressed={orderKind === 'spot'}
@@ -2129,17 +2166,8 @@ function unloadDurationLabel(value) {
                       const id = e.target.value;
                       setSelectedProjectId(id);
                       setSubmitError('');
-                      const p = (filteredProjects || []).find((x) => x && x.id === id);
-                      if (p) {
-                        if (p.trading_company_name || p.trading_company) setTraderName(String(p.trading_company_name || p.trading_company));
-                        if (p.contractor) setContractorName(String(p.contractor));
-                        if (p.name) setSiteName(sanitizeSiteNameValue(p.name));
-                        if (p.main_factory_id) setPreferredFactoryId(String(p.main_factory_id));
-                        setDeliveryArea(String(p.delivery_area || '').trim());
-                        setSiteAddressDetail(String(p.site_address || '').trim());
-                      } else {
-                        setPreferredFactoryId('');
-                      }
+                      const p = id ? (filteredProjects || []).find((x) => x && x.id === id) : null;
+                      applyProjectSelection(p);
                     }}
                     className="min-h-[56px] w-full appearance-none rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-base font-medium text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                   >
@@ -2296,9 +2324,15 @@ function unloadDurationLabel(value) {
                   label="現場住所（納入エリア）"
                   allowedAreas={allowedDeliveryAreas}
                   deliveryArea={deliveryArea}
-                  onDeliveryAreaChange={setDeliveryArea}
+                  onDeliveryAreaChange={(v) => {
+                    setDeliveryArea(v);
+                    setSubmitError('');
+                  }}
                   addressDetail={siteAddressDetail}
-                  onAddressDetailChange={setSiteAddressDetail}
+                  onAddressDetailChange={(v) => {
+                    setSiteAddressDetail(v);
+                    setSubmitError('');
+                  }}
                 />
               ) : null}
 
