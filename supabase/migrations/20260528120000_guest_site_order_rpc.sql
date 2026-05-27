@@ -48,6 +48,25 @@ as $$
     );
 $$;
 
+/** text 引数を url_token（uuid 列）比較用に変換。UUID 形式でなければ NULL */
+create or replace function public.site_order_token_as_uuid(p_token text)
+returns uuid
+language plpgsql
+immutable
+as $$
+declare
+  v text := lower(trim(coalesce(p_token, '')));
+begin
+  if v = '' then
+    return null;
+  end if;
+  return v::uuid;
+exception
+  when others then
+    return null;
+end;
+$$;
+
 create or replace function public.get_site_order_context_by_token(p_token text)
 returns jsonb
 language plpgsql
@@ -57,6 +76,7 @@ set search_path = public
 as $$
 declare
   v_token text := trim(coalesce(p_token, ''));
+  v_token_uuid uuid := public.site_order_token_as_uuid(p_token);
   v_project public.projects%rowtype;
   v_customer public.customers%rowtype;
   v_projects jsonb;
@@ -65,50 +85,52 @@ begin
     return null;
   end if;
 
-  select * into v_project from public.projects where url_token = v_token limit 1;
-  if found then
-    if v_project.customer_id is not null then
-      select * into v_customer from public.customers where id = v_project.customer_id limit 1;
+  if v_token_uuid is not null then
+    select * into v_project from public.projects where url_token = v_token_uuid limit 1;
+    if found then
+      if v_project.customer_id is not null then
+        select * into v_customer from public.customers where id = v_project.customer_id limit 1;
+      end if;
+      return jsonb_build_object(
+        'match', 'project',
+        'token', v_token,
+        'project', to_jsonb(v_project),
+        'customer', case when v_customer.id is not null then
+          jsonb_build_object(
+            'id', v_customer.id,
+            'company_name', v_customer.company_name,
+            'name', coalesce(v_customer.company_name, v_customer.name),
+            'phone_number', v_customer.phone_number,
+            'manager_name', v_customer.manager_name,
+            'url_token', v_customer.url_token::text
+          )
+        else null end,
+        'projects', jsonb_build_array(to_jsonb(v_project))
+      );
     end if;
-    return jsonb_build_object(
-      'match', 'project',
-      'token', v_token,
-      'project', to_jsonb(v_project),
-      'customer', case when v_customer.id is not null then
-        jsonb_build_object(
+
+    select * into v_customer from public.customers where url_token = v_token_uuid limit 1;
+    if found then
+      select coalesce(jsonb_agg(to_jsonb(p) order by p.name), '[]'::jsonb)
+      into v_projects
+      from public.projects p
+      where p.customer_id = v_customer.id;
+
+      return jsonb_build_object(
+        'match', 'customer',
+        'token', v_token,
+        'project', null,
+        'customer', jsonb_build_object(
           'id', v_customer.id,
           'company_name', v_customer.company_name,
           'name', coalesce(v_customer.company_name, v_customer.name),
           'phone_number', v_customer.phone_number,
           'manager_name', v_customer.manager_name,
-          'url_token', v_customer.url_token
-        )
-      else null end,
-      'projects', jsonb_build_array(to_jsonb(v_project))
-    );
-  end if;
-
-  select * into v_customer from public.customers where url_token = v_token limit 1;
-  if found then
-    select coalesce(jsonb_agg(to_jsonb(p) order by p.name), '[]'::jsonb)
-    into v_projects
-    from public.projects p
-    where p.customer_id = v_customer.id;
-
-    return jsonb_build_object(
-      'match', 'customer',
-      'token', v_token,
-      'project', null,
-      'customer', jsonb_build_object(
-        'id', v_customer.id,
-        'company_name', v_customer.company_name,
-        'name', coalesce(v_customer.company_name, v_customer.name),
-        'phone_number', v_customer.phone_number,
-        'manager_name', v_customer.manager_name,
-        'url_token', v_customer.url_token
-      ),
-      'projects', coalesce(v_projects, '[]'::jsonb)
-    );
+          'url_token', v_customer.url_token::text
+        ),
+        'projects', coalesce(v_projects, '[]'::jsonb)
+      );
+    end if;
   end if;
 
   return null;
@@ -271,6 +293,7 @@ end;
 $$;
 
 revoke all on function public.is_valid_site_order_token(text) from public;
+revoke all on function public.site_order_token_as_uuid(text) from public;
 revoke all on function public.get_site_order_context_by_token(text) from public;
 revoke all on function public.get_guest_factories_for_token(text) from public;
 revoke all on function public.submit_guest_orders(text, jsonb) from public;
