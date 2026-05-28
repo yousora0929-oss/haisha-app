@@ -144,15 +144,19 @@ function validateMunicipalityAndTownName(context) {
 }
 
 /** 複数日一括発注フォームのバリデーション */
-export function validateMultiDateOrderForm(context, dates, { today, isPastPreferredDateTime }) {
+export function validateMultiDateOrderForm(context, dates, { today, isPastPreferredDateTime, isGuestSiteOrder = false }) {
   const missing = [];
   const list = (Array.isArray(dates) ? dates : []).map((d) => String(d || '').trim()).filter(Boolean);
   if (list.length === 0) missing.push('納入日（1件以上）');
   if (!String(context.currentCustomerId || '').trim()) missing.push('業者（会社）');
-  if (!String(context.contractorName || '').trim()) missing.push('業者');
+  if (!isGuestSiteOrder && !String(context.contractorName || '').trim()) missing.push('業者');
   if (!String(context.sitePhone || '').trim()) missing.push('電話番号');
   if (!String(context.quantityM3 || '').trim()) missing.push('数量（m³）');
-  if (context.orderKind === 'project' && !String(context.selectedProjectId || '').trim()) {
+  if (
+    !isGuestSiteOrder &&
+    context.orderKind === 'project' &&
+    !String(context.selectedProjectId || '').trim()
+  ) {
     missing.push('物件');
   }
   if (context.orderKind === 'spot') {
@@ -168,8 +172,12 @@ export function validateMultiDateOrderForm(context, dates, { today, isPastPrefer
     if (!nameTrim && !addrOk) missing.push('現場名または現場住所');
     missing.push(...validateMunicipalityAndTownName(context));
   }
-  if (context.orderKind === 'project') {
+  if (context.orderKind === 'project' && !isGuestSiteOrder) {
     missing.push(...validateMunicipalityAndTownName(context));
+  }
+  if (isGuestSiteOrder && context.orderKind === 'project') {
+    const full = combineDeliveryAddress(context.deliveryArea, context.siteAddressDetail ?? context.siteAddress);
+    if (!String(full || '').trim()) missing.push('現場住所');
   }
   const timeSlot = String(context.timeSlot || '').trim();
   list.forEach((date, i) => {
@@ -182,7 +190,11 @@ export function validateMultiDateOrderForm(context, dates, { today, isPastPrefer
 }
 
 /** カートに1行追加する前のバリデーション（単一納入日） */
-export function validateCartLineForm(context, preferredDate, { today, isPastPreferredDateTime }) {
+export function validateCartLineForm(context, preferredDate, { today, isPastPreferredDateTime, isGuestSiteOrder = false }) {
   const date = String(preferredDate || '').trim();
-  return validateMultiDateOrderForm(context, date ? [date] : [], { today, isPastPreferredDateTime });
+  return validateMultiDateOrderForm(context, date ? [date] : [], {
+    today,
+    isPastPreferredDateTime,
+    isGuestSiteOrder,
+  });
 }

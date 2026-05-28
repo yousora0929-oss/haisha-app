@@ -47,6 +47,22 @@ function unloadDurationLabel(value) {
   return UNLOAD_DURATION_OPTIONS.find((o) => o.value === String(value || ''))?.label || '30分（標準）';
 }
 
+/** ゲスト専用発注: 確定済み情報の読み取り専用表示 */
+function GuestLockedField({ label, value, emptyLabel = '—' }) {
+  const text = String(value || '').trim();
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">{label}</span>
+      <div
+        className="min-h-[52px] rounded-xl border-2 border-slate-200 bg-slate-100 px-4 py-3 text-base font-semibold leading-snug text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+        aria-readonly="true"
+      >
+        {text || emptyLabel}
+      </div>
+    </div>
+  );
+}
+
     function getDefaultFactoryDisplayName(order) {
       const site = order && order.factorySiteName ? String(order.factorySiteName).trim() : '';
       if (site) return site;
@@ -1290,8 +1306,10 @@ function unloadDurationLabel(value) {
                   setTraderName(String(primaryProject.trading_company_name || primaryProject.trading_company));
                 }
                 if (primaryProject.contractor) setContractorName(String(primaryProject.contractor));
+                else if (customer?.company_name) setContractorName(String(customer.company_name));
                 if (primaryProject.name) setSiteName(sanitizeSiteNameValue(primaryProject.name));
                 setPreferredFactoryId(String(primaryProject.main_factory_id || '').trim());
+                if (customer?.phone_number) setSitePhone(String(customer.phone_number));
                 setGuestSiteOrderDebugLog((prev) => `${prev}\nフォーム反映: 完了（住所/業者/現場/工場）`);
               } else {
                 setSelectedProjectId('');
@@ -1796,6 +1814,7 @@ function unloadDurationLabel(value) {
 
       const orderFormContext = useMemo(
         () => ({
+          isGuestSiteOrder,
           orderKind,
           currentCustomerId,
           currentCustomer,
@@ -1823,6 +1842,7 @@ function unloadDurationLabel(value) {
           mixText,
         }),
         [
+          isGuestSiteOrder,
           orderKind,
           currentCustomerId,
           currentCustomer,
@@ -1882,6 +1902,7 @@ function unloadDurationLabel(value) {
           const missing = validateCartLineForm(orderFormContext, date, {
             today,
             isPastPreferredDateTime,
+            isGuestSiteOrder,
           });
           if (missing.length) {
             const message = `次の項目を入力してください: ${missing.join('、')}`;
@@ -1896,7 +1917,7 @@ function unloadDurationLabel(value) {
           setSubmitNotice('リストに追加しました。日付や配合を変えて続けて追加できます。');
           window.setTimeout(() => setSubmitNotice(null), 2500);
         },
-        [preferredDate, orderFormContext, today],
+        [preferredDate, orderFormContext, today, isGuestSiteOrder],
       );
 
       const handleRemoveFromCart = useCallback((cartId) => {
@@ -2341,7 +2362,30 @@ function unloadDurationLabel(value) {
               </div>
               ) : null}
 
-              {orderKind === 'project' ? (
+              {isGuestSiteOrder && orderKind === 'project' ? (
+                <div className="order-1 flex flex-col gap-4 rounded-2xl border-2 border-slate-200 bg-slate-50/90 p-4 dark:border-slate-600 dark:bg-slate-800/80 lg:col-span-2">
+                  <p className="text-xs font-bold leading-relaxed text-slate-500 dark:text-slate-400">
+                    この現場で確定している情報です（変更できません）
+                  </p>
+                  <GuestLockedField label="現場住所" value={siteAddress} />
+                  <GuestLockedField
+                    label="業者名"
+                    value={contractorName || currentCustomerDisplayName}
+                  />
+                  <GuestLockedField label="商社名" value={traderName} emptyLabel="（未登録）" />
+                </div>
+              ) : null}
+
+              {isGuestSiteOrder ? (
+                <div className="order-2 lg:col-span-2">
+                  <h3 className="text-base font-black text-slate-900 dark:text-slate-100">発注内容</h3>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                    納入希望日時・配合・数量などを入力し、リストに追加してから一括確定してください。
+                  </p>
+                </div>
+              ) : null}
+
+              {orderKind === 'project' && !isGuestSiteOrder ? (
                 <div className="flex flex-col gap-3">
                   <Label htmlFor="dispatch-project">物件を選択</Label>
                   <select
@@ -2396,6 +2440,7 @@ function unloadDurationLabel(value) {
               ) : null}
 
               {orderKind === 'project' &&
+              !isGuestSiteOrder &&
               selectedProject &&
               Number.isFinite(selectedProject.lat) &&
               Number.isFinite(selectedProject.lng) ? (
@@ -2510,7 +2555,7 @@ function unloadDurationLabel(value) {
                 </>
               ) : null}
 
-              {orderKind === 'project' ? (
+              {orderKind === 'project' && !isGuestSiteOrder ? (
                 <DeliveryAreaAddressField
                   idPrefix="dispatch-project"
                   label="現場住所（納入エリア）"
@@ -2528,9 +2573,14 @@ function unloadDurationLabel(value) {
                 />
               ) : null}
 
-              <div className="flex min-w-0 max-w-full flex-col gap-3 overflow-hidden lg:col-start-1">
+              <div
+                className={
+                  'flex min-w-0 max-w-full flex-col gap-3 overflow-hidden lg:col-start-1' +
+                  (isGuestSiteOrder ? ' order-3' : '')
+                }
+              >
                 <Label htmlFor="preferred-date">希望日（納入日）</Label>
-                <p className="text-xs leading-relaxed text-slate-500">
+                <p className={'text-xs leading-relaxed text-slate-500' + (isGuestSiteOrder ? ' hidden' : '')}>
                   日付や試験の有無などを変えながら「リストに追加」でカートへ溜め、最後に一括確定できます。
                 </p>
                 <div className="w-full min-w-0 max-w-full overflow-hidden">
@@ -2558,9 +2608,9 @@ function unloadDurationLabel(value) {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-3">
+              <div className={'flex flex-col gap-3' + (isGuestSiteOrder ? ' order-4' : '')}>
                 <Label htmlFor="time-slot">希望時刻（8:00〜15:30・30分刻み）</Label>
-                <p className="text-xs leading-relaxed text-slate-500">
+                <p className={'text-xs leading-relaxed text-slate-500' + (isGuestSiteOrder ? ' hidden' : '')}>
                   到着・打設の目安時刻を、30分単位で指定します（最遅 15:30）。
                 </p>
                 <select
@@ -2591,7 +2641,7 @@ function unloadDurationLabel(value) {
                 </select>
               </div>
 
-              <div className="flex flex-col gap-3">
+              <div className={'flex flex-col gap-3' + (isGuestSiteOrder ? ' order-5' : '')}>
                 <Label htmlFor="dispatch-factory">第一希望工場（任意）</Label>
                 <p className="text-xs leading-relaxed text-slate-500">
                   指定した工場に最初に配車依頼が届きます。物件を選ぶとメイン工場が自動入力されます（変更可）。未指定の場合はエスカレーションルールに従います。
@@ -2621,7 +2671,7 @@ function unloadDurationLabel(value) {
                 </select>
               </div>
 
-              <div className="flex flex-col gap-3">
+              <div className={'flex flex-col gap-3' + (isGuestSiteOrder ? ' order-6' : '')}>
                 <span className="text-sm font-semibold text-slate-700">車両タイプ</span>
                 <div className="flex gap-4">
                   <button
@@ -2653,9 +2703,9 @@ function unloadDurationLabel(value) {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-3">
+              <div className={'flex flex-col gap-3' + (isGuestSiteOrder ? ' order-8' : '')}>
                 <Label htmlFor="quantity-m3">数量（m³）</Label>
-                <p className="text-xs leading-relaxed text-slate-500">
+                <p className={'text-xs leading-relaxed text-slate-500' + (isGuestSiteOrder ? ' hidden' : '')}>
                   発注時は空欄にできません。
                 </p>
                 <input
@@ -2673,7 +2723,7 @@ function unloadDurationLabel(value) {
                 />
               </div>
 
-              <div className="flex flex-col gap-3">
+              <div className={'flex flex-col gap-3' + (isGuestSiteOrder ? ' order-9' : '')}>
                 <Label htmlFor="unload-duration">1台あたりの荷卸し（車返却）予定時間</Label>
                 <p className="text-xs leading-relaxed text-slate-500">
                   現場での滞在想定時間です。工場側の帰着・次便計画に使用します。
@@ -2695,35 +2745,41 @@ function unloadDurationLabel(value) {
                 </select>
               </div>
 
-              <AutocompleteField
-                id="trader-name"
-                labelText="商社（任意）"
-                value={traderName}
-                onValueChange={(v) => {
-                  setTraderName(v);
-                  setSubmitError('');
-                }}
-                suggestions={MASTER_TRADER_SUGGESTIONS}
-                placeholder="例：梅田建材（入力すると候補が表示されます）"
-                autoComplete="organization"
-              />
+              {!isGuestSiteOrder ? (
+                <>
+                  <AutocompleteField
+                    id="trader-name"
+                    labelText="商社（任意）"
+                    value={traderName}
+                    onValueChange={(v) => {
+                      setTraderName(v);
+                      setSubmitError('');
+                    }}
+                    suggestions={MASTER_TRADER_SUGGESTIONS}
+                    placeholder="例：梅田建材（入力すると候補が表示されます）"
+                    autoComplete="organization"
+                  />
 
-              <AutocompleteField
-                id="contractor-name"
-                labelText="業者"
-                value={contractorName}
-                onValueChange={(v) => {
-                  setContractorName(v);
-                  setSubmitError('');
-                }}
-                suggestions={MASTER_CONTRACTOR_SUGGESTIONS}
-                placeholder="例：佐藤建設（入力すると候補が表示されます）"
-                autoComplete="off"
-              />
+                  <AutocompleteField
+                    id="contractor-name"
+                    labelText="業者"
+                    value={contractorName}
+                    onValueChange={(v) => {
+                      setContractorName(v);
+                      setSubmitError('');
+                    }}
+                    suggestions={MASTER_CONTRACTOR_SUGGESTIONS}
+                    placeholder="例：佐藤建設（入力すると候補が表示されます）"
+                    autoComplete="off"
+                  />
+                </>
+              ) : null}
 
-              <div className="flex flex-col gap-3">
+              <div className={'flex flex-col gap-3' + (isGuestSiteOrder ? ' order-7' : '')}>
                 <Label htmlFor="mix-spec">配合（JIS規格など）</Label>
-                <p className="text-xs leading-relaxed text-slate-500">自由入力のほか、下のショートカットから選べます。</p>
+                <p className={'text-xs leading-relaxed text-slate-500' + (isGuestSiteOrder ? ' hidden' : '')}>
+                  自由入力のほか、下のショートカットから選べます。
+                </p>
                 <input
                   id="mix-spec"
                   type="text"
@@ -2753,7 +2809,7 @@ function unloadDurationLabel(value) {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-2">
+              <div className={'flex flex-col gap-2' + (isGuestSiteOrder ? ' order-10 lg:col-span-2' : '')}>
                 <div className="flex cursor-pointer items-start gap-3 rounded-xl border-2 border-slate-200 bg-slate-50/90 px-4 py-3 transition hover:border-slate-300 hover:bg-white">
                   <input
                     id="order-has-test"
@@ -2774,7 +2830,7 @@ function unloadDurationLabel(value) {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-3">
+              <div className={'flex flex-col gap-3' + (isGuestSiteOrder ? ' order-11' : '')}>
                 <Label htmlFor="ordered-by">発注担当者名</Label>
                 <p className="text-xs leading-relaxed text-slate-500">当日連絡が取れる担当者名を自由入力してください（例：山田、佐藤）。</p>
                 <input
@@ -2791,7 +2847,7 @@ function unloadDurationLabel(value) {
                 />
               </div>
 
-              <div className="flex flex-col gap-3">
+              <div className={'flex flex-col gap-3' + (isGuestSiteOrder ? ' order-12' : '')}>
                 <Label htmlFor="site-phone">電話番号</Label>
                 <input
                   id="site-phone"
@@ -2808,12 +2864,14 @@ function unloadDurationLabel(value) {
                 />
               </div>
 
-              <OrderCartPreview
-                items={cartItems}
-                onRemove={handleRemoveFromCart}
-                onConfirmBulk={() => void handleCartBulkConfirm()}
-                bulkLoading={isSubmittingOrder}
-              />
+              <div className={isGuestSiteOrder ? 'order-13 lg:col-span-2' : 'lg:col-span-2'}>
+                <OrderCartPreview
+                  items={cartItems}
+                  onRemove={handleRemoveFromCart}
+                  onConfirmBulk={() => void handleCartBulkConfirm()}
+                  bulkLoading={isSubmittingOrder}
+                />
+              </div>
 
               {submitError ? (
                 <p
@@ -2827,9 +2885,16 @@ function unloadDurationLabel(value) {
                 type="button"
                 onClick={handleAddToCart}
                 disabled={isSubmittingOrder || !hasCurrentCustomer}
-                className="mt-2 flex min-h-[56px] w-full items-center justify-center rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-4 text-base font-bold text-white shadow-lg shadow-orange-500/30 transition hover:from-orange-600 hover:to-amber-600 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 lg:col-span-2"
+                className={
+                  'mt-2 flex min-h-[56px] w-full items-center justify-center rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-4 text-base font-bold text-white shadow-lg shadow-orange-500/30 transition hover:from-orange-600 hover:to-amber-600 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 lg:col-span-2' +
+                  (isGuestSiteOrder ? ' order-14' : '')
+                }
               >
-                {hasCurrentCustomer ? '➕ この内容でリスト（カート）に追加' : '先に業者を選択してください'}
+                {hasCurrentCustomer
+                  ? isGuestSiteOrder
+                    ? '➕ リストに追加'
+                    : '➕ この内容でリスト（カート）に追加'
+                  : '先に業者を選択してください'}
               </button>
               {submitNotice && (
                 <p
