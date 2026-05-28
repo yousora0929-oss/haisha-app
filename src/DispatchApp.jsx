@@ -1002,6 +1002,7 @@ function unloadDurationLabel(value) {
       const [guestSiteOrderErrorDetail, setGuestSiteOrderErrorDetail] = useState('');
       const orderFormRef = useRef(null);
       const lastAutofillProjectIdRef = useRef('');
+      const guestInitTokenRef = useRef('');
 
       const selectedProject = useMemo(
         () => (projects || []).find((p) => p && p.id === selectedProjectId) || null,
@@ -1215,8 +1216,11 @@ function unloadDurationLabel(value) {
 
       useEffect(() => {
         if (!isGuestSiteOrder || !guestOrderToken) return undefined;
+        if (guestSiteOrderLoading) return undefined;
+        if (guestInitTokenRef.current === guestOrderToken && guestSiteOrderCtx) return undefined;
         let cancelled = false;
         (async () => {
+          guestInitTokenRef.current = guestOrderToken;
           setGuestSiteOrderLoading(true);
           setGuestSiteOrderError('');
           setGuestSiteOrderErrorDetail('');
@@ -1246,7 +1250,9 @@ function unloadDurationLabel(value) {
               }
 
               setGuestSiteOrderCtx(ctx);
-              setAdminSettings(settings && typeof settings === 'object' ? settings : { admin_name: '', phone_number: '' });
+              const nextSettings =
+                settings && typeof settings === 'object' ? settings : { admin_name: '', phone_number: '' };
+              setAdminSettings(nextSettings);
               setFactories(Array.isArray(factoryRows) ? factoryRows : []);
 
               const customer = ctx.customer || null;
@@ -1264,14 +1270,24 @@ function unloadDurationLabel(value) {
               setCustomerOrderTab('new');
               if (primaryProject?.id) {
                 setSelectedProjectId(String(primaryProject.id));
-                applyProjectSelection(primaryProject);
+                // ゲスト初期化は adminSettings → allowedDeliveryAreas → applyProjectSelection の依存ループを避け、
+                // 取得した settings を元にここで直接フォームへ反映する（token 以外の依存を持たせない）。
+                const allowedAreas = normalizeAllowedDeliveryAreas(nextSettings?.allowed_delivery_areas);
+                const addr = extractProjectAddressFields(primaryProject, allowedAreas);
+                setDeliveryArea(addr.deliveryArea);
+                setSiteAddressDetail(addr.siteAddressDetail);
+                setAddressSearchError('');
+                if (primaryProject.trading_company_name || primaryProject.trading_company) {
+                  setTraderName(String(primaryProject.trading_company_name || primaryProject.trading_company));
+                }
+                if (primaryProject.contractor) setContractorName(String(primaryProject.contractor));
+                if (primaryProject.name) setSiteName(sanitizeSiteNameValue(primaryProject.name));
+                setPreferredFactoryId(String(primaryProject.main_factory_id || '').trim());
               } else {
                 setSelectedProjectId('');
-                try {
-                  applyProjectSelection(null);
-                } catch (clearErr) {
-                  console.warn('applyProjectSelection(null)', clearErr);
-                }
+                setDeliveryArea('');
+                setSiteAddressDetail('');
+                setPreferredFactoryId('');
               }
               const label =
                 primaryProject?.name || customer?.company_name || customer?.name || '';
@@ -1300,7 +1316,7 @@ function unloadDurationLabel(value) {
         return () => {
           cancelled = true;
         };
-      }, [isGuestSiteOrder, guestOrderToken, applyProjectSelection]);
+      }, [isGuestSiteOrder, guestOrderToken, guestSiteOrderLoading, guestSiteOrderCtx]);
 
       useEffect(() => {
         if (isGuestSiteOrder || !isLoggedIn) return;
