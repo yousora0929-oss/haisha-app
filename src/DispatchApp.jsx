@@ -30,7 +30,11 @@ import { isLocationPendingOrder, resolveInitialOrderStatus, sumOrderVolumesM3 } 
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
-import { formatSiteOrderVendorLabel, parseSiteOrderTokenFromPath } from './utils/siteOrderUrl.js';
+import {
+  formatSiteOrderVendorLabel,
+  parseSiteOrderTokenFromPath,
+  resolveGuestOrderLockedFields,
+} from './utils/siteOrderUrl.js';
 
 const DISPATCH_CUSTOMER_SESSION_KEY = 'haisha_dispatch_customer_id_v1';
 const SITE_ORDER_PENDING_SESSION_KEY = 'haisha_site_order_pending_v1';
@@ -1035,6 +1039,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         () => combineDeliveryAddress(deliveryArea, siteAddressDetail),
         [deliveryArea, siteAddressDetail],
       );
+      const guestLockedFields = useMemo(() => {
+        if (!isGuestSiteOrder || !guestSiteOrderCtx) return null;
+        return resolveGuestOrderLockedFields(guestSiteOrderCtx, allowedDeliveryAreas);
+      }, [isGuestSiteOrder, guestSiteOrderCtx, allowedDeliveryAreas]);
 
       /** 物件選択時: 住所・関連フィールドをオートフィル（未選択時はクリア） */
       const applyProjectSelection = useCallback(
@@ -1293,24 +1301,24 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               setOrderKind('project');
               setNewOrderMode('form');
               setCustomerOrderTab('new');
+              const allowedAreas = normalizeAllowedDeliveryAreas(nextSettings?.allowed_delivery_areas);
               if (primaryProject?.id) {
                 setSelectedProjectId(String(primaryProject.id));
                 // ゲスト初期化は adminSettings → allowedDeliveryAreas → applyProjectSelection の依存ループを避け、
                 // 取得した settings を元にここで直接フォームへ反映する（token 以外の依存を持たせない）。
-                const allowedAreas = normalizeAllowedDeliveryAreas(nextSettings?.allowed_delivery_areas);
-                const addr = extractProjectAddressFields(primaryProject, allowedAreas);
-                setDeliveryArea(addr.deliveryArea);
-                setSiteAddressDetail(addr.siteAddressDetail);
+                const locked = resolveGuestOrderLockedFields(
+                  { project: primaryProject, customer },
+                  allowedAreas,
+                );
+                setDeliveryArea(locked.deliveryArea);
+                setSiteAddressDetail(locked.siteAddressDetail);
                 setAddressSearchError('');
-                if (primaryProject.trading_company_name || primaryProject.trading_company) {
-                  setTraderName(String(primaryProject.trading_company_name || primaryProject.trading_company));
-                }
-                if (primaryProject.contractor) setContractorName(String(primaryProject.contractor));
-                else if (customer?.company_name) setContractorName(String(customer.company_name));
-                if (primaryProject.name) setSiteName(sanitizeSiteNameValue(primaryProject.name));
+                setTraderName(locked.traderNameRaw);
+                setContractorName(locked.contractorName);
+                if (locked.projectName) setSiteName(sanitizeSiteNameValue(locked.projectName));
                 setPreferredFactoryId(String(primaryProject.main_factory_id || '').trim());
                 if (customer?.phone_number) setSitePhone(String(customer.phone_number));
-                setGuestSiteOrderDebugLog((prev) => `${prev}\nフォーム反映: 完了（住所/業者/現場/工場）`);
+                setGuestSiteOrderDebugLog((prev) => `${prev}\nフォーム反映: 完了（物件住所/業者/工場）`);
               } else {
                 setSelectedProjectId('');
                 setDeliveryArea('');
@@ -1318,10 +1326,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 setPreferredFactoryId('');
                 setGuestSiteOrderDebugLog((prev) => `${prev}\nフォーム反映: スキップ（primaryProject なし）`);
               }
-              const label =
-                primaryProject?.name || customer?.company_name || customer?.name || '';
+              const lockedNotice = primaryProject
+                ? resolveGuestOrderLockedFields({ project: primaryProject, customer }, allowedAreas)
+                : null;
+              const label = lockedNotice?.projectName || customer?.company_name || customer?.name || '';
               setSiteOrderLinkNotice(
-                label ? `「${label}」の専用発注フォームです。` : '専用発注フォームです。',
+                label ? `「${label}」の物件専用発注フォームです。` : '物件専用発注フォームです。',
               );
               // ここまで来たら「初期化完了」とみなす
               guestInitCompletedTokenRef.current = guestOrderToken;
@@ -1913,7 +1923,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           setSubmitError('');
           const order = buildDispatchOrderForDate(date, orderFormContext);
           const cartId = `cart_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-          setCartItems((prev) => [...prev, { cartId, order }]);
+          const addedAt = Date.now();
+          setCartItems((prev) => [...prev, { cartId, order, addedAt }]);
           setSubmitNotice('リストに追加しました。日付や配合を変えて続けて追加できます。');
           window.setTimeout(() => setSubmitNotice(null), 2500);
         },
@@ -2006,7 +2017,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return formatSiteOrderVendorLabel({
           customerName: c?.company_name || c?.name,
           traderName: p?.trading_company_name || p?.trading_company,
-          contractorName: p?.contractor,
         });
       }, [isGuestSiteOrder, guestSiteOrderCtx]);
       const guestSiteLabel = useMemo(() => {
@@ -2028,7 +2038,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               <div style={{ background: '#000', color: '#0f0', padding: '10px', fontFamily: 'monospace' }}>
                 {guestSiteOrderDebugLog}
               </div>
-              <p className="mt-4 text-center text-sm font-bold text-slate-600 dark:text-slate-300">専用発注フォームを読み込み中…</p>
+              <p className="mt-4 text-center text-sm font-bold text-slate-600 dark:text-slate-300">物件専用発注フォームを読み込み中…</p>
             </div>
           </div>
         );
@@ -2149,7 +2159,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   )}
                   {isGuestSiteOrder ? (
                     <div className="mt-3 space-y-1">
-                      <p className="text-xs font-black uppercase tracking-wider text-indigo-600">専用発注フォーム</p>
+                      <p className="text-xs font-black uppercase tracking-wider text-indigo-600">物件専用発注フォーム</p>
                       {guestVendorLabel ? (
                         <p className="text-xl font-bold leading-snug text-slate-900 dark:text-slate-100">
                           <span className="text-slate-500 text-sm font-bold">業者・商社</span>
@@ -2159,7 +2169,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       ) : null}
                       {guestSiteLabel ? (
                         <p className="text-2xl font-black leading-tight text-slate-900 dark:text-white">
-                          <span className="text-slate-500 text-sm font-bold">現場</span>
+                          <span className="text-slate-500 text-sm font-bold">物件名</span>
                           <br />
                           {guestSiteLabel}
                         </p>
@@ -2365,14 +2375,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               {isGuestSiteOrder && orderKind === 'project' ? (
                 <div className="order-1 flex flex-col gap-4 rounded-2xl border-2 border-slate-200 bg-slate-50/90 p-4 dark:border-slate-600 dark:bg-slate-800/80 lg:col-span-2">
                   <p className="text-xs font-bold leading-relaxed text-slate-500 dark:text-slate-400">
-                    この現場で確定している情報です（変更できません）
+                    この物件で確定している情報です（変更できません）
                   </p>
-                  <GuestLockedField label="現場住所" value={siteAddress} />
-                  <GuestLockedField
-                    label="業者名"
-                    value={contractorName || currentCustomerDisplayName}
-                  />
-                  <GuestLockedField label="商社名" value={traderName} emptyLabel="（未登録）" />
+                  <GuestLockedField label="物件住所" value={guestLockedFields?.address} />
+                  <GuestLockedField label="業者名" value={guestLockedFields?.contractorName} />
+                  <GuestLockedField label="商社名" value={guestLockedFields?.traderNameDisplay} />
                 </div>
               ) : null}
 
@@ -2644,7 +2651,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               <div className={'flex flex-col gap-3' + (isGuestSiteOrder ? ' order-5' : '')}>
                 <Label htmlFor="dispatch-factory">第一希望工場（任意）</Label>
                 <p className="text-xs leading-relaxed text-slate-500">
-                  指定した工場に最初に配車依頼が届きます。物件を選ぶとメイン工場が自動入力されます（変更可）。未指定の場合はエスカレーションルールに従います。
+                  {isGuestSiteOrder
+                    ? '指定した工場に最初に配車依頼が届きます。メイン工場が自動入力されています（変更可）。未指定の場合はエスカレーションルールに従います。'
+                    : '指定した工場に最初に配車依頼が届きます。物件を選ぶとメイン工場が自動入力されます（変更可）。未指定の場合はエスカレーションルールに従います。'}
                 </p>
                 <select
                   id="dispatch-factory"
@@ -2726,7 +2735,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               <div className={'flex flex-col gap-3' + (isGuestSiteOrder ? ' order-9' : '')}>
                 <Label htmlFor="unload-duration">1台あたりの荷卸し（車返却）予定時間</Label>
                 <p className="text-xs leading-relaxed text-slate-500">
-                  現場での滞在想定時間です。工場側の帰着・次便計画に使用します。
+                  {isGuestSiteOrder
+                    ? '物件での滞在想定時間です。工場側の帰着・次便計画に使用します。'
+                    : '現場での滞在想定時間です。工場側の帰着・次便計画に使用します。'}
                 </p>
                 <select
                   id="unload-duration"
@@ -2864,30 +2875,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 />
               </div>
 
-              <div className={isGuestSiteOrder ? 'order-13 lg:col-span-2' : 'lg:col-span-2'}>
-                <OrderCartPreview
-                  items={cartItems}
-                  onRemove={handleRemoveFromCart}
-                  onConfirmBulk={() => void handleCartBulkConfirm()}
-                  bulkLoading={isSubmittingOrder}
-                />
-              </div>
-
-              {submitError ? (
-                <p
-                  className="rounded-xl border-2 border-red-400 bg-red-50 px-4 py-3 text-sm font-bold text-red-700 shadow-sm lg:col-span-2"
-                  role="alert"
-                >
-                  {submitError}
-                </p>
-              ) : null}
               <button
                 type="button"
                 onClick={handleAddToCart}
                 disabled={isSubmittingOrder || !hasCurrentCustomer}
                 className={
                   'mt-2 flex min-h-[56px] w-full items-center justify-center rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-4 text-base font-bold text-white shadow-lg shadow-orange-500/30 transition hover:from-orange-600 hover:to-amber-600 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 lg:col-span-2' +
-                  (isGuestSiteOrder ? ' order-14' : '')
+                  (isGuestSiteOrder ? ' order-13' : '')
                 }
               >
                 {hasCurrentCustomer
@@ -2896,9 +2890,35 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     : '➕ この内容でリスト（カート）に追加'
                   : '先に業者を選択してください'}
               </button>
+
+              {submitError ? (
+                <p
+                  className={
+                    'rounded-xl border-2 border-red-400 bg-red-50 px-4 py-3 text-sm font-bold text-red-700 shadow-sm lg:col-span-2' +
+                    (isGuestSiteOrder ? ' order-14' : '')
+                  }
+                  role="alert"
+                >
+                  {submitError}
+                </p>
+              ) : null}
+
+              <div className={isGuestSiteOrder ? 'order-15 lg:col-span-2' : 'lg:col-span-2'}>
+                <OrderCartPreview
+                  items={cartItems}
+                  onRemove={handleRemoveFromCart}
+                  onConfirmBulk={() => void handleCartBulkConfirm()}
+                  bulkLoading={isSubmittingOrder}
+                  siteAddressLabel={isGuestSiteOrder ? '物件住所' : '現場住所'}
+                />
+              </div>
+
               {submitNotice && (
                 <p
-                  className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900 lg:col-span-2"
+                  className={
+                    'rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900 lg:col-span-2' +
+                    (isGuestSiteOrder ? ' order-16' : '')
+                  }
                   role="status"
                 >
                   {submitNotice}

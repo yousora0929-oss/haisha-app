@@ -12,8 +12,19 @@ function formatOrderDateLabel(order) {
 /**
  * 発注カート（買い物かご）プレビュー
  */
-export function OrderCartPreview({ items, onRemove, onConfirmBulk, bulkLoading }) {
-  const list = Array.isArray(items) ? items : [];
+export function OrderCartPreview({
+  items,
+  onRemove,
+  onConfirmBulk,
+  bulkLoading,
+  siteAddressLabel = '現場住所',
+}) {
+  const list = (Array.isArray(items) ? items : []).slice().sort((a, b) => {
+    const ta = Number(a?.addedAt ?? 0);
+    const tb = Number(b?.addedAt ?? 0);
+    if (ta !== tb) return ta - tb;
+    return String(a?.cartId || '').localeCompare(String(b?.cartId || ''));
+  });
   if (list.length === 0) return null;
 
   return (
@@ -70,7 +81,7 @@ export function OrderCartPreview({ items, onRemove, onConfirmBulk, bulkLoading }
                   <dd className="font-mono font-black text-slate-900">{o.mixText || '—'}</dd>
                 </div>
                 <div className="sm:col-span-2">
-                  <dt className="text-xs font-bold text-slate-500">現場住所</dt>
+                  <dt className="text-xs font-bold text-slate-500">{siteAddressLabel}</dt>
                   <dd className="break-words font-bold text-slate-800">{o.siteAddress || '—'}</dd>
                 </div>
                 <div className="sm:col-span-2">
