@@ -1000,6 +1000,9 @@ function unloadDurationLabel(value) {
       const [guestSiteOrderLoading, setGuestSiteOrderLoading] = useState(isGuestSiteOrder);
       const [guestSiteOrderError, setGuestSiteOrderError] = useState('');
       const [guestSiteOrderErrorDetail, setGuestSiteOrderErrorDetail] = useState('');
+      const [guestSiteOrderDebugLog, setGuestSiteOrderDebugLog] = useState(() => {
+        return guestOrderToken ? `初期化開始...\nトークン検出: ${guestOrderToken}` : '初期化開始...';
+      });
       const orderFormRef = useRef(null);
       const lastAutofillProjectIdRef = useRef('');
       const guestInitTokenRef = useRef('');
@@ -1224,7 +1227,9 @@ function unloadDurationLabel(value) {
           setGuestSiteOrderLoading(true);
           setGuestSiteOrderError('');
           setGuestSiteOrderErrorDetail('');
+          setGuestSiteOrderDebugLog((prev) => `${prev}\n---\n初期化開始: ${new Date().toISOString()}\nトークン検出: ${guestOrderToken}`);
           try {
+            setGuestSiteOrderDebugLog((prev) => `${prev}\nRPC呼び出し直前: get_site_order_context_by_token`);
             const [ctx, settings, factoryRows] = await Promise.all([
               db.fetchSiteOrderContextByUrlToken(guestOrderToken),
               db.fetchDispatchOperationalSettings(),
@@ -1233,10 +1238,12 @@ function unloadDurationLabel(value) {
             if (cancelled) return;
 
             if (!ctx) {
+              setGuestSiteOrderDebugLog((prev) => `${prev}\nRPC結果: データが空です`);
               setGuestSiteOrderError('専用発注URLが無効です。リンクを確認してください。');
               setGuestSiteOrderErrorDetail('サーバーからコンテキストを取得できませんでした（応答が空です）。');
               return;
             }
+            setGuestSiteOrderDebugLog((prev) => `${prev}\nRPC結果: データ取得成功`);
 
             try {
               const hasCustomer = Boolean(ctx?.customer?.id);
@@ -1244,10 +1251,12 @@ function unloadDurationLabel(value) {
               const projectList = Array.isArray(ctx?.projects) && ctx.projects.length > 0 ? ctx.projects : [];
               const hasProjectsList = projectList.length > 0;
               if (!hasCustomer && !hasProject && !hasProjectsList) {
+                setGuestSiteOrderDebugLog((prev) => `${prev}\nデータ検証: NG（customer/project/projects が不足）`);
                 setGuestSiteOrderError('専用発注データが不完全です。');
                 setGuestSiteOrderErrorDetail('業者または物件の情報が応答に含まれていません。');
                 return;
               }
+              setGuestSiteOrderDebugLog((prev) => `${prev}\nデータ検証: OK`);
 
               setGuestSiteOrderCtx(ctx);
               const nextSettings =
@@ -1283,11 +1292,13 @@ function unloadDurationLabel(value) {
                 if (primaryProject.contractor) setContractorName(String(primaryProject.contractor));
                 if (primaryProject.name) setSiteName(sanitizeSiteNameValue(primaryProject.name));
                 setPreferredFactoryId(String(primaryProject.main_factory_id || '').trim());
+                setGuestSiteOrderDebugLog((prev) => `${prev}\nフォーム反映: 完了（住所/業者/現場/工場）`);
               } else {
                 setSelectedProjectId('');
                 setDeliveryArea('');
                 setSiteAddressDetail('');
                 setPreferredFactoryId('');
+                setGuestSiteOrderDebugLog((prev) => `${prev}\nフォーム反映: スキップ（primaryProject なし）`);
               }
               const label =
                 primaryProject?.name || customer?.company_name || customer?.name || '';
@@ -1300,6 +1311,7 @@ function unloadDurationLabel(value) {
                 setGuestSiteOrderCtx(null);
                 setGuestSiteOrderError('専用発注フォームの初期化に失敗しました。');
                 setGuestSiteOrderErrorDetail(String(procErr?.message ?? procErr ?? '不明なエラー'));
+                setGuestSiteOrderDebugLog((prev) => `${prev}\nエラー発生: ${String(procErr?.message ?? procErr ?? '不明なエラー')}`);
               }
             }
           } catch (e) {
@@ -1308,8 +1320,10 @@ function unloadDurationLabel(value) {
               setGuestSiteOrderCtx(null);
               setGuestSiteOrderError(formatSupabaseError(e, '専用発注URLの読み込みに失敗しました。'));
               setGuestSiteOrderErrorDetail(String(e?.message ?? e ?? '不明なエラー'));
+              setGuestSiteOrderDebugLog((prev) => `${prev}\nエラー発生: ${String(e?.message ?? e ?? '不明なエラー')}`);
             }
           } finally {
+            setGuestSiteOrderDebugLog((prev) => `${prev}\nローディング解除`);
             setGuestSiteOrderLoading(false);
           }
         })();
@@ -1987,7 +2001,12 @@ function unloadDurationLabel(value) {
       if (isGuestSiteOrder && guestSiteOrderLoading) {
         return (
           <div className="flex min-h-[100dvh] w-full items-center justify-center bg-slate-100 px-4 dark:bg-gray-900">
-            <p className="text-sm font-bold text-slate-600 dark:text-slate-300">専用発注フォームを読み込み中…</p>
+            <div className="w-full max-w-2xl">
+              <div style={{ background: '#000', color: '#0f0', padding: '10px', fontFamily: 'monospace' }}>
+                {guestSiteOrderDebugLog}
+              </div>
+              <p className="mt-4 text-center text-sm font-bold text-slate-600 dark:text-slate-300">専用発注フォームを読み込み中…</p>
+            </div>
           </div>
         );
       }
@@ -1999,6 +2018,11 @@ function unloadDurationLabel(value) {
               <p className="text-sm font-black text-red-700 dark:text-red-300" role="alert">
                 {guestSiteOrderError}
               </p>
+              <div className="mt-4">
+                <div style={{ background: '#000', color: '#0f0', padding: '10px', fontFamily: 'monospace' }}>
+                  {guestSiteOrderDebugLog}
+                </div>
+              </div>
               {guestSiteOrderErrorDetail ? (
                 <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-red-100 bg-red-50/80 p-3 text-left text-xs font-bold text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
                   {guestSiteOrderErrorDetail}
