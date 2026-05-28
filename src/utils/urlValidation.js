@@ -9,6 +9,25 @@ export function isGoogleInternalGarbage(value) {
   return false;
 }
 
+/** 物件専用発注URL用の新規 UUID トークンを生成 */
+export function generateSiteOrderUrlToken() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (ch) => {
+    const r = (Math.random() * 16) | 0;
+    const v = ch === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+/** 書き込み用 url_token（未指定・不正時は新規 UUID） */
+export function resolveUrlTokenForInsert(payload) {
+  const existing = String(payload?.url_token ?? '').trim();
+  if (isValidSiteOrderUrlToken(existing)) return existing;
+  return generateSiteOrderUrlToken();
+}
+
 /** 現場専用発注URL用トークン（projects.url_token / customers.url_token） */
 export function isValidSiteOrderUrlToken(token) {
   const s = String(token || '').trim();

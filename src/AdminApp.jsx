@@ -556,18 +556,27 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
       </div>
       {initial?.id ? (
         <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-3">
-          <p className="text-xs font-black text-slate-700">専用発注URL（現場向け）</p>
+          <p className="text-xs font-black text-slate-700">物件専用発注URL</p>
+          <p className="mt-0.5 text-[11px] font-medium text-slate-500">
+            ゲスト発注・QRコード用。保存後に URL をコピーできます。
+          </p>
           <div className="mt-2">
             <SiteOrderUrlActions
               urlToken={initial?.url_token}
               siteName={name || initial?.name}
-              customerName={linkedCustomer?.company_name || linkedCustomer?.name || subContractor}
+              customerName={linkedCustomer?.company_name || linkedCustomer?.name}
               traderName={tradingCompany}
-              compact
+              project={initial}
+              customer={linkedCustomer}
+              compact={false}
             />
           </div>
         </div>
-      ) : null}
+      ) : (
+        <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600">
+          保存すると専用発注URLが自動発行されます。
+        </p>
+      )}
       <div className="flex flex-wrap gap-2 pt-1">
         <button type="submit" disabled={saving} className="min-h-[44px] flex-1 rounded-lg bg-indigo-600 px-4 text-sm font-black text-white shadow hover:bg-indigo-700 disabled:opacity-50">{saving ? '保存中…' : '保存'}</button>
         <button type="button" onClick={onCancel} disabled={saving} className="min-h-[44px] rounded-lg border-2 border-slate-300 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50">キャンセル</button>
@@ -628,10 +637,11 @@ function ProjectsSection({ factories, factoryNameById }) {
     setSaving(true);
     setError('');
     try {
-      if (editing?.id) await db.updateProject(editing.id, payload);
-      else await db.insertProject(payload);
-      setFormMode(null);
-      setEditing(null);
+      const saved = editing?.id
+        ? await db.updateProject(editing.id, payload)
+        : await db.insertProject(payload);
+      setFormMode('edit');
+      setEditing(saved);
       await load();
     } catch (e) {
       console.error(e);
@@ -707,8 +717,19 @@ function ProjectsSection({ factories, factoryNameById }) {
                   <td className="px-3 py-2.5">{factoryNameById[p.main_factory_id] || '—'}</td>
                   <td className="max-w-[12rem] px-3 py-2.5 text-xs text-slate-600">{(p.sub_factory_ids || []).map((id) => factoryNameById[id] || id).join('、') || '—'}</td>
                   <td className="px-3 py-2.5 font-mono text-xs">{p.lat != null && p.lng != null ? `${p.lat}, ${p.lng}` : '—'}</td>
-                  <td className="min-w-[8rem] px-3 py-2.5">
-                    <ProjectExternalUrlActions folderUrl={p.folder_url} sheetUrl={p.sheet_url} variant="compact" />
+                  <td className="min-w-[10rem] px-3 py-2.5">
+                    <div className="flex flex-col gap-2">
+                      <SiteOrderUrlActions
+                        urlToken={p.url_token}
+                        siteName={p.name}
+                        customerName={customers.find((c) => c.id === p.customer_id)?.company_name || customers.find((c) => c.id === p.customer_id)?.name}
+                        traderName={p.trading_company_name || p.trading_company}
+                        project={p}
+                        customer={customers.find((c) => c.id === p.customer_id)}
+                        compact
+                      />
+                      <ProjectExternalUrlActions folderUrl={p.folder_url} sheetUrl={p.sheet_url} variant="compact" />
+                    </div>
                   </td>
                   <td className="px-3 py-2.5">
                     <div className="flex flex-wrap gap-1">

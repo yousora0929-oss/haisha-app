@@ -8,7 +8,7 @@ import {
 import { normalizeExternalUrl } from './utils/urlValidation.js';
 import { supabase } from './supabaseClient.js';
 import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils/deliveryAreas.js';
-import { isValidSiteOrderUrlToken } from './utils/urlValidation.js';
+import { isValidSiteOrderUrlToken, resolveUrlTokenForInsert } from './utils/urlValidation.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import {
   DISPATCH_DEFAULT_FACTORY_SITE_ID,
@@ -1216,6 +1216,7 @@ export async function insertProject(payload) {
     site_address: String(payload.site_address || '').trim() || null,
     folder_url: normalizeExternalUrl(payload.folder_url) || null,
     sheet_url: normalizeExternalUrl(payload.sheet_url) || null,
+    url_token: resolveUrlTokenForInsert(payload),
   };
   const { data, error } = await supabase.from('projects').insert(row).select('*').single();
   if (error) throw error;
