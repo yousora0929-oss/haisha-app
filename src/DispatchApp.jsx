@@ -1064,7 +1064,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           if (project.trading_company_name || project.trading_company) {
             setTraderName(String(project.trading_company_name || project.trading_company));
           }
-          if (project.contractor) setContractorName(String(project.contractor));
+          const subName = String(project.sub_contractor_name || project.contractor || '').trim();
+          if (subName) setContractorName(subName);
           if (project.name) setSiteName(sanitizeSiteNameValue(project.name));
           if (project.main_factory_id) setPreferredFactoryId(String(project.main_factory_id));
           lastAutofillProjectIdRef.current = String(project.id || '');
@@ -2015,7 +2016,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         const p = guestSiteOrderCtx.project;
         const c = guestSiteOrderCtx.customer;
         return formatSiteOrderVendorLabel({
-          customerName: c?.company_name || c?.name,
+          primeContractorName: c?.company_name || c?.name,
           traderName: p?.trading_company_name || p?.trading_company,
         });
       }, [isGuestSiteOrder, guestSiteOrderCtx]);
@@ -2162,7 +2163,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       <p className="text-xs font-black uppercase tracking-wider text-indigo-600">物件専用発注フォーム</p>
                       {guestVendorLabel ? (
                         <p className="text-xl font-bold leading-snug text-slate-900 dark:text-slate-100">
-                          <span className="text-slate-500 text-sm font-bold">業者・商社</span>
+                          <span className="text-slate-500 text-sm font-bold">元請・商社</span>
                           <br />
                           {guestVendorLabel}
                         </p>
@@ -2378,7 +2379,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     この物件で確定している情報です（変更できません）
                   </p>
                   <GuestLockedField label="物件住所" value={guestLockedFields?.address} />
-                  <GuestLockedField label="業者名" value={guestLockedFields?.contractorName} />
+                  <GuestLockedField
+                    label="業者（元請）"
+                    value={guestLockedFields?.primeContractorDisplay}
+                  />
+                  <GuestLockedField
+                    label="業者（下請）"
+                    value={guestLockedFields?.subContractorDisplay}
+                  />
                   <GuestLockedField label="商社名" value={guestLockedFields?.traderNameDisplay} />
                 </div>
               ) : null}

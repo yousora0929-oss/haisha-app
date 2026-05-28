@@ -49,25 +49,53 @@ export function resolveSiteOrderPartiesFromProject(project, customer) {
   return { projectName, siteName: projectName, customerName, traderName };
 }
 
+function readPartyField(parties, snakeKey, camelKey) {
+  if (!parties || typeof parties !== 'object') return '';
+  return String(parties[snakeKey] ?? parties[camelKey] ?? '').trim();
+}
+
 /**
  * ゲスト専用発注: RPC コンテキストから確認ブロック・フォーム初期値用の確定情報を解決
+ * - 業者（元請）: customers.company_name（projects.customer_id 経由）
+ * - 業者（下請）: projects.sub_contractor_name（なければ contractor）
+ * - 商社: projects.trading_company_name
  */
 export function resolveGuestOrderLockedFields(siteOrderContext, allowedAreasInput) {
   const project = siteOrderContext?.project;
   const customer = siteOrderContext?.customer;
+  const parties = siteOrderContext?.parties;
   const areas = normalizeAllowedDeliveryAreas(allowedAreasInput);
   const { deliveryArea, siteAddressDetail } = extractProjectAddressFields(project, areas);
+
+  const addressFromParts = combineDeliveryAddress(deliveryArea, siteAddressDetail);
   const address =
-    combineDeliveryAddress(deliveryArea, siteAddressDetail) ||
+    readPartyField(parties, 'project_address', 'projectAddress') ||
+    addressFromParts ||
     String(project?.site_address ?? project?.address ?? '').trim();
-  const contractorName = String(customer?.company_name ?? customer?.name ?? '').trim();
-  const traderNameRaw = String(
-    project?.trading_company_name ?? project?.trading_company ?? '',
-  ).trim();
-  const projectName = String(project?.name ?? '').trim();
+
+  const primeContractorName =
+    readPartyField(parties, 'prime_contractor_name', 'primeContractorName') ||
+    String(customer?.company_name ?? customer?.name ?? '').trim();
+
+  const subContractorName =
+    readPartyField(parties, 'sub_contractor_name', 'subContractorName') ||
+    String(project?.sub_contractor_name ?? project?.contractor ?? '').trim();
+
+  const traderNameRaw =
+    readPartyField(parties, 'trading_company_name', 'tradingCompanyName') ||
+    String(project?.trading_company_name ?? project?.trading_company ?? '').trim();
+
+  const projectName =
+    readPartyField(parties, 'project_name', 'projectName') || String(project?.name ?? '').trim();
+
   return {
     address,
-    contractorName,
+    primeContractorName,
+    subContractorName,
+    /** 発注 payload の contractorName（下請）用 */
+    contractorName: subContractorName,
+    primeContractorDisplay: primeContractorName || '—',
+    subContractorDisplay: subContractorName || '（未設定）',
     traderNameRaw,
     traderNameDisplay: traderNameRaw || '直取引',
     deliveryArea,
@@ -76,12 +104,17 @@ export function resolveGuestOrderLockedFields(siteOrderContext, allowedAreasInpu
   };
 }
 
-/** 業者・商社の表示ラベル（例: 〇〇建設 / △△商社） */
-export function formatSiteOrderVendorLabel({ customerName, traderName, contractorName } = {}) {
-  const customer = String(customerName || contractorName || '').trim();
+/** 業者（元請）・商社のヘッダー表示（例: 〇〇建設 / △△商社） */
+export function formatSiteOrderVendorLabel({
+  customerName,
+  primeContractorName,
+  traderName,
+  contractorName,
+} = {}) {
+  const prime = String(primeContractorName || customerName || '').trim();
   const trader = String(traderName || '').trim();
-  if (customer && trader && customer !== trader) return `${customer} / ${trader}`;
-  return customer || trader || '';
+  if (prime && trader && prime !== trader) return `${prime} / ${trader}`;
+  return prime || trader || String(contractorName || '').trim();
 }
 
 export function withCustomerHonorific(name) {

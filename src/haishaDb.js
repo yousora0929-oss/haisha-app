@@ -26,7 +26,7 @@ const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
 
 const PROJECT_SELECT_MIN =
-  'id, name, customer_id, trading_company_name, trading_company, main_factory_id, sub_factory_ids, lat, lng, contractor, delivery_area, site_address, created_at, updated_at';
+  'id, name, customer_id, trading_company_name, trading_company, main_factory_id, sub_factory_ids, lat, lng, contractor, sub_contractor_name, delivery_area, site_address, created_at, updated_at';
 
 /** 物件の url_token が無い場合、紐づく業者（customers）の url_token を補完する */
 function pickSiteUrlToken(project, customer) {
@@ -885,6 +885,12 @@ function mapProjectRow(row) {
           : '',
     trading_company: row.trading_company != null ? String(row.trading_company) : '',
     contractor: row.contractor != null ? String(row.contractor) : '',
+    sub_contractor_name:
+      row.sub_contractor_name != null
+        ? String(row.sub_contractor_name)
+        : row.contractor != null
+          ? String(row.contractor)
+          : '',
     delivery_area: row.delivery_area != null ? String(row.delivery_area) : '',
     site_address: row.site_address != null ? String(row.site_address) : '',
     url_token:
@@ -1116,11 +1122,15 @@ export async function fetchSiteOrderContextByUrlToken(urlToken) {
     throw new Error(`専用発注コンテキストの解釈に失敗しました: ${msg}`);
   }
 
+  const parties =
+    raw.parties && typeof raw.parties === 'object' && !Array.isArray(raw.parties) ? raw.parties : null;
+
   return {
     token: String(raw.token ?? token),
     project,
     customer,
     projects,
+    parties,
     match: raw.match === 'customer' ? 'customer' : 'project',
   };
 }
@@ -1197,7 +1207,8 @@ export async function insertProject(payload) {
     lng: payload.lng != null && payload.lng !== '' && Number.isFinite(Number(payload.lng)) ? Number(payload.lng) : null,
     trading_company_name: String(payload.trading_company_name || payload.trading_company || '').trim() || null,
     trading_company: String(payload.trading_company || payload.trading_company_name || '').trim() || null,
-    contractor: String(payload.contractor || '').trim() || null,
+    contractor: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
+    sub_contractor_name: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
     delivery_area: String(payload.delivery_area || '').trim() || null,
     site_address: String(payload.site_address || '').trim() || null,
     folder_url: normalizeExternalUrl(payload.folder_url) || null,
@@ -1225,7 +1236,8 @@ export async function updateProject(projectId, payload) {
     lng: payload.lng != null && payload.lng !== '' && Number.isFinite(Number(payload.lng)) ? Number(payload.lng) : null,
     trading_company_name: String(payload.trading_company_name || payload.trading_company || '').trim() || null,
     trading_company: String(payload.trading_company || payload.trading_company_name || '').trim() || null,
-    contractor: String(payload.contractor || '').trim() || null,
+    contractor: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
+    sub_contractor_name: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
     delivery_area: String(payload.delivery_area || '').trim() || null,
     site_address: String(payload.site_address || '').trim() || null,
     folder_url: normalizeExternalUrl(payload.folder_url) || null,

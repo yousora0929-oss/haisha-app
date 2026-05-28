@@ -334,7 +334,9 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
   const [name, setName] = useState(initial?.name ?? '');
   const [customerId, setCustomerId] = useState(initial?.customer_id ?? '');
   const [tradingCompany, setTradingCompany] = useState(initial?.trading_company_name ?? initial?.trading_company ?? '');
-  const [contractor, setContractor] = useState(initial?.contractor ?? '');
+  const [subContractor, setSubContractor] = useState(
+    initial?.sub_contractor_name ?? initial?.contractor ?? '',
+  );
   const [mainFactoryId, setMainFactoryId] = useState(initial?.main_factory_id ?? '');
   const [subIds, setSubIds] = useState(() => new Set(initial?.sub_factory_ids ?? []));
   const [deliveryArea, setDeliveryArea] = useState(initial?.delivery_area ?? '');
@@ -353,7 +355,7 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
     setName(initial?.name ?? '');
     setCustomerId(initial?.customer_id ?? '');
     setTradingCompany(initial?.trading_company_name ?? initial?.trading_company ?? '');
-    setContractor(initial?.contractor ?? '');
+    setSubContractor(initial?.sub_contractor_name ?? initial?.contractor ?? '');
     setMainFactoryId(initial?.main_factory_id ?? '');
     setSubIds(new Set(initial?.sub_factory_ids ?? []));
     setDeliveryArea(initial?.delivery_area ?? '');
@@ -398,7 +400,8 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
       customer_id: customerId,
       trading_company_name: tradingCompany.trim(),
       trading_company: tradingCompany.trim(),
-      contractor: contractor.trim(),
+      contractor: subContractor.trim(),
+      sub_contractor_name: subContractor.trim(),
       main_factory_id: mainFactoryId,
       sub_factory_ids: [...subIds].filter((id) => id && id !== mainFactoryId),
       delivery_area: area,
@@ -423,7 +426,7 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
         <input id="proj-name" type="text" value={name} onChange={(e) => setName(e.target.value)} className={fieldClass} required />
       </div>
       <div>
-        <label className="text-xs font-bold text-slate-600" htmlFor="proj-customer">業者（会社）</label>
+        <label className="text-xs font-bold text-slate-600" htmlFor="proj-customer">業者（元請）</label>
         <select id="proj-customer" value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={fieldClass}>
           <option value="">未設定</option>
           {(customers || []).map((c) => (
@@ -437,8 +440,8 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
           <input id="proj-trading-company" type="text" value={tradingCompany} onChange={(e) => setTradingCompany(e.target.value)} className={fieldClass} placeholder="例: ○○商事" />
         </div>
         <div>
-          <label className="text-xs font-bold text-slate-600" htmlFor="proj-contractor">業者</label>
-          <input id="proj-contractor" type="text" value={contractor} onChange={(e) => setContractor(e.target.value)} className={fieldClass} placeholder="例: △△建設" />
+          <label className="text-xs font-bold text-slate-600" htmlFor="proj-contractor">業者（下請）</label>
+          <input id="proj-contractor" type="text" value={subContractor} onChange={(e) => setSubContractor(e.target.value)} className={fieldClass} placeholder="例: △△建設" />
         </div>
       </div>
       <div>
@@ -558,7 +561,7 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
             <SiteOrderUrlActions
               urlToken={initial?.url_token}
               siteName={name || initial?.name}
-              customerName={linkedCustomer?.company_name || linkedCustomer?.name || contractor}
+              customerName={linkedCustomer?.company_name || linkedCustomer?.name || subContractor}
               traderName={tradingCompany}
               compact
             />
@@ -684,9 +687,9 @@ function ProjectsSection({ factories, factoryNameById }) {
             <thead>
               <tr className="border-b-2 border-slate-200 bg-slate-50">
                 <th className="px-3 py-2 font-black text-slate-700">物件名</th>
-                <th className="px-3 py-2 font-black text-slate-700">業者（会社）</th>
+                <th className="px-3 py-2 font-black text-slate-700">業者（元請）</th>
                 <th className="px-3 py-2 font-black text-slate-700">商社名</th>
-                <th className="px-3 py-2 font-black text-slate-700">業者</th>
+                <th className="px-3 py-2 font-black text-slate-700">業者（下請）</th>
                 <th className="px-3 py-2 font-black text-slate-700">メイン工場</th>
                 <th className="px-3 py-2 font-black text-slate-700">サブ工場</th>
                 <th className="px-3 py-2 font-black text-slate-700">緯度・経度</th>
@@ -700,7 +703,7 @@ function ProjectsSection({ factories, factoryNameById }) {
                   <td className="px-3 py-2.5 font-bold text-slate-900">{p.name}</td>
                   <td className="px-3 py-2.5 text-slate-700">{customers.find((c) => c.id === p.customer_id)?.name || '—'}</td>
                   <td className="px-3 py-2.5 text-slate-700">{(p.trading_company_name || p.trading_company)?.trim() || '—'}</td>
-                  <td className="px-3 py-2.5 text-slate-700">{p.contractor?.trim() || '—'}</td>
+                  <td className="px-3 py-2.5 text-slate-700">{(p.sub_contractor_name || p.contractor)?.trim() || '—'}</td>
                   <td className="px-3 py-2.5">{factoryNameById[p.main_factory_id] || '—'}</td>
                   <td className="max-w-[12rem] px-3 py-2.5 text-xs text-slate-600">{(p.sub_factory_ids || []).map((id) => factoryNameById[id] || id).join('、') || '—'}</td>
                   <td className="px-3 py-2.5 font-mono text-xs">{p.lat != null && p.lng != null ? `${p.lat}, ${p.lng}` : '—'}</td>
