@@ -1005,7 +1005,7 @@ function unloadDurationLabel(value) {
       });
       const orderFormRef = useRef(null);
       const lastAutofillProjectIdRef = useRef('');
-      const guestInitTokenRef = useRef('');
+      const guestInitCompletedTokenRef = useRef('');
 
       const selectedProject = useMemo(
         () => (projects || []).find((p) => p && p.id === selectedProjectId) || null,
@@ -1219,11 +1219,11 @@ function unloadDurationLabel(value) {
 
       useEffect(() => {
         if (!isGuestSiteOrder || !guestOrderToken) return undefined;
-        if (guestSiteOrderLoading) return undefined;
-        if (guestInitTokenRef.current === guestOrderToken && guestSiteOrderCtx) return undefined;
+        // 二重実行防止は「そのトークンで初期化完了済み」の場合のみ
+        if (guestInitCompletedTokenRef.current === guestOrderToken && guestSiteOrderCtx) return undefined;
         let cancelled = false;
         (async () => {
-          guestInitTokenRef.current = guestOrderToken;
+          // フェッチ開始直前で Loading を立てる
           setGuestSiteOrderLoading(true);
           setGuestSiteOrderError('');
           setGuestSiteOrderErrorDetail('');
@@ -1305,6 +1305,8 @@ function unloadDurationLabel(value) {
               setSiteOrderLinkNotice(
                 label ? `「${label}」の専用発注フォームです。` : '専用発注フォームです。',
               );
+              // ここまで来たら「初期化完了」とみなす
+              guestInitCompletedTokenRef.current = guestOrderToken;
             } catch (procErr) {
               console.error('専用発注フォームの初期化に失敗しました', procErr);
               if (!cancelled) {
@@ -1330,7 +1332,7 @@ function unloadDurationLabel(value) {
         return () => {
           cancelled = true;
         };
-      }, [isGuestSiteOrder, guestOrderToken, guestSiteOrderLoading, guestSiteOrderCtx]);
+      }, [isGuestSiteOrder, guestOrderToken, guestSiteOrderCtx]);
 
       useEffect(() => {
         if (isGuestSiteOrder || !isLoggedIn) return;
