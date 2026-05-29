@@ -51,30 +51,6 @@ function unloadDurationLabel(value) {
   return UNLOAD_DURATION_OPTIONS.find((o) => o.value === String(value || ''))?.label || '30分（標準）';
 }
 
-/** ゲスト専用発注: RPC デバッグログ表示 */
-function GuestOrderDebugPanel({ log }) {
-  const text = String(log || '').trim();
-  if (!text) return null;
-  return (
-    <pre
-      className="mt-3 max-h-[50vh] w-full overflow-auto rounded-lg border-2 border-lime-700 bg-black p-3 text-left text-xs font-mono leading-relaxed text-lime-400"
-      style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
-    >
-      {text}
-    </pre>
-  );
-}
-
-function appendGuestDebugJson(setter, label, data) {
-  let serialized = '';
-  try {
-    serialized = JSON.stringify(data, null, 2);
-  } catch (e) {
-    serialized = `[JSON.stringify 失敗] ${String(e?.message ?? e)}`;
-  }
-  setter((prev) => `${prev}\n【${label}】\n${serialized}`);
-}
-
 /** ゲスト専用発注: 確定済み情報の読み取り専用表示 */
 function GuestLockedField({ label, value, emptyLabel = '—' }) {
   const text = String(value || '').trim();
@@ -1044,9 +1020,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [guestSiteOrderLoading, setGuestSiteOrderLoading] = useState(isGuestSiteOrder);
       const [guestSiteOrderError, setGuestSiteOrderError] = useState('');
       const [guestSiteOrderErrorDetail, setGuestSiteOrderErrorDetail] = useState('');
-      const [guestSiteOrderDebugLog, setGuestSiteOrderDebugLog] = useState(() => {
-        return guestOrderToken ? `初期化開始...\nトークン検出: ${guestOrderToken}` : '初期化開始...';
-      });
       const orderFormRef = useRef(null);
       const lastAutofillProjectIdRef = useRef('');
       const guestInitCompletedTokenRef = useRef('');
@@ -1276,9 +1249,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           setGuestSiteOrderLoading(true);
           setGuestSiteOrderError('');
           setGuestSiteOrderErrorDetail('');
-          setGuestSiteOrderDebugLog((prev) => `${prev}\n---\n初期化開始: ${new Date().toISOString()}\nトークン検出: ${guestOrderToken}`);
           try {
-            setGuestSiteOrderDebugLog((prev) => `${prev}\nRPC呼び出し直前: get_site_order_context_by_token`);
             const [ctx, settings, factoryRows] = await Promise.all([
               db.fetchSiteOrderContextByUrlToken(guestOrderToken),
               db.fetchDispatchOperationalSettings(),
@@ -1287,33 +1258,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             if (cancelled) return;
 
             if (!ctx) {
-              setGuestSiteOrderDebugLog((prev) => `${prev}\nRPC結果: データが空です`);
               setGuestSiteOrderError('専用発注URLが無効です。リンクを確認してください。');
               setGuestSiteOrderErrorDetail('サーバーからコンテキストを取得できませんでした（応答が空です）。');
               return;
             }
-
-            appendGuestDebugJson(
-              setGuestSiteOrderDebugLog,
-              '受信データ（Supabase data 生）',
-              ctx._debugSupabaseData ?? null,
-            );
-            appendGuestDebugJson(
-              setGuestSiteOrderDebugLog,
-              '受信データ（RPC JSON 正規化後）',
-              ctx._debugRawRpc ?? null,
-            );
-            appendGuestDebugJson(setGuestSiteOrderDebugLog, '受信データ（マッピング後 ctx）', {
-              token: ctx.token,
-              match: ctx.match,
-              parties: ctx.parties,
-              customer: ctx.customer,
-              project: ctx.project,
-              projects: ctx.projects,
-            });
-            setGuestSiteOrderDebugLog((prev) => `${prev}\nRPC結果: データ取得成功`);
-
-            const { _debugRawRpc: _rawOmit, _debugSupabaseData: _dataOmit, ...ctxForState } = ctx;
 
             try {
               const hasCustomer = Boolean(ctx?.customer?.id);
@@ -1321,14 +1269,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               const projectList = Array.isArray(ctx?.projects) && ctx.projects.length > 0 ? ctx.projects : [];
               const hasProjectsList = projectList.length > 0;
               if (!hasCustomer && !hasProject && !hasProjectsList) {
-                setGuestSiteOrderDebugLog((prev) => `${prev}\nデータ検証: NG（customer/project/projects が不足）`);
                 setGuestSiteOrderError('専用発注データが不完全です。');
                 setGuestSiteOrderErrorDetail('業者または物件の情報が応答に含まれていません。');
                 return;
               }
-              setGuestSiteOrderDebugLog((prev) => `${prev}\nデータ検証: OK`);
 
-              setGuestSiteOrderCtx(ctxForState);
+              setGuestSiteOrderCtx(ctx);
               const nextSettings =
                 settings && typeof settings === 'object' ? settings : { admin_name: '', phone_number: '' };
               setAdminSettings(nextSettings);
@@ -1364,18 +1310,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 if (locked.projectName) setSiteName(sanitizeSiteNameValue(locked.projectName));
                 setPreferredFactoryId(String(primaryProject.main_factory_id || '').trim());
                 if (customer?.phone_number) setSitePhone(String(customer.phone_number));
-                appendGuestDebugJson(
-                  setGuestSiteOrderDebugLog,
-                  'resolveGuestOrderLockedFields 結果',
-                  locked,
-                );
-                setGuestSiteOrderDebugLog((prev) => `${prev}\nフォーム反映: 完了（物件住所/業者/工場）`);
               } else {
                 setSelectedProjectId('');
                 setDeliveryArea('');
                 setSiteAddressDetail('');
                 setPreferredFactoryId('');
-                setGuestSiteOrderDebugLog((prev) => `${prev}\nフォーム反映: スキップ（primaryProject なし）`);
               }
               const lockedNotice = primaryProject
                 ? resolveGuestOrderLockedFields({ project: primaryProject, customer }, allowedAreas)
@@ -1392,7 +1331,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 setGuestSiteOrderCtx(null);
                 setGuestSiteOrderError('専用発注フォームの初期化に失敗しました。');
                 setGuestSiteOrderErrorDetail(String(procErr?.message ?? procErr ?? '不明なエラー'));
-                setGuestSiteOrderDebugLog((prev) => `${prev}\nエラー発生: ${String(procErr?.message ?? procErr ?? '不明なエラー')}`);
               }
             }
           } catch (e) {
@@ -1401,10 +1339,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               setGuestSiteOrderCtx(null);
               setGuestSiteOrderError(formatSupabaseError(e, '専用発注URLの読み込みに失敗しました。'));
               setGuestSiteOrderErrorDetail(String(e?.message ?? e ?? '不明なエラー'));
-              setGuestSiteOrderDebugLog((prev) => `${prev}\nエラー発生: ${String(e?.message ?? e ?? '不明なエラー')}`);
             }
           } finally {
-            setGuestSiteOrderDebugLog((prev) => `${prev}\nローディング解除`);
             setGuestSiteOrderLoading(false);
           }
         })();
@@ -2085,10 +2021,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       if (isGuestSiteOrder && guestSiteOrderLoading) {
         return (
           <div className="flex min-h-[100dvh] w-full items-center justify-center bg-slate-100 px-4 dark:bg-gray-900">
-            <div className="w-full max-w-2xl">
-              <GuestOrderDebugPanel log={guestSiteOrderDebugLog} />
-              <p className="mt-4 text-center text-sm font-bold text-slate-600 dark:text-slate-300">物件専用発注フォームを読み込み中…</p>
-            </div>
+            <p className="text-center text-sm font-bold text-slate-600 dark:text-slate-300">物件専用発注フォームを読み込み中…</p>
           </div>
         );
       }
@@ -2100,7 +2033,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               <p className="text-sm font-black text-red-700 dark:text-red-300" role="alert">
                 {guestSiteOrderError}
               </p>
-              <GuestOrderDebugPanel log={guestSiteOrderDebugLog} />
               {guestSiteOrderErrorDetail ? (
                 <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-red-100 bg-red-50/80 p-3 text-left text-xs font-bold text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
                   {guestSiteOrderErrorDetail}
@@ -2247,7 +2179,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   {siteOrderLinkNotice}
                 </p>
               ) : null}
-              {isGuestSiteOrder ? <GuestOrderDebugPanel log={guestSiteOrderDebugLog} /> : null}
             </div>
           </header>
 

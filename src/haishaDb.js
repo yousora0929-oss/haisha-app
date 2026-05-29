@@ -1132,9 +1132,6 @@ export async function fetchSiteOrderContextByUrlToken(urlToken) {
     projects,
     parties,
     match: raw.match === 'customer' ? 'customer' : 'project',
-    /** デバッグ用: Supabase RPC の生 JSON（画面表示後に DispatchApp 側で除去） */
-    _debugRawRpc: raw,
-    _debugSupabaseData: data,
   };
 }
 
