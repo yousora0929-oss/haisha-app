@@ -29,7 +29,7 @@ export function OrderCartPreview({
 
   return (
     <section
-      className="rounded-2xl border-2 border-violet-300 bg-violet-50/70 p-4 shadow-sm sm:p-5 lg:col-span-2"
+      className="rounded-2xl border-2 border-violet-300 bg-violet-50/70 p-4 shadow-sm sm:p-5"
       aria-labelledby="order-cart-title"
     >
       <h3 id="order-cart-title" className="text-base font-black text-violet-950 sm:text-lg">

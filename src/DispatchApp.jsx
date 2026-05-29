@@ -2419,7 +2419,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               ) : null}
 
               {isGuestSiteOrder && orderKind === 'project' ? (
-                <div className="order-1 flex flex-col gap-4 rounded-2xl border-2 border-slate-200 bg-slate-50/90 p-4 dark:border-slate-600 dark:bg-slate-800/80 lg:col-span-2">
+                <div className="flex flex-col gap-4 rounded-2xl border-2 border-slate-200 bg-slate-50/90 p-4 dark:border-slate-600 dark:bg-slate-800/80 lg:col-span-2">
                   <p className="text-xs font-bold leading-relaxed text-slate-500 dark:text-slate-400">
                     この物件で確定している情報です（変更できません）
                   </p>
@@ -2437,7 +2437,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               ) : null}
 
               {isGuestSiteOrder ? (
-                <div className="order-2 lg:col-span-2">
+                <div className="lg:col-span-2">
                   <h3 className="text-base font-black text-slate-900 dark:text-slate-100">発注内容</h3>
                   <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
                     納入希望日時・配合・数量などを入力し、リストに追加してから一括確定してください。
@@ -2633,12 +2633,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 />
               ) : null}
 
-              <div
-                className={
-                  'flex min-w-0 max-w-full flex-col gap-3 overflow-hidden lg:col-start-1' +
-                  (isGuestSiteOrder ? ' order-3' : '')
-                }
-              >
+              <div className="flex min-w-0 max-w-full flex-col gap-3 overflow-hidden lg:col-start-1">
                 <Label htmlFor="preferred-date">希望日（納入日）</Label>
                 <p className={'text-xs leading-relaxed text-slate-500' + (isGuestSiteOrder ? ' hidden' : '')}>
                   日付や試験の有無などを変えながら「リストに追加」でカートへ溜め、最後に一括確定できます。
@@ -2668,7 +2663,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </div>
               </div>
 
-              <div className={'flex flex-col gap-3' + (isGuestSiteOrder ? ' order-4' : '')}>
+              <div className="flex flex-col gap-3">
                 <Label htmlFor="time-slot">希望時刻（8:00〜15:30・30分刻み）</Label>
                 <p className={'text-xs leading-relaxed text-slate-500' + (isGuestSiteOrder ? ' hidden' : '')}>
                   到着・打設の目安時刻を、30分単位で指定します（最遅 15:30）。
@@ -2701,7 +2696,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </select>
               </div>
 
-              <div className={'flex flex-col gap-3' + (isGuestSiteOrder ? ' order-5' : '')}>
+              <div className="flex flex-col gap-3">
                 <Label htmlFor="dispatch-factory">第一希望工場（任意）</Label>
                 <p className="text-xs leading-relaxed text-slate-500">
                   {isGuestSiteOrder
@@ -2733,7 +2728,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </select>
               </div>
 
-              <div className={'flex flex-col gap-3' + (isGuestSiteOrder ? ' order-6' : '')}>
+              <div className="flex flex-col gap-3">
                 <span className="text-sm font-semibold text-slate-700">車両タイプ</span>
                 <div className="flex gap-4">
                   <button
@@ -2763,50 +2758,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     小型
                   </button>
                 </div>
-              </div>
-
-              <div className={'flex flex-col gap-3' + (isGuestSiteOrder ? ' order-8' : '')}>
-                <Label htmlFor="quantity-m3">数量（m³）</Label>
-                <p className={'text-xs leading-relaxed text-slate-500' + (isGuestSiteOrder ? ' hidden' : '')}>
-                  発注時は空欄にできません。
-                </p>
-                <input
-                  id="quantity-m3"
-                  type="text"
-                  inputMode="decimal"
-                  autoComplete="off"
-                  placeholder=""
-                  value={quantityM3}
-                  onChange={(e) => {
-                    setQuantityM3(e.target.value);
-                    setSubmitError('');
-                  }}
-                  className="min-h-[56px] w-full rounded-xl border-2 border-slate-200 px-4 py-3 text-base text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
-                />
-              </div>
-
-              <div className={'flex flex-col gap-3' + (isGuestSiteOrder ? ' order-9' : '')}>
-                <Label htmlFor="unload-duration">1台あたりの荷卸し（車返却）予定時間</Label>
-                <p className="text-xs leading-relaxed text-slate-500">
-                  {isGuestSiteOrder
-                    ? '物件での滞在想定時間です。工場側の帰着・次便計画に使用します。'
-                    : '現場での滞在想定時間です。工場側の帰着・次便計画に使用します。'}
-                </p>
-                <select
-                  id="unload-duration"
-                  value={unloadDuration}
-                  onChange={(e) => {
-                    setUnloadDuration(e.target.value);
-                    setSubmitError('');
-                  }}
-                  className="min-h-[56px] w-full appearance-none rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-base font-medium text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
-                >
-                  {UNLOAD_DURATION_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
               </div>
 
               {!isGuestSiteOrder ? (
@@ -2839,7 +2790,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </>
               ) : null}
 
-              <div className={'flex flex-col gap-3' + (isGuestSiteOrder ? ' order-7' : '')}>
+              <div className="flex flex-col gap-3">
                 <Label htmlFor="mix-spec">配合（JIS規格など）</Label>
                 <p className={'text-xs leading-relaxed text-slate-500' + (isGuestSiteOrder ? ' hidden' : '')}>
                   自由入力のほか、下のショートカットから選べます。
@@ -2873,7 +2824,51 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </div>
               </div>
 
-              <div className={'flex flex-col gap-2' + (isGuestSiteOrder ? ' order-10 lg:col-span-2' : '')}>
+              <div className="flex flex-col gap-3">
+                <Label htmlFor="quantity-m3">数量（m³）</Label>
+                <p className={'text-xs leading-relaxed text-slate-500' + (isGuestSiteOrder ? ' hidden' : '')}>
+                  発注時は空欄にできません。
+                </p>
+                <input
+                  id="quantity-m3"
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  placeholder=""
+                  value={quantityM3}
+                  onChange={(e) => {
+                    setQuantityM3(e.target.value);
+                    setSubmitError('');
+                  }}
+                  className="min-h-[56px] w-full rounded-xl border-2 border-slate-200 px-4 py-3 text-base text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
+                />
+              </div>
+
+              <div className="flex flex-col gap-3">
+                <Label htmlFor="unload-duration">1台あたりの荷卸し（車返却）予定時間</Label>
+                <p className="text-xs leading-relaxed text-slate-500">
+                  {isGuestSiteOrder
+                    ? '物件での滞在想定時間です。工場側の帰着・次便計画に使用します。'
+                    : '現場での滞在想定時間です。工場側の帰着・次便計画に使用します。'}
+                </p>
+                <select
+                  id="unload-duration"
+                  value={unloadDuration}
+                  onChange={(e) => {
+                    setUnloadDuration(e.target.value);
+                    setSubmitError('');
+                  }}
+                  className="min-h-[56px] w-full appearance-none rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-base font-medium text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
+                >
+                  {UNLOAD_DURATION_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className={'flex flex-col gap-2' + (isGuestSiteOrder ? ' lg:col-span-2' : '')}>
                 <div className="flex cursor-pointer items-start gap-3 rounded-xl border-2 border-slate-200 bg-slate-50/90 px-4 py-3 transition hover:border-slate-300 hover:bg-white">
                   <input
                     id="order-has-test"
@@ -2894,7 +2889,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </div>
               </div>
 
-              <div className={'flex flex-col gap-3' + (isGuestSiteOrder ? ' order-11' : '')}>
+              <div className="flex flex-col gap-3">
                 <Label htmlFor="ordered-by">発注担当者名</Label>
                 <p className="text-xs leading-relaxed text-slate-500">当日連絡が取れる担当者名を自由入力してください（例：山田、佐藤）。</p>
                 <input
@@ -2911,7 +2906,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 />
               </div>
 
-              <div className={'flex flex-col gap-3' + (isGuestSiteOrder ? ' order-12' : '')}>
+              <div className="flex flex-col gap-3">
                 <Label htmlFor="site-phone">電話番号</Label>
                 <input
                   id="site-phone"
@@ -2928,35 +2923,29 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 />
               </div>
 
-              <button
-                type="button"
-                onClick={handleAddToCart}
-                disabled={isSubmittingOrder || !hasCurrentCustomer}
-                className={
-                  'mt-2 flex min-h-[56px] w-full items-center justify-center rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-4 text-base font-bold text-white shadow-lg shadow-orange-500/30 transition hover:from-orange-600 hover:to-amber-600 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 lg:col-span-2' +
-                  (isGuestSiteOrder ? ' order-13' : '')
-                }
-              >
-                {hasCurrentCustomer
-                  ? isGuestSiteOrder
-                    ? '➕ リストに追加'
-                    : '➕ この内容でリスト（カート）に追加'
-                  : '先に業者を選択してください'}
-              </button>
-
-              {submitError ? (
-                <p
-                  className={
-                    'rounded-xl border-2 border-red-400 bg-red-50 px-4 py-3 text-sm font-bold text-red-700 shadow-sm lg:col-span-2' +
-                    (isGuestSiteOrder ? ' order-14' : '')
-                  }
-                  role="alert"
+              <div className="order-last col-span-1 flex flex-col gap-3 border-t-2 border-slate-200 pt-6 mt-2 dark:border-slate-600 lg:col-span-2">
+                <button
+                  type="button"
+                  onClick={handleAddToCart}
+                  disabled={isSubmittingOrder || !hasCurrentCustomer}
+                  className="flex min-h-[56px] w-full items-center justify-center rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-4 text-base font-bold text-white shadow-lg shadow-orange-500/30 transition hover:from-orange-600 hover:to-amber-600 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {submitError}
-                </p>
-              ) : null}
+                  {hasCurrentCustomer
+                    ? isGuestSiteOrder
+                      ? '➕ リストに追加'
+                      : '➕ この内容でリスト（カート）に追加'
+                    : '先に業者を選択してください'}
+                </button>
 
-              <div className={isGuestSiteOrder ? 'order-15 lg:col-span-2' : 'lg:col-span-2'}>
+                {submitError ? (
+                  <p
+                    className="rounded-xl border-2 border-red-400 bg-red-50 px-4 py-3 text-sm font-bold text-red-700 shadow-sm"
+                    role="alert"
+                  >
+                    {submitError}
+                  </p>
+                ) : null}
+
                 <OrderCartPreview
                   items={cartItems}
                   onRemove={handleRemoveFromCart}
@@ -2964,19 +2953,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   bulkLoading={isSubmittingOrder}
                   siteAddressLabel={isGuestSiteOrder ? '物件住所' : '現場住所'}
                 />
-              </div>
 
-              {submitNotice && (
-                <p
-                  className={
-                    'rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900 lg:col-span-2' +
-                    (isGuestSiteOrder ? ' order-16' : '')
-                  }
-                  role="status"
-                >
-                  {submitNotice}
-                </p>
-              )}
+                {submitNotice ? (
+                  <p
+                    className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900"
+                    role="status"
+                  >
+                    {submitNotice}
+                  </p>
+                ) : null}
+              </div>
             </form>
               </div>
               ) : null}
