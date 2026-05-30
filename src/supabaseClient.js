@@ -35,6 +35,8 @@ export const ADMIN_PANEL_PHONE_KEY = 'concrete_link_admin_phone_v1';
 export const ADMIN_PANEL_PASSWORD_KEY = 'concrete_link_admin_pass_v1';
 export const CUSTOMER_PANEL_PHONE_KEY = 'concrete_link_customer_phone_v1';
 export const CUSTOMER_PANEL_PASSWORD_KEY = 'concrete_link_customer_pass_v1';
+export const FACTORY_PANEL_ID_KEY = 'concrete_link_factory_id_v1';
+export const FACTORY_PANEL_PASSWORD_KEY = 'concrete_link_factory_pass_v1';
 
 /** 管理画面ログイン後、RLS 用ヘッダー認証の資格情報を sessionStorage に保存 */
 export function setAdminPanelSession(phone, password) {
@@ -89,6 +91,32 @@ export function hasCustomerPanelSession() {
   }
 }
 
+export function setFactoryPanelSession(factoryId, password) {
+  if (typeof sessionStorage === 'undefined') return;
+  const id = String(factoryId || '').trim();
+  const pass = String(password || '').trim();
+  if (!id || !pass) return;
+  sessionStorage.setItem(FACTORY_PANEL_ID_KEY, id);
+  sessionStorage.setItem(FACTORY_PANEL_PASSWORD_KEY, pass);
+}
+
+export function clearFactoryPanelSession() {
+  if (typeof sessionStorage === 'undefined') return;
+  sessionStorage.removeItem(FACTORY_PANEL_ID_KEY);
+  sessionStorage.removeItem(FACTORY_PANEL_PASSWORD_KEY);
+}
+
+export function hasFactoryPanelSession() {
+  if (typeof sessionStorage === 'undefined') return false;
+  try {
+    return Boolean(
+      sessionStorage.getItem(FACTORY_PANEL_ID_KEY) && sessionStorage.getItem(FACTORY_PANEL_PASSWORD_KEY),
+    );
+  } catch {
+    return false;
+  }
+}
+
 function readPanelRequestHeaders() {
   if (typeof sessionStorage === 'undefined') return {};
   try {
@@ -104,6 +132,12 @@ function readPanelRequestHeaders() {
     if (customerPhone && customerPassword) {
       headers['x-customer-phone'] = customerPhone;
       headers['x-customer-password'] = customerPassword;
+    }
+    const factoryId = sessionStorage.getItem(FACTORY_PANEL_ID_KEY);
+    const factoryPassword = sessionStorage.getItem(FACTORY_PANEL_PASSWORD_KEY);
+    if (factoryId && factoryPassword) {
+      headers['x-factory-id'] = factoryId;
+      headers['x-factory-password'] = factoryPassword;
     }
     return headers;
   } catch {

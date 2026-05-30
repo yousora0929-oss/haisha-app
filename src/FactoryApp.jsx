@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import * as db from './haishaDb.js';
-import { supabase } from './supabaseClient.js';
+import { supabase, setFactoryPanelSession, clearFactoryPanelSession, hasFactoryPanelSession } from './supabaseClient.js';
 import { MapPicker } from './MapPicker.jsx';
 import { buildEscalationContext, filterOrdersForFactory, getEffectiveEscalationMinutes } from './utils/escalationUtils.js';
 import {
@@ -36,6 +36,10 @@ import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/site
 import { MAP_EDITOR_ORDER_SAVED_DOM_EVENT, MAP_EDITOR_ORDER_SAVED_EVENT_KEY } from './mapEditorConstants.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
+import {
+  detectFactoryNotifyOrderIds,
+  analyzeFactoryOrderRealtimePayload,
+} from './utils/factoryOrderRealtime.js';
 
 const todayLocalISO = todayLocalISODate;
 
@@ -1881,7 +1885,7 @@ function orderPartyInfo(order) {
       );
     }
 
-    function NewOrderToast({ order, onDismiss }) {
+    function NewOrderToast({ order, isReassignment, onDismiss }) {
       if (!order) return null;
       return (
         <div
@@ -1890,7 +1894,9 @@ function orderPartyInfo(order) {
         >
           <div className="overflow-hidden rounded-2xl border-2 border-orange-600 bg-white shadow-2xl">
             <div className="flex items-start justify-between gap-2 bg-orange-600 px-4 py-2.5">
-              <p className="text-sm font-black text-white sm:text-base">新規注文を受信</p>
+              <p className="text-sm font-black text-white sm:text-base">
+                {isReassignment ? '手配振替の注文を受信' : '新規注文を受信'}
+              </p>
               <button
                 type="button"
                 onClick={onDismiss}
@@ -2486,6 +2492,7 @@ function orderPartyInfo(order) {
       const [scheduleByDate, setScheduleByDate] = useState({});
       const scheduleByDateRef = useRef({});
       const [rawOrders, setRawOrders] = useState([]);
+      const rawOrdersRef = useRef([]);
       const [orders, setOrders] = useState([]);
       const [readOrderIds, setReadOrderIds] = useState(() => new Set());
       const [hiddenOrderIds, setHiddenOrderIds] = useState(() => new Set());
@@ -2495,6 +2502,7 @@ function orderPartyInfo(order) {
       const [systemSettings, setSystemSettings] = useState({ start_time: '08:00:00', end_time: '16:00:00' });
       const [escalationTick, setEscalationTick] = useState(0);
       const [toastOrder, setToastOrder] = useState(null);
+      const [toastIsReassignment, setToastIsReassignment] = useState(false);
       const [actionNotice, setActionNotice] = useState('');
       const [chatThreads, setChatThreads] = useState({});
       const [readChatKeys, setReadChatKeys] = useState({});
@@ -2536,6 +2544,10 @@ function orderPartyInfo(order) {
         scheduleByDateRef.current = scheduleByDate;
       }, [scheduleByDate]);
 
+      useEffect(() => {
+        rawOrdersRef.current = rawOrders;
+      }, [rawOrders]);
+
       const refreshChatThreads = useCallback(async () => {
         const { chatThreads: th } = await db.fetchOrdersWithChat();
         setChatThreads(th);
@@ -2568,7 +2580,13 @@ function orderPartyInfo(order) {
           next.add(id);
           return next;
         });
-        setToastOrder((cur) => (cur?.id === id ? null : cur));
+        setToastOrder((cur) => {
+          if (cur?.id === id) {
+            setToastIsReassignment(false);
+            return null;
+          }
+          return cur;
+        });
       }, []);
 
       const showAllHiddenOrders = useCallback(() => {
@@ -2601,6 +2619,8 @@ function orderPartyInfo(order) {
             setLoginPassword('');
             setHiddenOrderIds(new Set());
             setToastOrder(null);
+            setToastIsReassignment(false);
+            setFactoryPanelSession(fid, loginPassword);
             try {
               sessionStorage.setItem(FACTORY_SESSION_STORAGE_KEY, fid);
               sessionStorage.setItem(FACTORY_AUTH_STORAGE_KEY, fid);
@@ -2620,6 +2640,7 @@ function orderPartyInfo(order) {
       const dismissNewOrderToast = useCallback(() => {
         stopNotificationAlarm();
         setToastOrder(null);
+        setToastIsReassignment(false);
       }, []);
 
       useEffect(() => {
@@ -2641,8 +2662,11 @@ function orderPartyInfo(order) {
       const handleFactoryLogout = useCallback(() => {
         stopNotificationAlarm();
         setToastOrder(null);
+        setToastIsReassignment(false);
+        clearFactoryPanelSession();
         try {
           sessionStorage.removeItem(FACTORY_AUTH_STORAGE_KEY);
+          sessionStorage.removeItem(FACTORY_SESSION_STORAGE_KEY);
         } catch {
           /* ignore */
         }
@@ -2676,6 +2700,14 @@ function orderPartyInfo(order) {
         (list, options) => {
           const playSound = options && options.playSound;
           const muteExisting = options && options.muteExisting;
+          const notifyOrderIds = options?.notifyOrderIds;
+          const reassignNotifyOrderIds = options?.reassignNotifyOrderIds;
+          const forceNotify = (orderId) => {
+            if (!notifyOrderIds) return false;
+            if (notifyOrderIds instanceof Set) return notifyOrderIds.has(String(orderId));
+            if (Array.isArray(notifyOrderIds)) return notifyOrderIds.includes(String(orderId));
+            return false;
+          };
           setRawOrders(Array.isArray(list) ? list : []);
           const visible = applyVisibleOrders(list);
           setOrders(visible);
@@ -2694,12 +2726,18 @@ function orderPartyInfo(order) {
           }
           const head = visible.find((o) => {
             if (!o?.id) return false;
-            if (notifiedOrderIds.current.has(o.id)) return false;
             if (String(o.status || 'pending') !== 'pending') return false;
             if (isRejectedByFactory(o, activeFactoryId)) return false;
+            if (forceNotify(o.id)) return true;
+            if (notifiedOrderIds.current.has(o.id)) return false;
             return true;
           }) ?? null;
           if (head && playSound) {
+            const isReassign =
+              reassignNotifyOrderIds instanceof Set
+                ? reassignNotifyOrderIds.has(String(head.id))
+                : false;
+            setToastIsReassignment(isReassign);
             setToastOrder(head);
             lastNotifiedHeadIdRef.current = head.id;
             notifiedOrderIds.current.add(head.id);
@@ -2762,10 +2800,38 @@ function orderPartyInfo(order) {
       );
 
       const syncFromStorage = useCallback(
-        async (options) => {
+        async (options, realtimePayload) => {
+          const prevOrders = rawOrdersRef.current;
           let { orders: list, chatThreads: th } = await db.fetchOrdersWithChat();
           setChatThreads(th);
-          applyIncomingOrders(list, options);
+
+          const notifyOrderIds = new Set();
+          const reassignNotifyOrderIds = new Set();
+          if (activeFactoryId) {
+            const ctx = buildEscalationContext(
+              list,
+              factories,
+              projects,
+              systemSettings,
+              holidays,
+              new Date(),
+            );
+            const detected = detectFactoryNotifyOrderIds(prevOrders, list, activeFactoryId, ctx);
+            for (const id of detected.notifyOrderIds) notifyOrderIds.add(id);
+            for (const id of detected.reassignNotifyOrderIds) reassignNotifyOrderIds.add(id);
+            if (realtimePayload) {
+              const analysis = analyzeFactoryOrderRealtimePayload(realtimePayload, activeFactoryId, ctx);
+              for (const id of analysis.notifyOrderIds) notifyOrderIds.add(id);
+              for (const id of analysis.reassignNotifyOrderIds) reassignNotifyOrderIds.add(id);
+            }
+          }
+
+          const incomingOptions = {
+            ...options,
+            ...(notifyOrderIds.size > 0 ? { notifyOrderIds } : {}),
+            ...(reassignNotifyOrderIds.size > 0 ? { reassignNotifyOrderIds } : {}),
+          };
+          applyIncomingOrders(list, incomingOptions);
           const ids = new Set(
             list
               .map((o) => (o && o.factory_site_id ? String(o.factory_site_id).trim() : ''))
@@ -2787,7 +2853,7 @@ function orderPartyInfo(order) {
             applyIncomingOrders(r.orders, { playSound: false });
           }
         },
-        [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById],
+        [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById, factories, projects, systemSettings, holidays],
       );
 
       useEffect(() => {
@@ -2937,7 +3003,8 @@ function orderPartyInfo(order) {
               authStored &&
               stored &&
               authStored === stored &&
-              rowIds.has(stored);
+              rowIds.has(stored) &&
+              hasFactoryPanelSession();
             if (canRestoreAuth) {
               const selected = (rows || []).find((f) => String(f.id) === String(stored));
               const displayName = nameMap[stored] || FACTORY_SITE_NAME;
@@ -2946,6 +3013,7 @@ function orderPartyInfo(order) {
               setIsFactoryAuthenticated(true);
               void registerOneSignalUser(stored, { role: 'factory', factory_id: stored });
             } else {
+              clearFactoryPanelSession();
               setActiveFactoryId('');
               setActiveFactoryName('');
               setIsFactoryAuthenticated(false);
@@ -2969,6 +3037,7 @@ function orderPartyInfo(order) {
         let realtimeTimerId = null;
         let realtimeRunning = false;
         let realtimePending = false;
+        let pendingRealtimePayload = null;
         (async () => {
           try {
             const m = await db.fetchSchedulesForFactory(activeFactoryId);
@@ -2989,7 +3058,9 @@ function orderPartyInfo(order) {
           try {
             do {
               realtimePending = false;
-              await syncFromStorage({ playSound: true });
+              const payload = pendingRealtimePayload;
+              pendingRealtimePayload = null;
+              await syncFromStorage({ playSound: true }, payload);
               try {
                 const m = await db.fetchSchedulesForFactory(activeFactoryId);
                 if (!cancel) setScheduleByDate(m);
@@ -3002,7 +3073,8 @@ function orderPartyInfo(order) {
             realtimeRunning = false;
           }
         };
-        const scheduleRealtimeSync = () => {
+        const scheduleRealtimeSync = (payload) => {
+          if (payload) pendingRealtimePayload = payload;
           realtimePending = true;
           if (realtimeTimerId != null) return;
           realtimeTimerId = window.setTimeout(() => {
@@ -3597,7 +3669,7 @@ function orderPartyInfo(order) {
             </div>
           </PullToRefresh>
 
-          <NewOrderToast order={toastOrder} onDismiss={dismissNewOrderToast} />
+          <NewOrderToast order={toastOrder} isReassignment={toastIsReassignment} onDismiss={dismissNewOrderToast} />
           {actionNotice ? (
             <div
               className="fixed bottom-4 left-4 z-[95] rounded-2xl border-2 border-emerald-600 bg-white px-4 py-3 text-sm font-black text-emerald-800 shadow-2xl sm:left-6 sm:text-base"
