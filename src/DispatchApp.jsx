@@ -7,7 +7,17 @@ import {
   todayLocalISODate,
 } from './haishaConstants.js';
 import * as db from './haishaDb.js';
-import { supabase, setCustomerPanelSession, clearCustomerPanelSession, hasCustomerPanelSession, setGuestSiteOrderSession, clearGuestSiteOrderSession, hasGuestSiteOrderSession, ensurePanelRealtimeAuth } from './supabaseClient.js';
+import {
+  supabase,
+  setCustomerPanelSession,
+  clearCustomerPanelSession,
+  hasCustomerPanelSession,
+  setGuestSiteOrderSession,
+  clearGuestSiteOrderSession,
+  hasGuestSiteOrderSession,
+  ensurePanelRealtimeAuth,
+  CUSTOMER_PANEL_PHONE_KEY,
+} from './supabaseClient.js';
 import { MapPicker } from './MapPicker.jsx';
 import { geocodeAddress } from './utils/nominatimGeocode.js';
 import {
@@ -1096,7 +1106,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         () => (customers || []).find((c) => c && c.id === currentCustomerId) || null,
         [customers, currentCustomerId],
       );
-      const currentCustomerPhone = String(currentCustomer?.phone_number || '').trim();
+      const sessionCustomerPhone = useMemo(() => {
+        if (!isLoggedIn) return '';
+        try {
+          return String(sessionStorage.getItem(CUSTOMER_PANEL_PHONE_KEY) || '').trim();
+        } catch {
+          return '';
+        }
+      }, [isLoggedIn]);
+      const currentCustomerPhone = String(currentCustomer?.phone_number || sessionCustomerPhone || '').trim();
       const currentCustomerDisplayName = String(currentCustomer?.company_name || currentCustomer?.name || '').trim() || 'カスタマー';
       const isOrderForCurrentCustomer = useCallback(
         (order) => {
@@ -1472,9 +1490,28 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [orderKind, selectedProjectId, applyProjectSelection]);
 
       useEffect(() => {
-        if (isGuestSiteOrder || !isLoggedIn || !currentCustomerPhone) return;
+        if (isGuestSiteOrder) {
+          const guestPhone = String(
+            guestSiteOrderCtx?.customer?.phone_number ?? sitePhone ?? '',
+          ).trim();
+          const guestCustomerId = String(guestSiteOrderCtx?.customer?.id ?? currentCustomerId ?? '').trim();
+          if (!guestPhone) return;
+          void registerOneSignalUser(guestPhone, {
+            role: 'customer',
+            customer_id: guestCustomerId,
+          });
+          return;
+        }
+        if (!isLoggedIn || !currentCustomerPhone) return;
         void registerOneSignalUser(currentCustomerPhone, { role: 'customer', customer_id: currentCustomerId || '' });
-      }, [isGuestSiteOrder, isLoggedIn, currentCustomerPhone, currentCustomerId]);
+      }, [
+        isGuestSiteOrder,
+        isLoggedIn,
+        currentCustomerPhone,
+        currentCustomerId,
+        guestSiteOrderCtx,
+        sitePhone,
+      ]);
 
       useEffect(() => {
         if (!isLoggedIn || activeChatOrderId) return;

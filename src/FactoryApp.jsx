@@ -1,6 +1,14 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import * as db from './haishaDb.js';
-import { supabase, setFactoryPanelSession, clearFactoryPanelSession, hasFactoryPanelSession, ensurePanelRealtimeAuth, issuePanelRealtimeAuth } from './supabaseClient.js';
+import {
+  supabase,
+  setFactoryPanelSession,
+  clearFactoryPanelSession,
+  hasFactoryPanelSession,
+  ensurePanelRealtimeAuth,
+  issuePanelRealtimeAuth,
+  FACTORY_PANEL_PASSWORD_KEY,
+} from './supabaseClient.js';
 import { MapPicker } from './MapPicker.jsx';
 import { buildEscalationContext, filterOrdersForFactory, getEffectiveEscalationMinutes } from './utils/escalationUtils.js';
 import {
@@ -3017,7 +3025,16 @@ function orderPartyInfo(order) {
               setActiveFactoryName(displayName);
               setIsFactoryAuthenticated(true);
               void registerOneSignalUser(stored, { role: 'factory', factory_id: stored });
-              void ensurePanelRealtimeAuth();
+              try {
+                const storedPassword = String(sessionStorage.getItem(FACTORY_PANEL_PASSWORD_KEY) || '').trim();
+                if (storedPassword) {
+                  void issuePanelRealtimeAuth('factory', stored, storedPassword);
+                } else {
+                  void ensurePanelRealtimeAuth();
+                }
+              } catch {
+                void ensurePanelRealtimeAuth();
+              }
             } else {
               clearFactoryPanelSession();
               setActiveFactoryId('');

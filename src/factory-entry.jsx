@@ -4,8 +4,10 @@ import { FactoryApp } from './FactoryApp.jsx';
 import { ThemeProvider } from './components/ThemeProvider.jsx';
 import './theme.css';
 import { initTheme } from './utils/theme.js';
+import { initOneSignal, setupNotificationClickRedirect } from './utils/notification.js';
 
 initTheme();
+void initOneSignal().then(() => setupNotificationClickRedirect());
 
 const rootEl = document.getElementById('root');
 if (!rootEl) {

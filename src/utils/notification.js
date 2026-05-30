@@ -1,10 +1,11 @@
 import OneSignal from 'react-onesignal';
+import { ONESIGNAL_APP_ID, ONESIGNAL_SERVICE_WORKER_PATH } from '../constants/onesignal.js';
 
 let oneSignalInitPromise = null;
 let notificationClickListenerRegistered = false;
 
 function appId() {
-  return String(import.meta.env.VITE_ONESIGNAL_APP_ID || '').trim();
+  return String(import.meta.env.VITE_ONESIGNAL_APP_ID || ONESIGNAL_APP_ID || '').trim();
 }
 
 function restApiKey() {
@@ -60,6 +61,10 @@ export async function initOneSignal() {
   if (!oneSignalInitPromise) {
     oneSignalInitPromise = OneSignal.init({
       appId: id,
+      serviceWorkerPath: ONESIGNAL_SERVICE_WORKER_PATH,
+      serviceWorkerParam: { scope: '/' },
+      autoRegister: true,
+      autoResubscribe: true,
       promptOptions: {
         slidedown: {
           prompts: [
