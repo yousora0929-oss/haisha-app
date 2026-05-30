@@ -7,7 +7,7 @@ import {
   todayLocalISODate,
 } from './haishaConstants.js';
 import * as db from './haishaDb.js';
-import { supabase, setCustomerPanelSession, clearCustomerPanelSession, hasCustomerPanelSession } from './supabaseClient.js';
+import { supabase, setCustomerPanelSession, clearCustomerPanelSession, hasCustomerPanelSession, setGuestSiteOrderSession, clearGuestSiteOrderSession, hasGuestSiteOrderSession } from './supabaseClient.js';
 import { MapPicker } from './MapPicker.jsx';
 import { geocodeAddress } from './utils/nominatimGeocode.js';
 import {
@@ -35,6 +35,27 @@ import {
   parseSiteOrderTokenFromPath,
   resolveGuestOrderLockedFields,
 } from './utils/siteOrderUrl.js';
+import {
+  detectCustomerOrderNotifications,
+  analyzeCustomerOrderRealtimePayload,
+} from './utils/customerOrderRealtime.js';
+import {
+  primeNotificationAlarm,
+  startNotificationAlarm,
+  stopNotificationAlarm,
+} from './utils/notificationAlarm.js';
+
+function isOrderForGuestSite(order, ctx) {
+  if (!order || !ctx?.customer?.id) return false;
+  if (String(order.customer_id || order.customerId || '').trim() !== String(ctx.customer.id).trim()) {
+    return false;
+  }
+  const projectId = ctx.project?.id;
+  if (projectId && String(order.project_id || order.projectId || '').trim() !== String(projectId).trim()) {
+    return false;
+  }
+  return true;
+}
 
 const DISPATCH_CUSTOMER_SESSION_KEY = 'haisha_dispatch_customer_id_v1';
 const SITE_ORDER_PENDING_SESSION_KEY = 'haisha_site_order_pending_v1';
@@ -1088,6 +1109,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         },
         [currentCustomerId, currentCustomerPhone],
       );
+      const isRelevantDashboardOrder = useCallback(
+        (order) => {
+          if (isGuestSiteOrder && guestSiteOrderCtx) return isOrderForGuestSite(order, guestSiteOrderCtx);
+          return isOrderForCurrentCustomer(order);
+        },
+        [isGuestSiteOrder, guestSiteOrderCtx, isOrderForCurrentCustomer],
+      );
       const filteredProjects = useMemo(
         () => (projects || []).filter((p) => p && String(p.customer_id || '') === String(currentCustomerId || '')),
         [projects, currentCustomerId],
@@ -1099,58 +1127,96 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, []);
 
       const prevOrdersRef = useRef(null);
+      const dashboardNoticeTimerRef = useRef(null);
 
-      const refreshDashboard = useCallback(async () => {
-        try {
-          const factoryNameById = Object.fromEntries(
-            (Array.isArray(factories) ? factories : []).map((f) => [f.id, f.name]),
-          );
-          let { orders: newOrders, chatThreads: newThreads } = await db.fetchOrdersWithChat();
-          const idSet = new Set(
-            (Array.isArray(newOrders) ? newOrders : [])
-              .map((o) => (o && o.factory_site_id ? String(o.factory_site_id).trim() : ''))
-              .filter(Boolean),
-          );
-          for (const o of newOrders || []) {
-            const pf = o?.preferred_factory_id ?? o?.preferredFactoryId;
-            if (pf) idSet.add(String(pf).trim());
-          }
-          if (preferredFactoryId) idSet.add(String(preferredFactoryId));
-          if (idSet.size === 0) idSet.add(DISPATCH_DEFAULT_FACTORY_SITE_ID);
-          const schedulesByFactoryId = await db.fetchSchedulesForFactories([...idSet]);
-          await db.persistScheduleAutoRejections({
-            schedulesByFactoryId,
-            orders: newOrders,
-            chatThreads: newThreads,
-            factoryNameById,
-            defaultFactorySiteName: DISPATCH_DEFAULT_FACTORY_SITE_NAME,
-            defaultFactorySiteId: DISPATCH_DEFAULT_FACTORY_SITE_ID,
-          });
-          const final = await db.fetchOrdersWithChat();
-          newOrders = final.orders.filter((o) => o && o.status !== 'deleted');
-          const displayOrders = String(currentCustomerId || '').trim()
-            ? newOrders.filter((o) => isOrderForCurrentCustomer(o))
-            : newOrders;
-          newThreads = final.chatThreads;
-
-          if (prevOrdersRef.current) {
-            const prevOrderMapForAdmin = new Map(
-              (Array.isArray(prevOrdersRef.current) ? prevOrdersRef.current : []).filter(Boolean).map((o) => [o.id, o]),
-            );
-            if (displayOrders.some((o) => o?.is_admin_modified && !prevOrderMapForAdmin.get(o.id)?.is_admin_modified)) {
-              setAdminNotice('⚠️ 管理者によって注文内容が変更されました。内容を確認してください。');
-              window.setTimeout(() => setAdminNotice(''), 6000);
-            }
-          }
-
-          prevOrdersRef.current = displayOrders;
-          setDashboardOrders(displayOrders);
-          setChatThreads(newThreads);
-        } catch (err) {
-          console.error(err);
-          window.alert(formatSupabaseError(err, '注文一覧の更新に失敗しました'));
+      const showDashboardNotice = useCallback((message, { playSound = false } = {}) => {
+        if (!message) return;
+        setAdminNotice(message);
+        if (playSound) {
+          startNotificationAlarm();
         }
-      }, [factories, preferredFactoryId, currentCustomerId, isOrderForCurrentCustomer]);
+        if (dashboardNoticeTimerRef.current != null) {
+          window.clearTimeout(dashboardNoticeTimerRef.current);
+        }
+        dashboardNoticeTimerRef.current = window.setTimeout(() => {
+          setAdminNotice('');
+          if (playSound) stopNotificationAlarm();
+          dashboardNoticeTimerRef.current = null;
+        }, 6000);
+      }, []);
+
+      const refreshDashboard = useCallback(
+        async (options, realtimePayload) => {
+          const playSound = Boolean(options?.playSound);
+          try {
+            const factoryNameById = Object.fromEntries(
+              (Array.isArray(factories) ? factories : []).map((f) => [f.id, f.name]),
+            );
+            let { orders: newOrders, chatThreads: newThreads } = await db.fetchOrdersWithChat();
+            const idSet = new Set(
+              (Array.isArray(newOrders) ? newOrders : [])
+                .map((o) => (o && o.factory_site_id ? String(o.factory_site_id).trim() : ''))
+                .filter(Boolean),
+            );
+            for (const o of newOrders || []) {
+              const pf = o?.preferred_factory_id ?? o?.preferredFactoryId;
+              if (pf) idSet.add(String(pf).trim());
+            }
+            if (preferredFactoryId) idSet.add(String(preferredFactoryId));
+            if (idSet.size === 0) idSet.add(DISPATCH_DEFAULT_FACTORY_SITE_ID);
+            const schedulesByFactoryId = await db.fetchSchedulesForFactories([...idSet]);
+            await db.persistScheduleAutoRejections({
+              schedulesByFactoryId,
+              orders: newOrders,
+              chatThreads: newThreads,
+              factoryNameById,
+              defaultFactorySiteName: DISPATCH_DEFAULT_FACTORY_SITE_NAME,
+              defaultFactorySiteId: DISPATCH_DEFAULT_FACTORY_SITE_ID,
+            });
+            const final = await db.fetchOrdersWithChat();
+            newOrders = final.orders.filter((o) => o && o.status !== 'deleted');
+            const displayOrders =
+              isGuestSiteOrder || String(currentCustomerId || '').trim()
+                ? newOrders.filter((o) => isRelevantDashboardOrder(o))
+                : newOrders;
+            newThreads = final.chatThreads;
+
+            const prevOrders = prevOrdersRef.current;
+            if (prevOrders) {
+              const prevOrderMapForAdmin = new Map(
+                (Array.isArray(prevOrders) ? prevOrders : []).filter(Boolean).map((o) => [o.id, o]),
+              );
+              if (displayOrders.some((o) => o?.is_admin_modified && !prevOrderMapForAdmin.get(o.id)?.is_admin_modified)) {
+                showDashboardNotice('⚠️ 管理者によって注文内容が変更されました。内容を確認してください。', { playSound });
+              } else {
+                const detected = detectCustomerOrderNotifications(prevOrders, displayOrders, isRelevantDashboardOrder);
+                if (realtimePayload) {
+                  const fromPayload = analyzeCustomerOrderRealtimePayload(
+                    realtimePayload,
+                    isRelevantDashboardOrder,
+                    db.normalizeOrderRow,
+                  );
+                  if (fromPayload.factoryAccepted) detected.factoryAccepted = true;
+                  if (fromPayload.factoryReassigned) detected.factoryReassigned = true;
+                }
+                if (detected.factoryAccepted) {
+                  showDashboardNotice('注文が工場に受注されました', { playSound });
+                } else if (detected.factoryReassigned) {
+                  showDashboardNotice('手配先工場が変更・調整されました', { playSound });
+                }
+              }
+            }
+
+            prevOrdersRef.current = displayOrders;
+            setDashboardOrders(displayOrders);
+            setChatThreads(newThreads);
+          } catch (err) {
+            console.error(err);
+            window.alert(formatSupabaseError(err, '注文一覧の更新に失敗しました'));
+          }
+        },
+        [factories, preferredFactoryId, currentCustomerId, isGuestSiteOrder, isRelevantDashboardOrder, showDashboardNotice],
+      );
 
       useEffect(() => {
         if (isGuestSiteOrder) return undefined;
@@ -1332,6 +1398,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               );
               // ここまで来たら「初期化完了」とみなす
               guestInitCompletedTokenRef.current = guestOrderToken;
+              setGuestSiteOrderSession(guestOrderToken);
+              primeNotificationAlarm();
             } catch (procErr) {
               console.error('専用発注フォームの初期化に失敗しました', procErr);
               if (!cancelled) {
@@ -1489,11 +1557,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
 
       useEffect(() => {
-        if (isGuestSiteOrder || !isLoggedIn) return undefined;
+        const canSubscribe = isGuestSiteOrder
+          ? Boolean(guestSiteOrderCtx && hasGuestSiteOrderSession())
+          : Boolean(isLoggedIn && hasCustomerPanelSession());
+        if (!canSubscribe) return undefined;
+
         let disposed = false;
         let timerId = null;
         let running = false;
         let pending = false;
+        let pendingPayload = null;
         const runRefresh = async () => {
           if (running) {
             pending = true;
@@ -1503,13 +1576,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           try {
             do {
               pending = false;
-              await refreshDashboard();
+              const payload = pendingPayload;
+              pendingPayload = null;
+              await refreshDashboard({ playSound: true }, payload);
             } while (pending && !disposed);
           } finally {
             running = false;
           }
         };
-        const scheduleRefresh = () => {
+        const scheduleRefresh = (payload) => {
+          if (payload) pendingPayload = payload;
           pending = true;
           if (timerId != null) return;
           timerId = window.setTimeout(() => {
@@ -1517,9 +1593,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             void runRefresh();
           }, 500);
         };
-        void runRefresh();
+        void refreshDashboard({ playSound: false });
+        const channelKey = isGuestSiteOrder
+          ? `dispatch-guest-orders-${String(guestOrderToken || 'guest').replace(/[^a-zA-Z0-9_-]/g, '')}`
+          : `dispatch-customer-orders-${String(currentCustomerId || 'customer').replace(/[^a-zA-Z0-9_-]/g, '')}`;
         const channel = supabase
-          .channel('custom-all-channel')
+          .channel(channelKey)
           .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleRefresh)
           .subscribe();
         return () => {
@@ -1527,49 +1606,21 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           if (timerId != null) window.clearTimeout(timerId);
           void supabase.removeChannel(channel);
         };
-      }, [isGuestSiteOrder, isLoggedIn, refreshDashboard]);
+      }, [
+        isGuestSiteOrder,
+        guestSiteOrderCtx,
+        guestOrderToken,
+        isLoggedIn,
+        currentCustomerId,
+        refreshDashboard,
+      ]);
 
       useEffect(() => {
-        if (isGuestSiteOrder || !isLoggedIn || !String(currentCustomerId || '').trim()) return undefined;
-        let disposed = false;
-        let timerId = null;
-        let running = false;
-        let pending = false;
-        const runRefresh = async () => {
-          if (running) {
-            pending = true;
-            return;
-          }
-          running = true;
-          try {
-            do {
-              pending = false;
-              await refreshDashboard();
-            } while (pending && !disposed);
-          } finally {
-            running = false;
-          }
-        };
-        const scheduleCustomerRefresh = (payload) => {
-          const nextOrder = db.normalizeOrderRow(payload?.new);
-          if (!isOrderForCurrentCustomer(nextOrder)) return;
-          pending = true;
-          if (timerId != null) return;
-          timerId = window.setTimeout(() => {
-            timerId = null;
-            void runRefresh();
-          }, 250);
-        };
-        const channel = supabase
-          .channel(`dispatch-customer-orders-${String(currentCustomerId).replace(/[^a-zA-Z0-9_-]/g, '')}`)
-          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders' }, scheduleCustomerRefresh)
-          .subscribe();
-        return () => {
-          disposed = true;
-          if (timerId != null) window.clearTimeout(timerId);
-          void supabase.removeChannel(channel);
-        };
-      }, [isGuestSiteOrder, currentCustomerId, isLoggedIn, isOrderForCurrentCustomer, refreshDashboard]);
+        if (!isLoggedIn && !isGuestSiteOrder) return undefined;
+        const onGesture = () => primeNotificationAlarm();
+        window.addEventListener('pointerdown', onGesture, { once: true, passive: true });
+        return () => window.removeEventListener('pointerdown', onGesture);
+      }, [isLoggedIn, isGuestSiteOrder]);
 
       const handleSendMasterChat = useCallback(
         async (orderId, text) => {
@@ -1674,6 +1725,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             setCustomers([customer]);
             setIsLoggedIn(true);
             setCustomerPanelSession(phone, password);
+            primeNotificationAlarm();
             void registerOneSignalUser(customer.phone_number, { role: 'customer', customer_id: customer.id });
             setLoginPhone('');
             setLoginPassword('');
@@ -2233,7 +2285,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           </div>
           ) : null}
 
-          <PullToRefresh onRefresh={isGuestSiteOrder ? async () => {} : refreshDashboard} className="mx-auto w-full max-w-6xl px-4 py-6">
+          <PullToRefresh
+            onRefresh={
+              isGuestSiteOrder
+                ? hasGuestSiteOrderSession()
+                  ? () => refreshDashboard({ playSound: false })
+                  : async () => {}
+                : refreshDashboard
+            }
+            className="mx-auto w-full max-w-6xl px-4 py-6"
+          >
           <main id="dispatch-dashboard">
             <div className="grid min-w-0 gap-6">
               {customerOrderTab === 'new' && !newOrderMode && !isGuestSiteOrder ? (
@@ -2903,6 +2964,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   >
                     {submitNotice}
                   </p>
+                ) : null}
+
+                {adminNotice ? (
+                  <div
+                    className="rounded-xl border-2 border-indigo-300 bg-indigo-50 px-4 py-3 text-sm font-black text-indigo-900"
+                    role="alert"
+                  >
+                    {adminNotice}
+                  </div>
                 ) : null}
               </div>
             </form>

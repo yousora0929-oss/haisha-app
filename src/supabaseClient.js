@@ -37,6 +37,7 @@ export const CUSTOMER_PANEL_PHONE_KEY = 'concrete_link_customer_phone_v1';
 export const CUSTOMER_PANEL_PASSWORD_KEY = 'concrete_link_customer_pass_v1';
 export const FACTORY_PANEL_ID_KEY = 'concrete_link_factory_id_v1';
 export const FACTORY_PANEL_PASSWORD_KEY = 'concrete_link_factory_pass_v1';
+export const GUEST_SITE_ORDER_TOKEN_KEY = 'concrete_link_guest_site_order_token_v1';
 
 /** 管理画面ログイン後、RLS 用ヘッダー認証の資格情報を sessionStorage に保存 */
 export function setAdminPanelSession(phone, password) {
@@ -117,6 +118,27 @@ export function hasFactoryPanelSession() {
   }
 }
 
+export function setGuestSiteOrderSession(urlToken) {
+  if (typeof sessionStorage === 'undefined') return;
+  const token = String(urlToken || '').trim();
+  if (!token) return;
+  sessionStorage.setItem(GUEST_SITE_ORDER_TOKEN_KEY, token);
+}
+
+export function clearGuestSiteOrderSession() {
+  if (typeof sessionStorage === 'undefined') return;
+  sessionStorage.removeItem(GUEST_SITE_ORDER_TOKEN_KEY);
+}
+
+export function hasGuestSiteOrderSession() {
+  if (typeof sessionStorage === 'undefined') return false;
+  try {
+    return Boolean(sessionStorage.getItem(GUEST_SITE_ORDER_TOKEN_KEY));
+  } catch {
+    return false;
+  }
+}
+
 function readPanelRequestHeaders() {
   if (typeof sessionStorage === 'undefined') return {};
   try {
@@ -138,6 +160,10 @@ function readPanelRequestHeaders() {
     if (factoryId && factoryPassword) {
       headers['x-factory-id'] = factoryId;
       headers['x-factory-password'] = factoryPassword;
+    }
+    const guestToken = sessionStorage.getItem(GUEST_SITE_ORDER_TOKEN_KEY);
+    if (guestToken) {
+      headers['x-site-order-token'] = guestToken;
     }
     return headers;
   } catch {
