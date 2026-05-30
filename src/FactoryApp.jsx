@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import * as db from './haishaDb.js';
-import { supabase, setFactoryPanelSession, clearFactoryPanelSession, hasFactoryPanelSession } from './supabaseClient.js';
+import { supabase, setFactoryPanelSession, clearFactoryPanelSession, hasFactoryPanelSession, ensurePanelRealtimeAuth, issuePanelRealtimeAuth } from './supabaseClient.js';
 import { MapPicker } from './MapPicker.jsx';
 import { buildEscalationContext, filterOrdersForFactory, getEffectiveEscalationMinutes } from './utils/escalationUtils.js';
 import {
@@ -2621,6 +2621,7 @@ function orderPartyInfo(order) {
             setToastOrder(null);
             setToastIsReassignment(false);
             setFactoryPanelSession(fid, loginPassword);
+            await issuePanelRealtimeAuth('factory', fid, loginPassword);
             try {
               sessionStorage.setItem(FACTORY_SESSION_STORAGE_KEY, fid);
               sessionStorage.setItem(FACTORY_AUTH_STORAGE_KEY, fid);
@@ -3012,6 +3013,7 @@ function orderPartyInfo(order) {
               setActiveFactoryName(displayName);
               setIsFactoryAuthenticated(true);
               void registerOneSignalUser(stored, { role: 'factory', factory_id: stored });
+              void ensurePanelRealtimeAuth();
             } else {
               clearFactoryPanelSession();
               setActiveFactoryId('');
@@ -3082,14 +3084,19 @@ function orderPartyInfo(order) {
             void runRealtimeSync();
           }, 500);
         };
-        const channel = supabase
-          .channel('custom-all-channel')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleRealtimeSync)
-          .subscribe();
+        let channel = null;
+        void (async () => {
+          await ensurePanelRealtimeAuth();
+          if (cancel) return;
+          channel = supabase
+            .channel('custom-all-channel')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleRealtimeSync)
+            .subscribe();
+        })();
         return () => {
           cancel = true;
           if (realtimeTimerId != null) window.clearTimeout(realtimeTimerId);
-          void supabase.removeChannel(channel);
+          if (channel) void supabase.removeChannel(channel);
         };
       }, [activeFactoryId, syncFromStorage, runScheduleAutoPipeline]);
 

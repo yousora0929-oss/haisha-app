@@ -1,10 +1,10 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import * as db from './haishaDb.js';
 import {
-  supabase,
   setAdminPanelSession,
   clearAdminPanelSession,
   hasAdminPanelSession,
+  ensurePanelRealtimeAuth,
 } from './supabaseClient.js';
 import { MapPicker } from './MapPicker.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
@@ -634,14 +634,17 @@ function ProjectsSection({ factories, factoryNameById }) {
 
   useEffect(() => {
     let timerId = null;
-    const unsub = db.subscribeHaishaRealtime((payload) => {
-      if (payload?.table !== 'customers') return;
-      if (timerId != null) window.clearTimeout(timerId);
-      timerId = window.setTimeout(() => {
-        timerId = null;
-        void load();
-      }, 500);
-    });
+    let unsub = () => {};
+    void (async () => {
+      unsub = await db.subscribeHaishaRealtime((payload) => {
+        if (payload?.table !== 'customers') return;
+        if (timerId != null) window.clearTimeout(timerId);
+        timerId = window.setTimeout(() => {
+          timerId = null;
+          void load();
+        }, 500);
+      });
+    })();
     return () => {
       if (timerId != null) window.clearTimeout(timerId);
       unsub();
@@ -791,9 +794,12 @@ function CustomersSection() {
 
   useEffect(() => {
     void load();
-    const unsub = db.subscribeHaishaRealtime((payload) => {
-      if (payload?.table === 'customers') void load();
-    });
+    let unsub = () => {};
+    void (async () => {
+      unsub = await db.subscribeHaishaRealtime((payload) => {
+        if (payload?.table === 'customers') void load();
+      });
+    })();
     return () => unsub();
   }, [load]);
 
@@ -1191,9 +1197,12 @@ function AdminSettingsSection() {
 
   useEffect(() => {
     void load();
-    const unsub = db.subscribeHaishaRealtime((payload) => {
-      if (payload?.table === 'admin_settings') void load();
-    });
+    let unsub = () => {};
+    void (async () => {
+      unsub = await db.subscribeHaishaRealtime((payload) => {
+        if (payload?.table === 'admin_settings') void load();
+      });
+    })();
     return () => unsub();
   }, [load]);
 
@@ -1634,14 +1643,14 @@ function OrdersMonitorSection({
       }, 500);
     };
     void runLoad();
-    const channel = supabase
-      .channel('custom-all-channel')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleLoad)
-      .subscribe();
+    let unsub = () => {};
+    void (async () => {
+      unsub = await db.subscribeHaishaRealtime(scheduleLoad);
+    })();
     return () => {
       disposed = true;
       if (timerId != null) window.clearTimeout(timerId);
-      void supabase.removeChannel(channel);
+      unsub();
     };
   }, [load]);
 
@@ -2102,6 +2111,7 @@ function AdminLoginScreen({ onLogin }) {
     try {
       const admin = await db.loginAdmin(phone, pass);
       setAdminPanelSession(phone, pass);
+      await ensurePanelRealtimeAuth(admin?.realtime_token);
       try {
         sessionStorage.setItem(ADMIN_AUTH_SESSION_KEY, '1');
       } catch {
@@ -2197,6 +2207,12 @@ export function AdminApp() {
     setIsAdminLoggedIn(false);
   }, []);
 
+  useEffect(() => {
+    if (!isAdminLoggedIn) return undefined;
+    void ensurePanelRealtimeAuth();
+    return undefined;
+  }, [isAdminLoggedIn]);
+
   const loadFactoryStatus = useCallback(async () => {
     try {
       const rows = await db.fetchFactories();
@@ -2238,7 +2254,10 @@ export function AdminApp() {
       }, 500);
     };
     void runLoad();
-    const unsub = db.subscribeHaishaRealtime(scheduleLoad);
+    let unsub = () => {};
+    void (async () => {
+      unsub = await db.subscribeHaishaRealtime(scheduleLoad);
+    })();
     return () => {
       disposed = true;
       if (timerId != null) window.clearTimeout(timerId);
@@ -2257,9 +2276,12 @@ export function AdminApp() {
 
   useEffect(() => {
     void loadAdminSettings();
-    const unsub = db.subscribeHaishaRealtime((payload) => {
-      if (payload?.table === 'admin_settings') void loadAdminSettings();
-    });
+    let unsub = () => {};
+    void (async () => {
+      unsub = await db.subscribeHaishaRealtime((payload) => {
+        if (payload?.table === 'admin_settings') void loadAdminSettings();
+      });
+    })();
     return () => unsub();
   }, [loadAdminSettings]);
 

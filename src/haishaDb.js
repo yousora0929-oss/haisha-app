@@ -6,7 +6,7 @@ import {
   normalizeMapAnnotations,
 } from './utils/mapAnnotations.js';
 import { normalizeExternalUrl } from './utils/urlValidation.js';
-import { supabase } from './supabaseClient.js';
+import { supabase, ensurePanelRealtimeAuth } from './supabaseClient.js';
 import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils/deliveryAreas.js';
 import { isValidSiteOrderUrlToken, resolveUrlTokenForInsert } from './utils/urlValidation.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
@@ -952,7 +952,8 @@ export async function persistScheduleAutoRejections({
   return { changed: true, orders: next, chatThreads: nextThreads };
 }
 
-export function subscribeHaishaRealtime(onEvent) {
+export async function subscribeHaishaRealtime(onEvent) {
+  await ensurePanelRealtimeAuth();
   const channelName = `haisha-realtime-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const channel = supabase
     .channel(channelName)
@@ -1083,7 +1084,7 @@ export async function loginCustomer(phoneNumber, password) {
   if (!error && data != null) {
     const row = typeof data === 'string' ? JSON.parse(data) : data;
     if (!row || !row.id) return null;
-    return mapCustomerRow({ ...row, login_password: pass });
+    return mapCustomerRow({ ...row, login_password: pass, realtime_token: row.realtime_token });
   }
 
   const missingFn =
@@ -1136,7 +1137,7 @@ export async function loginAdmin(phoneNumber, password) {
   });
   if (!error && data != null) {
     const row = typeof data === 'string' ? JSON.parse(data) : data;
-    return mapAdminSettingsRow({ ...row, login_password: pass });
+    return mapAdminSettingsRow({ ...row, login_password: pass, realtime_token: row.realtime_token });
   }
 
   const missingFn =

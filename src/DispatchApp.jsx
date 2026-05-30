@@ -7,7 +7,7 @@ import {
   todayLocalISODate,
 } from './haishaConstants.js';
 import * as db from './haishaDb.js';
-import { supabase, setCustomerPanelSession, clearCustomerPanelSession, hasCustomerPanelSession, setGuestSiteOrderSession, clearGuestSiteOrderSession, hasGuestSiteOrderSession } from './supabaseClient.js';
+import { supabase, setCustomerPanelSession, clearCustomerPanelSession, hasCustomerPanelSession, setGuestSiteOrderSession, clearGuestSiteOrderSession, hasGuestSiteOrderSession, ensurePanelRealtimeAuth } from './supabaseClient.js';
 import { MapPicker } from './MapPicker.jsx';
 import { geocodeAddress } from './utils/nominatimGeocode.js';
 import {
@@ -1399,6 +1399,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               // ここまで来たら「初期化完了」とみなす
               guestInitCompletedTokenRef.current = guestOrderToken;
               setGuestSiteOrderSession(guestOrderToken);
+              await ensurePanelRealtimeAuth();
               primeNotificationAlarm();
             } catch (procErr) {
               console.error('専用発注フォームの初期化に失敗しました', procErr);
@@ -1597,14 +1598,19 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         const channelKey = isGuestSiteOrder
           ? `dispatch-guest-orders-${String(guestOrderToken || 'guest').replace(/[^a-zA-Z0-9_-]/g, '')}`
           : `dispatch-customer-orders-${String(currentCustomerId || 'customer').replace(/[^a-zA-Z0-9_-]/g, '')}`;
-        const channel = supabase
-          .channel(channelKey)
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleRefresh)
-          .subscribe();
+        let channel = null;
+        void (async () => {
+          await ensurePanelRealtimeAuth();
+          if (disposed) return;
+          channel = supabase
+            .channel(channelKey)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleRefresh)
+            .subscribe();
+        })();
         return () => {
           disposed = true;
           if (timerId != null) window.clearTimeout(timerId);
-          void supabase.removeChannel(channel);
+          if (channel) void supabase.removeChannel(channel);
         };
       }, [
         isGuestSiteOrder,
@@ -1614,6 +1620,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         currentCustomerId,
         refreshDashboard,
       ]);
+
+      useEffect(() => {
+        if (!isLoggedIn || isGuestSiteOrder) return undefined;
+        void ensurePanelRealtimeAuth();
+        return undefined;
+      }, [isLoggedIn, isGuestSiteOrder]);
 
       useEffect(() => {
         if (!isLoggedIn && !isGuestSiteOrder) return undefined;
@@ -1725,6 +1737,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             setCustomers([customer]);
             setIsLoggedIn(true);
             setCustomerPanelSession(phone, password);
+            await ensurePanelRealtimeAuth(customer?.realtime_token);
             primeNotificationAlarm();
             void registerOneSignalUser(customer.phone_number, { role: 'customer', customer_id: customer.id });
             setLoginPhone('');

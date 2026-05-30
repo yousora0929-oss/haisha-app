@@ -49,10 +49,15 @@ export function setAdminPanelSession(phone, password) {
   sessionStorage.setItem(ADMIN_PANEL_PASSWORD_KEY, pass);
 }
 
+export const PANEL_REALTIME_TOKEN_KEY = 'concrete_link_panel_realtime_token_v1';
+
+let panelRealtimeAuthPromise = null;
+
 export function clearAdminPanelSession() {
   if (typeof sessionStorage === 'undefined') return;
   sessionStorage.removeItem(ADMIN_PANEL_PHONE_KEY);
   sessionStorage.removeItem(ADMIN_PANEL_PASSWORD_KEY);
+  clearPanelRealtimeAuth();
 }
 
 export function hasAdminPanelSession() {
@@ -79,6 +84,7 @@ export function clearCustomerPanelSession() {
   if (typeof sessionStorage === 'undefined') return;
   sessionStorage.removeItem(CUSTOMER_PANEL_PHONE_KEY);
   sessionStorage.removeItem(CUSTOMER_PANEL_PASSWORD_KEY);
+  clearPanelRealtimeAuth();
 }
 
 export function hasCustomerPanelSession() {
@@ -105,6 +111,7 @@ export function clearFactoryPanelSession() {
   if (typeof sessionStorage === 'undefined') return;
   sessionStorage.removeItem(FACTORY_PANEL_ID_KEY);
   sessionStorage.removeItem(FACTORY_PANEL_PASSWORD_KEY);
+  clearPanelRealtimeAuth();
 }
 
 export function hasFactoryPanelSession() {
@@ -128,6 +135,7 @@ export function setGuestSiteOrderSession(urlToken) {
 export function clearGuestSiteOrderSession() {
   if (typeof sessionStorage === 'undefined') return;
   sessionStorage.removeItem(GUEST_SITE_ORDER_TOKEN_KEY);
+  clearPanelRealtimeAuth();
 }
 
 export function hasGuestSiteOrderSession() {
@@ -137,6 +145,97 @@ export function hasGuestSiteOrderSession() {
   } catch {
     return false;
   }
+}
+
+function detectPanelCredentials() {
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    const adminPhone = sessionStorage.getItem(ADMIN_PANEL_PHONE_KEY);
+    const adminPassword = sessionStorage.getItem(ADMIN_PANEL_PASSWORD_KEY);
+    if (adminPhone && adminPassword) {
+      return { panelType: 'admin', credentialA: adminPhone, credentialB: adminPassword };
+    }
+    const customerPhone = sessionStorage.getItem(CUSTOMER_PANEL_PHONE_KEY);
+    const customerPassword = sessionStorage.getItem(CUSTOMER_PANEL_PASSWORD_KEY);
+    if (customerPhone && customerPassword) {
+      return { panelType: 'customer', credentialA: customerPhone, credentialB: customerPassword };
+    }
+    const factoryId = sessionStorage.getItem(FACTORY_PANEL_ID_KEY);
+    const factoryPassword = sessionStorage.getItem(FACTORY_PANEL_PASSWORD_KEY);
+    if (factoryId && factoryPassword) {
+      return { panelType: 'factory', credentialA: factoryId, credentialB: factoryPassword };
+    }
+    const guestToken = sessionStorage.getItem(GUEST_SITE_ORDER_TOKEN_KEY);
+    if (guestToken) {
+      return { panelType: 'guest', credentialA: guestToken, credentialB: null };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/** Realtime 用 JWT を supabase.realtime に適用 */
+export async function applyPanelRealtimeAuth(token) {
+  const normalized = token ? String(token).trim() : '';
+  if (typeof sessionStorage !== 'undefined') {
+    if (normalized) sessionStorage.setItem(PANEL_REALTIME_TOKEN_KEY, normalized);
+    else sessionStorage.removeItem(PANEL_REALTIME_TOKEN_KEY);
+  }
+  await supabase.realtime.setAuth(normalized || null);
+  return normalized || null;
+}
+
+export function clearPanelRealtimeAuth() {
+  if (typeof sessionStorage !== 'undefined') {
+    sessionStorage.removeItem(PANEL_REALTIME_TOKEN_KEY);
+  }
+  void supabase.realtime.setAuth(null);
+}
+
+/** RPC で Realtime JWT を発行して適用 */
+export async function issuePanelRealtimeAuth(panelType, credentialA, credentialB) {
+  const { data, error } = await supabase.rpc('issue_panel_realtime_jwt', {
+    p_panel_type: panelType,
+    p_credential_a: credentialA ?? null,
+    p_credential_b: credentialB ?? null,
+  });
+  if (error) throw error;
+  const token = data != null ? String(data).trim() : '';
+  if (!token) throw new Error('Realtime JWT の発行に失敗しました');
+  return applyPanelRealtimeAuth(token);
+}
+
+/**
+ * セッション復元・チャネル購読前に呼ぶ。
+ * preferredToken があればそれを優先（login RPC 同梱トークン等）。
+ */
+export async function ensurePanelRealtimeAuth(preferredToken) {
+  if (preferredToken) {
+    return applyPanelRealtimeAuth(preferredToken);
+  }
+  if (panelRealtimeAuthPromise) return panelRealtimeAuthPromise;
+  panelRealtimeAuthPromise = (async () => {
+    try {
+      const stored =
+        typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(PANEL_REALTIME_TOKEN_KEY) : null;
+      if (stored) {
+        return applyPanelRealtimeAuth(stored);
+      }
+      const creds = detectPanelCredentials();
+      if (!creds) {
+        await supabase.realtime.setAuth(null);
+        return null;
+      }
+      return issuePanelRealtimeAuth(creds.panelType, creds.credentialA, creds.credentialB);
+    } catch (err) {
+      console.warn('[haisha] Realtime JWT の適用に失敗しました', err);
+      return null;
+    } finally {
+      panelRealtimeAuthPromise = null;
+    }
+  })();
+  return panelRealtimeAuthPromise;
 }
 
 function readPanelRequestHeaders() {
