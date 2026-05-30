@@ -33,6 +33,8 @@ function normalizeSupabaseProjectUrl(raw) {
 
 export const ADMIN_PANEL_PHONE_KEY = 'concrete_link_admin_phone_v1';
 export const ADMIN_PANEL_PASSWORD_KEY = 'concrete_link_admin_pass_v1';
+export const CUSTOMER_PANEL_PHONE_KEY = 'concrete_link_customer_phone_v1';
+export const CUSTOMER_PANEL_PASSWORD_KEY = 'concrete_link_customer_pass_v1';
 
 /** 管理画面ログイン後、RLS 用ヘッダー認証の資格情報を sessionStorage に保存 */
 export function setAdminPanelSession(phone, password) {
@@ -61,16 +63,49 @@ export function hasAdminPanelSession() {
   }
 }
 
-function readAdminPanelRequestHeaders() {
+export function setCustomerPanelSession(phone, password) {
+  if (typeof sessionStorage === 'undefined') return;
+  const p = String(phone || '').trim();
+  const pass = String(password || '').trim();
+  if (!p || !pass) return;
+  sessionStorage.setItem(CUSTOMER_PANEL_PHONE_KEY, p);
+  sessionStorage.setItem(CUSTOMER_PANEL_PASSWORD_KEY, pass);
+}
+
+export function clearCustomerPanelSession() {
+  if (typeof sessionStorage === 'undefined') return;
+  sessionStorage.removeItem(CUSTOMER_PANEL_PHONE_KEY);
+  sessionStorage.removeItem(CUSTOMER_PANEL_PASSWORD_KEY);
+}
+
+export function hasCustomerPanelSession() {
+  if (typeof sessionStorage === 'undefined') return false;
+  try {
+    return Boolean(
+      sessionStorage.getItem(CUSTOMER_PANEL_PHONE_KEY) && sessionStorage.getItem(CUSTOMER_PANEL_PASSWORD_KEY),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function readPanelRequestHeaders() {
   if (typeof sessionStorage === 'undefined') return {};
   try {
-    const phone = sessionStorage.getItem(ADMIN_PANEL_PHONE_KEY);
-    const password = sessionStorage.getItem(ADMIN_PANEL_PASSWORD_KEY);
-    if (!phone || !password) return {};
-    return {
-      'x-admin-phone': phone,
-      'x-admin-password': password,
-    };
+    const headers = {};
+    const adminPhone = sessionStorage.getItem(ADMIN_PANEL_PHONE_KEY);
+    const adminPassword = sessionStorage.getItem(ADMIN_PANEL_PASSWORD_KEY);
+    if (adminPhone && adminPassword) {
+      headers['x-admin-phone'] = adminPhone;
+      headers['x-admin-password'] = adminPassword;
+    }
+    const customerPhone = sessionStorage.getItem(CUSTOMER_PANEL_PHONE_KEY);
+    const customerPassword = sessionStorage.getItem(CUSTOMER_PANEL_PASSWORD_KEY);
+    if (customerPhone && customerPassword) {
+      headers['x-customer-phone'] = customerPhone;
+      headers['x-customer-password'] = customerPassword;
+    }
+    return headers;
   } catch {
     return {};
   }
@@ -94,9 +129,9 @@ export const supabase = createClient(supabaseUrl, anonKey, {
   },
   global: {
     fetch: (url, options = {}) => {
-      const adminHdrs = readAdminPanelRequestHeaders();
+      const panelHdrs = readPanelRequestHeaders();
       const headers = new Headers(options.headers || {});
-      for (const [key, value] of Object.entries(adminHdrs)) {
+      for (const [key, value] of Object.entries(panelHdrs)) {
         if (value) headers.set(key, value);
       }
       return fetch(url, { ...options, headers });

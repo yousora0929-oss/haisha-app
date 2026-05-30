@@ -7,7 +7,7 @@ import {
   todayLocalISODate,
 } from './haishaConstants.js';
 import * as db from './haishaDb.js';
-import { supabase } from './supabaseClient.js';
+import { supabase, setCustomerPanelSession, clearCustomerPanelSession, hasCustomerPanelSession } from './supabaseClient.js';
 import { MapPicker } from './MapPicker.jsx';
 import { geocodeAddress } from './utils/nominatimGeocode.js';
 import {
@@ -965,7 +965,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
       const [isLoggedIn, setIsLoggedIn] = useState(() => {
         try {
-          return Boolean(sessionStorage.getItem(DISPATCH_AUTH_SESSION_KEY));
+          return Boolean(sessionStorage.getItem(DISPATCH_AUTH_SESSION_KEY)) && hasCustomerPanelSession();
         } catch {
           return false;
         }
@@ -1157,11 +1157,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         let cancelled = false;
         (async () => {
           try {
+            if (!isLoggedIn || !hasCustomerPanelSession()) {
+              const adminSettingRows = await db.fetchDispatchOperationalSettings();
+              if (cancelled) return;
+              setAdminSettings(adminSettingRows || { admin_name: '', phone_number: '' });
+              return;
+            }
             const [rows, projs, customerRows, adminSettingRows] = await Promise.all([
               db.fetchFactories(),
               db.fetchProjects(),
               db.fetchCustomers(),
-              db.fetchAdminSettings(),
+              db.fetchDispatchOperationalSettings(),
             ]);
             if (cancelled) return;
             setFactories(rows);
@@ -1180,9 +1186,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   return '';
                 }
               })();
-              if (!authId || !customerRows.some((c) => c && c.id === authId)) {
+              if (!authId || !hasCustomerPanelSession() || !customerRows.some((c) => c && c.id === authId)) {
                 setIsLoggedIn(false);
                 setCurrentCustomerId('');
+                clearCustomerPanelSession();
                 try {
                   sessionStorage.removeItem(DISPATCH_AUTH_SESSION_KEY);
                   sessionStorage.removeItem(DISPATCH_CUSTOMER_SESSION_KEY);
@@ -1664,7 +1671,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               return;
             }
             setCurrentCustomerId(customer.id);
+            setCustomers([customer]);
             setIsLoggedIn(true);
+            setCustomerPanelSession(phone, password);
             void registerOneSignalUser(customer.phone_number, { role: 'customer', customer_id: customer.id });
             setLoginPhone('');
             setLoginPassword('');
@@ -1688,12 +1697,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const handleCustomerLogout = useCallback(() => {
         setIsLoggedIn(false);
         setCurrentCustomerId('');
+        setCustomers([]);
         setSelectedProjectId('');
         setPreferredFactoryId('');
         setShowConfirmModal(false);
         setConfirmOrders([]);
         setLoginPassword('');
         setLoginError('');
+        clearCustomerPanelSession();
         try {
           sessionStorage.removeItem(DISPATCH_AUTH_SESSION_KEY);
           sessionStorage.removeItem(DISPATCH_CUSTOMER_SESSION_KEY);

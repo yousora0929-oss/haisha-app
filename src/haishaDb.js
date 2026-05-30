@@ -1075,14 +1075,29 @@ export async function loginCustomer(phoneNumber, password) {
   const phone = String(phoneNumber || '').trim();
   const pass = String(password || '').trim();
   if (!phone || !pass) return null;
-  const { data, error } = await supabase
+
+  const { data, error } = await supabase.rpc('login_customer', {
+    p_phone: phone,
+    p_password: pass,
+  });
+  if (!error && data != null) {
+    const row = typeof data === 'string' ? JSON.parse(data) : data;
+    if (!row || !row.id) return null;
+    return mapCustomerRow({ ...row, login_password: pass });
+  }
+
+  const missingFn =
+    error && (error.code === '42883' || /login_customer/i.test(String(error.message || '')));
+  if (!missingFn) throw error;
+
+  const { data: legacy, error: legacyErr } = await supabase
     .from('customers')
     .select('*')
     .eq('phone_number', phone)
     .eq('login_password', pass)
     .maybeSingle();
-  if (error) throw error;
-  return data ? mapCustomerRow(data) : null;
+  if (legacyErr) throw legacyErr;
+  return legacy ? mapCustomerRow(legacy) : null;
 }
 
 export async function deleteCustomer(id) {
