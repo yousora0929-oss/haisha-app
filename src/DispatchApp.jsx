@@ -19,6 +19,7 @@ import {
   setupNotificationClickRedirect,
 } from './utils/notification.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
+import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
 import { OrderCartPreview } from './components/OrderCartPreview.jsx';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
@@ -2072,7 +2073,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         'min-h-[56px] flex-1 rounded-xl border-2 px-4 py-3.5 text-base font-bold transition-colors';
       const adminPhoneNumber = String(adminSettings?.phone_number || '').trim();
       const adminTelHref = adminPhoneNumber ? `tel:${adminPhoneNumber.replace(/[^\d+]/g, '')}` : '';
-      const adminDisplayName = String(adminSettings?.admin_name || '').trim() || '管理者';
       const guestVendorLabel = useMemo(() => {
         if (!isGuestSiteOrder || !guestSiteOrderCtx) return '';
         const p = guestSiteOrderCtx.project;
@@ -2204,10 +2204,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   {isGuestSiteOrder ? (
-                    <img src={concreteLinkLogo} alt="CONCRETE LINK" className="h-10 w-auto" />
+                    <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-10 w-auto" />
                   ) : (
-                    <a href="/" className="inline-flex w-fit items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label="CONCRETE LINK トップへ戻る">
-                      <img src={concreteLinkLogo} alt="CONCRETE LINK" className="h-10 w-auto" />
+                    <a href="/" className="inline-flex w-fit items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label={APP_BRAND_HOME_LABEL}>
+                      <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-10 w-auto" />
                     </a>
                   )}
                   {isGuestSiteOrder ? (
@@ -2229,7 +2229,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       ) : null}
                     </div>
                   ) : (
-                    <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{adminDisplayName}</p>
+                    <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{APP_BRAND_NAME}</p>
                   )}
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">

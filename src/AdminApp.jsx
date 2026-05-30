@@ -36,6 +36,7 @@ import {
 import { SCHEDULE_BLOCK_IDS, normalizeDayBlockSchedule, todayLocalISODate } from './haishaConstants.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
+import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
 
 const ADMIN_AUTH_SESSION_KEY = 'concrete_link_admin_auth_v1';
@@ -2129,8 +2130,8 @@ function AdminLoginScreen({ onLogin }) {
   return (
     <div className="flex min-h-[100dvh] w-full items-center justify-center overflow-x-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 px-4 py-[max(2rem,env(safe-area-inset-top))] text-white">
       <form onSubmit={submit} className="w-full max-w-md rounded-3xl border border-white/10 bg-slate-950/80 p-6 shadow-2xl ring-1 ring-white/10 backdrop-blur sm:p-8">
-        <a href="/" className="inline-flex w-fit rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label="CONCRETE LINK トップへ戻る">
-          <img src={concreteLinkLogo} alt="CONCRETE LINK" className="h-12 w-auto rounded bg-white/95 p-1" />
+        <a href="/" className="inline-flex w-fit rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label={APP_BRAND_HOME_LABEL}>
+          <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-12 w-auto rounded bg-white/95 p-1" />
         </a>
         <p className="mt-6 text-xs font-black uppercase tracking-[0.24em] text-indigo-300">Admin Control Panel</p>
         <h1 className="mt-2 text-2xl font-black tracking-tight text-white">管理者専用ログイン</h1>
@@ -2190,7 +2191,6 @@ export function AdminApp() {
   const [activeMonitorTab, setActiveMonitorTab] = useState('orders');
   const [adminSettings, setAdminSettings] = useState({ admin_name: '', phone_number: '' });
   const factoryNameById = useMemo(() => Object.fromEntries(factories.map((f) => [f.id, f.name])), [factories]);
-  const adminDisplayName = String(adminSettings?.admin_name || '').trim() || '管理者';
 
   const handleAdminLogin = useCallback((admin) => {
     setIsAdminLoggedIn(true);
@@ -2304,10 +2304,10 @@ export function AdminApp() {
       <header className="border-b border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
         <div className="mx-auto flex max-w-6xl flex-wrap items-start justify-between gap-3 px-4 py-5 sm:px-6">
           <div className="min-w-0">
-            <a href="/" className="inline-flex w-fit items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label="CONCRETE LINK トップへ戻る">
-              <img src={concreteLinkLogo} alt="CONCRETE LINK" className="h-10 w-auto" />
+            <a href="/" className="inline-flex w-fit items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label={APP_BRAND_HOME_LABEL}>
+              <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-10 w-auto" />
             </a>
-            <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{adminDisplayName}</p>
+            <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{APP_BRAND_NAME}</p>
             <p className="mt-2 text-sm text-slate-500">全注文の監視・工場別スケジュール・物件マスタ・休日設定（Supabase 連携）</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">

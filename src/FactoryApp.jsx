@@ -35,7 +35,9 @@ import { isLocationPendingOrder } from './utils/orderWorkflow.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { MAP_EDITOR_ORDER_SAVED_DOM_EVENT, MAP_EDITOR_ORDER_SAVED_EVENT_KEY } from './mapEditorConstants.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
+import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
+import { OrderAcceptModal } from './components/OrderAcceptModal.jsx';
 import {
   detectFactoryNotifyOrderIds,
   analyzeFactoryOrderRealtimePayload,
@@ -2503,6 +2505,8 @@ function orderPartyInfo(order) {
       const [escalationTick, setEscalationTick] = useState(0);
       const [toastOrder, setToastOrder] = useState(null);
       const [toastIsReassignment, setToastIsReassignment] = useState(false);
+      const [acceptModalOrder, setAcceptModalOrder] = useState(null);
+      const [acceptSubmitting, setAcceptSubmitting] = useState(false);
       const [actionNotice, setActionNotice] = useState('');
       const [chatThreads, setChatThreads] = useState({});
       const [readChatKeys, setReadChatKeys] = useState({});
@@ -3150,30 +3154,46 @@ function orderPartyInfo(order) {
       );
 
       const handleAcceptOrder = useCallback(
-        async (order) => {
+        (order) => {
           if (!order?.id || !activeFactoryId) return;
-          if (!window.confirm('この注文を受注しますか？')) return;
-          markOrderRead(order.id);
-          try {
-            const accepted = await db.acceptOrderForFactory(order, activeFactoryId, activeFactoryName);
-            setRawOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === accepted.id ? accepted : o)) : prev));
-            setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === accepted.id ? accepted : o)) : prev));
-            setActionNotice('受注しました！');
-            window.setTimeout(() => setActionNotice(''), 4500);
-            void notifyCustomerOrderStatus(accepted, 'accepted', activeFactoryName);
-            await appendOrderChatMessage(
-              accepted.id,
-              'system',
-              `【受注】${activeFactoryName}がこの注文を受注しました。`,
-            );
-            await syncFromStorage({ playSound: false });
-          } catch (e) {
-            console.error(e);
-            window.alert('受注処理に失敗しました。通信状態を確認して再度お試しください。');
-          }
+          setAcceptModalOrder(order);
         },
-        [activeFactoryId, activeFactoryName, markOrderRead, syncFromStorage],
+        [activeFactoryId],
       );
+
+      const executeAcceptOrder = useCallback(async () => {
+        const order = acceptModalOrder;
+        if (!order?.id || !activeFactoryId || acceptSubmitting) return;
+        setAcceptSubmitting(true);
+        markOrderRead(order.id);
+        try {
+          const accepted = await db.acceptOrderForFactory(order, activeFactoryId, activeFactoryName);
+          setRawOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === accepted.id ? accepted : o)) : prev));
+          setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === accepted.id ? accepted : o)) : prev));
+          setAcceptModalOrder(null);
+          setActionNotice('受注しました！');
+          window.setTimeout(() => setActionNotice(''), 4500);
+          void notifyCustomerOrderStatus(accepted, 'accepted', activeFactoryName);
+          await appendOrderChatMessage(
+            accepted.id,
+            'system',
+            `【受注】${activeFactoryName}がこの注文を受注しました。`,
+          );
+          await syncFromStorage({ playSound: false });
+        } catch (e) {
+          console.error(e);
+          window.alert('受注処理に失敗しました。通信状態を確認して再度お試しください。');
+        } finally {
+          setAcceptSubmitting(false);
+        }
+      }, [
+        acceptModalOrder,
+        acceptSubmitting,
+        activeFactoryId,
+        activeFactoryName,
+        markOrderRead,
+        syncFromStorage,
+      ]);
 
       const handleRejectOrder = useCallback(
         async (order) => {
@@ -3536,8 +3556,8 @@ function orderPartyInfo(order) {
           ) : null}
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-1.5 border-b border-slate-200 bg-white px-2 py-1 shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <div className="flex min-w-0 items-center gap-2">
-              <a href="/" className="inline-flex w-fit shrink-0 items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label="CONCRETE LINK トップへ戻る">
-                <img src={concreteLinkLogo} alt="CONCRETE LINK" className="h-7 w-auto sm:h-8" />
+              <a href="/" className="inline-flex w-fit shrink-0 items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label={APP_BRAND_HOME_LABEL}>
+                <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-7 w-auto sm:h-8" />
               </a>
               <div className="min-w-0">
                 <p className="truncate text-xs font-black text-slate-900 sm:text-sm">工場画面</p>
@@ -3677,6 +3697,15 @@ function orderPartyInfo(order) {
           </PullToRefresh>
 
           <NewOrderToast order={toastOrder} isReassignment={toastIsReassignment} onDismiss={dismissNewOrderToast} />
+          <OrderAcceptModal
+            order={acceptModalOrder}
+            open={Boolean(acceptModalOrder)}
+            submitting={acceptSubmitting}
+            onClose={() => {
+              if (!acceptSubmitting) setAcceptModalOrder(null);
+            }}
+            onConfirm={() => void executeAcceptOrder()}
+          />
           {actionNotice ? (
             <div
               className="fixed bottom-4 left-4 z-[95] rounded-2xl border-2 border-emerald-600 bg-white px-4 py-3 text-sm font-black text-emerald-800 shadow-2xl sm:left-6 sm:text-base"

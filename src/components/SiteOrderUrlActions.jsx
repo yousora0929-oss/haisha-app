@@ -8,6 +8,7 @@ import {
   resolveSiteOrderPartiesFromProject,
   siteOrderUrlValidationMessage,
 } from '../utils/siteOrderUrl.js';
+import { APP_BRAND_NAME } from '../constants/brand.js';
 import { isValidSiteOrderUrlToken } from '../utils/urlValidation.js';
 
 function SiteOrderQrModal({ open, parties, url, onClose }) {
@@ -59,7 +60,7 @@ function SiteOrderQrModal({ open, parties, url, onClose }) {
         onClick={(e) => e.stopPropagation()}
       >
         <p className="site-order-qr-print-brand site-order-qr-no-print text-center text-[10px] font-black uppercase tracking-widest text-indigo-700">
-          CONCRETE LINK
+          {APP_BRAND_NAME}
         </p>
         <h2 id="site-order-qr-title" className="site-order-qr-no-print text-center text-lg font-black text-slate-900">
           専用発注URL（QRコード）
