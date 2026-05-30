@@ -1,3 +1,7 @@
+-- admin_settings: 古い環境では updated_at が無い場合がある
+alter table public.admin_settings
+  add column if not exists updated_at timestamptz not null default now();
+
 -- =============================================================================
 -- 管理者画面（電話番号 + パスワード・anon キー）向け RLS 補完
 --
@@ -56,9 +60,19 @@ security definer
 set search_path = public
 as $$
 declare
-  r public.admin_settings%rowtype;
+  v_id integer;
+  v_admin_name text;
+  v_phone_number text;
+  v_areas jsonb;
+  v_spot numeric;
 begin
-  select * into r
+  select
+    s.id,
+    s.admin_name,
+    s.phone_number,
+    coalesce(s.allowed_delivery_areas, '[]'::jsonb),
+    s.spot_threshold_volume
+  into v_id, v_admin_name, v_phone_number, v_areas, v_spot
   from public.admin_settings s
   where s.id = 1
     and trim(coalesce(s.phone_number, '')) = trim(coalesce(p_phone, ''))
@@ -68,12 +82,11 @@ begin
       using errcode = 'P0001';
   end if;
   return jsonb_build_object(
-    'id', r.id,
-    'admin_name', r.admin_name,
-    'phone_number', r.phone_number,
-    'allowed_delivery_areas', coalesce(r.allowed_delivery_areas, '[]'::jsonb),
-    'spot_threshold_volume', r.spot_threshold_volume,
-    'updated_at', r.updated_at
+    'id', v_id,
+    'admin_name', v_admin_name,
+    'phone_number', v_phone_number,
+    'allowed_delivery_areas', v_areas,
+    'spot_threshold_volume', v_spot
   );
 end;
 $$;

@@ -11,6 +11,7 @@ import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils
 import { isValidSiteOrderUrlToken, resolveUrlTokenForInsert } from './utils/urlValidation.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { normalizeAssociationFactorySelection } from './utils/associationFactoryAssignment.js';
+import { shouldResetOrderStatusOnFactoryReassign } from './utils/orderFactoryReassign.js';
 import {
   DISPATCH_DEFAULT_FACTORY_SITE_ID,
   DISPATCH_DEFAULT_FACTORY_SITE_NAME,
@@ -520,9 +521,16 @@ export async function updateOrderDetails(orderId, updatedData) {
     has_test: hasTest,
     customer_id: customerId,
     ordered_by: orderedBy || null,
-    factory_site_id: factorySiteId,
     status: status || 'pending',
   };
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'factory_site_id') ||
+    Object.prototype.hasOwnProperty.call(patch, 'factorySiteId')
+  ) {
+    updateRow.factory_site_id = factorySiteId;
+  } else {
+    updateRow.factory_site_id = sanitizeRefId(row.factory_site_id ?? nextOrder.factory_site_id);
+  }
   if (
     Object.prototype.hasOwnProperty.call(patch, 'preferred_factory_id') ||
     Object.prototype.hasOwnProperty.call(patch, 'preferredFactoryId') ||
@@ -577,6 +585,53 @@ export async function adminDeleteOrder(orderId) {
 }
 
 /** 組合承認待ち（pending_association）を工場指定付きで配車待ちへ */
+/** 管理者: 手配先工場の振り替え（メイン・応援工場の上書き） */
+export async function reassignOrderFactories(orderId, options = {}) {
+  const id = String(orderId || '').trim();
+  if (!id) throw new Error('orderId が必要です');
+
+  const { preferredFactoryId, associationAssignedFactoryIds } = normalizeAssociationFactorySelection(options);
+  if (!preferredFactoryId && associationAssignedFactoryIds.length === 0) {
+    throw new Error('手配先工場を1件以上選択してください');
+  }
+
+  const { data: row, error: selErr } = await supabase.from('orders').select(ORDER_SELECT).eq('id', id).maybeSingle();
+  if (selErr) throw selErr;
+  if (!row) throw new Error('注文が見つかりません');
+
+  const current = normalizeOrderRow(row);
+  const resetStatus = shouldResetOrderStatusOnFactoryReassign(current);
+  const now = new Date().toISOString();
+
+  const patch = {
+    preferred_factory_id: preferredFactoryId,
+    preferredFactoryId,
+    association_assigned_factory_ids: associationAssignedFactoryIds,
+    associationAssignedFactoryIds,
+    association_reassigned_at: now,
+    associationReassignedAt: now,
+  };
+
+  if (resetStatus) {
+    Object.assign(patch, {
+      status: 'pending',
+      factory_site_id: null,
+      factorySiteId: null,
+      factoryResponseStatus: undefined,
+      factoryResponseLocked: false,
+      factoryPendingStartedAt: undefined,
+      factoryPendingByName: undefined,
+      factoryRejectSource: undefined,
+      factoryUnlockRequested: false,
+      acceptedFactoryLabel: undefined,
+      confirmedQuantityM3: undefined,
+      confirmedMixText: undefined,
+    });
+  }
+
+  return adminUpdateOrder(id, patch);
+}
+
 export async function approveOrderForAssociation(orderId, options = {}) {
   const { preferredFactoryId, associationAssignedFactoryIds } = normalizeAssociationFactorySelection(options);
   if (!preferredFactoryId && associationAssignedFactoryIds.length === 0) {

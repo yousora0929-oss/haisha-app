@@ -12,6 +12,15 @@ import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { OrderVisibilityScopePanel } from './components/OrderVisibilityScopePanel.jsx';
 import { OrderVisibilityScopeBadge } from './components/OrderVisibilityScopeBadge.jsx';
 import { AssociationOrderApproveModal } from './components/AssociationOrderApproveModal.jsx';
+import { OrderFactoryAssignmentForm } from './components/OrderFactoryAssignmentForm.jsx';
+import {
+  associationAssignedFactoryIds,
+} from './utils/associationFactoryAssignment.js';
+import {
+  canAdminReassignOrderFactories,
+  formatFactoryAssignmentSummary,
+  shouldResetOrderStatusOnFactoryReassign,
+} from './utils/orderFactoryReassign.js';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
@@ -1325,10 +1334,12 @@ function AdminOrderDetailModal({
   order,
   open,
   saving,
+  savingReassign,
   escalationCtx,
   factoryNameById,
   factories,
   onApproveAssociation,
+  onReassignFactories,
   onClose,
   onSave,
 }) {
@@ -1337,9 +1348,11 @@ function AdminOrderDetailModal({
   const [quantityM3, setQuantityM3] = useState('');
   const [mixText, setMixText] = useState('');
   const [siteName, setSiteName] = useState('');
+  const [editingFactories, setEditingFactories] = useState(false);
 
   useEffect(() => {
     if (!open || !order) return;
+    setEditingFactories(false);
     setPreferredDate(orderDeliveryDate(order));
     const t = formatOrderTime(order);
     setTimeValue(t === '—' ? '' : t);
@@ -1353,6 +1366,17 @@ function AdminOrderDetailModal({
 
   const party = orderPartyInfo(order);
   const st = orderStatus(order);
+  const assignedIds = associationAssignedFactoryIds(order);
+  const preferredId = String(order.preferred_factory_id || order.preferredFactoryId || '').trim();
+  const displayAssigned =
+    assignedIds.length > 0
+      ? formatFactoryAssignmentSummary(assignedIds, factoryNameById)
+      : preferredId
+        ? factoryNameById[preferredId] || preferredId
+        : '—';
+  const canReassign = canAdminReassignOrderFactories(order);
+  const willResetOnReassign = shouldResetOrderStatusOnFactoryReassign(order);
+
   const submit = (e) => {
     e.preventDefault();
     const minutes = parseTimeInputToMinutes(timeValue);
@@ -1414,6 +1438,79 @@ function AdminOrderDetailModal({
             </div>
           ) : null}
 
+          {canReassign && onReassignFactories ? (
+            <div className="mt-4 rounded-xl border-2 border-indigo-200 bg-indigo-50/70 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <p className="text-sm font-black text-indigo-950">手配先工場</p>
+                  <p className="mt-1 text-sm font-bold text-slate-900">{displayAssigned}</p>
+                  {willResetOnReassign ? (
+                    <p className="mt-1 text-xs font-medium text-amber-800">
+                      変更時は受注・確認済み状態を解除し、配車待ち（pending）へ差し戻します。
+                    </p>
+                  ) : null}
+                </div>
+                {!editingFactories ? (
+                  <button
+                    type="button"
+                    disabled={saving || savingReassign}
+                    onClick={() => setEditingFactories(true)}
+                    className="min-h-[40px] shrink-0 rounded-lg border-2 border-indigo-600 bg-white px-3 text-sm font-black text-indigo-800 hover:bg-indigo-100 disabled:opacity-50"
+                  >
+                    手配先を変更
+                  </button>
+                ) : null}
+              </div>
+              {editingFactories ? (
+                <div className="mt-3 border-t border-indigo-200 pt-3">
+                  <OrderFactoryAssignmentForm
+                    order={order}
+                    factories={factories}
+                    factoryNameById={factoryNameById}
+                    escalationCtx={escalationCtx}
+                    disabled={saving || savingReassign}
+                    previewStatus={willResetOnReassign ? 'pending' : st}
+                  >
+                    {({ buildSelection, mainFactoryId }) => (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={saving || savingReassign}
+                          onClick={() => setEditingFactories(false)}
+                          className="min-h-[44px] flex-1 rounded-lg border-2 border-slate-300 bg-white px-3 text-sm font-black text-slate-700"
+                        >
+                          キャンセル
+                        </button>
+                        <button
+                          type="button"
+                          disabled={saving || savingReassign || !mainFactoryId}
+                          onClick={() => {
+                            const sel = buildSelection();
+                            if (!sel) {
+                              window.alert('メインの手配先工場を選択してください。');
+                              return;
+                            }
+                            const msg = willResetOnReassign
+                              ? '手配先を変更し、ステータスを配車待ちに戻します。新しい工場が再度確認・受注できます。続行しますか？'
+                              : '手配先工場を変更します。続行しますか？';
+                            if (!window.confirm(msg)) return;
+                            void (async () => {
+                              await onReassignFactories(order.id, sel);
+                              setEditingFactories(false);
+                            })();
+                          }}
+                          className="min-h-[44px] flex-1 rounded-lg border-2 border-indigo-700 bg-indigo-600 px-3 text-sm font-black text-white hover:bg-indigo-700 disabled:opacity-50"
+                        >
+                          {savingReassign ? '更新中…' : '手配先を更新'}
+                        </button>
+                      </div>
+                    )}
+                  </OrderFactoryAssignmentForm>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           <div className="mt-4">
             <OrderMapEditorUrlActions orderId={order.id} siteName={party.site} order={order} />
           </div>
@@ -1432,10 +1529,14 @@ function AdminOrderDetailModal({
               <dd className="font-black text-slate-900">{order.quantityM3 ?? order.quantityCube ?? '—'} m³</dd>
             </div>
             <div>
-              <dt className="text-xs font-bold text-slate-500">受注工場</dt>
+              <dt className="text-xs font-bold text-slate-500">受注確定工場</dt>
               <dd className="font-bold text-slate-900">
                 {order.factory_site_id ? factoryNameById[order.factory_site_id] || order.factory_site_id : '—'}
               </dd>
+            </div>
+            <div className="sm:col-span-2">
+              <dt className="text-xs font-bold text-slate-500">手配先（メイン・応援）</dt>
+              <dd className="font-bold text-slate-900">{displayAssigned}</dd>
             </div>
           </dl>
 
@@ -1473,6 +1574,7 @@ function OrdersMonitorSection({
   const [associationApproveOrder, setAssociationApproveOrder] = useState(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const [savingAssociation, setSavingAssociation] = useState(false);
+  const [savingReassign, setSavingReassign] = useState(false);
   const [projects, setProjects] = useState([]);
   const [holidays, setHolidays] = useState([]);
   const [systemSettings, setSystemSettings] = useState({});
@@ -1607,6 +1709,28 @@ function OrdersMonitorSection({
     setAssociationApproveOrder(order);
   };
 
+  const applyOrderUpdate = useCallback((updated) => {
+    if (!updated?.id) return;
+    setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === updated.id ? updated : o)) : prev));
+    setDetailOrder((prev) => (prev?.id === updated.id ? updated : prev));
+  }, []);
+
+  const handleReassignFactories = async (orderId, selection) => {
+    if (!orderId) return;
+    setSavingReassign(true);
+    setError('');
+    try {
+      const updated = await db.reassignOrderFactories(orderId, selection);
+      applyOrderUpdate(updated);
+      await load();
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || '手配先の変更に失敗しました。');
+    } finally {
+      setSavingReassign(false);
+    }
+  };
+
   const handleConfirmAssociationApprove = async ({ preferredFactoryId, associationAssignedFactoryIds }) => {
     const order = associationApproveOrder;
     if (!order?.id) return;
@@ -1617,10 +1741,8 @@ function OrdersMonitorSection({
         preferredFactoryId,
         associationAssignedFactoryIds,
       });
-      if (updated) {
-        setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === order.id ? updated : o)) : prev));
-        if (detailOrder?.id === order.id) setDetailOrder(updated);
-      }
+      applyOrderUpdate(updated);
+      await load();
       setAssociationApproveOrder(null);
     } catch (e) {
       console.error(e);
@@ -1922,9 +2044,11 @@ function OrdersMonitorSection({
         factoryNameById={factoryNameById}
         factories={factories}
         saving={savingEdit}
+        savingReassign={savingReassign}
         onClose={() => setDetailOrder(null)}
         onSave={handleSaveEdit}
         onApproveAssociation={openAssociationApprove}
+        onReassignFactories={handleReassignFactories}
       />
     </section>
   );
