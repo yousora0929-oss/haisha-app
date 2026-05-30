@@ -13,6 +13,7 @@
 --   2. 各 Auth ユーザーに app_user_profiles を登録すること
 --   3. service_role キーは RLS をバイパスする — サーバー専用に保管すること
 --   4. 専用発注 URL（url_token）の未ログインアクセスは別途 Edge Function / RPC が必要
+--   5. public.factories.id は text 型（例: 'FACTORY_01'）。app_user_profiles.factory_id も text
 -- =============================================================================
 
 create extension if not exists "pgcrypto";
@@ -24,7 +25,7 @@ create table if not exists public.app_user_profiles (
   user_id uuid primary key references auth.users (id) on delete cascade,
   role text not null check (role in ('customer', 'factory', 'admin')),
   customer_id uuid references public.customers (id) on delete set null,
-  factory_id uuid references public.factories (id) on delete set null,
+  factory_id text references public.factories (id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint app_user_profiles_role_refs check (
@@ -46,6 +47,26 @@ create index if not exists app_user_profiles_factory_id_idx
 
 create index if not exists app_user_profiles_role_idx on public.app_user_profiles (role);
 
+-- 過去に uuid 型で作成された factory_id を text に矯正（factories.id が text の環境向け）
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns c
+    where c.table_schema = 'public'
+      and c.table_name = 'app_user_profiles'
+      and c.column_name = 'factory_id'
+      and c.udt_name = 'uuid'
+  ) then
+    alter table public.app_user_profiles drop constraint if exists app_user_profiles_factory_id_fkey;
+    alter table public.app_user_profiles
+      alter column factory_id type text using factory_id::text;
+    alter table public.app_user_profiles
+      add constraint app_user_profiles_factory_id_fkey
+      foreign key (factory_id) references public.factories (id) on delete set null;
+  end if;
+end $$;
+
 -- 管理者メール許可リスト（JWT email フォールバック用）
 alter table public.admin_settings
   add column if not exists admin_auth_emails text[] not null default '{}'::text[];
@@ -55,6 +76,9 @@ comment on column public.admin_settings.admin_auth_emails is
 
 -- -----------------------------------------------------------------------------
 -- RLS ヘルパー関数（SECURITY DEFINER — プロファイル参照）
+--
+-- 【重要】CREATE POLICY より必ず先に実行すること。
+-- is_app_admin() は app_role() に依存。factory_can_access_* は is_app_admin() に依存。
 -- -----------------------------------------------------------------------------
 create or replace function public.app_role()
 returns text
@@ -88,18 +112,21 @@ as $$
 $$;
 
 create or replace function public.current_factory_id()
-returns uuid
+returns text
 language sql
 stable
 security definer
 set search_path = public
 as $$
   select coalesce(
-    (select p.factory_id from public.app_user_profiles p where p.user_id = auth.uid() and p.role = 'factory'),
-    nullif(auth.jwt() -> 'app_metadata' ->> 'factory_id', '')::uuid,
-    nullif(auth.jwt() -> 'user_metadata' ->> 'factory_id', '')::uuid
+    (select nullif(trim(p.factory_id), '') from public.app_user_profiles p where p.user_id = auth.uid() and p.role = 'factory'),
+    nullif(trim(auth.jwt() -> 'app_metadata' ->> 'factory_id'), ''),
+    nullif(trim(auth.jwt() -> 'user_metadata' ->> 'factory_id'), '')
   );
 $$;
+
+comment on function public.current_factory_id() is
+  '現在ユーザーの工場 ID（factories.id と同じ text 型。例: FACTORY_01）';
 
 create or replace function public.is_app_admin()
 returns boolean
@@ -119,6 +146,9 @@ as $$
     else false
   end;
 $$;
+
+comment on function public.is_app_admin() is
+  '管理者判定: app_user_profiles.role=admin または admin_settings.admin_auth_emails に JWT email が含まれる';
 
 create or replace function public.is_app_customer()
 returns boolean
@@ -140,15 +170,17 @@ as $$
   select public.app_role() = 'factory' and public.current_factory_id() is not null;
 $$;
 
-create or replace function public.factory_matches_text(p_factory_id uuid, p_site_text text)
+drop function if exists public.factory_matches_text(uuid, text);
+
+create or replace function public.factory_matches_text(p_factory_id text, p_site_text text)
 returns boolean
 language sql
 immutable
 as $$
-  select p_factory_id is not null
+  select nullif(trim(p_factory_id), '') is not null
     and p_site_text is not null
     and trim(p_site_text) <> ''
-    and p_factory_id::text = trim(p_site_text);
+    and trim(p_factory_id) = trim(p_site_text);
 $$;
 
 -- 工場が物件マスタを閲覧・更新できるか（main_factory_id / sub_factory_ids）
@@ -168,14 +200,40 @@ as $$
       from public.projects p
       where p.id = p_project_id
         and (
-          p.main_factory_id = public.current_factory_id()
-          or coalesce(p.sub_factory_ids, '[]'::jsonb) @> jsonb_build_array(public.current_factory_id()::text)
+          trim(p.main_factory_id::text) = public.current_factory_id()
+          or coalesce(p.sub_factory_ids, '[]'::jsonb) @> jsonb_build_array(public.current_factory_id())
         )
     )
   end;
 $$;
 
--- 工場が注文を閲覧・更新できるか（受注工場・希望工場・物件紐づけ・見送り履歴）
+-- 組合承認で指定された手配先工場 ID（order_data）
+create or replace function public.order_association_factory_ids(p_order public.orders)
+returns text[]
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(
+    (
+      select array_agg(distinct trim(x))
+      from (
+        select jsonb_array_elements_text(
+          coalesce(p_order.order_data->'association_assigned_factory_ids', '[]'::jsonb)
+        ) as x
+        union all
+        select jsonb_array_elements_text(
+          coalesce(p_order.order_data->'associationAssignedFactoryIds', '[]'::jsonb)
+        ) as x
+      ) s
+      where nullif(trim(x), '') is not null
+    ),
+    array[]::text[]
+  );
+$$;
+
+-- 工場が注文を閲覧・更新できるか（受注工場・希望工場・組合指定・物件紐づけ・見送り履歴）
 create or replace function public.factory_can_access_order(p_order public.orders)
 returns boolean
 language sql
@@ -187,14 +245,19 @@ as $$
     when p_order is null then false
     when public.is_app_admin() then true
     when not public.is_app_factory() then false
+    when p_order.status = 'pending_association' then false
     else (
       public.factory_matches_text(public.current_factory_id(), p_order.factory_site_id)
-      or p_order.preferred_factory_id = public.current_factory_id()
+      or trim(p_order.preferred_factory_id::text) = public.current_factory_id()
+      or (
+        public.current_factory_id() is not null
+        and public.current_factory_id() = any (public.order_association_factory_ids(p_order))
+      )
       or (
         p_order.project_id is not null
         and public.factory_can_access_project(p_order.project_id)
       )
-      or coalesce(p_order.rejected_factory_ids, '[]'::jsonb) @> jsonb_build_array(public.current_factory_id()::text)
+      or coalesce(p_order.rejected_factory_ids, '[]'::jsonb) @> jsonb_build_array(public.current_factory_id())
     )
   end;
 $$;
@@ -218,8 +281,9 @@ revoke all on function public.current_factory_id() from public;
 revoke all on function public.is_app_admin() from public;
 revoke all on function public.is_app_customer() from public;
 revoke all on function public.is_app_factory() from public;
-revoke all on function public.factory_matches_text(uuid, text) from public;
+revoke all on function public.factory_matches_text(text, text) from public;
 revoke all on function public.factory_can_access_project(uuid) from public;
+revoke all on function public.order_association_factory_ids(public.orders) from public;
 revoke all on function public.factory_can_access_order(public.orders) from public;
 revoke all on function public.customer_owns_row(uuid) from public;
 
@@ -229,8 +293,9 @@ grant execute on function public.current_factory_id() to authenticated;
 grant execute on function public.is_app_admin() to authenticated;
 grant execute on function public.is_app_customer() to authenticated;
 grant execute on function public.is_app_factory() to authenticated;
-grant execute on function public.factory_matches_text(uuid, text) to authenticated;
+grant execute on function public.factory_matches_text(text, text) to authenticated;
 grant execute on function public.factory_can_access_project(uuid) to authenticated;
+grant execute on function public.order_association_factory_ids(public.orders) to authenticated;
 grant execute on function public.factory_can_access_order(public.orders) to authenticated;
 grant execute on function public.customer_owns_row(uuid) to authenticated;
 
