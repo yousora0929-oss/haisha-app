@@ -4,6 +4,7 @@ import {
   getVisibleFactoryIdsForOrder,
 } from './escalationUtils.js';
 import { getOrderDeliveryAreaContext } from './deliveryAreaEscalation.js';
+import { associationAssignedFactoryIds } from './associationFactoryAssignment.js';
 
 function orderStatus(order) {
   return String(order?.status || 'pending').trim();
@@ -87,11 +88,37 @@ export function getOrderVisibilityScope(order, ctx, factoryNameById = {}) {
       ...base,
       kind: 'association_pending',
       summary: '組合管理者にのみ表示（工場には非表示）',
-      detail: 'スポット数量が組合しきい値を超えています。組合承認後に工場へ配車待ちとして公開されます。',
+      detail:
+        'スポット数量が組合しきい値を超えています。承認時に手配先工場を指定すると、指定工場の配車待ち一覧へ公開されます。',
       visibleFactoryIds: [],
       visibleFactoryNames: [],
       listIcon: { emoji: '🛡️', count: null, shortLabel: '組合預かり' },
       chips: [{ id: 'admin', name: '組合管理者', role: 'admin' }],
+    };
+  }
+
+  const associationIds = associationAssignedFactoryIds(order);
+  if (associationIds.length > 0 && status === 'pending') {
+    const visibleFactoryIds = associationIds;
+    const visibleFactoryNames = visibleFactoryIds.map((id) => factoryName(factoryNameById, id));
+    const subPool = associationIds.filter((id) => id !== preferredId);
+    const chips = visibleFactoryIds.map((id) => ({
+      id,
+      name: factoryName(factoryNameById, id),
+      role: id === preferredId ? 'preferred' : subPool.includes(id) ? 'association' : 'visible',
+    }));
+    return {
+      ...base,
+      kind: 'association_assigned',
+      summary: `組合指定の ${visibleFactoryIds.length} 工場に表示中`,
+      detail:
+        '大口スポット承認時に組合が指定した手配先です。公開範囲はこの工場群に限定されます（物件デフォルトより優先）。',
+      visibleFactoryIds,
+      visibleFactoryNames,
+      mainFactoryIds: preferredId ? [preferredId] : visibleFactoryIds.slice(0, 1),
+      subFactoryIds: subPool,
+      listIcon: { emoji: '🛡️', count: visibleFactoryIds.length, shortLabel: '組合指定' },
+      chips,
     };
   }
 
@@ -275,6 +302,7 @@ export function buildOrderVisibilityContext(orders, factories, projects, setting
 
 export function chipRoleLabel(role) {
   if (role === 'admin') return '組合';
+  if (role === 'association') return '組合指定';
   if (role === 'assigned') return '受注';
   if (role === 'preferred') return '指定';
   if (role === 'main') return 'メイン';

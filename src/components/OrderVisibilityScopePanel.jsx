@@ -7,6 +7,7 @@ const CHIP_CLASS =
 
 function chipClassForRole(role) {
   if (role === 'admin') return CHIP_CLASS + ' border-violet-400 bg-violet-100 text-violet-950';
+  if (role === 'association') return CHIP_CLASS + ' border-violet-500 bg-violet-100 text-violet-950';
   if (role === 'assigned') return CHIP_CLASS + ' border-emerald-500 bg-emerald-100 text-emerald-950';
   if (role === 'preferred') return CHIP_CLASS + ' border-sky-500 bg-sky-100 text-sky-950';
   if (role === 'main') return CHIP_CLASS + ' border-indigo-400 bg-indigo-100 text-indigo-950';

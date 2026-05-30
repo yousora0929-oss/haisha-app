@@ -6,6 +6,7 @@ import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { OrderVisibilityScopePanel } from './components/OrderVisibilityScopePanel.jsx';
 import { OrderVisibilityScopeBadge } from './components/OrderVisibilityScopeBadge.jsx';
+import { AssociationOrderApproveModal } from './components/AssociationOrderApproveModal.jsx';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
@@ -1315,7 +1316,17 @@ function AdminSettingsSection() {
   );
 }
 
-function AdminOrderDetailModal({ order, open, saving, escalationCtx, factoryNameById, onClose, onSave }) {
+function AdminOrderDetailModal({
+  order,
+  open,
+  saving,
+  escalationCtx,
+  factoryNameById,
+  factories,
+  onApproveAssociation,
+  onClose,
+  onSave,
+}) {
   const [preferredDate, setPreferredDate] = useState('');
   const [timeValue, setTimeValue] = useState('');
   const [quantityM3, setQuantityM3] = useState('');
@@ -1382,6 +1393,22 @@ function AdminOrderDetailModal({ order, open, saving, escalationCtx, factoryName
             />
           </div>
 
+          {st === 'pending_association' && onApproveAssociation ? (
+            <div className="mt-4 rounded-xl border-2 border-violet-300 bg-violet-50/80 p-4">
+              <p className="text-sm font-black text-violet-950">組合承認（手配先工場の指定）</p>
+              <p className="mt-1 text-xs font-medium text-violet-900/90">
+                この注文は工場に未公開です。手配先を選んで承認してください。
+              </p>
+              <button
+                type="button"
+                onClick={() => onApproveAssociation(order)}
+                className="mt-3 min-h-[44px] w-full rounded-lg border-2 border-violet-800 bg-violet-700 px-4 text-sm font-black text-white hover:bg-violet-800"
+              >
+                工場を指定して手配・承認…
+              </button>
+            </div>
+          ) : null}
+
           <div className="mt-4">
             <OrderMapEditorUrlActions orderId={order.id} siteName={party.site} order={order} />
           </div>
@@ -1438,7 +1465,9 @@ function OrdersMonitorSection({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [detailOrder, setDetailOrder] = useState(null);
+  const [associationApproveOrder, setAssociationApproveOrder] = useState(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [savingAssociation, setSavingAssociation] = useState(false);
   const [projects, setProjects] = useState([]);
   const [holidays, setHolidays] = useState([]);
   const [systemSettings, setSystemSettings] = useState({});
@@ -1568,16 +1597,31 @@ function OrdersMonitorSection({
     }
   };
 
-  const handleApproveAssociation = async (order) => {
+  const openAssociationApprove = (order) => {
     if (!order?.id) return;
-    if (!window.confirm('この注文を組合承認し、工場の配車待ち一覧へ回しますか？')) return;
+    setAssociationApproveOrder(order);
+  };
+
+  const handleConfirmAssociationApprove = async ({ preferredFactoryId, associationAssignedFactoryIds }) => {
+    const order = associationApproveOrder;
+    if (!order?.id) return;
+    setSavingAssociation(true);
     setError('');
     try {
-      const updated = await db.approveOrderForAssociation(order.id);
-      if (updated) setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === order.id ? updated : o)) : prev));
+      const updated = await db.approveOrderForAssociation(order.id, {
+        preferredFactoryId,
+        associationAssignedFactoryIds,
+      });
+      if (updated) {
+        setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === order.id ? updated : o)) : prev));
+        if (detailOrder?.id === order.id) setDetailOrder(updated);
+      }
+      setAssociationApproveOrder(null);
     } catch (e) {
       console.error(e);
-      setError('組合承認に失敗しました。');
+      setError(e?.message || '組合承認に失敗しました。');
+    } finally {
+      setSavingAssociation(false);
     }
   };
 
@@ -1707,10 +1751,10 @@ function OrdersMonitorSection({
                   </div>
                   <button
                     type="button"
-                    onClick={() => void handleApproveAssociation(o)}
+                    onClick={() => openAssociationApprove(o)}
                     className="min-h-[40px] rounded-lg bg-violet-700 px-3 text-sm font-black text-white hover:bg-violet-800"
                   >
-                    組合承認して配車待ちへ
+                    工場を指定して手配・承認
                   </button>
                 </li>
               );
@@ -1778,10 +1822,10 @@ function OrdersMonitorSection({
                           {st === 'pending_association' ? (
                             <button
                               type="button"
-                              onClick={() => void handleApproveAssociation(o)}
+                              onClick={() => openAssociationApprove(o)}
                               className="rounded border border-violet-400 bg-violet-100 px-2 py-1 text-xs font-black text-violet-900 hover:bg-violet-200"
                             >
-                              組合承認
+                              工場指定で承認
                             </button>
                           ) : null}
                           {[
@@ -1856,14 +1900,26 @@ function OrdersMonitorSection({
           )}
         </div>
       ) : null}
+      <AssociationOrderApproveModal
+        order={associationApproveOrder}
+        open={Boolean(associationApproveOrder)}
+        factories={factories}
+        factoryNameById={factoryNameById}
+        escalationCtx={escalationCtx}
+        saving={savingAssociation}
+        onClose={() => !savingAssociation && setAssociationApproveOrder(null)}
+        onApprove={(payload) => void handleConfirmAssociationApprove(payload)}
+      />
       <AdminOrderDetailModal
         order={detailOrder}
         open={Boolean(detailOrder)}
         escalationCtx={escalationCtx}
         factoryNameById={factoryNameById}
+        factories={factories}
         saving={savingEdit}
         onClose={() => setDetailOrder(null)}
         onSave={handleSaveEdit}
+        onApproveAssociation={openAssociationApprove}
       />
     </section>
   );

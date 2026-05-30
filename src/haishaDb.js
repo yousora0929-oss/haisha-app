@@ -10,6 +10,7 @@ import { supabase } from './supabaseClient.js';
 import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils/deliveryAreas.js';
 import { isValidSiteOrderUrlToken, resolveUrlTokenForInsert } from './utils/urlValidation.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
+import { normalizeAssociationFactorySelection } from './utils/associationFactoryAssignment.js';
 import {
   DISPATCH_DEFAULT_FACTORY_SITE_ID,
   DISPATCH_DEFAULT_FACTORY_SITE_NAME,
@@ -139,6 +140,16 @@ function sanitizeOrderDataForDb(order) {
     preferredFactoryId: sanitizeRefId(o.preferredFactoryId),
     main_factory_id: sanitizeRefId(o.main_factory_id),
     mainFactoryId: sanitizeRefId(o.mainFactoryId),
+    association_assigned_factory_ids: Array.isArray(o.association_assigned_factory_ids)
+      ? o.association_assigned_factory_ids.map((x) => String(x).trim()).filter(Boolean)
+      : Array.isArray(o.associationAssignedFactoryIds)
+        ? o.associationAssignedFactoryIds.map((x) => String(x).trim()).filter(Boolean)
+        : [],
+    associationAssignedFactoryIds: Array.isArray(o.associationAssignedFactoryIds)
+      ? o.associationAssignedFactoryIds.map((x) => String(x).trim()).filter(Boolean)
+      : Array.isArray(o.association_assigned_factory_ids)
+        ? o.association_assigned_factory_ids.map((x) => String(x).trim()).filter(Boolean)
+        : [],
   };
 }
 
@@ -220,6 +231,16 @@ export function normalizeOrderRow(row) {
       ? row.rejected_factory_ids.map((x) => String(x)).filter(Boolean)
       : Array.isArray(od.rejected_factory_ids)
         ? od.rejected_factory_ids.map((x) => String(x)).filter(Boolean)
+        : [],
+    association_assigned_factory_ids: Array.isArray(od.association_assigned_factory_ids)
+      ? od.association_assigned_factory_ids.map((x) => String(x).trim()).filter(Boolean)
+      : Array.isArray(od.associationAssignedFactoryIds)
+        ? od.associationAssignedFactoryIds.map((x) => String(x).trim()).filter(Boolean)
+        : [],
+    associationAssignedFactoryIds: Array.isArray(od.associationAssignedFactoryIds)
+      ? od.associationAssignedFactoryIds.map((x) => String(x).trim()).filter(Boolean)
+      : Array.isArray(od.association_assigned_factory_ids)
+        ? od.association_assigned_factory_ids.map((x) => String(x).trim()).filter(Boolean)
         : [],
     override_map_image_url:
       row.override_map_image_url != null
@@ -491,6 +512,7 @@ export async function updateOrderDetails(orderId, updatedData) {
   const status = nextOrder.status != null ? String(nextOrder.status) : row.status;
   const hasTest = Boolean(nextOrder.has_test);
   const factorySiteId = sanitizeRefId(nextOrder.factory_site_id);
+  const preferredFactoryId = sanitizeRefId(nextOrder.preferred_factory_id ?? nextOrder.preferredFactoryId);
   const customerId = sanitizeRefId(nextOrder.customer_id);
   const orderedBy = String(nextOrder.ordered_by ?? nextOrder.orderedBy ?? '').trim();
   const updateRow = {
@@ -501,6 +523,23 @@ export async function updateOrderDetails(orderId, updatedData) {
     factory_site_id: factorySiteId,
     status: status || 'pending',
   };
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'preferred_factory_id') ||
+    Object.prototype.hasOwnProperty.call(patch, 'preferredFactoryId') ||
+    Object.prototype.hasOwnProperty.call(patch, 'association_assigned_factory_ids') ||
+    Object.prototype.hasOwnProperty.call(patch, 'associationAssignedFactoryIds')
+  ) {
+    updateRow.preferred_factory_id = preferredFactoryId;
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'rejected_factory_ids') ||
+    Object.prototype.hasOwnProperty.call(patch, 'rejectedFactoryIds')
+  ) {
+    const rejected = patch.rejected_factory_ids ?? patch.rejectedFactoryIds;
+    updateRow.rejected_factory_ids = Array.isArray(rejected)
+      ? rejected.map((x) => String(x).trim()).filter(Boolean)
+      : [];
+  }
   if (
     Object.prototype.hasOwnProperty.call(patch, 'is_location_pending') ||
     Object.prototype.hasOwnProperty.call(patch, 'isLocationPending')
@@ -537,10 +576,21 @@ export async function adminDeleteOrder(orderId) {
   });
 }
 
-/** 組合承認待ち（pending_association）を工場配車待ちへ */
-export async function approveOrderForAssociation(orderId) {
+/** 組合承認待ち（pending_association）を工場指定付きで配車待ちへ */
+export async function approveOrderForAssociation(orderId, options = {}) {
+  const { preferredFactoryId, associationAssignedFactoryIds } = normalizeAssociationFactorySelection(options);
+  if (!preferredFactoryId && associationAssignedFactoryIds.length === 0) {
+    throw new Error('手配先工場を1件以上選択してください');
+  }
+  const approvedAt = new Date().toISOString();
   return updateOrderDetails(orderId, {
     status: 'pending',
+    preferred_factory_id: preferredFactoryId,
+    preferredFactoryId,
+    association_assigned_factory_ids: associationAssignedFactoryIds,
+    associationAssignedFactoryIds,
+    association_approved_at: approvedAt,
+    associationApprovedAt: approvedAt,
     factoryResponseStatus: undefined,
     factoryResponseLocked: false,
     factoryPendingStartedAt: undefined,
