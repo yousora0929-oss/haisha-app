@@ -1,6 +1,11 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import * as db from './haishaDb.js';
-import { supabase } from './supabaseClient.js';
+import {
+  supabase,
+  setAdminPanelSession,
+  clearAdminPanelSession,
+  hasAdminPanelSession,
+} from './supabaseClient.js';
 import { MapPicker } from './MapPicker.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
@@ -1972,6 +1977,7 @@ function AdminLoginScreen({ onLogin }) {
     setLoading(true);
     try {
       const admin = await db.loginAdmin(phone, pass);
+      setAdminPanelSession(phone, pass);
       try {
         sessionStorage.setItem(ADMIN_AUTH_SESSION_KEY, '1');
       } catch {
@@ -2038,7 +2044,7 @@ function AdminLoginScreen({ onLogin }) {
 export function AdminApp() {
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(() => {
     try {
-      return sessionStorage.getItem(ADMIN_AUTH_SESSION_KEY) === '1';
+      return sessionStorage.getItem(ADMIN_AUTH_SESSION_KEY) === '1' && hasAdminPanelSession();
     } catch {
       return false;
     }
@@ -2063,6 +2069,7 @@ export function AdminApp() {
     } catch {
       /* ignore */
     }
+    clearAdminPanelSession();
     setIsAdminLoggedIn(false);
   }, []);
 

@@ -1059,16 +1059,31 @@ export async function loginAdmin(phoneNumber, password) {
   const phone = String(phoneNumber || '').trim();
   const pass = String(password || '').trim();
   if (!phone || !pass) throw new Error('管理者の電話番号とパスワードを入力してください');
-  const { data, error } = await supabase
+
+  const { data, error } = await supabase.rpc('login_admin', {
+    p_phone: phone,
+    p_password: pass,
+  });
+  if (!error && data != null) {
+    const row = typeof data === 'string' ? JSON.parse(data) : data;
+    return mapAdminSettingsRow({ ...row, login_password: pass });
+  }
+
+  const missingFn =
+    error &&
+    (error.code === '42883' || /login_admin/i.test(String(error.message || '')));
+  if (!missingFn) throw error;
+
+  const { data: legacy, error: legacyErr } = await supabase
     .from('admin_settings')
     .select('*')
     .eq('id', 1)
     .eq('phone_number', phone)
     .eq('login_password', pass)
     .maybeSingle();
-  if (error) throw error;
-  if (!data) throw new Error('管理者の電話番号またはパスワードが間違っています');
-  return mapAdminSettingsRow(data);
+  if (legacyErr) throw legacyErr;
+  if (!legacy) throw new Error('管理者の電話番号またはパスワードが間違っています');
+  return mapAdminSettingsRow(legacy);
 }
 
 export async function updateAdminSettings(payload) {

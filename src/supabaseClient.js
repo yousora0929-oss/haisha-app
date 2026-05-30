@@ -31,6 +31,51 @@ function normalizeSupabaseProjectUrl(raw) {
   }
 }
 
+export const ADMIN_PANEL_PHONE_KEY = 'concrete_link_admin_phone_v1';
+export const ADMIN_PANEL_PASSWORD_KEY = 'concrete_link_admin_pass_v1';
+
+/** 管理画面ログイン後、RLS 用ヘッダー認証の資格情報を sessionStorage に保存 */
+export function setAdminPanelSession(phone, password) {
+  if (typeof sessionStorage === 'undefined') return;
+  const p = String(phone || '').trim();
+  const pass = String(password || '').trim();
+  if (!p || !pass) return;
+  sessionStorage.setItem(ADMIN_PANEL_PHONE_KEY, p);
+  sessionStorage.setItem(ADMIN_PANEL_PASSWORD_KEY, pass);
+}
+
+export function clearAdminPanelSession() {
+  if (typeof sessionStorage === 'undefined') return;
+  sessionStorage.removeItem(ADMIN_PANEL_PHONE_KEY);
+  sessionStorage.removeItem(ADMIN_PANEL_PASSWORD_KEY);
+}
+
+export function hasAdminPanelSession() {
+  if (typeof sessionStorage === 'undefined') return false;
+  try {
+    return Boolean(
+      sessionStorage.getItem(ADMIN_PANEL_PHONE_KEY) && sessionStorage.getItem(ADMIN_PANEL_PASSWORD_KEY),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function readAdminPanelRequestHeaders() {
+  if (typeof sessionStorage === 'undefined') return {};
+  try {
+    const phone = sessionStorage.getItem(ADMIN_PANEL_PHONE_KEY);
+    const password = sessionStorage.getItem(ADMIN_PANEL_PASSWORD_KEY);
+    if (!phone || !password) return {};
+    return {
+      'x-admin-phone': phone,
+      'x-admin-password': password,
+    };
+  } catch {
+    return {};
+  }
+}
+
 const supabaseUrl = normalizeSupabaseProjectUrl(import.meta.env.VITE_SUPABASE_URL);
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
   ? String(import.meta.env.VITE_SUPABASE_ANON_KEY).trim()
@@ -46,5 +91,15 @@ export const supabase = createClient(supabaseUrl, anonKey, {
   auth: {
     persistSession: false,
     autoRefreshToken: false,
+  },
+  global: {
+    fetch: (url, options = {}) => {
+      const adminHdrs = readAdminPanelRequestHeaders();
+      const headers = new Headers(options.headers || {});
+      for (const [key, value] of Object.entries(adminHdrs)) {
+        if (value) headers.set(key, value);
+      }
+      return fetch(url, { ...options, headers });
+    },
   },
 });
