@@ -28,7 +28,7 @@ import {
   getOrderMinutesForScheduleScan,
   computeScheduleAutoRejectReason,
 } from './haishaConstants.js';
-import { registerOneSignalUser, sendPushNotification } from './utils/notification.js';
+import { registerOneSignalUser } from './utils/notification.js';
 import {
   primeNotificationAlarm,
   startNotificationAlarm,
@@ -119,40 +119,6 @@ function factoryUnloadDurationLabel(order) {
   return String(raw || '30分（標準）');
 }
 
-function factoryStatusLabel(status) {
-  if (status === FACTORY_RESPONSE.ACCEPTED || status === 'accepted') return '受注';
-  if (status === FACTORY_RESPONSE.REJECTED || status === 'rejected') return '見送り';
-  if (status === FACTORY_RESPONSE.PENDING || status === 'pending') return '配車待ち';
-  if (status === 'customer_cancelled') return 'キャンセル';
-  if (status === 'completed') return '完了';
-  return String(status || '更新');
-}
-
-function resolveNotificationFactoryName(order, fallbackFactoryName) {
-  const name = String(order?.factorySiteName || fallbackFactoryName || FACTORY_SITE_NAME || '').trim();
-  return name || '工場';
-}
-
-function customerStatusPushMessage(order, status, factoryName) {
-  const normalizedStatus = normalizeFactoryResponse(status) || String(status || '');
-  if (normalizedStatus === FACTORY_RESPONSE.ACCEPTED || normalizedStatus === FACTORY_RESPONSE.PENDING || normalizedStatus === 'accepted') {
-    return `${resolveNotificationFactoryName(order, factoryName)}がご注文承りました。キャンセルのご連絡は前営業日の12時までに工場へご連絡ください。`;
-  }
-  if (
-    normalizedStatus === FACTORY_RESPONSE.REJECTED ||
-    normalizedStatus === 'rejected' ||
-    normalizedStatus === 'cancelled' ||
-    normalizedStatus === 'customer_cancelled'
-  ) {
-    return '大変込み合っております。別日をご指定ください。';
-  }
-  return `注文のステータスが${factoryStatusLabel(status)}に変更されました`;
-}
-
-function orderCustomerPushExternalId(order) {
-  return String(order?.phone_number ?? order?.customerPhone ?? order?.sitePhone ?? order?.phone ?? '').trim();
-}
-
 function orderContactPersonName(order, fallback = '担当者') {
   return String(
     order?.manager_name ??
@@ -163,30 +129,6 @@ function orderContactPersonName(order, fallback = '担当者') {
       fallback ??
       '',
   ).trim() || '担当者';
-}
-
-async function notifyCustomerOrderStatus(order, status, factoryName) {
-  const target = orderCustomerPushExternalId(order);
-  if (!target) return;
-  try {
-    await sendPushNotification(target, customerStatusPushMessage(order, status, factoryName));
-  } catch (error) {
-    console.warn('[OneSignal] ステータス通知の送信に失敗しました', error);
-  }
-}
-
-async function notifyCustomerFactoryMessage(order, factoryName) {
-  const target = orderCustomerPushExternalId(order);
-  console.log('Push Notification Target:', target);
-  if (!target) return;
-  try {
-    await sendPushNotification(target, `${resolveNotificationFactoryName(order, factoryName)}からメッセージが届いています。`, {
-      type: 'chat',
-      orderId: order?.id,
-    });
-  } catch (error) {
-    console.warn('[OneSignal] チャット通知の送信に失敗しました', error);
-  }
 }
 
 function FactoryResizablePanels({ defaultLeftPercent = 48, children }) {
@@ -429,13 +371,6 @@ function orderPartyInfo(order) {
         if (!t) return;
         void appendOrderChatMessage(orderId, 'factory', t).then(() => {
           setTxt('');
-          void (async () => {
-            try {
-              await notifyCustomerFactoryMessage(order, factoryName);
-            } catch (error) {
-              console.warn('[OneSignal] チャット通知の送信に失敗しました', error);
-            }
-          })();
           if (typeof onAfterSend === 'function') onAfterSend();
         });
       };
@@ -3190,7 +3125,6 @@ function orderPartyInfo(order) {
           setAcceptModalOrder(null);
           setActionNotice('受注しました！');
           window.setTimeout(() => setActionNotice(''), 4500);
-          void notifyCustomerOrderStatus(accepted, 'accepted', activeFactoryName);
           await appendOrderChatMessage(
             accepted.id,
             'system',
@@ -3234,7 +3168,6 @@ function orderPartyInfo(order) {
             setToastOrder((cur) => (cur?.id === order.id ? null : cur));
             setActionNotice('見送りました');
             window.setTimeout(() => setActionNotice(''), 3500);
-            void notifyCustomerOrderStatus(order, 'rejected', activeFactoryName);
             await syncFromStorage({ playSound: false });
           } catch (e) {
             console.error(e);
@@ -3264,7 +3197,6 @@ function orderPartyInfo(order) {
             setToastOrder((cur) => (cur?.id === order.id ? null : cur));
             setActionNotice('お客様都合キャンセルにしました');
             window.setTimeout(() => setActionNotice(''), 4500);
-            void notifyCustomerOrderStatus(cancelled || order, 'customer_cancelled', activeFactoryName);
             await appendOrderChatMessage(order.id, 'system', '【キャンセル】工場により、お客様都合キャンセルとして処理されました。');
             await syncFromStorage({ playSound: false });
           } catch (e) {
@@ -3286,7 +3218,6 @@ function orderPartyInfo(order) {
           const cur = normalizeFactoryResponse(target.factoryResponseStatus);
           const locked = Boolean(target.factoryResponseLocked);
           if (locked && (cur === FACTORY_RESPONSE.ACCEPTED || cur === FACTORY_RESPONSE.REJECTED)) return;
-          let updatedTarget = null;
           const next = list.map((o) => {
             if (!o || o.id !== orderId) return o;
             const patch = { factoryResponseStatus: nextStatus };
@@ -3320,12 +3251,10 @@ function orderPartyInfo(order) {
               patch.factoryResponseLocked = true;
               patch.factoryUnlockRequested = false;
             }
-            updatedTarget = { ...o, ...patch };
-            return updatedTarget;
+            return { ...o, ...patch };
           });
           setOrders(next);
           void persistOrders(next);
-          void notifyCustomerOrderStatus(updatedTarget, nextStatus, activeFactoryName);
           if (nextStatus === FACTORY_RESPONSE.PENDING) {
             void appendOrderChatMessage(
               orderId,

@@ -8,21 +8,8 @@ function appId() {
   return String(import.meta.env.VITE_ONESIGNAL_APP_ID || ONESIGNAL_APP_ID || '').trim();
 }
 
-function restApiKey() {
-  return String(import.meta.env.VITE_ONESIGNAL_REST_API_KEY || '').trim();
-}
-
 function normalizeExternalId(value) {
   return String(value || '').replace(/\s+/g, '').trim();
-}
-
-function externalIdCandidates(value) {
-  const base = normalizeExternalId(value);
-  if (!base) return [];
-  const ids = new Set([base]);
-  const compactPhone = base.replace(/[‐-‒–—―ーｰ−\s]/g, '');
-  if (compactPhone && compactPhone !== base) ids.add(compactPhone);
-  return [...ids];
 }
 
 function readOneSignalDebugValue(label, getter) {
@@ -137,48 +124,6 @@ export async function registerOneSignalUser(externalId, tags = {}) {
   }
 }
 
-async function postNotification(payload) {
-  const id = appId();
-  const key = restApiKey();
-  if (!id || !key) {
-    console.warn('[OneSignal] 通知送信用の環境変数が未設定です');
-    return null;
-  }
-  const res = await fetch('https://onesignal.com/api/v1/notifications', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Basic ${key}`,
-    },
-    body: JSON.stringify({
-      app_id: id,
-      headings: { ja: '生コン発注システム', en: 'Ready-mix Ordering System' },
-      ...payload,
-    }),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`OneSignal通知送信に失敗しました: ${res.status} ${text}`);
-  }
-  return res.json().catch(() => null);
-}
-
-const badgePayload = {
-  ios_badgeType: 'SetTo',
-  ios_badgeCount: 1,
-  web_badge: 1,
-};
-
-function buildNotificationUrl(additionalData) {
-  if (!additionalData || additionalData.type !== 'chat' || !additionalData.orderId) return '';
-  if (typeof window === 'undefined' || !window.location?.origin) return '';
-  const targetApp = additionalData.targetApp === 'factory' ? 'FactoryTabletPrototype.html' : 'DispatchOrderPrototype.html';
-  const url = new URL(`/${targetApp}`, window.location.origin);
-  url.searchParams.set('action', 'chat');
-  url.searchParams.set('orderId', String(additionalData.orderId));
-  return url.toString();
-}
-
 export function clearAppBadge() {
   if (typeof navigator === 'undefined' || typeof navigator.clearAppBadge !== 'function') return;
   navigator.clearAppBadge().catch((error) => {
@@ -186,40 +131,3 @@ export function clearAppBadge() {
   });
 }
 
-export async function sendPushNotification(targetExternalId, message, additionalData = null) {
-  const externalIds = externalIdCandidates(targetExternalId);
-  if (externalIds.length === 0 || !message) return null;
-  try {
-    console.log('[OneSignal] Push target external IDs:', externalIds);
-    const notificationUrl = buildNotificationUrl(additionalData);
-    return await postNotification({
-      include_external_user_ids: externalIds,
-      channel_for_external_user_ids: 'push',
-      contents: { ja: String(message), en: String(message) },
-      ...badgePayload,
-      ...(notificationUrl ? { url: notificationUrl } : {}),
-      ...(additionalData && typeof additionalData === 'object' ? { data: additionalData } : {}),
-    });
-  } catch (error) {
-    console.warn('[OneSignal] 通知送信に失敗しました', error);
-    return null;
-  }
-}
-
-export async function sendPushNotificationToRole(role, message, additionalData = null) {
-  const normalizedRole = String(role || '').trim();
-  if (!normalizedRole || !message) return null;
-  try {
-    const notificationUrl = buildNotificationUrl(additionalData);
-    return await postNotification({
-      filters: [{ field: 'tag', key: 'role', relation: '=', value: normalizedRole }],
-      contents: { ja: String(message), en: String(message) },
-      ...badgePayload,
-      ...(notificationUrl ? { url: notificationUrl } : {}),
-      ...(additionalData && typeof additionalData === 'object' ? { data: additionalData } : {}),
-    });
-  } catch (error) {
-    console.warn('[OneSignal] 通知送信に失敗しました', error);
-    return null;
-  }
-}

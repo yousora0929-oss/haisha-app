@@ -24,8 +24,6 @@ import {
   PUSH_CHAT_REDIRECT_SESSION_KEY,
   clearAppBadge,
   registerOneSignalUser,
-  sendPushNotification,
-  sendPushNotificationToRole,
   setupNotificationClickRedirect,
 } from './utils/notification.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
@@ -1675,39 +1673,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const handleSendMasterChat = useCallback(
         async (orderId, text) => {
           await appendOrderChatMessage(orderId, 'master', text);
-          const targetOrder = (dashboardOrders || []).find((order) => String(order?.id || '') === String(orderId || ''));
-          const targetExternalId = String(
-            targetOrder?.factory_site_id ??
-              targetOrder?.factorySiteId ??
-              targetOrder?.preferred_factory_id ??
-              targetOrder?.preferredFactoryId ??
-              DISPATCH_DEFAULT_FACTORY_SITE_ID ??
-              '',
-          ).trim();
-          const senderName = orderContactPersonName(targetOrder, currentCustomerDisplayName);
-          void (async () => {
-            try {
-              console.log('Push Notification Target:', targetExternalId);
-              if (targetExternalId) {
-                await sendPushNotification(targetExternalId, `${senderName}から新しいメッセージが届きました。`, {
-                  type: 'chat',
-                  orderId,
-                  targetApp: 'factory',
-                });
-              } else {
-                await sendPushNotificationToRole('factory', `${senderName}から新しいメッセージが届きました。`, {
-                  type: 'chat',
-                  orderId,
-                  targetApp: 'factory',
-                });
-              }
-            } catch (error) {
-              console.warn('[OneSignal] チャット通知の送信に失敗しました', error);
-            }
-          })();
           await refreshDashboard();
         },
-        [currentCustomerDisplayName, dashboardOrders, refreshDashboard],
+        [refreshDashboard],
       );
 
       const markChatRead = useCallback((orderId, messages) => {
@@ -2057,18 +2025,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             await db.submitGuestOrders(guestOrderToken, orders);
           } else {
             await db.insertOrdersBulk(orders);
-            const contractorName =
-              orders[0]?.customerName ||
-              orders[0]?.contractorName ||
-              currentCustomer?.company_name ||
-              currentCustomer?.name ||
-              '新規注文';
-            if (bulkStatus !== 'pending_association') {
-              void sendPushNotificationToRole(
-                'factory',
-                count > 1 ? `新規注文が${count}件入りました：${contractorName}` : `新規注文が入りました：${contractorName}`,
-              );
-            }
             await refreshDashboard();
             setCustomerOrderTab(count > 1 ? 'calendar' : 'active');
             setExpandedHistoryOrderId('');
