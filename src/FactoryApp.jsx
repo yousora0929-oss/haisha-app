@@ -2445,6 +2445,17 @@ function orderPartyInfo(order) {
       const [customers, setCustomers] = useState([]);
       const [holidays, setHolidays] = useState([]);
       const [systemSettings, setSystemSettings] = useState({ start_time: '08:00:00', end_time: '16:00:00' });
+      const [operationalSettings, setOperationalSettings] = useState(null);
+      const escalationSettings = useMemo(
+        () => ({
+          ...systemSettings,
+          allowed_delivery_areas:
+            operationalSettings?.allowed_delivery_areas ?? systemSettings?.allowed_delivery_areas,
+          spot_threshold_volume:
+            operationalSettings?.spot_threshold_volume ?? systemSettings?.spot_threshold_volume,
+        }),
+        [systemSettings, operationalSettings],
+      );
       const [escalationTick, setEscalationTick] = useState(0);
       const [toastOrder, setToastOrder] = useState(null);
       const [toastIsReassignment, setToastIsReassignment] = useState(false);
@@ -2635,13 +2646,13 @@ function orderPartyInfo(order) {
             list,
             factories,
             projects,
-            systemSettings,
+            escalationSettings,
             holidays,
             new Date(),
           );
           return filterAndSortFactoryOrders(list, activeFactoryId, ctx).filter((o) => !hiddenOrderIds.has(String(o?.id || '')));
         },
-        [activeFactoryId, factories, projects, systemSettings, holidays, hiddenOrderIds],
+        [activeFactoryId, factories, projects, escalationSettings, holidays, hiddenOrderIds],
       );
 
       const applyIncomingOrders = useCallback(
@@ -2760,7 +2771,7 @@ function orderPartyInfo(order) {
               list,
               factories,
               projects,
-              systemSettings,
+              escalationSettings,
               holidays,
               new Date(),
             );
@@ -2801,7 +2812,7 @@ function orderPartyInfo(order) {
             applyIncomingOrders(r.orders, { playSound: false });
           }
         },
-        [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById, factories, projects, systemSettings, holidays],
+        [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById, factories, projects, escalationSettings, holidays],
       );
 
       useEffect(() => {
@@ -2923,12 +2934,13 @@ function orderPartyInfo(order) {
         let cancelled = false;
         (async () => {
           try {
-            const [rows, projs, hols, settings, customerRows] = await Promise.all([
+            const [rows, projs, hols, settings, customerRows, opSettings] = await Promise.all([
               db.fetchFactories(),
               db.fetchProjects(),
               db.fetchHolidays(),
               db.fetchSystemSettings(),
               db.fetchCustomers(),
+              db.fetchDispatchOperationalSettings(),
             ]);
             if (cancelled) return;
             setFactories(rows);
@@ -2936,6 +2948,7 @@ function orderPartyInfo(order) {
             setCustomers(customerRows);
             setHolidays(hols);
             setSystemSettings(settings);
+            setOperationalSettings(opSettings);
             const nameMap = Object.fromEntries((rows || []).map((r) => [r.id, r.name]));
             const urlId = getFactoryIdFromUrl();
             const stored = readStoredFactoryId();

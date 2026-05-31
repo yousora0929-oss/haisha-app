@@ -39,6 +39,71 @@ function logOneSignalDebug() {
 
 export const PUSH_CHAT_REDIRECT_SESSION_KEY = 'redirect_to_chat';
 
+/** OneSignal 許可プロンプト（slidedown）の日本語文言 */
+const ONESIGNAL_SLIDEDOWN_TEXT = {
+  actionMessage: '最新の出荷状況や受注通知を受け取るには、通知を許可してください。',
+  acceptButton: '許可する',
+  cancelButton: '今はしない',
+  confirmMessage: '通知の設定が完了しました。',
+  updateMessage: '通知カテゴリを更新しますか？',
+  positiveUpdateButton: '保存',
+  negativeUpdateButton: 'キャンセル',
+};
+
+/** 通知ベル（notifyButton）ダイアログの日本語文言（enable: false でも将来用に定義） */
+const ONESIGNAL_NOTIFY_BUTTON_TEXT = {
+  'dialog.blocked.message': 'ブラウザの設定で通知がブロックされています。設定から許可してください。',
+  'dialog.blocked.title': '通知がブロックされています',
+  'dialog.main.button.subscribe': '通知を受け取る',
+  'dialog.main.button.unsubscribe': '通知を停止する',
+  'dialog.main.title': 'プッシュ通知',
+  'message.action.resubscribed': '通知の再登録が完了しました',
+  'message.action.subscribed': '通知の登録が完了しました',
+  'message.action.subscribing': '登録中…',
+  'message.action.unsubscribed': '通知を停止しました',
+  'message.prenotify': 'クリックして通知を有効にしてください',
+  'tip.state.blocked': '通知がブロックされています',
+  'tip.state.subscribed': '通知を受信中です',
+  'tip.state.unsubscribed': '通知を受け取れます',
+};
+
+function buildOneSignalInitOptions(appIdValue) {
+  return {
+    appId: appIdValue,
+    serviceWorkerPath: ONESIGNAL_SERVICE_WORKER_PATH,
+    serviceWorkerParam: { scope: '/' },
+    autoRegister: true,
+    autoResubscribe: true,
+    promptOptions: {
+      slidedown: {
+        prompts: [
+          {
+            type: 'push',
+            autoPrompt: false,
+            delay: { pageViews: 1, timeDelay: 0 },
+            text: ONESIGNAL_SLIDEDOWN_TEXT,
+          },
+        ],
+      },
+    },
+    notifyButton: {
+      enable: false,
+      text: ONESIGNAL_NOTIFY_BUTTON_TEXT,
+    },
+    welcomeNotification: {
+      disable: true,
+    },
+  };
+}
+
+async function setOneSignalUserLanguageJa() {
+  try {
+    await OneSignal.User.setLanguage('ja');
+  } catch (error) {
+    console.warn('[OneSignal] ユーザー言語の設定に失敗しました', error);
+  }
+}
+
 export async function initOneSignal() {
   const id = appId();
   if (!id) {
@@ -46,30 +111,11 @@ export async function initOneSignal() {
     return null;
   }
   if (!oneSignalInitPromise) {
-    oneSignalInitPromise = OneSignal.init({
-      appId: id,
-      serviceWorkerPath: ONESIGNAL_SERVICE_WORKER_PATH,
-      serviceWorkerParam: { scope: '/' },
-      autoRegister: true,
-      autoResubscribe: true,
-      promptOptions: {
-        slidedown: {
-          prompts: [
-            {
-              type: 'push',
-              autoPrompt: false,
-              delay: { pageViews: 1, timeDelay: 0 },
-              text: {
-                actionMessage: '生コン発注システムから注文状況の通知を受け取りますか？',
-                acceptButton: '許可',
-                cancelButton: 'あとで',
-              },
-            },
-          ],
-        },
-      },
-      notifyButton: { enable: false },
-    }).catch((error) => {
+    oneSignalInitPromise = (async () => {
+      await OneSignal.init(buildOneSignalInitOptions(id));
+      await setOneSignalUserLanguageJa();
+      return OneSignal;
+    })().catch((error) => {
       oneSignalInitPromise = null;
       throw error;
     });
@@ -106,6 +152,7 @@ export async function registerOneSignalUser(externalId, tags = {}) {
   try {
     await initOneSignal();
     await OneSignal.login(normalizedId);
+    await setOneSignalUserLanguageJa();
     logOneSignalDebug();
     if (tags && Object.keys(tags).length > 0) {
       OneSignal.User.addTags(
