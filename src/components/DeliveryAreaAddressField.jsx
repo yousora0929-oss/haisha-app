@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { combineDeliveryAddress, getDeliveryAreaValidationMessage } from '../utils/deliveryAreas.js';
 
 const DEFAULT_DETAIL_LABEL = '町名・地名';
@@ -22,11 +22,34 @@ export function DeliveryAreaAddressField({
   detailRequired = true,
   showWarning = true,
   disabled = false,
+  showTownSuggestions = false,
+  townSuggestions = [],
+  townSuggestionsLoading = false,
+  townSuggestionsError = '',
 }) {
   const areas = Array.isArray(allowedAreas) ? allowedAreas.filter(Boolean) : [];
   const full = combineDeliveryAddress(deliveryArea, addressDetail);
   const warning = showWarning ? getDeliveryAreaValidationMessage(full, areas) : '';
   const townMissing = detailRequired && !String(addressDetail || '').trim();
+  const townListId = `${idPrefix}-town-suggestions`;
+  const suggestionOptions = useMemo(
+    () =>
+      [...new Set((Array.isArray(townSuggestions) ? townSuggestions : []).map((t) => String(t || '').trim()).filter(Boolean))],
+    [townSuggestions],
+  );
+  const showDatalist = showTownSuggestions && suggestionOptions.length > 0;
+
+  const resolvedDetailHint = showTownSuggestions
+    ? townSuggestionsLoading
+      ? '町名リストを読み込み中…（その間も手入力できます）'
+      : showDatalist
+        ? '候補から選ぶか、町名・地名を入力してください（未掲載の地名も手入力可）'
+        : townSuggestionsError
+          ? `${townSuggestionsError}（手入力で続行できます）`
+          : deliveryArea
+            ? '市町村を選択すると町名の候補が表示されます。候補にない場合は手入力してください。'
+            : detailHint
+    : detailHint;
 
   return (
     <div className="flex flex-col gap-2">
@@ -68,14 +91,23 @@ export function DeliveryAreaAddressField({
         required={detailRequired}
         aria-required={detailRequired}
         placeholder={detailPlaceholder}
+        list={showDatalist ? townListId : undefined}
+        autoComplete={showDatalist ? 'address-level3' : 'off'}
         onChange={(e) => onAddressDetailChange?.(e.target.value)}
         className={
           'min-h-[52px] w-full rounded-xl border-2 px-4 py-3 text-base text-slate-900 placeholder:text-slate-400 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300 ' +
           (townMissing ? 'border-amber-400 bg-amber-50/40' : 'border-slate-200')
         }
       />
-      {detailHint ? (
-        <p className="text-xs font-medium leading-relaxed text-slate-600">{detailHint}</p>
+      {showDatalist ? (
+        <datalist id={townListId}>
+          {suggestionOptions.map((town) => (
+            <option key={town} value={town} />
+          ))}
+        </datalist>
+      ) : null}
+      {resolvedDetailHint ? (
+        <p className="text-xs font-medium leading-relaxed text-slate-600">{resolvedDetailHint}</p>
       ) : null}
       {full ? (
         <p className="text-xs font-mono font-bold text-slate-600">

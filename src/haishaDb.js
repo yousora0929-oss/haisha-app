@@ -420,11 +420,13 @@ function buildOrderInsertRow(order) {
   const projectId = !isSpot && order.project_id != null ? String(order.project_id).trim() : '';
   const customerId = sanitizeRefId(order.customer_id ?? order.customerId);
   const orderedBy = String(order.ordered_by ?? order.orderedBy ?? '').trim();
-  const deliveryLat = isSpot ? parseDeliveryCoord(order.delivery_lat ?? order.deliveryLat) : null;
-  const deliveryLng = isSpot ? parseDeliveryCoord(order.delivery_lng ?? order.deliveryLng) : null;
+  const isLocationPending = Boolean(order.is_location_pending ?? order.isLocationPending);
+  const deliveryLat =
+    isSpot && !isLocationPending ? parseDeliveryCoord(order.delivery_lat ?? order.deliveryLat) : null;
+  const deliveryLng =
+    isSpot && !isLocationPending ? parseDeliveryCoord(order.delivery_lng ?? order.deliveryLng) : null;
   const safeOrder = sanitizeOrderRefs(order);
   const preferredFactoryId = sanitizeRefId(safeOrder.preferred_factory_id);
-  const isLocationPending = Boolean(order.is_location_pending ?? order.isLocationPending);
   const statusRaw = String(order.status || 'pending').trim() || 'pending';
   const nextOrder = sanitizeOrderDataForDb({
     ...safeOrder,
@@ -444,6 +446,10 @@ function buildOrderInsertRow(order) {
     preferredFactoryId: preferredFactoryId,
     main_factory_id: sanitizeRefId(safeOrder.main_factory_id),
     mainFactoryId: sanitizeRefId(safeOrder.mainFactoryId),
+    delivery_lat: deliveryLat,
+    delivery_lng: deliveryLng,
+    deliveryLat,
+    deliveryLng,
   });
   return {
     id,
@@ -1716,30 +1722,52 @@ export async function fetchOrderForMapEditor(orderId) {
   const id = String(orderId || '').trim();
   if (!id) throw new Error('orderId が必要です');
 
-  let row;
-  let error;
-  ({ data: row, error } = await supabase.from('orders').select(ORDER_SELECT).eq('id', id).maybeSingle());
-  if (error && isMissingRelationOrColumnError(error)) {
-    ({ data: row, error } = await supabase
-      .from('orders')
-      .select(
-        'id, order_data, chat_messages, created_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending',
-      )
-      .eq('id', id)
-      .maybeSingle());
+  let row = null;
+  let projectFromRpc = null;
+
+  const { data: rpcData, error: rpcError } = await supabase.rpc('fetch_order_for_map_editor', {
+    p_order_id: id,
+  });
+  const rpcMissing =
+    rpcError &&
+    (rpcError.code === '42883' || /fetch_order_for_map_editor/i.test(String(rpcError.message || '')));
+  if (!rpcError && rpcData != null) {
+    const payload = typeof rpcData === 'string' ? JSON.parse(rpcData) : rpcData;
+    if (payload && typeof payload === 'object' && payload.order) {
+      row = payload.order;
+      projectFromRpc = payload.project && typeof payload.project === 'object' ? payload.project : null;
+    } else if (payload === null) {
+      return null;
+    }
+  } else if (!rpcMissing && rpcError) {
+    console.warn('[fetchOrderForMapEditor] RPC failed, falling back to direct select', rpcError);
   }
-  if (error) {
-    console.error('fetchOrderForMapEditor failed', error);
-    throw error;
+
+  if (!row) {
+    let error;
+    ({ data: row, error } = await supabase.from('orders').select(ORDER_SELECT).eq('id', id).maybeSingle());
+    if (error && isMissingRelationOrColumnError(error)) {
+      ({ data: row, error } = await supabase
+        .from('orders')
+        .select(
+          'id, order_data, chat_messages, created_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending',
+        )
+        .eq('id', id)
+        .maybeSingle());
+    }
+    if (error) {
+      console.error('fetchOrderForMapEditor failed', error);
+      throw error;
+    }
   }
   if (!row) return null;
 
   const order = normalizeOrderRow(row);
   if (!order || order.status === 'deleted') return null;
 
-  let project = null;
+  let project = projectFromRpc;
   const projectId = String(order.project_id || '').trim();
-  if (projectId) {
+  if (projectId && !project) {
     let p;
     let pErr;
     ({ data: p, error: pErr } = await supabase.from('projects').select(PROJECT_MAP_SELECT).eq('id', projectId).maybeSingle());

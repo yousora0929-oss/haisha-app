@@ -107,13 +107,40 @@ function orderHasUsableCoords(order, projectById) {
   return Boolean(getOrderSiteCoords(order, projectById));
 }
 
+/** 注文レコード上の緯度経度（地図ピン）があるか（地図待ちは除く） */
+function orderHasOrderLevelCoords(order) {
+  const lat = order?.delivery_lat ?? order?.deliveryLat;
+  const lng = order?.delivery_lng ?? order?.deliveryLng;
+  return Number.isFinite(Number(lat)) && Number.isFinite(Number(lng));
+}
+
+function shouldRankByDeliveryArea(order, projectById, globalAllowedAreas) {
+  const addrCtx = getOrderDeliveryAreaContext(order, projectById, globalAllowedAreas);
+  if (addrCtx.locationPending) return true;
+  if (addrCtx.addressDetail) return true;
+  if (addrCtx.deliveryArea || addrCtx.fullAddress) {
+    if (!orderHasOrderLevelCoords(order)) return true;
+  }
+  return false;
+}
+
 /** 注文ごとのエスカレーション対象工場 ID（距離 or 市町村ベース） */
 export function rankFactoryIdsForOrder(order, projectById, factories, globalAllowedAreas) {
+  if (shouldRankByDeliveryArea(order, projectById, globalAllowedAreas)) {
+    return rankFactoryIdsByDeliveryArea(order, projectById, factories, globalAllowedAreas);
+  }
+  if (orderHasOrderLevelCoords(order)) {
+    return rankFactoryIdsByDistance(getOrderSiteCoords(order, projectById), factories);
+  }
   if (orderHasUsableCoords(order, projectById)) {
     return rankFactoryIdsByDistance(getOrderSiteCoords(order, projectById), factories);
   }
-  const { locationPending, deliveryArea, fullAddress } = getOrderDeliveryAreaContext(order, projectById);
-  if (locationPending || deliveryArea || fullAddress) {
+  const { deliveryArea, fullAddress, addressDetail } = getOrderDeliveryAreaContext(
+    order,
+    projectById,
+    globalAllowedAreas,
+  );
+  if (deliveryArea || fullAddress || addressDetail) {
     return rankFactoryIdsByDeliveryArea(order, projectById, factories, globalAllowedAreas);
   }
   return rankFactoryIdsByDistance(null, factories);

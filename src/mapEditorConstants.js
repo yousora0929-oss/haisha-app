@@ -1,3 +1,6 @@
+import { GUEST_SITE_ORDER_TOKEN_KEY } from './supabaseClient.js';
+import { parseSiteOrderTokenFromPath } from './utils/siteOrderUrl.js';
+
 /** 地図エディタで使うスタンプ種別 */
 export const MAP_STAMP_TYPES = [
   'PUMP',
@@ -148,13 +151,25 @@ export function buildMapEditorUrl(orderId, baseOrigin) {
     (baseOrigin && String(baseOrigin).replace(/\/$/, '')) ||
     envOrigin ||
     (typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '');
-  let url = `${origin}/map-editor/${encodeURIComponent(id)}`;
+
+  const params = new URLSearchParams();
   if (typeof window !== 'undefined') {
     const ret = window.location.href;
     if (ret && !/\/map-editor\//i.test(ret)) {
-      url += `?return=${encodeURIComponent(ret)}`;
+      params.set('return', ret);
+    }
+    let guestToken = parseSiteOrderTokenFromPath();
+    if (!guestToken) {
+      guestToken = String(sessionStorage.getItem(GUEST_SITE_ORDER_TOKEN_KEY) || '').trim();
+    }
+    if (guestToken) {
+      params.set('token', guestToken);
     }
   }
+
+  let url = `${origin}/map-editor/${encodeURIComponent(id)}`;
+  const qs = params.toString();
+  if (qs) url += `?${qs}`;
   return url;
 }
 

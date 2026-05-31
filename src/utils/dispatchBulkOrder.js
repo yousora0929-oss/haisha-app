@@ -18,6 +18,50 @@ function unloadDurationLabel(value) {
   return UNLOAD_LABELS[String(value || '')] || UNLOAD_LABELS['30'];
 }
 
+/** フォーム入力からエスカレーション判定用の住所フィールドを正規化 */
+export function buildEscalationAddressFields(context) {
+  const deliveryAreaTrim = String(context.deliveryArea || '').trim();
+  const addressDetailTrim = String(
+    context.siteAddressDetail ?? context.town ?? context.townAddress ?? context.town_address ?? '',
+  ).trim();
+  const fullAddress =
+    String(context.siteAddress || '').trim() ||
+    combineDeliveryAddress(deliveryAreaTrim, addressDetailTrim);
+
+  return {
+    delivery_area: deliveryAreaTrim || null,
+    deliveryArea: deliveryAreaTrim || null,
+    site_address_detail: addressDetailTrim || null,
+    siteAddressDetail: addressDetailTrim || null,
+    siteAddress: fullAddress,
+    site_address: fullAddress,
+  };
+}
+
+/** 発注フォーム state からエスカレーション判定用の注文オブジェクトを組み立てる */
+export function buildEscalationOrderFromFormContext(context) {
+  const isSpot = context.orderKind === 'spot';
+  const locationPending = Boolean(context.isLocationPending);
+  const addressFields = buildEscalationAddressFields(context);
+  const spotLat = parseFloat(String(context.deliveryLat ?? '').trim());
+  const spotLng = parseFloat(String(context.deliveryLng ?? '').trim());
+  const hasPinnedCoords =
+    !locationPending && Number.isFinite(spotLat) && Number.isFinite(spotLng);
+
+  return {
+    is_spot: isSpot,
+    is_location_pending: locationPending,
+    isLocationPending: locationPending,
+    project_id: !isSpot && context.selectedProjectId ? String(context.selectedProjectId) : null,
+    projectId: !isSpot && context.selectedProjectId ? String(context.selectedProjectId) : null,
+    preferred_factory_id: String(context.preferredFactoryId || '').trim() || null,
+    preferredFactoryId: String(context.preferredFactoryId || '').trim() || null,
+    delivery_lat: isSpot && hasPinnedCoords ? spotLat : null,
+    delivery_lng: isSpot && hasPinnedCoords ? spotLng : null,
+    ...addressFields,
+  };
+}
+
 /**
  * 共通フォーム入力 + 1つの納入日から発注用 order オブジェクトを組み立てる
  */
@@ -55,10 +99,10 @@ export function buildDispatchOrderForDate(preferredDate, context) {
   const isSpot = orderKind === 'spot';
   const locationPending = Boolean(isLocationPending);
   const nameTrim = sanitizeSiteNameValue(siteName);
-  const deliveryAreaTrim = String(context.deliveryArea || '').trim();
-  const addressDetailTrim = String(context.siteAddressDetail ?? '').trim();
-  const addrTrim =
-    String(siteAddress || '').trim() || combineDeliveryAddress(deliveryAreaTrim, addressDetailTrim);
+  const addressFields = buildEscalationAddressFields(context);
+  const deliveryAreaTrim = String(addressFields.deliveryArea || '').trim();
+  const addressDetailTrim = String(addressFields.siteAddressDetail || '').trim();
+  const addrTrim = String(addressFields.siteAddress || '').trim();
   const projectName = sanitizeSiteNameValue(selectedProject?.name);
   const addrForName = looksLikeUrlText(addrTrim) ? '' : addrTrim;
   const resolvedSiteName =
@@ -72,8 +116,10 @@ export function buildDispatchOrderForDate(preferredDate, context) {
   const preferredFactoryName =
     prefFid && (Array.isArray(factories) ? factories : []).find((f) => f && f.id === prefFid)?.name?.trim();
 
-  const spotLat = isSpot ? parseFloat(String(deliveryLat).trim()) : null;
-  const spotLng = isSpot ? parseFloat(String(deliveryLng).trim()) : null;
+  const spotLat =
+    isSpot && !locationPending ? parseFloat(String(deliveryLat).trim()) : Number.NaN;
+  const spotLng =
+    isSpot && !locationPending ? parseFloat(String(deliveryLng).trim()) : Number.NaN;
 
   return {
     createdAt: new Date().toISOString(),
@@ -113,10 +159,8 @@ export function buildDispatchOrderForDate(preferredDate, context) {
     mixText,
     siteName: resolvedSiteName,
     siteAddress: addrTrim,
-    delivery_area: deliveryAreaTrim || null,
-    deliveryArea: deliveryAreaTrim || null,
-    site_address_detail: addressDetailTrim || null,
-    siteAddressDetail: addressDetailTrim || null,
+    site_address: addrTrim,
+    ...addressFields,
     sitePhone: String(sitePhone || '').trim(),
     has_test: Boolean(hasTest),
     is_location_pending: locationPending,

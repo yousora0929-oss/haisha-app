@@ -33,8 +33,10 @@ import { OrderCartPreview } from './components/OrderCartPreview.jsx';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
-import { buildDispatchOrderForDate, validateCartLineForm } from './utils/dispatchBulkOrder.js';
+import { buildDispatchOrderForDate, validateCartLineForm, buildEscalationOrderFromFormContext } from './utils/dispatchBulkOrder.js';
 import { combineDeliveryAddress, extractProjectAddressFields, normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
+import { fetchTownsForMunicipality, resolveDeliveryPrefecture } from './utils/heartrailsGeo.js';
+import { rankFactoryIdsForOrder } from './utils/escalationUtils.js';
 import { isLocationPendingOrder, resolveInitialOrderStatus, sumOrderVolumesM3 } from './utils/orderWorkflow.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
@@ -987,6 +989,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [deliveryArea, setDeliveryArea] = useState('');
       const [siteAddressDetail, setSiteAddressDetail] = useState('');
       const [isLocationPending, setIsLocationPending] = useState(false);
+      const [townOptions, setTownOptions] = useState([]);
+      const [townOptionsLoading, setTownOptionsLoading] = useState(false);
+      const [townOptionsError, setTownOptionsError] = useState('');
       const [sitePhone, setSitePhone] = useState('');
       const [orderedBy, setOrderedBy] = useState('');
       const [hasTest, setHasTest] = useState(false);
@@ -1099,6 +1104,50 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         },
         [allowedDeliveryAreas],
       );
+
+      /** 地図待ち時: 市町村選択に応じて HeartRails から町名候補を取得 */
+      useEffect(() => {
+        if (orderKind !== 'spot' || !isLocationPending) {
+          setTownOptions([]);
+          setTownOptionsLoading(false);
+          setTownOptionsError('');
+          return undefined;
+        }
+
+        const municipality = String(deliveryArea || '').trim();
+        if (!municipality) {
+          setTownOptions([]);
+          setTownOptionsLoading(false);
+          setTownOptionsError('');
+          return undefined;
+        }
+
+        let cancelled = false;
+        setTownOptionsLoading(true);
+        setTownOptionsError('');
+
+        fetchTownsForMunicipality(municipality, resolveDeliveryPrefecture(adminSettings))
+          .then((towns) => {
+            if (cancelled) return;
+            setTownOptions(Array.isArray(towns) ? towns : []);
+            if (!towns?.length) {
+              setTownOptionsError('この市町村の町名候補は取得できませんでした');
+            }
+          })
+          .catch((err) => {
+            if (cancelled) return;
+            setTownOptions([]);
+            setTownOptionsError(err?.message || '町名リストの取得に失敗しました');
+            console.warn('[DispatchApp] 町名サジェスト取得失敗', err);
+          })
+          .finally(() => {
+            if (!cancelled) setTownOptionsLoading(false);
+          });
+
+        return () => {
+          cancelled = true;
+        };
+      }, [orderKind, isLocationPending, deliveryArea, adminSettings]);
 
       const currentCustomer = useMemo(
         () => (customers || []).find((c) => c && c.id === currentCustomerId) || null,
@@ -1950,6 +1999,26 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         ],
       );
 
+      const factoriesForSelection = useMemo(() => {
+        if (!Array.isArray(factories) || factories.length === 0) return [];
+        const projectById =
+          selectedProjectId && selectedProject
+            ? { [String(selectedProjectId)]: selectedProject }
+            : {};
+        const previewOrder = buildEscalationOrderFromFormContext(orderFormContext);
+        const rankedIds = rankFactoryIdsForOrder(
+          previewOrder,
+          projectById,
+          factories,
+          allowedDeliveryAreas,
+        );
+        const byId = new Map(factories.map((f) => [String(f.id), f]));
+        const ranked = rankedIds.map((id) => byId.get(String(id))).filter(Boolean);
+        const rankedSet = new Set(rankedIds.map((id) => String(id)));
+        const rest = factories.filter((f) => f?.id && !rankedSet.has(String(f.id)));
+        return [...ranked, ...rest];
+      }, [factories, orderFormContext, selectedProject, selectedProjectId, allowedDeliveryAreas]);
+
       const resetOrderForm = useCallback(() => {
         const next = nextAvailableOrderDateTime(today);
         setPreferredDate(next.date);
@@ -1967,6 +2036,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setDeliveryArea('');
         setSiteAddressDetail('');
         setIsLocationPending(false);
+        setTownOptions([]);
+        setTownOptionsError('');
         lastAutofillProjectIdRef.current = '';
         setSitePhone('');
         setOrderedBy('');
@@ -2550,6 +2621,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     deliveryArea={deliveryArea}
                     onDeliveryAreaChange={(v) => {
                       setDeliveryArea(v);
+                      if (isLocationPending) setSiteAddressDetail('');
                       setAddressSearchError('');
                       setSubmitError('');
                     }}
@@ -2558,6 +2630,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       setSiteAddressDetail(v);
                       setAddressSearchError('');
                     }}
+                    showTownSuggestions={isLocationPending}
+                    townSuggestions={townOptions}
+                    townSuggestionsLoading={townOptionsLoading}
+                    townSuggestionsError={townOptionsError}
                   />
                   <div className="flex flex-col gap-2">
                     <button
@@ -2729,7 +2805,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   }}
                 >
                   <option value="">（指定しない）</option>
-                  {factories.map((f) => (
+                  {factoriesForSelection.map((f) => (
                     <option key={f.id} value={f.id}>
                       {f.name}
                     </option>

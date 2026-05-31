@@ -147,6 +147,38 @@ export function hasGuestSiteOrderSession() {
   }
 }
 
+/** 地図エディタ用: いずれかのパネル認証が sessionStorage にあるか */
+export function hasAnyPanelSession() {
+  return (
+    hasAdminPanelSession() ||
+    hasCustomerPanelSession() ||
+    hasFactoryPanelSession() ||
+    hasGuestSiteOrderSession()
+  );
+}
+
+/** 地図エディタ URL の ?token= からゲスト専用発注トークンを取得 */
+export function parseMapEditorGuestTokenFromUrl() {
+  if (typeof window === 'undefined') return '';
+  try {
+    return String(new URLSearchParams(window.location.search).get('token') || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 地図エディタ起動時: URL の token を session に反映し、Realtime JWT を同期する。
+ * REST の RLS は readPanelRequestHeaders() 経由の x-* ヘッダーで評価される。
+ */
+export async function ensureMapEditorPanelAuth() {
+  const urlToken = parseMapEditorGuestTokenFromUrl();
+  if (urlToken) {
+    setGuestSiteOrderSession(urlToken);
+  }
+  return ensurePanelRealtimeAuth();
+}
+
 function detectPanelCredentials() {
   if (typeof sessionStorage === 'undefined') return null;
   try {

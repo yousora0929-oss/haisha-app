@@ -6,6 +6,7 @@ import {
   saveOrderOverrideMap,
   saveProjectDefaultMap,
 } from './haishaDb.js';
+import { ensureMapEditorPanelAuth, hasAnyPanelSession, parseMapEditorGuestTokenFromUrl } from './supabaseClient.js';
 import {
   MAP_EDITOR_TOOLS,
   navigateAfterMapEditorSave,
@@ -159,11 +160,17 @@ export function MapEditorApp() {
       setLoading(true);
       setLoadError('');
       try {
+        await ensureMapEditorPanelAuth();
         const result = await fetchOrderForMapEditor(orderId);
         if (cancelled) return;
 
         if (!result) {
-          setLoadError('注文が見つからないか、無効です。');
+          const hasAuth = hasAnyPanelSession() || Boolean(parseMapEditorGuestTokenFromUrl());
+          setLoadError(
+            hasAuth
+              ? '注文が見つからないか、無効です。'
+              : '認証情報がありません。発注画面・工場画面・管理画面から開くか、専用URL（?token=）付きのリンクをご利用ください。',
+          );
           return;
         }
 

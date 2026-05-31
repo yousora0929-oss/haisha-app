@@ -1,40 +1,89 @@
 import {
   combineDeliveryAddress,
+  extractProjectAddressFields,
   normalizeAllowedDeliveryAreas,
   splitDeliveryAddress,
 } from './deliveryAreas.js';
 
-/** 注文・物件から市町村・住所テキストを抽出 */
-export function getOrderDeliveryAreaContext(order, projectById = {}) {
+function normalizeAreaText(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
+
+function readOrderString(order, keys) {
+  if (!order || typeof order !== 'object') return '';
+  for (const key of keys) {
+    const value = order[key];
+    if (value != null && String(value).trim()) {
+      return String(value).trim();
+    }
+  }
+  return '';
+}
+
+/** 注文・物件から市町村・住所テキストを抽出（地図待ち・手動入力・地図ピン共通） */
+export function getOrderDeliveryAreaContext(order, projectById = {}, globalAllowedAreas = []) {
   if (!order) {
     return { deliveryArea: '', addressDetail: '', fullAddress: '', locationPending: false };
   }
+
   const pid = order.project_id ?? order.projectId;
   const project = pid != null ? projectById[String(pid)] : null;
-
-  const deliveryArea = String(
-    order.delivery_area ?? order.deliveryArea ?? project?.delivery_area ?? '',
-  ).trim();
-  const addressDetail = String(
-    order.site_address_detail ?? order.siteAddressDetail ?? project?.site_address ?? '',
-  ).trim();
-  const siteAddress = String(order.siteAddress ?? order.site_address ?? '').trim();
-  const fullAddress =
-    siteAddress || combineDeliveryAddress(deliveryArea, addressDetail);
-
   const locationPending = Boolean(order.is_location_pending ?? order.isLocationPending);
+  const areas = normalizeAllowedDeliveryAreas(globalAllowedAreas);
 
-  if (!deliveryArea && fullAddress) {
-    const split = splitDeliveryAddress(fullAddress, normalizeAllowedDeliveryAreas([]));
-    return {
-      deliveryArea: split.deliveryArea,
-      addressDetail: split.addressDetail || addressDetail,
-      fullAddress,
-      locationPending,
-    };
+  const orderDeliveryArea = readOrderString(order, [
+    'delivery_area',
+    'deliveryArea',
+    'city',
+    'municipality',
+  ]);
+  const orderAddressDetail = readOrderString(order, [
+    'site_address_detail',
+    'siteAddressDetail',
+    'town_address',
+    'townAddress',
+    'town',
+    'manualAddress',
+  ]);
+  const orderSiteAddress = readOrderString(order, ['siteAddress', 'site_address']);
+
+  let deliveryArea = orderDeliveryArea;
+  let addressDetail = orderAddressDetail;
+
+  if (!deliveryArea && !addressDetail && !locationPending && project) {
+    const fromProject = extractProjectAddressFields(project, areas);
+    if (!deliveryArea) deliveryArea = fromProject.deliveryArea;
+    if (!addressDetail) addressDetail = fromProject.siteAddressDetail;
   }
 
-  return { deliveryArea, addressDetail, fullAddress, locationPending };
+  let fullAddress =
+    orderSiteAddress || combineDeliveryAddress(deliveryArea, addressDetail);
+
+  if (fullAddress && (!deliveryArea || !addressDetail)) {
+    const split = splitDeliveryAddress(fullAddress, areas);
+    if (!deliveryArea && split.deliveryArea) deliveryArea = split.deliveryArea;
+    if (!addressDetail && split.addressDetail) addressDetail = split.addressDetail;
+  }
+
+  if (deliveryArea && fullAddress && !addressDetail && fullAddress.length > deliveryArea.length) {
+    const rest = fullAddress.startsWith(deliveryArea)
+      ? fullAddress.slice(deliveryArea.length).trim()
+      : fullAddress.replace(deliveryArea, '').trim();
+    if (rest) addressDetail = rest;
+  }
+
+  if (deliveryArea && addressDetail && addressDetail.startsWith(deliveryArea)) {
+    addressDetail = addressDetail.slice(deliveryArea.length).trim();
+  }
+
+  fullAddress = orderSiteAddress || combineDeliveryAddress(deliveryArea, addressDetail);
+
+  return {
+    deliveryArea: normalizeAreaText(deliveryArea),
+    addressDetail: normalizeAreaText(addressDetail),
+    fullAddress: normalizeAreaText(fullAddress),
+    locationPending,
+  };
 }
 
 function factoryAllowedAreas(factory, globalAllowedAreas) {
@@ -47,21 +96,46 @@ function factoryAllowedAreas(factory, globalAllowedAreas) {
   return normalizeAllowedDeliveryAreas(globalAllowedAreas);
 }
 
-/** 工場が当該市町村・住所エリアをカバーするか */
-export function factoryCoversDeliveryArea(factory, deliveryArea, addressText, globalAllowedAreas) {
+function buildAddressMatchCandidates(deliveryArea, addressDetail, addressText) {
+  const area = normalizeAreaText(deliveryArea);
+  const detail = normalizeAreaText(addressDetail);
+  const text = normalizeAreaText(addressText);
+  const combined = normalizeAreaText(combineDeliveryAddress(area, detail));
+  return [...new Set([text, combined, detail, area].filter(Boolean))];
+}
+
+function areaStringsMatch(factoryArea, candidates) {
+  const normalizedFactoryArea = normalizeAreaText(factoryArea);
+  if (!normalizedFactoryArea) return false;
+
+  return candidates.some((candidate) => {
+    if (!candidate) return false;
+    if (candidate === normalizedFactoryArea) return true;
+    if (candidate.startsWith(normalizedFactoryArea) || normalizedFactoryArea.startsWith(candidate)) {
+      return true;
+    }
+    if (candidate.includes(normalizedFactoryArea) || normalizedFactoryArea.includes(candidate)) {
+      return true;
+    }
+    return false;
+  });
+}
+
+/** 工場が当該市町村・町名・住所エリアをカバーするか */
+export function factoryCoversDeliveryArea(
+  factory,
+  deliveryArea,
+  addressText,
+  globalAllowedAreas,
+  addressDetail = '',
+) {
   const areas = factoryAllowedAreas(factory, globalAllowedAreas);
   if (!areas.length) return true;
 
-  const area = String(deliveryArea || '').trim();
-  const text = String(addressText || '').trim();
+  const candidates = buildAddressMatchCandidates(deliveryArea, addressDetail, addressText);
+  if (!candidates.length) return false;
 
-  if (area && areas.some((a) => area === a || area.startsWith(a) || a.startsWith(area))) {
-    return true;
-  }
-  if (text && areas.some((a) => text.includes(a))) {
-    return true;
-  }
-  return !area && !text;
+  return areas.some((factoryArea) => areaStringsMatch(factoryArea, candidates));
 }
 
 /**
@@ -69,8 +143,12 @@ export function factoryCoversDeliveryArea(factory, deliveryArea, addressText, gl
  */
 export function rankFactoryIdsByDeliveryArea(order, projectById, factories, globalAllowedAreas) {
   const list = Array.isArray(factories) ? factories : [];
-  const { deliveryArea, fullAddress } = getOrderDeliveryAreaContext(order, projectById);
-  const text = fullAddress || deliveryArea;
+  const { deliveryArea, addressDetail, fullAddress } = getOrderDeliveryAreaContext(
+    order,
+    projectById,
+    globalAllowedAreas,
+  );
+  const text = fullAddress || combineDeliveryAddress(deliveryArea, addressDetail) || deliveryArea;
 
   const pid = order?.project_id ?? order?.projectId;
   const project = pid != null ? projectById[String(pid)] : null;
@@ -90,7 +168,7 @@ export function rankFactoryIdsByDeliveryArea(order, projectById, factories, glob
   for (const f of list) {
     const id = f?.id != null ? String(f.id) : '';
     if (!id) continue;
-    if (factoryCoversDeliveryArea(f, deliveryArea, text, globalAllowedAreas)) {
+    if (factoryCoversDeliveryArea(f, deliveryArea, text, globalAllowedAreas, addressDetail)) {
       matching.push(id);
     } else {
       fallback.push(id);
