@@ -35,7 +35,12 @@ import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { buildDispatchOrderForDate, validateCartLineForm, buildEscalationOrderFromFormContext } from './utils/dispatchBulkOrder.js';
 import { combineDeliveryAddress, extractProjectAddressFields, normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
-import { fetchTownsForMunicipality, resolveDeliveryPrefecture } from './utils/heartrailsGeo.js';
+import {
+  fetchTownLocationsForMunicipality,
+  findTownLocation,
+  resolveDeliveryPrefecture,
+  townNamesFromLocationList,
+} from './utils/heartrailsGeo.js';
 import { rankFactoryIdsForOrder } from './utils/escalationUtils.js';
 import { isLocationPendingOrder, resolveInitialOrderStatus, sumOrderVolumesM3 } from './utils/orderWorkflow.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
@@ -995,9 +1000,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [deliveryArea, setDeliveryArea] = useState('');
       const [siteAddressDetail, setSiteAddressDetail] = useState('');
       const [isLocationPending, setIsLocationPending] = useState(false);
-      const [townOptions, setTownOptions] = useState([]);
+      const [townList, setTownList] = useState([]);
       const [townOptionsLoading, setTownOptionsLoading] = useState(false);
       const [townOptionsError, setTownOptionsError] = useState('');
+      const [representativeLat, setRepresentativeLat] = useState('');
+      const [representativeLng, setRepresentativeLng] = useState('');
       const [sitePhone, setSitePhone] = useState('');
       const [orderedBy, setOrderedBy] = useState('');
       const [hasTest, setHasTest] = useState(false);
@@ -1111,13 +1118,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         [allowedDeliveryAreas],
       );
 
-      /** 市町村選択に応じて HeartRails から町名候補を取得（地図待ち以外も含む） */
+      /** 市町村選択に応じて HeartRails から町名候補（代表地点付き）を取得 */
       useEffect(() => {
         const municipality = String(deliveryArea || '').trim();
         if (!municipality) {
-          setTownOptions([]);
+          setTownList([]);
           setTownOptionsLoading(false);
           setTownOptionsError('');
+          setRepresentativeLat('');
+          setRepresentativeLng('');
           return undefined;
         }
 
@@ -1125,17 +1134,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setTownOptionsLoading(true);
         setTownOptionsError('');
 
-        fetchTownsForMunicipality(municipality, resolveDeliveryPrefecture(adminSettings))
-          .then((towns) => {
+        fetchTownLocationsForMunicipality(municipality, resolveDeliveryPrefecture(adminSettings))
+          .then((rows) => {
             if (cancelled) return;
-            setTownOptions(Array.isArray(towns) ? towns : []);
-            if (!towns?.length) {
+            setTownList(Array.isArray(rows) ? rows : []);
+            if (!rows?.length) {
               setTownOptionsError('この市町村の町名候補は取得できませんでした');
             }
           })
           .catch((err) => {
             if (cancelled) return;
-            setTownOptions([]);
+            setTownList([]);
             setTownOptionsError(err?.message || '町名リストの取得に失敗しました');
             console.warn('[DispatchApp] 町名サジェスト取得失敗', err);
           })
@@ -1147,6 +1156,26 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           cancelled = true;
         };
       }, [deliveryArea, adminSettings]);
+
+      /** 町名入力が HeartRails 候補と一致したら代表地点座標をセット */
+      useEffect(() => {
+        const town = String(siteAddressDetail || '').trim();
+        if (!town || !townList.length) {
+          setRepresentativeLat('');
+          setRepresentativeLng('');
+          return;
+        }
+        const hit = findTownLocation(townList, town);
+        if (hit?.lat != null && hit?.lng != null) {
+          setRepresentativeLat(String(hit.lat));
+          setRepresentativeLng(String(hit.lng));
+        } else {
+          setRepresentativeLat('');
+          setRepresentativeLng('');
+        }
+      }, [siteAddressDetail, townList]);
+
+      const townSuggestionNames = useMemo(() => townNamesFromLocationList(townList), [townList]);
 
       const currentCustomer = useMemo(
         () => (customers || []).find((c) => c && c.id === currentCustomerId) || null,
@@ -1964,6 +1993,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           deliveryLat,
           deliveryLng,
           isLocationPending,
+          representativeLat,
+          representativeLng,
           timeSlot,
           quantityM3,
           mixText,
@@ -1992,6 +2023,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           deliveryLat,
           deliveryLng,
           isLocationPending,
+          representativeLat,
+          representativeLng,
           timeSlot,
           quantityM3,
           mixText,
@@ -2075,8 +2108,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setDeliveryArea('');
         setSiteAddressDetail('');
         setIsLocationPending(false);
-        setTownOptions([]);
+        setTownList([]);
         setTownOptionsError('');
+        setRepresentativeLat('');
+        setRepresentativeLng('');
         lastAutofillProjectIdRef.current = '';
         setSitePhone('');
         setOrderedBy('');
@@ -2670,7 +2705,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       setAddressSearchError('');
                     }}
                     showTownSuggestions
-                    townSuggestions={townOptions}
+                    townSuggestions={townSuggestionNames}
                     townSuggestionsLoading={townOptionsLoading}
                     townSuggestionsError={townOptionsError}
                   />
@@ -2756,7 +2791,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     setSubmitError('');
                   }}
                   showTownSuggestions
-                  townSuggestions={townOptions}
+                  townSuggestions={townSuggestionNames}
                   townSuggestionsLoading={townOptionsLoading}
                   townSuggestionsError={townOptionsError}
                 />

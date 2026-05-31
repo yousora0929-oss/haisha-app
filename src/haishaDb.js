@@ -421,10 +421,8 @@ function buildOrderInsertRow(order) {
   const customerId = sanitizeRefId(order.customer_id ?? order.customerId);
   const orderedBy = String(order.ordered_by ?? order.orderedBy ?? '').trim();
   const isLocationPending = Boolean(order.is_location_pending ?? order.isLocationPending);
-  const deliveryLat =
-    isSpot && !isLocationPending ? parseDeliveryCoord(order.delivery_lat ?? order.deliveryLat) : null;
-  const deliveryLng =
-    isSpot && !isLocationPending ? parseDeliveryCoord(order.delivery_lng ?? order.deliveryLng) : null;
+  const deliveryLat = isSpot ? parseDeliveryCoord(order.delivery_lat ?? order.deliveryLat) : null;
+  const deliveryLng = isSpot ? parseDeliveryCoord(order.delivery_lng ?? order.deliveryLng) : null;
   const safeOrder = sanitizeOrderRefs(order);
   const preferredFactoryId = sanitizeRefId(safeOrder.preferred_factory_id);
   const statusRaw = String(order.status || 'pending').trim() || 'pending';

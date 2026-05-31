@@ -18,6 +18,33 @@ function unloadDurationLabel(value) {
   return UNLOAD_LABELS[String(value || '')] || UNLOAD_LABELS['30'];
 }
 
+function parseOptionalCoord(value) {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** スポット注文の delivery 座標（地図ピン or 地図待ちの代表地点） */
+export function resolveSpotDeliveryCoords(context) {
+  const isSpot = context?.orderKind === 'spot';
+  if (!isSpot) return { lat: null, lng: null, isRepresentative: false };
+
+  const locationPending = Boolean(context.isLocationPending);
+  if (!locationPending) {
+    const lat = parseOptionalCoord(context.deliveryLat);
+    const lng = parseOptionalCoord(context.deliveryLng);
+    return { lat, lng, isRepresentative: false };
+  }
+
+  const lat = parseOptionalCoord(
+    context.representativeLat ?? context.representative_lat ?? context.roughLat ?? context.rough_lat,
+  );
+  const lng = parseOptionalCoord(
+    context.representativeLng ?? context.representative_lng ?? context.roughLng ?? context.rough_lng,
+  );
+  return { lat, lng, isRepresentative: Boolean(lat != null && lng != null) };
+}
+
 /** フォーム入力からエスカレーション判定用の住所フィールドを正規化 */
 export function buildEscalationAddressFields(context) {
   const deliveryAreaTrim = String(context.deliveryArea || '').trim();
@@ -120,6 +147,17 @@ export function buildDispatchOrderForDate(preferredDate, context) {
     isSpot && !locationPending ? parseFloat(String(deliveryLat).trim()) : Number.NaN;
   const spotLng =
     isSpot && !locationPending ? parseFloat(String(deliveryLng).trim()) : Number.NaN;
+  const representativeCoords = resolveSpotDeliveryCoords(context);
+  const deliveryLatValue = locationPending
+    ? representativeCoords.lat
+    : isSpot && Number.isFinite(spotLat)
+      ? spotLat
+      : null;
+  const deliveryLngValue = locationPending
+    ? representativeCoords.lng
+    : isSpot && Number.isFinite(spotLng)
+      ? spotLng
+      : null;
 
   return {
     createdAt: new Date().toISOString(),
@@ -136,8 +174,16 @@ export function buildDispatchOrderForDate(preferredDate, context) {
     orderedBy: String(orderedBy || '').trim(),
     project_id: !isSpot && selectedProjectId ? String(selectedProjectId) : null,
     projectName: selectedProject?.name || '',
-    delivery_lat: isSpot && Number.isFinite(spotLat) ? spotLat : null,
-    delivery_lng: isSpot && Number.isFinite(spotLng) ? spotLng : null,
+    delivery_lat: deliveryLatValue,
+    delivery_lng: deliveryLngValue,
+    deliveryLat: deliveryLatValue,
+    deliveryLng: deliveryLngValue,
+    representative_lat: locationPending ? representativeCoords.lat : null,
+    representative_lng: locationPending ? representativeCoords.lng : null,
+    representativeLat: locationPending ? representativeCoords.lat : null,
+    representativeLng: locationPending ? representativeCoords.lng : null,
+    rough_lat: locationPending ? representativeCoords.lat : null,
+    rough_lng: locationPending ? representativeCoords.lng : null,
     preferred_factory_id: prefFid || null,
     preferredFactoryId: prefFid || null,
     preferredFactoryName: preferredFactoryName || '',

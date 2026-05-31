@@ -84,8 +84,11 @@ export function getEffectiveEscalationMinutes(order, projectById, settings, holi
   return minutes;
 }
 
-/** 現場座標（物件マスタ優先、なければ delivery / order_data） */
+/** 現場座標（物件マスタ優先、なければ delivery / order_data）。地図待ちは代表地点を距離判定に使わない */
 export function getOrderSiteCoords(order, projectById) {
+  if (Boolean(order?.is_location_pending ?? order?.isLocationPending)) {
+    return null;
+  }
   const pid = orderProjectId(order);
   if (pid && projectById[pid]) {
     const p = projectById[pid];
@@ -107,8 +110,9 @@ function orderHasUsableCoords(order, projectById) {
   return Boolean(getOrderSiteCoords(order, projectById));
 }
 
-/** 注文レコード上の緯度経度（地図ピン）があるか（地図待ちは除く） */
+/** 注文レコード上の緯度経度（地図ピン）があるか（地図待ちの代表地点は除く） */
 function orderHasOrderLevelCoords(order) {
+  if (Boolean(order?.is_location_pending ?? order?.isLocationPending)) return false;
   const lat = order?.delivery_lat ?? order?.deliveryLat;
   const lng = order?.delivery_lng ?? order?.deliveryLng;
   return Number.isFinite(Number(lat)) && Number.isFinite(Number(lng));
