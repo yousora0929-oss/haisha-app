@@ -142,51 +142,85 @@ export function getEffectiveEscalationMinutes(order, projectById, settings, holi
   return minutes;
 }
 
-/** 現場座標（物件マスタ優先、なければ delivery / order_data）。地図待ちは代表地点を距離判定に使わない */
+/** 現場座標（物件マスタ優先、なければ delivery / 代表地点 / order_data） */
 export function getOrderSiteCoords(order, projectById) {
-  if (Boolean(order?.is_location_pending ?? order?.isLocationPending)) {
-    return null;
-  }
   const pid = orderProjectId(order);
+  const locationPending = Boolean(order?.is_location_pending ?? order?.isLocationPending);
+
+  if (!locationPending && pid && projectById[pid]) {
+    const p = projectById[pid];
+    if (Number.isFinite(p.lat) && Number.isFinite(p.lng)) {
+      return { lat: p.lat, lng: p.lng };
+    }
+  }
+
+  const lat =
+    order?.delivery_lat ??
+    order?.deliveryLat ??
+    order?.representative_lat ??
+    order?.representativeLat ??
+    order?.rough_lat ??
+    order?.roughLat ??
+    order?.siteLat ??
+    order?.site_lat ??
+    order?.lat;
+  const lng =
+    order?.delivery_lng ??
+    order?.deliveryLng ??
+    order?.representative_lng ??
+    order?.representativeLng ??
+    order?.rough_lng ??
+    order?.roughLng ??
+    order?.siteLng ??
+    order?.site_lng ??
+    order?.lng;
+  const la = Number(lat);
+  const ln = Number(lng);
+  if (Number.isFinite(la) && Number.isFinite(ln)) return { lat: la, lng: ln };
+
   if (pid && projectById[pid]) {
     const p = projectById[pid];
     if (Number.isFinite(p.lat) && Number.isFinite(p.lng)) {
       return { lat: p.lat, lng: p.lng };
     }
   }
-  const lat =
-    order?.delivery_lat ?? order?.deliveryLat ?? order?.siteLat ?? order?.site_lat ?? order?.lat;
-  const lng =
-    order?.delivery_lng ?? order?.deliveryLng ?? order?.siteLng ?? order?.site_lng ?? order?.lng;
-  const la = Number(lat);
-  const ln = Number(lng);
-  if (Number.isFinite(la) && Number.isFinite(ln)) return { lat: la, lng: ln };
+
   return null;
 }
 
 /**
  * エスカレーション判定モード
- * 1. 地図待ち → AREA_BASED（代表座標は距離判定に使わない）
- * 2. 地図ピンあり → DISTANCE_BASED（町名テキストより優先）
- * 3. 座標なし → AREA_BASED
+ * 1. 有効な座標あり（地図ピン or 地図待ちの代表地点）→ DISTANCE_BASED
+ * 2. 座標なし → AREA_BASED（住所テキスト）
  */
 function resolveEscalationRankMode(order, projectById, globalAllowedAreas) {
   const locationPending = Boolean(order?.is_location_pending ?? order?.isLocationPending);
-  if (locationPending) {
-    return { mode: 'AREA_BASED', reason: 'location_pending' };
-  }
-
   const siteCoords = getOrderSiteCoords(order, projectById);
+
   if (siteCoords) {
-    return { mode: 'DISTANCE_BASED', reason: 'pinned_coordinates', siteCoords };
+    return {
+      mode: 'DISTANCE_BASED',
+      reason: locationPending ? 'location_pending_representative_coordinates' : 'pinned_coordinates',
+      siteCoords,
+      locationPending,
+    };
   }
 
   const addrCtx = getOrderDeliveryAreaContext(order, projectById, globalAllowedAreas);
-  if (addrCtx.deliveryArea || addrCtx.fullAddress || addrCtx.addressDetail) {
-    return { mode: 'AREA_BASED', reason: 'no_coordinates_address_fallback' };
+  if (locationPending || addrCtx.deliveryArea || addrCtx.fullAddress || addrCtx.addressDetail) {
+    return {
+      mode: 'AREA_BASED',
+      reason: locationPending ? 'location_pending_no_coordinates' : 'no_coordinates_address_fallback',
+      locationPending,
+    };
   }
 
-  return { mode: 'DISTANCE_BASED', reason: 'no_coordinates_no_address_all_factories', siteCoords: null };
+  return {
+    mode: 'DISTANCE_BASED',
+    reason: 'no_coordinates_no_address_all_factories',
+    siteCoords: null,
+    locationPending,
+  };
 }
 
 /** 注文ごとのエスカレーション対象工場 ID（距離 or 市町村ベース） */
@@ -202,6 +236,7 @@ export function rankFactoryIdsForOrder(order, projectById, factories, globalAllo
       判定対象の市町村: addrCtx.deliveryArea,
       判定対象の町名: addrCtx.addressDetail,
       地図待ち: addrCtx.locationPending,
+      代表座標距離判定: rankMode.reason === 'location_pending_representative_coordinates',
       地図ピン座標: siteCoords || null,
       第一希望工場: orderPreferredFactoryId(order) || null,
     });

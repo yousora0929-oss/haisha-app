@@ -73,8 +73,23 @@ export function buildEscalationOrderFromFormContext(context) {
   const addressFields = buildEscalationAddressFields(context);
   const spotLat = parseFloat(String(context.deliveryLat ?? '').trim());
   const spotLng = parseFloat(String(context.deliveryLng ?? '').trim());
+  const representativeCoords = resolveSpotDeliveryCoords(context);
   const hasPinnedCoords =
     !locationPending && Number.isFinite(spotLat) && Number.isFinite(spotLng);
+  const hasRepresentativeCoords =
+    locationPending &&
+    representativeCoords.lat != null &&
+    representativeCoords.lng != null;
+  const escalationLat = hasPinnedCoords
+    ? spotLat
+    : hasRepresentativeCoords
+      ? representativeCoords.lat
+      : null;
+  const escalationLng = hasPinnedCoords
+    ? spotLng
+    : hasRepresentativeCoords
+      ? representativeCoords.lng
+      : null;
 
   return {
     is_spot: isSpot,
@@ -84,8 +99,12 @@ export function buildEscalationOrderFromFormContext(context) {
     projectId: !isSpot && context.selectedProjectId ? String(context.selectedProjectId) : null,
     preferred_factory_id: normalizeFactoryRefId(context.preferredFactoryId) || null,
     preferredFactoryId: normalizeFactoryRefId(context.preferredFactoryId) || null,
-    delivery_lat: isSpot && hasPinnedCoords ? spotLat : null,
-    delivery_lng: isSpot && hasPinnedCoords ? spotLng : null,
+    delivery_lat: isSpot && escalationLat != null ? escalationLat : null,
+    delivery_lng: isSpot && escalationLng != null ? escalationLng : null,
+    representative_lat: hasRepresentativeCoords ? representativeCoords.lat : null,
+    representative_lng: hasRepresentativeCoords ? representativeCoords.lng : null,
+    representativeLat: hasRepresentativeCoords ? representativeCoords.lat : null,
+    representativeLng: hasRepresentativeCoords ? representativeCoords.lng : null,
     ...addressFields,
   };
 }

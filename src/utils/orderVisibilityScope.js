@@ -1,6 +1,7 @@
 import {
   buildEscalationContext,
   getEffectiveEscalationMinutes,
+  getOrderSiteCoords,
   getVisibleFactoryIdsForOrder,
 } from './escalationUtils.js';
 import { getOrderDeliveryAreaContext } from './deliveryAreaEscalation.js';
@@ -154,9 +155,11 @@ export function getOrderVisibilityScope(order, ctx, factoryNameById = {}) {
   const allCount = (ctx?.allFactoryIds || []).length;
   const addrCtx = getOrderDeliveryAreaContext(order, ctx?.projectById);
   const areaBasedNote =
-    addrCtx.locationPending && !order?.delivery_lat && !order?.delivery_lng && addrCtx.deliveryArea
+    addrCtx.locationPending && !getOrderSiteCoords(order, ctx?.projectById) && addrCtx.deliveryArea
       ? `（地図待ち・${addrCtx.deliveryArea}エリアで工場を選定）`
-      : '';
+      : addrCtx.locationPending && getOrderSiteCoords(order, ctx?.projectById)
+        ? '（地図待ち・代表座標から距離で工場を選定）'
+        : '';
 
   const chips = visibleFactoryIds.map((id) => {
     let role = 'visible';
