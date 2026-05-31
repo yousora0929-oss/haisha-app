@@ -33,7 +33,7 @@ import { OrderCartPreview } from './components/OrderCartPreview.jsx';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
-import { buildDispatchOrderForDate, validateCartLineForm, buildEscalationOrderFromFormContext } from './utils/dispatchBulkOrder.js';
+import { buildDispatchOrderForDate, validateCartLineForm } from './utils/dispatchBulkOrder.js';
 import { combineDeliveryAddress, extractProjectAddressFields, normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
 import {
   fetchTownLocationsForMunicipality,
@@ -41,7 +41,6 @@ import {
   resolveDeliveryPrefecture,
   townNamesFromLocationList,
 } from './utils/heartrailsGeo.js';
-import { rankFactoryIdsForOrder } from './utils/escalationUtils.js';
 import { isLocationPendingOrder, resolveInitialOrderStatus, sumOrderVolumesM3 } from './utils/orderWorkflow.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
@@ -2031,65 +2030,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         ],
       );
 
-      const factoriesForSelection = useMemo(() => {
-        if (!Array.isArray(factories) || factories.length === 0) return [];
-        const projectById =
-          selectedProjectId && selectedProject
-            ? { [String(selectedProjectId)]: selectedProject }
-            : {};
-        const previewOrder = buildEscalationOrderFromFormContext(orderFormContext);
-        const rankedIds = rankFactoryIdsForOrder(
-          previewOrder,
-          projectById,
-          factories,
-          allowedDeliveryAreas,
-        );
-        const byId = new Map(factories.map((f) => [String(f.id), f]));
-        const eligible = rankedIds.map((id) => byId.get(String(id))).filter(Boolean);
-
-        const cityTrim = String(deliveryArea || '').trim();
-        const townTrim = String(siteAddressDetail || '').trim();
-        const strictAddressFilter = Boolean(townTrim || cityTrim || isLocationPending);
-
-        if (strictAddressFilter) {
-          return eligible;
-        }
-
-        const eligibleSet = new Set(rankedIds.map((id) => String(id)));
-        const rest = factories.filter((f) => f?.id && !eligibleSet.has(String(f.id)));
-        return [...eligible, ...rest];
-      }, [
-        factories,
-        orderFormContext,
-        selectedProject,
-        selectedProjectId,
-        allowedDeliveryAreas,
-        deliveryArea,
-        siteAddressDetail,
-        isLocationPending,
-        orderKind,
-        deliveryLat,
-        deliveryLng,
-      ]);
-
-      useEffect(() => {
-        const townTrim = String(siteAddressDetail || '').trim();
-        const cityTrim = String(deliveryArea || '').trim();
-        if (!townTrim && !cityTrim && !isLocationPending) return;
-        if (!preferredFactoryId) return;
-        const stillValid = factoriesForSelection.some(
-          (f) => f?.id && String(f.id) === String(preferredFactoryId),
-        );
-        if (!stillValid) {
-          setPreferredFactoryId('');
-        }
-      }, [
-        factoriesForSelection,
-        preferredFactoryId,
-        siteAddressDetail,
-        deliveryArea,
-        isLocationPending,
-      ]);
+      const factoriesForPreferredSelection = useMemo(
+        () => (Array.isArray(factories) ? factories.filter((f) => f?.id) : []),
+        [factories],
+      );
 
       const resetOrderForm = useCallback(() => {
         const next = nextAvailableOrderDateTime(today);
@@ -2884,7 +2828,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   }}
                 >
                   <option value="">（指定しない）</option>
-                  {factoriesForSelection.map((f) => (
+                  {factoriesForPreferredSelection.map((f) => (
                     <option key={f.id} value={f.id}>
                       {f.name}
                     </option>
