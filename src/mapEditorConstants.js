@@ -1,5 +1,9 @@
-import { GUEST_SITE_ORDER_TOKEN_KEY } from './supabaseClient.js';
-import { parseSiteOrderTokenFromPath } from './utils/siteOrderUrl.js';
+import {
+  resolveGuestSiteOrderToken,
+  stageMapEditorPanelAuth,
+  stageMapEditorReturnUrl,
+  consumeStagedMapEditorReturnUrl,
+} from './supabaseClient.js';
 
 /** 地図エディタで使うスタンプ種別 */
 export const MAP_STAMP_TYPES = [
@@ -73,11 +77,14 @@ export function publishMapEditorOrderSaved(orderId) {
 /** 地図エディタを開く直前に呼び、保存後の戻り先 URL を記憶する */
 export function rememberMapEditorReturnUrl() {
   if (typeof window === 'undefined') return;
+  const href = window.location.href;
   try {
-    sessionStorage.setItem(MAP_EDITOR_RETURN_SESSION_KEY, window.location.href);
+    sessionStorage.setItem(MAP_EDITOR_RETURN_SESSION_KEY, href);
   } catch {
     /* ignore */
   }
+  stageMapEditorReturnUrl(href);
+  stageMapEditorPanelAuth();
 }
 
 function isUsableMapEditorReturnUrl(raw) {
@@ -106,6 +113,9 @@ export function navigateBackFromMapEditor() {
     if (q) target = decodeURIComponent(q);
     if (!isUsableMapEditorReturnUrl(target)) {
       target = sessionStorage.getItem(MAP_EDITOR_RETURN_SESSION_KEY) || '';
+    }
+    if (!isUsableMapEditorReturnUrl(target)) {
+      target = consumeStagedMapEditorReturnUrl();
     }
     sessionStorage.removeItem(MAP_EDITOR_RETURN_SESSION_KEY);
   } catch {
@@ -140,7 +150,7 @@ export function navigateAfterMapEditorSave() {
 }
 
 /** 注文に紐づく地図エディタURL（Vite dev / 静的ホストで /map-editor/:id にルーティング） */
-export function buildMapEditorUrl(orderId, baseOrigin) {
+export function buildMapEditorUrl(orderId, baseOrigin, options = {}) {
   const id = String(orderId || '').trim();
   if (!id) return '';
   const envOrigin =
@@ -158,10 +168,8 @@ export function buildMapEditorUrl(orderId, baseOrigin) {
     if (ret && !/\/map-editor\//i.test(ret)) {
       params.set('return', ret);
     }
-    let guestToken = parseSiteOrderTokenFromPath();
-    if (!guestToken) {
-      guestToken = String(sessionStorage.getItem(GUEST_SITE_ORDER_TOKEN_KEY) || '').trim();
-    }
+    const explicitToken = String(options.guestToken ?? options.token ?? '').trim();
+    const guestToken = explicitToken || resolveGuestSiteOrderToken();
     if (guestToken) {
       params.set('token', guestToken);
     }

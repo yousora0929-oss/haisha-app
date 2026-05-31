@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { buildMapEditorUrl, rememberMapEditorReturnUrl } from '../mapEditorConstants.js';
+import { resolveGuestSiteOrderToken } from '../supabaseClient.js';
 import { isLocationPendingOrder } from '../utils/orderWorkflow.js';
 
 function MapEditorQrModal({ open, siteName, url, onClose }) {
@@ -85,11 +86,18 @@ export function OrderMapEditorUrlActions({
   order,
   variant = 'default',
   onCopied,
+  guestToken,
 }) {
   const [copied, setCopied] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
+  const [qrUrl, setQrUrl] = useState('');
   const id = String(orderId || order?.id || '').trim();
-  const url = useMemo(() => buildMapEditorUrl(id), [id]);
+
+  const resolveMapEditorUrl = useCallback(() => {
+    const token = String(guestToken || resolveGuestSiteOrderToken() || '').trim();
+    return buildMapEditorUrl(id, undefined, token ? { guestToken: token } : {});
+  }, [guestToken, id]);
+
   const mapPending = order ? isLocationPendingOrder(order) : false;
   const hasOverride = Boolean(
     order?.override_map_image_url || order?.overrideMapImageUrl || order?.map_image_url,
@@ -99,6 +107,7 @@ export function OrderMapEditorUrlActions({
 
   const handleCopy = async (e) => {
     e?.stopPropagation?.();
+    const url = resolveMapEditorUrl();
     if (!url) return;
     try {
       await navigator.clipboard.writeText(url);
@@ -113,10 +122,19 @@ export function OrderMapEditorUrlActions({
 
   const openEditor = (e) => {
     e?.stopPropagation?.();
+    const url = resolveMapEditorUrl();
     if (!url) return;
     rememberMapEditorReturnUrl();
     window.open(url, '_blank', 'noopener,noreferrer');
   };
+
+  const openQrModal = (e) => {
+    e?.stopPropagation?.();
+    setQrUrl(resolveMapEditorUrl());
+    setQrOpen(true);
+  };
+
+  const previewUrl = resolveMapEditorUrl();
 
   const btn =
     'min-h-[40px] rounded-lg border-2 px-3 text-xs font-black transition sm:text-sm ' +
@@ -143,8 +161,8 @@ export function OrderMapEditorUrlActions({
           )}
         </div>
       </div>
-      {variant !== 'compact' && url ? (
-        <p className="mt-2 break-all font-mono text-[10px] leading-snug text-slate-600 sm:text-xs">{url}</p>
+      {variant !== 'compact' && previewUrl ? (
+        <p className="mt-2 break-all font-mono text-[10px] leading-snug text-slate-600 sm:text-xs">{previewUrl}</p>
       ) : null}
       <div className={'mt-2 flex flex-wrap gap-2 ' + (variant === 'inline' ? '' : '')}>
         <button type="button" onClick={openEditor} className={btn + ' border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700'}>
@@ -153,11 +171,11 @@ export function OrderMapEditorUrlActions({
         <button type="button" onClick={(e) => void handleCopy(e)} className={btn + ' border-slate-300 bg-white text-slate-800 hover:bg-slate-100'}>
           {copied ? 'コピー済み' : 'URLコピー'}
         </button>
-        <button type="button" onClick={(e) => { e.stopPropagation(); setQrOpen(true); }} className={btn + ' border-indigo-400 bg-indigo-50 text-indigo-900 hover:bg-indigo-100'}>
+        <button type="button" onClick={openQrModal} className={btn + ' border-indigo-400 bg-indigo-50 text-indigo-900 hover:bg-indigo-100'}>
           QR表示
         </button>
       </div>
-      <MapEditorQrModal open={qrOpen} siteName={siteName} url={url} onClose={() => setQrOpen(false)} />
+      <MapEditorQrModal open={qrOpen} siteName={siteName} url={qrUrl || previewUrl} onClose={() => setQrOpen(false)} />
     </div>
   );
 }

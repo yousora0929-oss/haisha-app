@@ -38,6 +38,174 @@ export const CUSTOMER_PANEL_PASSWORD_KEY = 'concrete_link_customer_pass_v1';
 export const FACTORY_PANEL_ID_KEY = 'concrete_link_factory_id_v1';
 export const FACTORY_PANEL_PASSWORD_KEY = 'concrete_link_factory_pass_v1';
 export const GUEST_SITE_ORDER_TOKEN_KEY = 'concrete_link_guest_site_order_token_v1';
+export const PANEL_REALTIME_TOKEN_KEY = 'concrete_link_panel_realtime_token_v1';
+
+/** 別タブ地図エディタ向け: sessionStorage → localStorage 一時退避 */
+export const MAP_EDITOR_PANEL_AUTH_STAGING_KEY = 'haisha_map_editor_panel_auth_staging_v1';
+export const MAP_EDITOR_RETURN_LOCAL_KEY = 'haisha_map_editor_return_url_local_v1';
+
+const MAP_EDITOR_PANEL_AUTH_KEYS = [
+  ADMIN_PANEL_PHONE_KEY,
+  ADMIN_PANEL_PASSWORD_KEY,
+  CUSTOMER_PANEL_PHONE_KEY,
+  CUSTOMER_PANEL_PASSWORD_KEY,
+  FACTORY_PANEL_ID_KEY,
+  FACTORY_PANEL_PASSWORD_KEY,
+  GUEST_SITE_ORDER_TOKEN_KEY,
+  PANEL_REALTIME_TOKEN_KEY,
+];
+
+const MAP_EDITOR_AUTH_STAGING_TTL_MS = 10 * 60 * 1000;
+
+function readLocalStorageJson(key) {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function readStagedPanelAuthPayload() {
+  const payload = readLocalStorageJson(MAP_EDITOR_PANEL_AUTH_STAGING_KEY);
+  if (!payload || typeof payload !== 'object' || !payload.keys || typeof payload.keys !== 'object') {
+    return null;
+  }
+  const age = Date.now() - Number(payload.at || 0);
+  if (!Number.isFinite(age) || age < 0 || age > MAP_EDITOR_AUTH_STAGING_TTL_MS) {
+    try {
+      localStorage.removeItem(MAP_EDITOR_PANEL_AUTH_STAGING_KEY);
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+  return payload;
+}
+
+function readStagedPanelAuthValue(key) {
+  const payload = readStagedPanelAuthPayload();
+  if (!payload?.keys) return '';
+  const value = payload.keys[key];
+  return value != null ? String(value).trim() : '';
+}
+
+function readPanelAuthValue(key) {
+  if (typeof sessionStorage !== 'undefined') {
+    try {
+      const fromSession = sessionStorage.getItem(key);
+      if (fromSession != null && String(fromSession).trim()) {
+        return String(fromSession).trim();
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return readStagedPanelAuthValue(key);
+}
+
+/** ゲスト専用発注トークンを path / query / session / localStorage 退避から解決 */
+export function resolveGuestSiteOrderToken() {
+  if (typeof window === 'undefined') return '';
+  try {
+    const pathMatch = window.location.pathname.match(/\/(?:order|guest-order)\/([^/?#]+)/i);
+    if (pathMatch?.[1]) {
+      return decodeURIComponent(pathMatch[1]).trim();
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    const fromQuery = String(new URLSearchParams(window.location.search).get('token') || '').trim();
+    if (fromQuery) return fromQuery;
+  } catch {
+    /* ignore */
+  }
+  const fromSession = readPanelAuthValue(GUEST_SITE_ORDER_TOKEN_KEY);
+  if (fromSession) return fromSession;
+  return '';
+}
+
+/**
+ * 地図エディタを別タブで開く直前に呼ぶ。
+ * sessionStorage が新タブに引き継がれない環境向けに localStorage へ一時コピーする。
+ */
+export function stageMapEditorPanelAuth() {
+  if (typeof localStorage === 'undefined' || typeof sessionStorage === 'undefined') return;
+  const keys = {};
+  for (const key of MAP_EDITOR_PANEL_AUTH_KEYS) {
+    try {
+      const value = sessionStorage.getItem(key);
+      if (value != null && String(value).trim()) {
+        keys[key] = String(value);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  if (Object.keys(keys).length === 0) return;
+  try {
+    localStorage.setItem(
+      MAP_EDITOR_PANEL_AUTH_STAGING_KEY,
+      JSON.stringify({ at: Date.now(), keys }),
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 地図エディタ起動時: localStorage 退避から sessionStorage へ認証を復元 */
+export function restoreMapEditorPanelAuthFromStorage() {
+  if (typeof sessionStorage === 'undefined') return false;
+  const payload = readStagedPanelAuthPayload();
+  if (!payload?.keys) return false;
+
+  let restored = false;
+  for (const key of MAP_EDITOR_PANEL_AUTH_KEYS) {
+    const value = payload.keys[key];
+    if (value == null || !String(value).trim()) continue;
+    try {
+      if (!sessionStorage.getItem(key)) {
+        sessionStorage.setItem(key, String(value));
+        restored = true;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  try {
+    localStorage.removeItem(MAP_EDITOR_PANEL_AUTH_STAGING_KEY);
+  } catch {
+    /* ignore */
+  }
+
+  return restored;
+}
+
+/** 別タブ地図エディタ向け: 戻り先 URL を localStorage にも保存 */
+export function stageMapEditorReturnUrl(url) {
+  const target = String(url || '').trim();
+  if (!target || typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(MAP_EDITOR_RETURN_LOCAL_KEY, target);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function consumeStagedMapEditorReturnUrl() {
+  if (typeof localStorage === 'undefined') return '';
+  try {
+    const url = String(localStorage.getItem(MAP_EDITOR_RETURN_LOCAL_KEY) || '').trim();
+    localStorage.removeItem(MAP_EDITOR_RETURN_LOCAL_KEY);
+    return url;
+  } catch {
+    return '';
+  }
+}
 
 /** 管理画面ログイン後、RLS 用ヘッダー認証の資格情報を sessionStorage に保存 */
 export function setAdminPanelSession(phone, password) {
@@ -48,8 +216,6 @@ export function setAdminPanelSession(phone, password) {
   sessionStorage.setItem(ADMIN_PANEL_PHONE_KEY, p);
   sessionStorage.setItem(ADMIN_PANEL_PASSWORD_KEY, pass);
 }
-
-export const PANEL_REALTIME_TOKEN_KEY = 'concrete_link_panel_realtime_token_v1';
 
 let panelRealtimeAuthPromise = null;
 
@@ -147,14 +313,16 @@ export function hasGuestSiteOrderSession() {
   }
 }
 
-/** 地図エディタ用: いずれかのパネル認証が sessionStorage にあるか */
 export function hasAnyPanelSession() {
-  return (
+  if (
     hasAdminPanelSession() ||
     hasCustomerPanelSession() ||
     hasFactoryPanelSession() ||
     hasGuestSiteOrderSession()
-  );
+  ) {
+    return true;
+  }
+  return Boolean(detectPanelCredentials());
 }
 
 /** 地図エディタ URL の ?token= からゲスト専用発注トークンを取得 */
@@ -172,32 +340,34 @@ export function parseMapEditorGuestTokenFromUrl() {
  * REST の RLS は readPanelRequestHeaders() 経由の x-* ヘッダーで評価される。
  */
 export async function ensureMapEditorPanelAuth() {
+  restoreMapEditorPanelAuthFromStorage();
+
   const urlToken = parseMapEditorGuestTokenFromUrl();
   if (urlToken) {
     setGuestSiteOrderSession(urlToken);
   }
+
   return ensurePanelRealtimeAuth();
 }
 
 function detectPanelCredentials() {
-  if (typeof sessionStorage === 'undefined') return null;
   try {
-    const adminPhone = sessionStorage.getItem(ADMIN_PANEL_PHONE_KEY);
-    const adminPassword = sessionStorage.getItem(ADMIN_PANEL_PASSWORD_KEY);
+    const adminPhone = readPanelAuthValue(ADMIN_PANEL_PHONE_KEY);
+    const adminPassword = readPanelAuthValue(ADMIN_PANEL_PASSWORD_KEY);
     if (adminPhone && adminPassword) {
       return { panelType: 'admin', credentialA: adminPhone, credentialB: adminPassword };
     }
-    const customerPhone = sessionStorage.getItem(CUSTOMER_PANEL_PHONE_KEY);
-    const customerPassword = sessionStorage.getItem(CUSTOMER_PANEL_PASSWORD_KEY);
+    const customerPhone = readPanelAuthValue(CUSTOMER_PANEL_PHONE_KEY);
+    const customerPassword = readPanelAuthValue(CUSTOMER_PANEL_PASSWORD_KEY);
     if (customerPhone && customerPassword) {
       return { panelType: 'customer', credentialA: customerPhone, credentialB: customerPassword };
     }
-    const factoryId = sessionStorage.getItem(FACTORY_PANEL_ID_KEY);
-    const factoryPassword = sessionStorage.getItem(FACTORY_PANEL_PASSWORD_KEY);
+    const factoryId = readPanelAuthValue(FACTORY_PANEL_ID_KEY);
+    const factoryPassword = readPanelAuthValue(FACTORY_PANEL_PASSWORD_KEY);
     if (factoryId && factoryPassword) {
       return { panelType: 'factory', credentialA: factoryId, credentialB: factoryPassword };
     }
-    const guestToken = sessionStorage.getItem(GUEST_SITE_ORDER_TOKEN_KEY);
+    const guestToken = readPanelAuthValue(GUEST_SITE_ORDER_TOKEN_KEY);
     if (guestToken) {
       return { panelType: 'guest', credentialA: guestToken, credentialB: null };
     }
@@ -249,8 +419,7 @@ export async function ensurePanelRealtimeAuth(preferredToken) {
   if (panelRealtimeAuthPromise) return panelRealtimeAuthPromise;
   panelRealtimeAuthPromise = (async () => {
     try {
-      const stored =
-        typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(PANEL_REALTIME_TOKEN_KEY) : null;
+      const stored = readPanelAuthValue(PANEL_REALTIME_TOKEN_KEY);
       if (stored) {
         return applyPanelRealtimeAuth(stored);
       }
@@ -271,28 +440,27 @@ export async function ensurePanelRealtimeAuth(preferredToken) {
 }
 
 function readPanelRequestHeaders() {
-  if (typeof sessionStorage === 'undefined') return {};
   try {
     const headers = {};
-    const adminPhone = sessionStorage.getItem(ADMIN_PANEL_PHONE_KEY);
-    const adminPassword = sessionStorage.getItem(ADMIN_PANEL_PASSWORD_KEY);
+    const adminPhone = readPanelAuthValue(ADMIN_PANEL_PHONE_KEY);
+    const adminPassword = readPanelAuthValue(ADMIN_PANEL_PASSWORD_KEY);
     if (adminPhone && adminPassword) {
       headers['x-admin-phone'] = adminPhone;
       headers['x-admin-password'] = adminPassword;
     }
-    const customerPhone = sessionStorage.getItem(CUSTOMER_PANEL_PHONE_KEY);
-    const customerPassword = sessionStorage.getItem(CUSTOMER_PANEL_PASSWORD_KEY);
+    const customerPhone = readPanelAuthValue(CUSTOMER_PANEL_PHONE_KEY);
+    const customerPassword = readPanelAuthValue(CUSTOMER_PANEL_PASSWORD_KEY);
     if (customerPhone && customerPassword) {
       headers['x-customer-phone'] = customerPhone;
       headers['x-customer-password'] = customerPassword;
     }
-    const factoryId = sessionStorage.getItem(FACTORY_PANEL_ID_KEY);
-    const factoryPassword = sessionStorage.getItem(FACTORY_PANEL_PASSWORD_KEY);
+    const factoryId = readPanelAuthValue(FACTORY_PANEL_ID_KEY);
+    const factoryPassword = readPanelAuthValue(FACTORY_PANEL_PASSWORD_KEY);
     if (factoryId && factoryPassword) {
       headers['x-factory-id'] = factoryId;
       headers['x-factory-password'] = factoryPassword;
     }
-    const guestToken = sessionStorage.getItem(GUEST_SITE_ORDER_TOKEN_KEY);
+    const guestToken = readPanelAuthValue(GUEST_SITE_ORDER_TOKEN_KEY);
     if (guestToken) {
       headers['x-site-order-token'] = guestToken;
     }

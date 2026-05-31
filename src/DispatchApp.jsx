@@ -685,6 +685,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       onMarkChatRead,
       onOpenChat,
       onAllowStatusReset,
+      guestToken = '',
     }) {
       const addr = order.siteAddress?.trim() || '';
       const party = orderPartyInfo(order);
@@ -736,7 +737,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           </div>
 
           <div className="mt-4">
-            <OrderMapEditorUrlActions orderId={order.id} siteName={party.site} order={order} />
+            <OrderMapEditorUrlActions
+              orderId={order.id}
+              siteName={party.site}
+              order={order}
+              guestToken={guestToken}
+            />
           </div>
 
           <dl className="mt-4 grid gap-2 rounded-2xl border-2 border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-bold sm:grid-cols-2">
@@ -1105,15 +1111,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         [allowedDeliveryAreas],
       );
 
-      /** 地図待ち時: 市町村選択に応じて HeartRails から町名候補を取得 */
+      /** 市町村選択に応じて HeartRails から町名候補を取得（地図待ち以外も含む） */
       useEffect(() => {
-        if (orderKind !== 'spot' || !isLocationPending) {
-          setTownOptions([]);
-          setTownOptionsLoading(false);
-          setTownOptionsError('');
-          return undefined;
-        }
-
         const municipality = String(deliveryArea || '').trim();
         if (!municipality) {
           setTownOptions([]);
@@ -1147,7 +1146,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return () => {
           cancelled = true;
         };
-      }, [orderKind, isLocationPending, deliveryArea, adminSettings]);
+      }, [deliveryArea, adminSettings]);
 
       const currentCustomer = useMemo(
         () => (customers || []).find((c) => c && c.id === currentCustomerId) || null,
@@ -2621,7 +2620,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     deliveryArea={deliveryArea}
                     onDeliveryAreaChange={(v) => {
                       setDeliveryArea(v);
-                      if (isLocationPending) setSiteAddressDetail('');
+                      setSiteAddressDetail('');
                       setAddressSearchError('');
                       setSubmitError('');
                     }}
@@ -2630,7 +2629,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       setSiteAddressDetail(v);
                       setAddressSearchError('');
                     }}
-                    showTownSuggestions={isLocationPending}
+                    showTownSuggestions
                     townSuggestions={townOptions}
                     townSuggestionsLoading={townOptionsLoading}
                     townSuggestionsError={townOptionsError}
@@ -2708,6 +2707,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   deliveryArea={deliveryArea}
                   onDeliveryAreaChange={(v) => {
                     setDeliveryArea(v);
+                    setSiteAddressDetail('');
                     setSubmitError('');
                   }}
                   addressDetail={siteAddressDetail}
@@ -2715,6 +2715,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     setSiteAddressDetail(v);
                     setSubmitError('');
                   }}
+                  showTownSuggestions
+                  townSuggestions={townOptions}
+                  townSuggestionsLoading={townOptionsLoading}
+                  townSuggestionsError={townOptionsError}
                 />
               ) : null}
 
@@ -3102,6 +3106,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                               onMarkChatRead={markChatRead}
                               onOpenChat={setActiveChatOrderId}
                               onAllowStatusReset={handleAllowStatusReset}
+                              guestToken={isGuestSiteOrder ? guestOrderToken : ''}
                             />
                           ))
                         )}
