@@ -2012,11 +2012,51 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           allowedDeliveryAreas,
         );
         const byId = new Map(factories.map((f) => [String(f.id), f]));
-        const ranked = rankedIds.map((id) => byId.get(String(id))).filter(Boolean);
-        const rankedSet = new Set(rankedIds.map((id) => String(id)));
-        const rest = factories.filter((f) => f?.id && !rankedSet.has(String(f.id)));
-        return [...ranked, ...rest];
-      }, [factories, orderFormContext, selectedProject, selectedProjectId, allowedDeliveryAreas]);
+        const eligible = rankedIds.map((id) => byId.get(String(id))).filter(Boolean);
+
+        const cityTrim = String(deliveryArea || '').trim();
+        const townTrim = String(siteAddressDetail || '').trim();
+        const strictAddressFilter = Boolean(townTrim || cityTrim || isLocationPending);
+
+        if (strictAddressFilter) {
+          return eligible;
+        }
+
+        const eligibleSet = new Set(rankedIds.map((id) => String(id)));
+        const rest = factories.filter((f) => f?.id && !eligibleSet.has(String(f.id)));
+        return [...eligible, ...rest];
+      }, [
+        factories,
+        orderFormContext,
+        selectedProject,
+        selectedProjectId,
+        allowedDeliveryAreas,
+        deliveryArea,
+        siteAddressDetail,
+        isLocationPending,
+        orderKind,
+        deliveryLat,
+        deliveryLng,
+      ]);
+
+      useEffect(() => {
+        const townTrim = String(siteAddressDetail || '').trim();
+        const cityTrim = String(deliveryArea || '').trim();
+        if (!townTrim && !cityTrim && !isLocationPending) return;
+        if (!preferredFactoryId) return;
+        const stillValid = factoriesForSelection.some(
+          (f) => f?.id && String(f.id) === String(preferredFactoryId),
+        );
+        if (!stillValid) {
+          setPreferredFactoryId('');
+        }
+      }, [
+        factoriesForSelection,
+        preferredFactoryId,
+        siteAddressDetail,
+        deliveryArea,
+        isLocationPending,
+      ]);
 
       const resetOrderForm = useCallback(() => {
         const next = nextAvailableOrderDateTime(today);

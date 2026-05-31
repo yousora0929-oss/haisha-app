@@ -126,7 +126,19 @@ function shouldRankByDeliveryArea(order, projectById, globalAllowedAreas) {
 
 /** 注文ごとのエスカレーション対象工場 ID（距離 or 市町村ベース） */
 export function rankFactoryIdsForOrder(order, projectById, factories, globalAllowedAreas) {
-  if (shouldRankByDeliveryArea(order, projectById, globalAllowedAreas)) {
+  const addrCtx = getOrderDeliveryAreaContext(order, projectById, globalAllowedAreas);
+  const useDeliveryArea = shouldRankByDeliveryArea(order, projectById, globalAllowedAreas);
+
+  if (typeof console !== 'undefined' && typeof console.log === 'function') {
+    console.log('【Escalation Debug】rankFactoryIdsForOrder', {
+      判定モード: useDeliveryArea ? 'delivery_area' : 'distance',
+      判定対象の市町村: addrCtx.deliveryArea,
+      判定対象の町名: addrCtx.addressDetail,
+      地図待ち: addrCtx.locationPending,
+    });
+  }
+
+  if (useDeliveryArea) {
     return rankFactoryIdsByDeliveryArea(order, projectById, factories, globalAllowedAreas);
   }
   if (orderHasOrderLevelCoords(order)) {

@@ -20,6 +20,15 @@ function readOrderString(order, keys) {
   return '';
 }
 
+/** 工場マスタ固有の allowed_delivery_areas（グローバル設定へのフォールバックなし） */
+export function getFactorySpecificAreas(factory) {
+  const raw =
+    factory?.allowed_delivery_areas ??
+    factory?.allowedDeliveryAreas ??
+    factory?.raw?.allowed_delivery_areas;
+  return normalizeAllowedDeliveryAreas(raw);
+}
+
 /** 注文・物件から市町村・住所テキストを抽出（地図待ち・手動入力・地図ピン共通） */
 export function getOrderDeliveryAreaContext(order, projectById = {}, globalAllowedAreas = []) {
   if (!order) {
@@ -86,14 +95,60 @@ export function getOrderDeliveryAreaContext(order, projectById = {}, globalAllow
   };
 }
 
-function factoryAllowedAreas(factory, globalAllowedAreas) {
-  const raw =
-    factory?.allowed_delivery_areas ??
-    factory?.allowedDeliveryAreas ??
-    factory?.raw?.allowed_delivery_areas;
-  const list = normalizeAllowedDeliveryAreas(raw);
-  if (list.length) return list;
-  return normalizeAllowedDeliveryAreas(globalAllowedAreas);
+function resolveEffectiveTown(deliveryArea, addressDetail, addressText, globalAllowedAreas) {
+  const town = normalizeAreaText(addressDetail);
+  if (town) return town;
+
+  const city = normalizeAreaText(deliveryArea);
+  const text = normalizeAreaText(addressText);
+  if (!text) return '';
+
+  if (city && text !== city && text.startsWith(city)) {
+    return normalizeAreaText(text.slice(city.length));
+  }
+
+  const split = splitDeliveryAddress(text, globalAllowedAreas);
+  return normalizeAreaText(split.addressDetail);
+}
+
+/** 工場エリア文字列が市町村名のみか（町名指定注文には不適合） */
+function isMunicipalityOnlyFactoryArea(factoryArea, deliveryArea) {
+  const fa = normalizeAreaText(factoryArea);
+  const city = normalizeAreaText(deliveryArea);
+  return Boolean(city && fa === city);
+}
+
+/** 工場エリアが指定町名をカバーするか（厳格） */
+function factoryAreaMatchesTown(factoryArea, deliveryArea, town) {
+  const fa = normalizeAreaText(factoryArea);
+  const city = normalizeAreaText(deliveryArea);
+  const t = normalizeAreaText(town);
+  if (!fa || !t) return false;
+
+  if (isMunicipalityOnlyFactoryArea(fa, city)) return false;
+  if (fa === t) return true;
+
+  const combined = normalizeAreaText(combineDeliveryAddress(city, t));
+  if (fa === combined) return true;
+
+  if (city && fa.startsWith(city)) {
+    const remainder = normalizeAreaText(fa.slice(city.length));
+    if (remainder === t || remainder.startsWith(t) || t.startsWith(remainder)) {
+      return true;
+    }
+  }
+
+  if (fa.includes(t) && fa !== city) return true;
+
+  return false;
+}
+
+/** 市町村のみの注文向け（町名未指定） */
+function factoryAreaMatchesMunicipality(factoryArea, deliveryArea) {
+  const fa = normalizeAreaText(factoryArea);
+  const city = normalizeAreaText(deliveryArea);
+  if (!city || !fa) return false;
+  return fa === city || fa.startsWith(city) || city.startsWith(fa);
 }
 
 function buildAddressMatchCandidates(deliveryArea, addressDetail, addressText) {
@@ -121,7 +176,10 @@ function areaStringsMatch(factoryArea, candidates) {
   });
 }
 
-/** 工場が当該市町村・町名・住所エリアをカバーするか */
+/**
+ * 工場が当該市町村・町名・住所エリアをカバーするか
+ * 町名が指定されている場合は工場側にその町名が明示されている工場のみ true
+ */
 export function factoryCoversDeliveryArea(
   factory,
   deliveryArea,
@@ -129,13 +187,64 @@ export function factoryCoversDeliveryArea(
   globalAllowedAreas,
   addressDetail = '',
 ) {
-  const areas = factoryAllowedAreas(factory, globalAllowedAreas);
-  if (!areas.length) return true;
+  const factoryAreas = getFactorySpecificAreas(factory);
+  const city = normalizeAreaText(deliveryArea);
+  const effectiveTown = resolveEffectiveTown(city, addressDetail, addressText, globalAllowedAreas);
+
+  if (effectiveTown) {
+    if (!factoryAreas.length) return false;
+    return factoryAreas.some((fa) => factoryAreaMatchesTown(fa, city, effectiveTown));
+  }
+
+  if (city) {
+    if (factoryAreas.length) {
+      return factoryAreas.some((fa) => factoryAreaMatchesMunicipality(fa, city));
+    }
+    const globalAreas = normalizeAllowedDeliveryAreas(globalAllowedAreas);
+    if (!globalAreas.length) return true;
+    return globalAreas.some((fa) => factoryAreaMatchesMunicipality(fa, city));
+  }
 
   const candidates = buildAddressMatchCandidates(deliveryArea, addressDetail, addressText);
   if (!candidates.length) return false;
 
-  return areas.some((factoryArea) => areaStringsMatch(factoryArea, candidates));
+  const areas = factoryAreas.length ? factoryAreas : normalizeAllowedDeliveryAreas(globalAllowedAreas);
+  if (!areas.length) return true;
+  return areas.some((fa) => areaStringsMatch(fa, candidates));
+}
+
+function logEscalationDebug({
+  deliveryArea,
+  addressDetail,
+  effectiveTown,
+  factories,
+  globalAllowedAreas,
+  matching,
+  fallback,
+  pool,
+}) {
+  if (typeof console === 'undefined' || typeof console.log !== 'function') return;
+
+  const text = combineDeliveryAddress(deliveryArea, addressDetail) || deliveryArea;
+  const factoryAreas = (Array.isArray(factories) ? factories : []).map((f) => {
+    const specific = getFactorySpecificAreas(f);
+    const covers = factoryCoversDeliveryArea(f, deliveryArea, text, globalAllowedAreas, addressDetail);
+    return {
+      id: f?.id,
+      name: f?.name,
+      areas: specific,
+      result: covers,
+    };
+  });
+
+  console.log('【Escalation Debug】', {
+    判定対象の市町村: deliveryArea,
+    判定対象の町名: effectiveTown || addressDetail,
+    各工場の設定: factoryAreas,
+    マッチした工場ID: matching,
+    フォールバック工場ID: fallback,
+    結果: pool,
+  });
 }
 
 /**
@@ -149,6 +258,8 @@ export function rankFactoryIdsByDeliveryArea(order, projectById, factories, glob
     globalAllowedAreas,
   );
   const text = fullAddress || combineDeliveryAddress(deliveryArea, addressDetail) || deliveryArea;
+  const effectiveTown = resolveEffectiveTown(deliveryArea, addressDetail, text, globalAllowedAreas);
+  const strictTownFilter = Boolean(effectiveTown);
 
   const pid = order?.project_id ?? order?.projectId;
   const project = pid != null ? projectById[String(pid)] : null;
@@ -170,12 +281,29 @@ export function rankFactoryIdsByDeliveryArea(order, projectById, factories, glob
     if (!id) continue;
     if (factoryCoversDeliveryArea(f, deliveryArea, text, globalAllowedAreas, addressDetail)) {
       matching.push(id);
-    } else {
+    } else if (!strictTownFilter) {
       fallback.push(id);
     }
   }
 
-  const pool = matching.length ? matching : fallback.length ? fallback : list.map((f) => String(f.id)).filter(Boolean);
+  const pool = matching.length
+    ? matching
+    : strictTownFilter
+      ? []
+      : fallback.length
+        ? fallback
+        : list.map((f) => String(f.id)).filter(Boolean);
+
+  logEscalationDebug({
+    deliveryArea,
+    addressDetail,
+    effectiveTown,
+    factories: list,
+    globalAllowedAreas,
+    matching,
+    fallback,
+    pool,
+  });
 
   const preferredInPool = pool.filter((id) => preferred.has(id));
   const rest = pool.filter((id) => !preferred.has(id));
