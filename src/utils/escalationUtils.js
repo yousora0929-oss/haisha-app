@@ -164,67 +164,61 @@ export function getOrderSiteCoords(order, projectById) {
   return null;
 }
 
-function orderHasUsableCoords(order, projectById) {
-  return Boolean(getOrderSiteCoords(order, projectById));
-}
-
-/** 注文レコード上の緯度経度（地図ピン）があるか（地図待ちの代表地点は除く） */
-function orderHasOrderLevelCoords(order) {
-  if (Boolean(order?.is_location_pending ?? order?.isLocationPending)) return false;
-  const lat = order?.delivery_lat ?? order?.deliveryLat;
-  const lng = order?.delivery_lng ?? order?.deliveryLng;
-  return Number.isFinite(Number(lat)) && Number.isFinite(Number(lng));
-}
-
-function shouldRankByDeliveryArea(order, projectById, globalAllowedAreas) {
-  const addrCtx = getOrderDeliveryAreaContext(order, projectById, globalAllowedAreas);
-  if (addrCtx.locationPending) return true;
-  if (addrCtx.addressDetail) return true;
-  if (addrCtx.deliveryArea || addrCtx.fullAddress) {
-    if (!orderHasOrderLevelCoords(order)) return true;
+/**
+ * エスカレーション判定モード
+ * 1. 地図待ち → AREA_BASED（代表座標は距離判定に使わない）
+ * 2. 地図ピンあり → DISTANCE_BASED（町名テキストより優先）
+ * 3. 座標なし → AREA_BASED
+ */
+function resolveEscalationRankMode(order, projectById, globalAllowedAreas) {
+  const locationPending = Boolean(order?.is_location_pending ?? order?.isLocationPending);
+  if (locationPending) {
+    return { mode: 'AREA_BASED', reason: 'location_pending' };
   }
-  return false;
+
+  const siteCoords = getOrderSiteCoords(order, projectById);
+  if (siteCoords) {
+    return { mode: 'DISTANCE_BASED', reason: 'pinned_coordinates', siteCoords };
+  }
+
+  const addrCtx = getOrderDeliveryAreaContext(order, projectById, globalAllowedAreas);
+  if (addrCtx.deliveryArea || addrCtx.fullAddress || addrCtx.addressDetail) {
+    return { mode: 'AREA_BASED', reason: 'no_coordinates_address_fallback' };
+  }
+
+  return { mode: 'DISTANCE_BASED', reason: 'no_coordinates_no_address_all_factories', siteCoords: null };
 }
 
 /** 注文ごとのエスカレーション対象工場 ID（距離 or 市町村ベース） */
 export function rankFactoryIdsForOrder(order, projectById, factories, globalAllowedAreas) {
   const addrCtx = getOrderDeliveryAreaContext(order, projectById, globalAllowedAreas);
-  const useDeliveryArea = shouldRankByDeliveryArea(order, projectById, globalAllowedAreas);
+  const rankMode = resolveEscalationRankMode(order, projectById, globalAllowedAreas);
+  const siteCoords = rankMode.siteCoords ?? getOrderSiteCoords(order, projectById);
 
   if (typeof console !== 'undefined' && typeof console.log === 'function') {
     console.log('【Escalation Debug】rankFactoryIdsForOrder', {
-      判定モード: useDeliveryArea ? 'delivery_area' : 'distance',
+      Mode: rankMode.mode,
+      modeReason: rankMode.reason,
       判定対象の市町村: addrCtx.deliveryArea,
       判定対象の町名: addrCtx.addressDetail,
       地図待ち: addrCtx.locationPending,
+      地図ピン座標: siteCoords || null,
       第一希望工場: orderPreferredFactoryId(order) || null,
     });
   }
 
   let ranked;
-  if (useDeliveryArea) {
+  if (rankMode.mode === 'AREA_BASED') {
     ranked = rankFactoryIdsByDeliveryArea(order, projectById, factories, globalAllowedAreas);
-  } else if (orderHasOrderLevelCoords(order)) {
-    ranked = rankFactoryIdsByDistance(getOrderSiteCoords(order, projectById), factories);
-  } else if (orderHasUsableCoords(order, projectById)) {
-    ranked = rankFactoryIdsByDistance(getOrderSiteCoords(order, projectById), factories);
   } else {
-    const { deliveryArea, fullAddress, addressDetail } = getOrderDeliveryAreaContext(
-      order,
-      projectById,
-      globalAllowedAreas,
-    );
-    if (deliveryArea || fullAddress || addressDetail) {
-      ranked = rankFactoryIdsByDeliveryArea(order, projectById, factories, globalAllowedAreas);
-    } else {
-      ranked = rankFactoryIdsByDistance(null, factories);
-    }
+    ranked = rankFactoryIdsByDistance(siteCoords, factories);
   }
 
   const finalized = finalizeEscalationRank(ranked, order, projectById, factories);
 
   if (typeof console !== 'undefined' && typeof console.log === 'function') {
     console.log('【Escalation Debug】rankFactoryIdsForOrder 結果', {
+      Mode: rankMode.mode,
       第一希望工場: orderPreferredFactoryId(order) || null,
       公開候補数: finalized.length,
       公開候補: finalized,
