@@ -5,6 +5,7 @@ import {
   normalizeAllowedDeliveryAreas,
 } from './deliveryAreas.js';
 import { looksLikeUrlText, sanitizeSiteNameValue } from './siteNameDisplay.js';
+import { normalizeFactoryRefId } from './escalationUtils.js';
 
 const UNLOAD_LABELS = {
   '15': '15分',
@@ -81,8 +82,8 @@ export function buildEscalationOrderFromFormContext(context) {
     isLocationPending: locationPending,
     project_id: !isSpot && context.selectedProjectId ? String(context.selectedProjectId) : null,
     projectId: !isSpot && context.selectedProjectId ? String(context.selectedProjectId) : null,
-    preferred_factory_id: String(context.preferredFactoryId || '').trim() || null,
-    preferredFactoryId: String(context.preferredFactoryId || '').trim() || null,
+    preferred_factory_id: normalizeFactoryRefId(context.preferredFactoryId) || null,
+    preferredFactoryId: normalizeFactoryRefId(context.preferredFactoryId) || null,
     delivery_lat: isSpot && hasPinnedCoords ? spotLat : null,
     delivery_lng: isSpot && hasPinnedCoords ? spotLng : null,
     ...addressFields,
@@ -135,13 +136,9 @@ export function buildDispatchOrderForDate(preferredDate, context) {
   const resolvedSiteName =
     !isSpot && projectName ? nameTrim || projectName : nameTrim || addrForName;
 
-  const prefFidRaw = String(preferredFactoryId || '').trim();
-  const prefFid =
-    prefFidRaw && (Array.isArray(factories) ? factories : []).some((f) => f && String(f.id) === prefFidRaw)
-      ? prefFidRaw
-      : '';
+  const prefFid = normalizeFactoryRefId(preferredFactoryId);
   const preferredFactoryName =
-    prefFid && (Array.isArray(factories) ? factories : []).find((f) => f && f.id === prefFid)?.name?.trim();
+    prefFid && (Array.isArray(factories) ? factories : []).find((f) => f && String(f.id) === prefFid)?.name?.trim();
 
   const spotLat =
     isSpot && !locationPending ? parseFloat(String(deliveryLat).trim()) : Number.NaN;

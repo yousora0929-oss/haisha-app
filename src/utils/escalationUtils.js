@@ -16,9 +16,67 @@ function orderProjectId(order) {
   return id != null ? String(id).trim() : '';
 }
 
+/** 工場参照 ID を安全に文字列化（オブジェクト・undefined 混入を防ぐ） */
+export function normalizeFactoryRefId(value) {
+  if (value == null) return '';
+  if (typeof value === 'object') {
+    const nested = value.id ?? value.factory_id ?? value.factoryId;
+    if (nested != null && nested !== value) return normalizeFactoryRefId(nested);
+    return '';
+  }
+  const s = String(value).trim();
+  if (!s || s === '[object Object]') return '';
+  const lower = s.toLowerCase();
+  if (lower === 'undefined' || lower === 'null') return '';
+  return s;
+}
+
 function orderPreferredFactoryId(order) {
-  const id = order?.preferred_factory_id ?? order?.preferredFactoryId;
-  return id != null ? String(id).trim() : '';
+  return normalizeFactoryRefId(order?.preferred_factory_id ?? order?.preferredFactoryId);
+}
+
+function buildKnownFactoryIdSet(factories) {
+  return new Set(
+    (Array.isArray(factories) ? factories : [])
+      .map((f) => (f?.id != null ? String(f.id).trim() : ''))
+      .filter(Boolean),
+  );
+}
+
+/** 第一希望工場をエリア外でもリスト先頭に置く（VIP） */
+function applyPreferredFactoryVip(rankedIds, preferredId, knownFactoryIds) {
+  const pref = normalizeFactoryRefId(preferredId);
+  if (!pref || !knownFactoryIds.has(pref)) {
+    return Array.isArray(rankedIds) ? [...rankedIds] : [];
+  }
+  const rest = (Array.isArray(rankedIds) ? rankedIds : []).filter((id) => String(id) !== pref);
+  return [pref, ...rest];
+}
+
+/** エリア一致0件時: 第一希望 → 物件メイン → 全工場 */
+function resolveEscalationEmptyFallback(order, projectById, knownFactoryIds) {
+  const preferredId = orderPreferredFactoryId(order);
+  if (preferredId && knownFactoryIds.has(preferredId)) return [preferredId];
+
+  const pid = orderProjectId(order);
+  const project = pid ? projectById?.[pid] : null;
+  const mainId = normalizeFactoryRefId(project?.main_factory_id);
+  if (mainId && knownFactoryIds.has(mainId)) return [mainId];
+
+  return [...knownFactoryIds];
+}
+
+function finalizeEscalationRank(rankedIds, order, projectById, factories) {
+  const knownFactoryIds = buildKnownFactoryIdSet(factories);
+  let result = (Array.isArray(rankedIds) ? rankedIds : [])
+    .map((id) => String(id).trim())
+    .filter((id) => knownFactoryIds.has(id));
+
+  if (!result.length && knownFactoryIds.size > 0) {
+    result = resolveEscalationEmptyFallback(order, projectById, knownFactoryIds);
+  }
+
+  return applyPreferredFactoryVip(result, orderPreferredFactoryId(order), knownFactoryIds);
 }
 
 function orderFactoryId(order) {
@@ -139,27 +197,41 @@ export function rankFactoryIdsForOrder(order, projectById, factories, globalAllo
       判定対象の市町村: addrCtx.deliveryArea,
       判定対象の町名: addrCtx.addressDetail,
       地図待ち: addrCtx.locationPending,
+      第一希望工場: orderPreferredFactoryId(order) || null,
     });
   }
 
+  let ranked;
   if (useDeliveryArea) {
-    return rankFactoryIdsByDeliveryArea(order, projectById, factories, globalAllowedAreas);
+    ranked = rankFactoryIdsByDeliveryArea(order, projectById, factories, globalAllowedAreas);
+  } else if (orderHasOrderLevelCoords(order)) {
+    ranked = rankFactoryIdsByDistance(getOrderSiteCoords(order, projectById), factories);
+  } else if (orderHasUsableCoords(order, projectById)) {
+    ranked = rankFactoryIdsByDistance(getOrderSiteCoords(order, projectById), factories);
+  } else {
+    const { deliveryArea, fullAddress, addressDetail } = getOrderDeliveryAreaContext(
+      order,
+      projectById,
+      globalAllowedAreas,
+    );
+    if (deliveryArea || fullAddress || addressDetail) {
+      ranked = rankFactoryIdsByDeliveryArea(order, projectById, factories, globalAllowedAreas);
+    } else {
+      ranked = rankFactoryIdsByDistance(null, factories);
+    }
   }
-  if (orderHasOrderLevelCoords(order)) {
-    return rankFactoryIdsByDistance(getOrderSiteCoords(order, projectById), factories);
+
+  const finalized = finalizeEscalationRank(ranked, order, projectById, factories);
+
+  if (typeof console !== 'undefined' && typeof console.log === 'function') {
+    console.log('【Escalation Debug】rankFactoryIdsForOrder 結果', {
+      第一希望工場: orderPreferredFactoryId(order) || null,
+      公開候補数: finalized.length,
+      公開候補: finalized,
+    });
   }
-  if (orderHasUsableCoords(order, projectById)) {
-    return rankFactoryIdsByDistance(getOrderSiteCoords(order, projectById), factories);
-  }
-  const { deliveryArea, fullAddress, addressDetail } = getOrderDeliveryAreaContext(
-    order,
-    projectById,
-    globalAllowedAreas,
-  );
-  if (deliveryArea || fullAddress || addressDetail) {
-    return rankFactoryIdsByDeliveryArea(order, projectById, factories, globalAllowedAreas);
-  }
-  return rankFactoryIdsByDistance(null, factories);
+
+  return finalized;
 }
 
 /** 距離の近い順に工場 ID を並べる */
@@ -269,7 +341,10 @@ export function isOrderVisibleToFactory(order, factoryId, ctx) {
     return Boolean(tier0) && fid === tier0;
   }
 
-  if (effectiveMinutes >= 30) return top6.includes(fid);
+  if (effectiveMinutes >= 30) {
+    if (preferredId && fid === preferredId) return true;
+    return top6.includes(fid);
+  }
 
   if (effectiveMinutes >= 15) {
     const set = new Set();

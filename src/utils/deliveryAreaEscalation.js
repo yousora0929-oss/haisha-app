@@ -271,10 +271,12 @@ export function rankFactoryIdsByDeliveryArea(order, projectById, factories, glob
     }
   }
   const orderPreferred = order?.preferred_factory_id ?? order?.preferredFactoryId;
-  if (orderPreferred) preferred.add(String(orderPreferred));
+  const preferredId = orderPreferred != null ? String(orderPreferred).trim() : '';
+  if (preferredId && preferredId !== '[object Object]') preferred.add(preferredId);
 
   const matching = [];
   const fallback = [];
+  const knownFactoryIds = new Set(list.map((f) => (f?.id != null ? String(f.id) : '')).filter(Boolean));
 
   for (const f of list) {
     const id = f?.id != null ? String(f.id) : '';
@@ -286,13 +288,29 @@ export function rankFactoryIdsByDeliveryArea(order, projectById, factories, glob
     }
   }
 
-  const pool = matching.length
+  let pool = matching.length
     ? matching
     : strictTownFilter
       ? []
       : fallback.length
         ? fallback
         : list.map((f) => String(f.id)).filter(Boolean);
+
+  // エリア一致0件でも第一希望・物件メイン・全工場へフォールバック
+  if (!pool.length && knownFactoryIds.size > 0) {
+    if (preferredId && knownFactoryIds.has(preferredId)) {
+      pool = [preferredId];
+    } else if (project?.main_factory_id && knownFactoryIds.has(String(project.main_factory_id))) {
+      pool = [String(project.main_factory_id)];
+    } else {
+      pool = [...knownFactoryIds];
+    }
+  }
+
+  // VIP: 第一希望はエリア外でも先頭に必ず含める
+  if (preferredId && knownFactoryIds.has(preferredId)) {
+    pool = [preferredId, ...pool.filter((id) => id !== preferredId)];
+  }
 
   logEscalationDebug({
     deliveryArea,
