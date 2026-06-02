@@ -78,6 +78,25 @@ export function MapEditorApp() {
     return Number.isFinite(n) ? n : null;
   }, []);
 
+  const closeOrNavigateBack = useCallback(() => {
+    try {
+      if (window.opener || window.history.length <= 1) {
+        window.close();
+        return;
+      }
+    } catch {
+      /* ignore */
+    }
+
+    if (!navigateBackFromMapEditor()) {
+      try {
+        window.history.back();
+      } catch {
+        navigateAfterMapEditorSave();
+      }
+    }
+  }, []);
+
   const revokeLocalBlob = useCallback(() => {
     if (localBlobUrlRef.current) {
       URL.revokeObjectURL(localBlobUrlRef.current);
@@ -139,26 +158,8 @@ export function MapEditorApp() {
 
   const askReturnAfterSave = useCallback(() => {
     window.alert('地図を保存しました。');
-
-    // 別タブ/別窓（window.open）または履歴が浅い場合は閉じる
-    try {
-      if (window.opener || window.history.length <= 1) {
-        window.close();
-        return;
-      }
-    } catch {
-      /* ignore */
-    }
-
-    // 同一タブ遷移: 前画面へ戻る
-    if (!navigateBackFromMapEditor()) {
-      try {
-        window.history.back();
-      } catch {
-        navigateAfterMapEditorSave();
-      }
-    }
-  }, []);
+    closeOrNavigateBack();
+  }, [closeOrNavigateBack]);
 
   useEffect(() => {
     let cancelled = false;
@@ -311,9 +312,7 @@ export function MapEditorApp() {
     if (dirty && !window.confirm('保存していません。地図エディタを閉じて前の画面に戻りますか？')) {
       return;
     }
-    if (!navigateBackFromMapEditor()) {
-      window.alert('戻り先が見つかりません。ブラウザの「戻る」で前の画面を開いてください。');
-    }
+    closeOrNavigateBack();
   };
 
   const runSave = async (mode) => {
@@ -517,7 +516,7 @@ export function MapEditorApp() {
         </form>
       </header>
 
-      <div className="map-editor-no-print fixed top-[calc(env(safe-area-inset-top)+6.5rem)] left-0 right-0 z-20 flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50/95 px-3 py-2 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
+      <div className="map-editor-no-print fixed top-[calc(env(safe-area-inset-top)+4.75rem)] left-0 right-0 z-20 flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50/95 px-3 py-2 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
         <input
           ref={baseUploadRef}
           type="file"
@@ -553,7 +552,7 @@ export function MapEditorApp() {
         onStampScaleChange={handleStampScaleChange}
         onDeleteSelection={handleDeleteSelection}
         disabled={saving}
-        className="fixed left-2 top-[calc(env(safe-area-inset-top)+10.5rem)] z-30 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700"
+        className="fixed left-2 top-[calc(env(safe-area-inset-top)+8.25rem)] z-30 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700"
       />
 
       {confirmMode ? (

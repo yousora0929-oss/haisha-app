@@ -357,7 +357,7 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
         : '';
 
   return (
-    <div className={'relative min-h-0 flex-1 ' + className}>
+    <div className={'relative h-full w-full min-h-0 ' + className}>
       <style>{`
         .${LEAFLET_DIV_ICON_CLASS} {
           background: transparent !important;
