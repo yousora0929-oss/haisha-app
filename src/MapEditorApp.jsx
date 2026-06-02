@@ -17,6 +17,7 @@ import { isValidExternalUrl, normalizeExternalUrl } from './utils/urlValidation.
 import { geocodeAddress } from './utils/nominatimGeocode.js';
 import { boundsFromCenter, emptyMapAnnotations } from './utils/mapAnnotations.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
+import { MapEditorPrintDetails } from './components/MapEditorPrintDetails.jsx';
 
 const MAP_SOURCE_LABEL = {
   override: 'この打設日の専用マップ',
@@ -66,6 +67,10 @@ export function MapEditorApp() {
   const [toast, setToast] = useState('');
   const [lastSavedUrl, setLastSavedUrl] = useState('');
   const [selection, setSelection] = useState(null);
+  const [editorOrder, setEditorOrder] = useState(null);
+  const [editorProject, setEditorProject] = useState(null);
+  const [printIncludeMap, setPrintIncludeMap] = useState(true);
+  const [printIncludeDetails, setPrintIncludeDetails] = useState(true);
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -147,14 +152,19 @@ export function MapEditorApp() {
   };
 
   const handlePrint = useCallback(() => {
-    const map = editorRef.current?.getMap?.();
-    if (map) {
-      map.invalidateSize();
-      window.setTimeout(() => window.print(), 150);
-    } else {
-      window.print();
+    if (!printIncludeMap && !printIncludeDetails) {
+      showToast('印刷する項目を1つ以上選択してください');
+      return;
     }
-  }, []);
+    const map = editorRef.current?.getMap?.();
+    const runPrint = () => window.print();
+    if (map && printIncludeMap) {
+      map.invalidateSize();
+      window.setTimeout(runPrint, 200);
+    } else {
+      runPrint();
+    }
+  }, [printIncludeMap, printIncludeDetails, showToast]);
 
   const askReturnAfterSave = useCallback(() => {
     window.alert('地図を保存しました。');
@@ -189,6 +199,8 @@ export function MapEditorApp() {
         }
 
         revokeLocalBlob();
+        setEditorOrder(result.order);
+        setEditorProject(result.project || null);
         setResolvedOrderId(result.order.id);
         setProjectId(result.projectId || '');
         setSiteLabel(result.title);
@@ -410,16 +422,26 @@ export function MapEditorApp() {
 
   const siteSubtitle = siteLabel.trim() || '（現場名未設定）';
 
+  const printShellClass =
+    'map-editor-app relative w-screen h-screen overflow-hidden bg-gray-100 text-slate-900 dark:bg-gray-900 dark:text-gray-100' +
+    (printIncludeMap ? ' print-include-map' : '') +
+    (printIncludeDetails ? ' print-include-details' : '');
+
+  const actionBtn =
+    'min-h-[44px] rounded-xl px-3 text-xs font-black shadow-md active:scale-[0.98] disabled:opacity-50 sm:text-sm';
+
   return (
-    <div className="map-editor-app relative w-screen h-screen overflow-hidden bg-slate-100 text-slate-900 dark:bg-gray-900 dark:text-gray-100">
-      <div className="map-editor-print-only map-editor-print-header">
+    <div className={printShellClass}>
+      <MapEditorPrintDetails order={editorOrder} project={editorProject} siteTitle={siteSubtitle} />
+
+      <div className="map-editor-print-only map-editor-print-header map-editor-print-map-header">
         <h1>現場地図</h1>
         <p>
           {siteSubtitle} · {sourceLabel} · 注釈 {annCount} 件
         </p>
       </div>
 
-      <div className="absolute inset-0 w-full h-full z-0">
+      <div className="map-editor-print-map-container absolute inset-0 z-0 h-full w-full">
         <MapEditorInteractive
           ref={editorRef}
           annotations={annotations}
@@ -431,111 +453,73 @@ export function MapEditorApp() {
           disabled={saving}
           selected={selection}
           onSelectionChange={setSelection}
-          className="map-editor-print-map w-full h-full"
+          className="map-editor-print-map h-full w-full"
         />
       </div>
 
-      <header className="map-editor-no-print fixed top-0 left-0 right-0 z-30 border-b border-slate-200 bg-white/95 px-3 py-2 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <h1 className="text-sm font-black sm:text-base">現場地図</h1>
-            <p className="mt-0.5 truncate text-[10px] font-bold text-slate-600 sm:text-xs" title={siteSubtitle}>
-              {siteSubtitle}
-            </p>
-            <p className="mt-0.5 text-[10px] font-bold text-slate-500 sm:text-xs">
-              {sourceLabel} · 注釈 {annCount} 件
-            </p>
-          </div>
-          <div className="flex shrink-0 flex-wrap justify-end gap-1">
-            <ThemeToggle compact />
-            <button
-              type="button"
-              onClick={() => setConfirmMode('order')}
-              disabled={saving}
-              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-black text-white shadow-sm hover:bg-emerald-700 active:scale-95 disabled:opacity-50 sm:text-xs"
-              title="保存して戻る（保存後に戻るか確認します）"
-            >
-              💾 保存する
-            </button>
-            <button
-              type="button"
-              onClick={handleCloseEditor}
-              disabled={saving}
-              className="rounded-lg border border-slate-400 bg-slate-100 px-2 py-1.5 text-[11px] font-bold text-slate-800 active:scale-95 sm:text-xs"
-              title="保存せず前の画面へ戻る"
-            >
-              ✕ 閉じる
-            </button>
-            <button
-              type="button"
-              onClick={handlePrint}
-              disabled={saving}
-              className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[11px] font-bold text-slate-800 active:scale-95 sm:text-xs"
-              title="地図を印刷"
-            >
-              🖨️ 印刷
-            </button>
-            <button
-              type="button"
-              onClick={handleUndo}
-              disabled={saving}
-              className="rounded-lg bg-slate-100 px-2 py-1.5 text-[11px] font-bold text-slate-800 active:scale-95 sm:text-xs"
-            >
-              ↩️ 1つ戻す
-            </button>
-            <button
-              type="button"
-              onClick={handleClear}
-              disabled={saving}
-              className="rounded-lg bg-red-50 px-2 py-1.5 text-[11px] font-bold text-red-700 active:scale-95 sm:text-xs"
-            >
-              🗑️ 消去
-            </button>
-          </div>
+      <form
+        onSubmit={handleSearch}
+        className="map-editor-no-print absolute top-4 left-4 z-10 flex w-full max-w-[calc(100%-2rem)] gap-2 rounded-xl border border-slate-200/80 bg-white p-2 shadow-lg md:max-w-md dark:border-slate-600 dark:bg-slate-900"
+      >
+        <div className="mb-1 w-full min-w-0 px-1 md:hidden">
+          <p className="truncate text-[10px] font-black text-slate-800 dark:text-slate-100" title={siteSubtitle}>
+            {siteSubtitle}
+          </p>
+          <p className="text-[9px] font-bold text-slate-500">
+            {sourceLabel} · 注釈 {annCount}
+          </p>
         </div>
-
-        <form onSubmit={handleSearch} className="mt-2 flex w-full max-w-[calc(100%-2rem)] gap-1.5 md:max-w-md">
-          <input
-            type="search"
-            id="map-search-input"
-            name="map_search"
-            autoComplete="off"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="町名・地名で検索（例: 福岡市博多区博多駅前）"
-            className="min-h-[40px] min-w-0 flex-1 rounded-lg border-2 border-slate-200 bg-white px-3 text-xs font-medium outline-none focus:border-indigo-400 sm:text-sm"
-            disabled={saving || searchLoading}
-          />
-          <button
-            type="submit"
-            disabled={saving || searchLoading}
-            className="shrink-0 rounded-lg bg-sky-600 px-3 py-2 text-xs font-black text-white disabled:opacity-50"
-          >
-            {searchLoading ? '検索中' : '🔍 検索'}
-          </button>
-        </form>
-      </header>
-
-      <div className="map-editor-no-print fixed top-[calc(env(safe-area-inset-top)+4.75rem)] left-0 right-0 z-20 flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50/95 px-3 py-2 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
         <input
-          ref={baseUploadRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={handleBaseImageUpload}
+          type="search"
+          id="map-search-input"
+          name="map_search"
+          autoComplete="off"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="町名・地名で検索"
+          className="min-h-[40px] min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium outline-none focus:border-indigo-400 dark:border-slate-600 dark:bg-slate-800"
+          disabled={saving || searchLoading}
         />
         <button
-          type="button"
-          disabled={saving}
-          onClick={() => baseUploadRef.current?.click()}
-          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-700 active:scale-95 sm:text-xs"
+          type="submit"
+          disabled={saving || searchLoading}
+          className="shrink-0 rounded-lg bg-sky-600 px-4 py-2 text-sm font-black text-white disabled:opacity-50"
         >
-          📷 図面画像を重ねる
+          {searchLoading ? '…' : '🔍'}
         </button>
-        <p className="text-[10px] font-bold text-slate-500">
-          左のツールで荷下ろし・スタンプ・コメントを配置 → タップで追加
-        </p>
+      </form>
+
+      <div className="map-editor-no-print absolute top-4 right-4 z-10 hidden max-w-xs rounded-xl border border-slate-200 bg-white p-3 shadow-lg print:hidden md:block dark:border-slate-600 dark:bg-slate-900">
+        <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">印刷する項目</p>
+        <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100">
+          <input
+            type="checkbox"
+            name="print_include_map"
+            checked={printIncludeMap}
+            onChange={(e) => setPrintIncludeMap(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300"
+          />
+          現場地図を印刷する
+        </label>
+        <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100">
+          <input
+            type="checkbox"
+            name="print_include_details"
+            checked={printIncludeDetails}
+            onChange={(e) => setPrintIncludeDetails(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300"
+          />
+          物件詳細（発注内容）を印刷する
+        </label>
       </div>
+
+      <input
+        ref={baseUploadRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleBaseImageUpload}
+      />
 
       <MapEditorToolbar
         activeTool={activeTool}
@@ -552,8 +536,86 @@ export function MapEditorApp() {
         onStampScaleChange={handleStampScaleChange}
         onDeleteSelection={handleDeleteSelection}
         disabled={saving}
-        className="fixed left-2 top-[calc(env(safe-area-inset-top)+8.25rem)] z-30 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700"
+        className="map-editor-no-print absolute left-4 top-[calc(env(safe-area-inset-top)+7.5rem)] z-10 max-h-[min(52vh,28rem)] overflow-y-auto rounded-2xl border border-slate-200 bg-white/95 shadow-lg backdrop-blur md:top-28 md:max-h-[calc(100vh-10rem)] dark:border-slate-600 dark:bg-slate-900/95"
       />
+
+      <div className="map-editor-no-print absolute bottom-6 left-4 right-4 z-20 flex flex-col gap-2 md:bottom-auto md:left-auto md:right-4 md:top-4 md:max-w-md md:items-end">
+        <div className="flex w-full flex-wrap gap-2 md:justify-end">
+          <ThemeToggle compact />
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => baseUploadRef.current?.click()}
+            className={actionBtn + ' border border-slate-300 bg-white text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100'}
+          >
+            📷 図面
+          </button>
+          <button
+            type="button"
+            onClick={handleUndo}
+            disabled={saving}
+            className={actionBtn + ' border border-slate-300 bg-white text-slate-800'}
+          >
+            ↩️ 戻す
+          </button>
+          <button
+            type="button"
+            onClick={handleClear}
+            disabled={saving}
+            className={actionBtn + ' border border-red-200 bg-red-50 text-red-800'}
+          >
+            🗑️ 消去
+          </button>
+          <button
+            type="button"
+            onClick={handlePrint}
+            disabled={saving}
+            className={actionBtn + ' border border-slate-300 bg-white text-slate-800'}
+            title="選択した項目を印刷"
+          >
+            🖨️ 印刷
+          </button>
+        </div>
+        <div className="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:grid-cols-none">
+          <button
+            type="button"
+            onClick={handleCloseEditor}
+            disabled={saving}
+            className={actionBtn + ' col-span-1 border-2 border-slate-400 bg-white text-slate-800'}
+          >
+            ✕ 閉じる
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmMode('order')}
+            disabled={saving}
+            className={actionBtn + ' col-span-1 bg-emerald-600 text-white ring-2 ring-emerald-300/50'}
+          >
+            💾 保存する
+          </button>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white/95 p-2 shadow-md md:hidden print:hidden dark:border-slate-600 dark:bg-slate-900/95">
+          <p className="text-[10px] font-black text-slate-500">印刷する項目</p>
+          <label className="mt-1.5 flex items-center gap-2 text-xs font-bold text-slate-800">
+            <input
+              type="checkbox"
+              checked={printIncludeMap}
+              onChange={(e) => setPrintIncludeMap(e.target.checked)}
+              className="h-4 w-4"
+            />
+            現場地図
+          </label>
+          <label className="mt-1 flex items-center gap-2 text-xs font-bold text-slate-800">
+            <input
+              type="checkbox"
+              checked={printIncludeDetails}
+              onChange={(e) => setPrintIncludeDetails(e.target.checked)}
+              className="h-4 w-4"
+            />
+            物件詳細
+          </label>
+        </div>
+      </div>
 
       {confirmMode ? (
         <div className="map-editor-no-print fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-6">
@@ -617,7 +679,7 @@ export function MapEditorApp() {
       ) : null}
 
       {lastSavedUrl ? (
-        <div className="map-editor-no-print pointer-events-none fixed bottom-4 right-4 z-40 max-w-[min(90vw,280px)] rounded-lg bg-emerald-800 px-3 py-2 text-[11px] font-bold text-white shadow-lg">
+        <div className="map-editor-no-print pointer-events-none fixed bottom-36 right-4 z-40 max-w-[min(90vw,280px)] rounded-lg bg-emerald-800 px-3 py-2 text-[11px] font-bold text-white shadow-lg md:bottom-4">
           変更を保存しました
           {isValidExternalUrl(lastSavedUrl) ? (
             <a
@@ -633,7 +695,7 @@ export function MapEditorApp() {
       ) : null}
 
       {toast ? (
-        <div className="map-editor-no-print pointer-events-none fixed bottom-20 left-1/2 z-40 -translate-x-1/2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-bold text-white shadow-lg">
+        <div className="map-editor-no-print pointer-events-none fixed bottom-44 left-1/2 z-40 max-w-[90vw] -translate-x-1/2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-bold text-white shadow-lg md:bottom-6">
           {toast}
         </div>
       ) : null}

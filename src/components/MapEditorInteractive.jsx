@@ -73,8 +73,8 @@ function MapFlyTo({ target }) {
   const map = useMap();
   useEffect(() => {
     if (!target) return;
-    const la = Number(target.lat);
-    const ln = Number(target.lng);
+    const la = parseFloat(String(target.lat ?? ''));
+    const ln = parseFloat(String(target.lng ?? ''));
     if (!Number.isFinite(la) || !Number.isFinite(ln)) return;
     const zoom = Number(target.zoom) || Math.max(map.getZoom(), 16);
     map.flyTo([la, ln], zoom, { duration: 1.2 });
@@ -192,14 +192,18 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
     () => applyInitialViewCenter(annotations)?.center || DEFAULT_MAP_CENTER,
     [annotations],
   );
-  const mapCenter = useMemo(
-    () => [
-      Number(displayCenter.lat) || DEFAULT_MAP_CENTER.lat,
-      Number(displayCenter.lng) || DEFAULT_MAP_CENTER.lng,
-    ],
-    [displayCenter.lat, displayCenter.lng],
-  );
-  const mapZoom = Number(displayCenter.zoom) || DEFAULT_MAP_CENTER.zoom;
+  const mapCenter = useMemo(() => {
+    const lat = parseFloat(String(displayCenter.lat ?? ''));
+    const lng = parseFloat(String(displayCenter.lng ?? ''));
+    return [
+      Number.isFinite(lat) ? lat : DEFAULT_MAP_CENTER.lat,
+      Number.isFinite(lng) ? lng : DEFAULT_MAP_CENTER.lng,
+    ];
+  }, [displayCenter.lat, displayCenter.lng]);
+  const mapZoom = (() => {
+    const z = parseFloat(String(displayCenter.zoom ?? ''));
+    return Number.isFinite(z) ? z : DEFAULT_MAP_CENTER.zoom;
+  })();
 
   const overlayBounds = useMemo(() => {
     if (annotations?.imageOverlay?.bounds) return annotations.imageOverlay.bounds;

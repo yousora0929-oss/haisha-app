@@ -3,10 +3,14 @@
   display: none;
 }
 
+.map-editor-print-details-section {
+  display: none;
+}
+
 @media print {
   @page {
-    size: landscape;
-    margin: 8mm;
+    size: A4 portrait;
+    margin: 10mm;
   }
 
   html,
@@ -29,57 +33,129 @@
 
   .map-editor-app {
     display: block !important;
+    position: static !important;
+    width: 100% !important;
     height: auto !important;
     min-height: 0 !important;
     overflow: visible !important;
     background: #fff !important;
   }
 
-  .map-editor-print-header {
+  /* 地図のみ: 横長レイアウト */
+  .map-editor-app.print-include-map:not(.print-include-details) {
+    page: landscape;
+  }
+
+  .map-editor-app.print-include-map:not(.print-include-details) .map-editor-print-map-container {
+    height: 85vh !important;
+    min-height: 85vh !important;
+  }
+
+  .map-editor-app.print-include-map:not(.print-include-details) .map-editor-print-map,
+  .map-editor-app.print-include-map:not(.print-include-details) .map-editor-print-map .leaflet-container {
+    height: 85vh !important;
+    min-height: 85vh !important;
+  }
+
+  /* 物件詳細のみ */
+  .map-editor-app:not(.print-include-map) .map-editor-print-map-container {
+    display: none !important;
+  }
+
+  .map-editor-app:not(.print-include-map) .map-editor-print-map-header {
+    display: none !important;
+  }
+
+  .map-editor-app.print-include-details .map-editor-print-details-section {
+    display: block !important;
+    page-break-after: auto;
+  }
+
+  /* 地図を印刷しない */
+  .map-editor-app:not(.print-include-map) .map-editor-print-map-container {
+    display: none !important;
+  }
+
+  .map-editor-app:not(.print-include-map) .map-editor-print-map-header {
+    display: none !important;
+  }
+
+  /* 詳細を印刷しない */
+  .map-editor-app:not(.print-include-details) .map-editor-print-details-section {
+    display: none !important;
+  }
+
+  /* 両方ON: 詳細 → 改ページ → 地図 */
+  .map-editor-app.print-include-map.print-include-details .map-editor-print-details-section {
+    display: block !important;
+    page-break-after: always;
+    break-after: page;
+    margin-bottom: 6mm;
+  }
+
+  .map-editor-app.print-include-map.print-include-details .map-editor-print-map-header {
+    margin-top: 0;
+  }
+
+  .map-editor-app.print-include-map.print-include-details .map-editor-print-map-container {
+    position: relative !important;
+    display: block !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    page-break-before: always;
+    break-before: page;
+  }
+
+  .map-editor-print-header,
+  .map-editor-print-map-header {
     margin: 0 0 4mm;
     padding: 0 0 2mm;
     border-bottom: 1px solid #cbd5e1;
   }
 
-  .map-editor-print-header h1 {
+  .map-editor-print-header h1,
+  .map-editor-print-map-header h1 {
     margin: 0;
     font-size: 14pt;
     font-weight: 800;
     color: #0f172a;
   }
 
-  .map-editor-print-header p {
+  .map-editor-print-header p,
+  .map-editor-print-map-header p {
     margin: 2mm 0 0;
     font-size: 10pt;
     font-weight: 600;
     color: #475569;
   }
 
-  .map-editor-workspace {
-    display: block !important;
-    height: auto !important;
-    min-height: 0 !important;
-    overflow: visible !important;
-  }
-
-  .map-editor-print-map {
+  .map-editor-print-map-container {
     position: relative !important;
     display: block !important;
     width: 100% !important;
-    height: 72vh !important;
-    min-height: 72vh !important;
+    height: 70vh !important;
+    min-height: 70vh !important;
     max-height: none !important;
-    flex: none !important;
     overflow: hidden !important;
     page-break-inside: avoid;
     border: 1px solid #e2e8f0;
     border-radius: 2px;
   }
 
+  .map-editor-print-map {
+    position: relative !important;
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 70vh !important;
+    flex: none !important;
+  }
+
   .map-editor-print-map .leaflet-container {
     width: 100% !important;
-    height: 72vh !important;
-    min-height: 72vh !important;
+    height: 100% !important;
+    min-height: 70vh !important;
   }
 
   .map-editor-print-map .leaflet-pane,
@@ -93,5 +169,27 @@
 
   .leaflet-control-container {
     display: none !important;
+  }
+
+  .map-editor-print-details-title h1 {
+    font-size: 14pt;
+    font-weight: 800;
+  }
+
+  .map-editor-print-details-heading {
+    margin: 4mm 0 2mm;
+    font-size: 11pt;
+    font-weight: 800;
+    color: #1e293b;
+  }
+
+  .map-editor-print-details-block + .map-editor-print-details-block {
+    margin-top: 4mm;
+  }
+
+  .map-editor-print-details-table th,
+  .map-editor-print-details-table td {
+    border: 1px solid #e2e8f0;
+    padding: 2mm 3mm;
   }
 }
