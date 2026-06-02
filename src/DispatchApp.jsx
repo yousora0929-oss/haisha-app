@@ -3227,12 +3227,19 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     {adminNotice}
                   </div>
                 ) : null}
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
+                <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                  <div className="min-w-0">
                     <h2 className="text-base font-black text-slate-900">進行中の注文ステータス</h2>
                     <p className="mt-1.5 text-xs leading-relaxed text-slate-400">
                       工場画面の受注／拒否／保留がここに反映されます。
                     </p>
+                  </div>
+                  <div className="hidden md:flex md:justify-end">
+                    <OrderListSearchInput
+                      id="master-in-progress-search"
+                      value={inProgressSearchQuery}
+                      onChange={setInProgressSearchQuery}
+                    />
                   </div>
                 </div>
                   <div className="mt-4 grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(380px,1fr))]">
@@ -3242,7 +3249,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       </p>
                     ) : (
                       <>
-                        <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-center md:justify-between">
+                        <div className="flex flex-col gap-3 md:hidden">
                           <OrderListSearchInput
                             id="master-in-progress-search"
                             value={inProgressSearchQuery}
