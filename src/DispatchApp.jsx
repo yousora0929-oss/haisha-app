@@ -711,11 +711,41 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const mixStr = mixDisp && String(mixDisp).trim() ? String(mixDisp).trim() : '—';
       const addrDisp = addr || '—';
 
-      const lbl = 'text-[11px] font-bold uppercase tracking-wide text-slate-400';
-      const val = 'mt-0.5 text-sm font-bold leading-snug text-slate-900';
-
       const timeSummary = `${formatOrderDate(order)} · ${order.timePointLabel || order.timeSlotLabel || '—'}`;
       const isCustomerCancelled = order.status === 'customer_cancelled';
+      const mapUrl = useMemo(() => {
+        if (!order?.id) return '';
+        const token = String(guestToken || '').trim();
+        return buildMapEditorUrl(order.id, undefined, token ? { guestToken: token } : {});
+      }, [guestToken, order?.id]);
+
+      const handleOpenMap = useCallback(
+        (e) => {
+          e?.stopPropagation?.();
+          if (!mapUrl) return;
+          try {
+            rememberMapEditorReturnUrl();
+          } catch {
+            /* ignore */
+          }
+          window.open(mapUrl, '_blank', 'noopener,noreferrer');
+        },
+        [mapUrl],
+      );
+
+      const handleCopyMapUrl = useCallback(
+        async (e) => {
+          e?.stopPropagation?.();
+          if (!mapUrl) return;
+          try {
+            await navigator.clipboard.writeText(mapUrl);
+          } catch (err) {
+            console.error('地図URLコピーに失敗', err);
+            window.prompt('以下のURLをコピーしてください', mapUrl);
+          }
+        },
+        [mapUrl],
+      );
 
       useEffect(() => {
         if (order?.id && typeof onMarkChatRead === 'function') {
@@ -726,126 +756,121 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       return (
         <article
           className={
-            'overflow-hidden rounded-2xl border-2 bg-white p-4 shadow-md sm:p-5 md:p-4 ' +
-            (isCustomerCancelled ? 'border-red-500 ring-2 ring-red-100' : 'border-slate-200')
+            'rounded-xl border bg-white shadow-sm transition ' +
+            (isCustomerCancelled ? 'border-red-200' : 'border-gray-100')
           }
         >
-          <div className="flex flex-col gap-4 md:flex-row md:items-start md:gap-5">
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-start justify-between gap-3 md:flex-nowrap">
-                <div className="min-w-0">
-                  <p className="text-[11px] font-black uppercase tracking-wider text-indigo-600">現在のステータス</p>
-                  <div className="mt-1 flex flex-wrap items-center gap-2">
-                    <OrderStatusBadges order={order} />
-                    {hasUnreadChat ? (
-                      <span className="inline-flex animate-pulse rounded-full border-2 border-red-500 bg-red-600 px-2.5 py-1 text-xs font-black text-white shadow-sm">
-                        新着チャット
-                      </span>
-                    ) : null}
-                    {order.is_admin_modified ? (
-                      <span className="inline-flex rounded-full border-2 border-violet-400 bg-violet-50 px-2.5 py-1 text-xs font-black text-violet-800">
-                        管理者変更あり
-                      </span>
-                    ) : null}
-                    <LocationPendingBadge order={order} />
-                  </div>
-                </div>
-                <div className="min-w-0 text-left md:text-right">
-                  <p className={lbl}>希望日 · 時刻</p>
-                  <p className="mt-1 break-words text-sm font-black leading-tight text-slate-900 sm:text-base md:mt-0.5">
-                    {timeSummary}
-                  </p>
-                </div>
+          <div className="flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between md:gap-4 md:py-2">
+            {/* 左〜中央：情報セグメント */}
+            <div className="min-w-0 flex-1 md:grid md:grid-cols-3 md:items-center md:gap-6">
+              <div className="min-w-0">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">日付・時刻</p>
+                <p className="mt-0.5 truncate text-sm font-black text-slate-900 md:text-[13px]">{timeSummary}</p>
               </div>
 
-              <dl className="mt-3 grid gap-2 rounded-2xl border-2 border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-bold sm:grid-cols-2 md:grid-cols-4 md:gap-3 md:px-3 md:py-2.5">
-                {[
-                  ['業者', party.contractor],
-                  ['商社', trader],
-                  ['現場名', party.site],
-                  ['現場住所', addrDisp],
-                ].map(([label, value]) => (
-                  <div key={label} className="min-w-0">
-                    <dt className="text-[10px] font-black uppercase tracking-wider text-indigo-600">{label}</dt>
-                    <dd className="mt-0.5 break-words font-black text-indigo-950">{value || '—'}</dd>
-                  </div>
-                ))}
-              </dl>
+              <div className="min-w-0">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">数量・配合</p>
+                <p className="mt-0.5 truncate text-sm font-black text-slate-900 md:text-[13px]">
+                  {qtyDisp}
+                  <span className="mx-2 text-slate-300">/</span>
+                  <span className="font-mono">{mixStr}</span>
+                </p>
+              </div>
 
-              <dl className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 md:mt-2">
-                {[
-                  ['車種', vehicle],
-                  ['数量', qtyDisp],
-                  ['配合', mixStr],
-                  ['連絡先', party.phone],
-                ].map(([label, value]) => (
-                  <div key={label} className="min-w-0 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 md:px-2.5 md:py-2">
-                    <dt className={lbl}>{label}</dt>
-                    <dd
-                      className={
-                        val +
-                        (label === '配合'
-                          ? ' break-all font-mono text-xs'
-                          : label === '連絡先'
-                            ? ' break-words font-mono text-xs'
-                            : ' break-words')
-                      }
-                    >
-                      {value || '—'}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-
-              <MasterPendingBanner order={order} />
-              {order.factoryUnlockRequested ? (
-                <div className="mt-3 rounded-xl border-2 border-indigo-300 bg-indigo-50 px-4 py-3">
-                  <p className="text-xs font-black text-indigo-950">工場からステータス変更のロック解除が依頼されています。</p>
-                  {typeof onAllowStatusReset === 'function' ? (
-                    <button
-                      type="button"
-                      onClick={() => onAllowStatusReset(order.id)}
-                      className="mt-2 w-full rounded-xl border-2 border-indigo-700 bg-indigo-700 py-2.5 text-sm font-black text-white shadow hover:bg-indigo-800"
-                    >
-                      ステータス再設定許可
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
+              <div className="min-w-0">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">現場・連絡先</p>
+                <p className="mt-0.5 truncate text-sm font-black text-slate-900 md:text-[13px]">
+                  {party.site || '—'}
+                  <span className="mx-2 text-slate-300">/</span>
+                  <span className="font-mono">{party.phone || '—'}</span>
+                </p>
+              </div>
             </div>
 
-            <div className="flex w-full flex-col gap-3 md:w-[19rem] md:shrink-0">
-              <OrderMapEditorUrlActions
-                orderId={order.id}
-                siteName={party.site}
-                order={order}
-                guestToken={guestToken}
-                variant="compact"
-              />
-
-              <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
-                <ConfirmedDetailsBlock order={order} />
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  if (typeof onOpenChat === 'function') onOpenChat(order.id);
-                }}
-                className="flex min-h-[52px] w-full items-center justify-center rounded-2xl border-2 border-indigo-600 bg-indigo-600 px-4 py-3 text-base font-black text-white shadow-lg shadow-indigo-500/20 transition hover:bg-indigo-700 active:scale-[0.99] md:min-h-[44px] md:rounded-xl md:text-sm"
-              >
-                工場とチャット
-                {hasUnreadChat ? (
-                  <span className="ml-2 rounded-full bg-red-600 px-2 py-0.5 text-xs font-black text-white ring-2 ring-white">
-                    新着
+            {/* 右：ステータス + アクション */}
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 md:flex-nowrap md:justify-end">
+              <div className="flex flex-wrap items-center gap-2">
+                <OrderStatusBadges order={order} />
+                <LocationPendingBadge order={order} />
+                {order.is_admin_modified ? (
+                  <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-black text-violet-800">
+                    管理者変更
                   </span>
                 ) : null}
-              </button>
+                {hasUnreadChat ? (
+                  <span className="inline-flex rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-black text-red-700">
+                    新着チャット
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {mapUrl ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleOpenMap}
+                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-black text-white shadow-sm hover:bg-emerald-700 active:scale-[0.99]"
+                      title="現場地図を開く"
+                    >
+                      地図
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => void handleCopyMapUrl(e)}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-black text-slate-700 shadow-sm hover:bg-slate-50 active:scale-[0.99]"
+                      title="現場地図URLをコピー"
+                    >
+                      URL
+                    </button>
+                  </>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof onOpenChat === 'function') onOpenChat(order.id);
+                  }}
+                  className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-black text-white shadow-sm hover:bg-indigo-700 active:scale-[0.99]"
+                  title="工場とチャット"
+                >
+                  チャット
+                </button>
+              </div>
             </div>
           </div>
 
+          {/* モバイルのみ：補足情報（縦に読めるように） */}
+          <div className="border-t border-slate-100 px-4 py-2 text-xs font-bold text-slate-600 md:hidden">
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              <span className="font-semibold text-slate-500">車種</span>
+              <span className="text-slate-900">{vehicle}</span>
+              <span className="text-slate-300">|</span>
+              <span className="font-semibold text-slate-500">業者</span>
+              <span className="text-slate-900">{party.contractor || '—'}</span>
+              <span className="text-slate-300">|</span>
+              <span className="font-semibold text-slate-500">住所</span>
+              <span className="truncate text-slate-900">{addrDisp}</span>
+            </div>
+            <MasterPendingBanner order={order} />
+          </div>
+
+          {order.factoryUnlockRequested ? (
+            <div className="border-t border-indigo-100 bg-indigo-50 px-4 py-3">
+              <p className="text-xs font-black text-indigo-950">工場からステータス変更のロック解除が依頼されています。</p>
+              {typeof onAllowStatusReset === 'function' ? (
+                <button
+                  type="button"
+                  onClick={() => onAllowStatusReset(order.id)}
+                  className="mt-2 rounded-lg bg-indigo-700 px-3 py-1.5 text-sm font-black text-white shadow-sm hover:bg-indigo-800 active:scale-[0.99]"
+                >
+                  ステータス再設定許可
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
           {isCustomerCancelled ? (
-            <div className="-mx-4 -mb-4 mt-4 border-t border-red-200 bg-red-50 px-4 py-3 text-center text-sm font-black text-red-700 sm:-mx-5 sm:-mb-5 md:-mx-4 md:-mb-4">
+            <div className="border-t border-red-200 bg-red-50 px-4 py-2 text-center text-xs font-black text-red-700">
               ⚠️お客様都合キャンセル
             </div>
           ) : null}

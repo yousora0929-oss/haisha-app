@@ -66,7 +66,6 @@ export function MapEditorApp() {
   const [toast, setToast] = useState('');
   const [lastSavedUrl, setLastSavedUrl] = useState('');
   const [selection, setSelection] = useState(null);
-  const navigateTimerRef = useRef(null);
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -84,12 +83,6 @@ export function MapEditorApp() {
   useEffect(() => {
     return () => revokeLocalBlob();
   }, [revokeLocalBlob]);
-
-  useEffect(() => {
-    return () => {
-      if (navigateTimerRef.current != null) window.clearTimeout(navigateTimerRef.current);
-    };
-  }, []);
 
   const selectedStamp = useMemo(() => {
     if (selection?.kind !== 'stamp') return null;
@@ -139,12 +132,29 @@ export function MapEditorApp() {
     }
   }, []);
 
-  const scheduleNavigateBack = useCallback(() => {
-    if (navigateTimerRef.current != null) window.clearTimeout(navigateTimerRef.current);
-    navigateTimerRef.current = window.setTimeout(() => {
-      navigateTimerRef.current = null;
-      navigateAfterMapEditorSave();
-    }, 1200);
+  const askReturnAfterSave = useCallback(() => {
+    const ok = window.confirm('保存が完了しました。元のページに戻りますか？');
+    if (!ok) return;
+
+    // 別タブ（window.open）で開かれた場合は閉じられる可能性がある
+    try {
+      if (window.opener) {
+        window.close();
+        // close できないブラウザもあるため、後続でフォールバックする
+      }
+    } catch {
+      /* ignore */
+    }
+
+    // 通常遷移: 前画面へ戻る（戻り先が無い場合は history.back を試す）
+    if (!navigateBackFromMapEditor()) {
+      try {
+        window.history.back();
+      } catch {
+        // 最終フォールバック（従来挙動）
+        navigateAfterMapEditorSave();
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -309,7 +319,7 @@ export function MapEditorApp() {
         setConfirmMode(null);
         if (result.savedFully) {
           showToast('変更を保存しました（基本マップ）');
-          scheduleNavigateBack();
+          askReturnAfterSave();
         } else if (result.storageUploadFailed && result.storageWarning) {
           showToast(`注釈データは保存しました。${result.storageWarning}`);
         } else {
@@ -328,7 +338,7 @@ export function MapEditorApp() {
         if (result.locationPendingCleared) {
           if (result.savedFully) {
             showToast('変更を保存しました（地図待ちを解除しました）');
-            scheduleNavigateBack();
+            askReturnAfterSave();
           } else if (result.storageUploadFailed && result.storageWarning) {
             showToast(`地図待ちを解除しました。${result.storageWarning}`);
           } else {
@@ -336,7 +346,7 @@ export function MapEditorApp() {
           }
         } else if (result.savedFully) {
           showToast('変更を保存しました');
-          scheduleNavigateBack();
+          askReturnAfterSave();
         } else if (result.storageUploadFailed && result.storageWarning) {
           showToast(`注釈データは保存しました。${result.storageWarning}`);
         } else {
@@ -406,6 +416,15 @@ export function MapEditorApp() {
             <ThemeToggle compact />
             <button
               type="button"
+              onClick={() => setConfirmMode('order')}
+              disabled={saving}
+              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-black text-white shadow-sm hover:bg-emerald-700 active:scale-95 disabled:opacity-50 sm:text-xs"
+              title="保存して戻る（保存後に戻るか確認します）"
+            >
+              💾 保存する
+            </button>
+            <button
+              type="button"
               onClick={handleCloseEditor}
               disabled={saving}
               className="rounded-lg border border-slate-400 bg-slate-100 px-2 py-1.5 text-[11px] font-bold text-slate-800 active:scale-95 sm:text-xs"
@@ -441,7 +460,7 @@ export function MapEditorApp() {
           </div>
         </div>
 
-        <form onSubmit={handleSearch} className="mt-2 flex gap-1.5">
+        <form onSubmit={handleSearch} className="mt-2 flex w-full max-w-md gap-1.5 sm:max-w-sm md:max-w-md">
           <input
             type="search"
             value={searchQuery}
@@ -458,26 +477,6 @@ export function MapEditorApp() {
             {searchLoading ? '検索中' : '🔍 検索'}
           </button>
         </form>
-
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          <button
-            type="button"
-            disabled={saving || !projectId}
-            title={!projectId ? '物件に紐づく注文のみ利用可能' : ''}
-            onClick={() => setConfirmMode('project')}
-            className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-bold text-emerald-800 active:scale-95 disabled:opacity-40 sm:text-xs"
-          >
-            💾 基本マップとして保存
-          </button>
-          <button
-            type="button"
-            disabled={saving}
-            onClick={() => setConfirmMode('order')}
-            className="rounded-lg bg-indigo-600 px-2.5 py-1.5 text-[11px] font-bold text-white active:scale-95 disabled:opacity-50 sm:text-xs"
-          >
-            🚀 打設日用として保存
-          </button>
-        </div>
       </header>
 
       <div className="map-editor-no-print flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-900">
@@ -542,6 +541,36 @@ export function MapEditorApp() {
             <p className="mt-2 text-sm font-bold leading-relaxed text-slate-600">
               地図上の注釈（赤〇・スタンプ・コメント）と合成画像を保存します。
             </p>
+            <div className="mt-4 flex flex-col gap-2">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => setConfirmMode('order')}
+                className={
+                  'w-full rounded-xl border-2 px-3 py-2 text-sm font-black transition ' +
+                  (confirmMode === 'order'
+                    ? 'border-indigo-600 bg-indigo-600 text-white'
+                    : 'border-slate-200 bg-slate-50 text-slate-800 hover:bg-white')
+                }
+              >
+                🚀 打設日用として保存
+              </button>
+              <button
+                type="button"
+                disabled={saving || !projectId}
+                title={!projectId ? '物件に紐づく注文のみ利用可能' : ''}
+                onClick={() => setConfirmMode('project')}
+                className={
+                  'w-full rounded-xl border-2 px-3 py-2 text-sm font-black transition ' +
+                  (confirmMode === 'project'
+                    ? 'border-emerald-700 bg-emerald-600 text-white'
+                    : 'border-slate-200 bg-slate-50 text-slate-800 hover:bg-white') +
+                  (!projectId ? ' opacity-50' : '')
+                }
+              >
+                💾 基本マップとして保存
+              </button>
+            </div>
             <div className="mt-5 flex gap-3">
               <button
                 type="button"
@@ -555,7 +584,7 @@ export function MapEditorApp() {
                 type="button"
                 disabled={saving}
                 onClick={() => runSave(confirmMode)}
-                className="flex-1 rounded-xl bg-indigo-600 py-2.5 text-sm font-bold text-white disabled:opacity-50"
+                className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-black text-white hover:bg-emerald-700 disabled:opacity-50"
               >
                 {saving ? '保存中…' : '保存する'}
               </button>
