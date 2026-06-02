@@ -3614,7 +3614,9 @@ function orderPartyInfo(order) {
           <PullToRefresh onRefresh={handleFactoryRefresh} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 py-1">
             <div className="mx-auto grid max-w-6xl gap-2">
               {activeTab === 'news' ? (
-                <FactoryNewsPanel factoryId={activeFactoryId} factories={factories} />
+                <div className="py-2 sm:py-4">
+                  <FactoryNewsPanel factoryId={activeFactoryId} factories={factories} />
+                </div>
               ) : null}
               {activeTab === 'schedule' ? (
                 <FactoryScheduleSettings
