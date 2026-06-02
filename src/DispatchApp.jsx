@@ -201,7 +201,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
     function OrderListSearchInput({ id, value, onChange }) {
       return (
-        <div className="relative">
+        <div className="relative w-full max-w-md">
           <span className="pointer-events-none absolute left-3 top-1/2 z-[1] -translate-y-1/2 text-slate-400" aria-hidden="true">
             <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="7" />
@@ -3242,11 +3242,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       </p>
                     ) : (
                       <>
-                        <OrderListSearchInput
-                          id="master-in-progress-search"
-                          value={inProgressSearchQuery}
-                          onChange={setInProgressSearchQuery}
-                        />
+                        <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-center md:justify-between">
+                          <OrderListSearchInput
+                            id="master-in-progress-search"
+                            value={inProgressSearchQuery}
+                            onChange={setInProgressSearchQuery}
+                          />
+                        </div>
                         {filteredInProgressOrders.length === 0 ? (
                           <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm font-bold text-slate-500">
                             該当する注文がありません
