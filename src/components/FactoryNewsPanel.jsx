@@ -4,22 +4,29 @@ import {
   countUnreadNewsForFactory,
   describeNewsTargets,
   formatFactoryNewsDate,
+  formatFactoryNewsDateShort,
 } from '../utils/factoryNews.js';
 import { FactoryNewsReadStatus } from './FactoryNewsReadStatus.jsx';
 
-const CARD =
-  'rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-indigo-200 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-indigo-600';
+const SCROLL_LOG =
+  'max-h-[500px] overflow-y-auto overscroll-y-contain rounded-xl border border-slate-200 bg-white shadow-inner dark:border-slate-600 dark:bg-slate-800/90';
+
+const ROW_BASE =
+  'flex w-full min-h-[44px] items-center gap-2 border-b border-slate-100 px-3 py-2 text-left transition-colors last:border-b-0 dark:border-slate-700/80';
+const ROW_HOVER = 'hover:bg-slate-50 dark:hover:bg-slate-700/40';
+const ROW_UNREAD = 'bg-indigo-50/40 dark:bg-indigo-950/20';
+const ROW_EXPANDED = 'bg-slate-50 dark:bg-slate-900/60';
 
 /**
- * 工場画面 — お知らせタブ
+ * 工場画面 — お知らせタブ（縮小1行 + アコーディオン展開）
  */
 export function FactoryNewsPanel({ factoryId, factories = [] }) {
   const [news, setNews] = useState([]);
   const [reads, setReads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [selected, setSelected] = useState(null);
-  const [opening, setOpening] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
+  const [markingId, setMarkingId] = useState(null);
 
   const factoryNameById = useMemo(
     () => Object.fromEntries((factories || []).filter((f) => f?.id).map((f) => [String(f.id), f.name || f.id])),
@@ -74,24 +81,27 @@ export function FactoryNewsPanel({ factoryId, factories = [] }) {
     [reads, factoryId],
   );
 
-  const openNews = async (item) => {
+  const toggleRow = async (item) => {
     if (!item?.id) return;
-    setOpening(true);
-    setSelected(item);
-    try {
-      if (!isSelfRead(item.id)) {
-        await db.markFactoryNewsRead(item.id);
+    const id = String(item.id);
+    if (expandedId === id) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(id);
+    if (!isSelfRead(id)) {
+      setMarkingId(id);
+      try {
+        await db.markFactoryNewsRead(id, factoryId);
         await load();
+      } catch (e) {
+        console.error('[FactoryNewsPanel] mark read failed', e);
+        setError(e?.message || '既読の記録に失敗しました');
+      } finally {
+        setMarkingId(null);
       }
-    } catch (e) {
-      console.error('[FactoryNewsPanel] mark read failed', e);
-      setError(e?.message || '既読の記録に失敗しました');
-    } finally {
-      setOpening(false);
     }
   };
-
-  const closeModal = () => setSelected(null);
 
   if (!factoryId) {
     return (
@@ -107,103 +117,108 @@ export function FactoryNewsPanel({ factoryId, factories = [] }) {
         <div>
           <h2 className="text-lg font-black text-slate-900 dark:text-slate-100">お知らせ</h2>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            管理者からのニュース · 他工場の既読状況も確認できます
+            行をタップして本文を表示 · 過去ログは下の枠内でスクロール
           </p>
         </div>
         {unreadCount > 0 ? (
-          <span className="rounded-full bg-red-500 px-2.5 py-1 text-xs font-black text-white">
+          <span className="rounded-full bg-red-500 px-2.5 py-1 text-xs font-black text-white shadow-sm">
             未読 {unreadCount}
           </span>
         ) : null}
       </header>
 
       {error ? (
-        <p className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-bold text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200" role="alert">
+        <p
+          className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-bold text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200"
+          role="alert"
+        >
           {error}
         </p>
       ) : null}
 
-      {loading ? <p className="text-sm text-slate-500">読み込み中…</p> : null}
+      {loading ? <p className="text-sm text-slate-500 dark:text-slate-400">読み込み中…</p> : null}
 
       {!loading && news.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm text-slate-600 dark:border-slate-600 dark:bg-slate-900/50">
+        <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm text-slate-600 dark:border-slate-600 dark:bg-slate-900/50 dark:text-slate-400">
           お知らせはまだありません。
         </p>
       ) : null}
 
-      <ul className="space-y-3">
-        {!loading
-          ? news.map((item) => {
+      {!loading && news.length > 0 ? (
+        <div className={SCROLL_LOG} role="region" aria-label="お知らせ一覧（過去ログ）">
+          <ul>
+            {news.map((item) => {
               const read = isSelfRead(item.id);
+              const expanded = expandedId === String(item.id);
+              const marking = markingId === String(item.id);
               return (
                 <li key={item.id}>
                   <button
                     type="button"
-                    onClick={() => void openNews(item)}
-                    className={'w-full text-left ' + CARD + (read ? '' : ' ring-2 ring-indigo-200 dark:ring-indigo-700')}
+                    aria-expanded={expanded}
+                    onClick={() => void toggleRow(item)}
+                    className={
+                      ROW_BASE +
+                      ROW_HOVER +
+                      (expanded ? ' ' + ROW_EXPANDED : '') +
+                      (!read && !expanded ? ' ' + ROW_UNREAD : '')
+                    }
                   >
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
-                        {formatFactoryNewsDate(item.created_at)}
-                      </p>
-                      <span
-                        className={
-                          'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ' +
-                          (read
-                            ? 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
-                            : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-200')
-                        }
-                      >
-                        {read ? '既読' : '未読'}
-                      </span>
-                    </div>
-                    <h3 className="mt-2 text-base font-black text-slate-900 dark:text-slate-100">{item.title}</h3>
-                    <p className="mt-1 line-clamp-2 text-sm text-slate-600 dark:text-slate-300">{item.body}</p>
-                    <p className="mt-2 text-[10px] font-bold text-slate-500">
-                      配信先: {describeNewsTargets(item, factoryNameById)}
-                    </p>
-                    <div className="mt-3 border-t border-slate-100 pt-3 dark:border-slate-700">
-                      <FactoryNewsReadStatus news={item} reads={reads} factories={factories} compact />
-                    </div>
+                    <span className="w-[5.5rem] shrink-0 text-[11px] font-bold tabular-nums text-slate-500 dark:text-slate-400">
+                      {formatFactoryNewsDateShort(item.created_at)}
+                    </span>
+                    <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                      {!read ? (
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-full bg-red-500 shadow-[0_0_0_2px_rgba(239,68,68,0.25)]"
+                          title="未読"
+                          aria-hidden
+                        />
+                      ) : null}
+                      <span className="truncate text-sm font-black text-slate-900 dark:text-slate-100">{item.title}</span>
+                    </span>
+                    <span
+                      className={
+                        'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ' +
+                        (read
+                          ? 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400'
+                          : 'bg-red-500 text-white shadow-sm')
+                      }
+                    >
+                      {read ? '既読' : '未読'}
+                    </span>
+                    <span
+                      className={
+                        'shrink-0 text-slate-400 transition-transform duration-200 dark:text-slate-500 ' +
+                        (expanded ? 'rotate-180' : '')
+                      }
+                      aria-hidden
+                    >
+                      ▾
+                    </span>
                   </button>
+
+                  {expanded ? (
+                    <div className="border-b border-slate-100 bg-slate-50/90 px-3 pb-4 pt-1 transition-colors duration-200 dark:border-slate-700 dark:bg-slate-900/50">
+                      <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                        {formatFactoryNewsDate(item.created_at)} · 配信先:{' '}
+                        {describeNewsTargets(item, factoryNameById)}
+                      </p>
+                      {marking ? (
+                        <p className="mt-2 text-xs font-bold text-indigo-600 dark:text-indigo-300">既読を記録中…</p>
+                      ) : null}
+                      <div className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-800 dark:text-slate-200">
+                        {item.body}
+                      </div>
+                      <div className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-600">
+                        <FactoryNewsReadStatus news={item} reads={reads} factories={factories} compact />
+                      </div>
+                    </div>
+                  ) : null}
                 </li>
               );
-            })
-          : null}
-      </ul>
-
-      {selected ? (
-        <div
-          className="fixed inset-0 z-[250] flex items-end justify-center bg-slate-900/50 p-4 sm:items-center"
-          role="presentation"
-          onClick={closeModal}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-600 dark:bg-slate-800"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="text-[10px] font-bold text-slate-500">{formatFactoryNewsDate(selected.created_at)}</p>
-            <h3 className="mt-1 text-lg font-black text-slate-900 dark:text-slate-100">{selected.title}</h3>
-            <p className="mt-1 text-xs font-bold text-slate-500">
-              配信先: {describeNewsTargets(selected, factoryNameById)}
-            </p>
-            <div className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-slate-800 dark:text-slate-200">
-              {selected.body}
-            </div>
-            <div className="mt-4 border-t border-slate-200 pt-4 dark:border-slate-600">
-              <FactoryNewsReadStatus news={selected} reads={reads} factories={factories} />
-            </div>
-            <button
-              type="button"
-              disabled={opening}
-              onClick={closeModal}
-              className="mt-5 min-h-[44px] w-full rounded-xl bg-indigo-600 text-sm font-black text-white disabled:opacity-50"
-            >
-              閉じる
-            </button>
-          </div>
+            })}
+          </ul>
         </div>
       ) : null}
     </div>

@@ -62,6 +62,13 @@ export function formatFactoryNewsDate(iso) {
   return `${y}/${m}/${day} ${hh}:${mm}`;
 }
 
+/** 一覧行用（日付のみ） */
+export function formatFactoryNewsDateShort(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+}
+
 export function describeNewsTargets(news, factoryNameById = {}) {
   const targets = normalizeTargetFactoryIds(news?.target_factory_ids);
   if (targets.length === 0) return '全工場';

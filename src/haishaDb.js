@@ -2144,10 +2144,15 @@ export async function fetchFactoryNewsFeed(factoryId) {
 }
 
 /** 工場: 既読登録（RPC・重複はスキップ） */
-export async function markFactoryNewsRead(newsId) {
+export async function markFactoryNewsRead(newsId, factoryId) {
   const id = String(newsId || '').trim();
+  const fid = sanitizeRefId(factoryId);
   if (!id) return;
-  const { error } = await supabase.rpc('mark_factory_news_read', { p_news_id: id });
+  if (!fid) throw new Error('工場IDが指定されていません');
+  const { error } = await supabase.rpc('mark_factory_news_read', {
+    p_news_id: id,
+    p_factory_id: fid,
+  });
   if (error) throw error;
 }
 

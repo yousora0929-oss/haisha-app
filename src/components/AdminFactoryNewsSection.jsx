@@ -1,6 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import * as db from '../haishaDb.js';
-import { buildFactoryReadStatuses, describeNewsTargets, formatFactoryNewsDate } from '../utils/factoryNews.js';
+import {
+  buildFactoryReadStatuses,
+  describeNewsTargets,
+  formatFactoryNewsDate,
+  formatFactoryNewsDateShort,
+} from '../utils/factoryNews.js';
 import { FactoryNewsReadStatus } from './FactoryNewsReadStatus.jsx';
 
 const SECTION =
@@ -20,6 +25,7 @@ export function AdminFactoryNewsSection({ factories = [] }) {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [selectedFactoryIds, setSelectedFactoryIds] = useState(() => new Set());
+  const [expandedHistoryId, setExpandedHistoryId] = useState(null);
 
   const factoryNameById = useMemo(
     () => Object.fromEntries((factories || []).filter((f) => f?.id).map((f) => [String(f.id), f.name || f.id])),
@@ -215,47 +221,101 @@ export function AdminFactoryNewsSection({ factories = [] }) {
           </p>
         ) : null}
 
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full min-w-[720px] border-collapse text-left text-sm">
-            <thead>
-              <tr className="border-b-2 border-slate-200 bg-slate-50 dark:border-slate-600 dark:bg-slate-900/50">
-                <th className="px-3 py-2 font-black">送信日</th>
-                <th className="px-3 py-2 font-black">件名</th>
-                <th className="px-3 py-2 font-black">対象工場</th>
-                <th className="px-3 py-2 font-black">既読状況</th>
-              </tr>
-            </thead>
-            <tbody>
+        {!loading && news.length > 0 ? (
+          <div
+            className="mt-4 max-h-[400px] overflow-y-auto overscroll-y-contain rounded-xl border border-slate-200 bg-slate-50/80 shadow-inner dark:border-slate-600 dark:bg-slate-900/50"
+            role="region"
+            aria-label="配信履歴（過去ログ）"
+          >
+            <div className="sticky top-0 z-10 grid grid-cols-[5.5rem_1fr_auto] gap-2 border-b border-slate-200 bg-slate-100/95 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-slate-500 backdrop-blur-sm dark:border-slate-600 dark:bg-slate-800/95 dark:text-slate-400">
+              <span>送信日</span>
+              <span>件名</span>
+              <span className="text-right">進捗</span>
+            </div>
+            <ul>
               {news.map((item) => {
                 const statuses = buildFactoryReadStatuses(item, reads, factories);
+                const readCount = statuses.filter((s) => s.read).length;
+                const total = statuses.length;
+                const expanded = expandedHistoryId === String(item.id);
                 const readNames = statuses.filter((s) => s.read).map((s) => s.factoryName);
                 const unreadNames = statuses.filter((s) => !s.read).map((s) => s.factoryName);
+                const hasUnread = unreadNames.length > 0;
+
                 return (
-                  <tr key={item.id} className="border-b border-slate-100 align-top dark:border-slate-700">
-                    <td className="whitespace-nowrap px-3 py-3 text-xs font-bold text-slate-600">
-                      {formatFactoryNewsDate(item.created_at)}
-                    </td>
-                    <td className="px-3 py-3 font-bold text-slate-900 dark:text-slate-100">{item.title}</td>
-                    <td className="max-w-[10rem] px-3 py-3 text-xs text-slate-700 dark:text-slate-300">
-                      {describeNewsTargets(item, factoryNameById)}
-                    </td>
-                    <td className="px-3 py-3">
-                      <p className="text-xs font-bold text-emerald-800 dark:text-emerald-300">
-                        既読: {readNames.length ? readNames.join('、') : '—'}
-                      </p>
-                      <p className="mt-1 text-xs font-bold text-amber-800 dark:text-amber-200">
-                        未読: {unreadNames.length ? unreadNames.join('、') : '—'}
-                      </p>
-                      <div className="mt-2">
-                        <FactoryNewsReadStatus news={item} reads={reads} factories={factories} compact />
+                  <li key={item.id} className="border-b border-slate-100 last:border-b-0 dark:border-slate-700/80">
+                    <button
+                      type="button"
+                      aria-expanded={expanded}
+                      onClick={() =>
+                        setExpandedHistoryId((prev) => (prev === String(item.id) ? null : String(item.id)))
+                      }
+                      className={
+                        'grid w-full min-h-[40px] grid-cols-[5.5rem_1fr_auto] items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white dark:hover:bg-slate-800 ' +
+                        (expanded ? 'bg-white dark:bg-slate-800' : '')
+                      }
+                    >
+                      <span className="text-[11px] font-bold tabular-nums text-slate-500 dark:text-slate-400">
+                        {formatFactoryNewsDateShort(item.created_at)}
+                      </span>
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        {hasUnread ? (
+                          <span
+                            className="h-2 w-2 shrink-0 rounded-full bg-red-500 shadow-[0_0_0_2px_rgba(239,68,68,0.25)]"
+                            title="未読の工場あり"
+                            aria-hidden
+                          />
+                        ) : null}
+                        <span className="truncate text-sm font-black text-slate-900 dark:text-slate-100">{item.title}</span>
+                      </span>
+                      <span className="flex shrink-0 items-center gap-1.5 justify-self-end">
+                        <span
+                          className={
+                            'rounded-full px-2 py-0.5 text-[10px] font-black ' +
+                            (readCount === total && total > 0
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200'
+                              : 'bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-100')
+                          }
+                        >
+                          {total > 0 ? `${readCount}/${total}` : '—'}
+                        </span>
+                        <span
+                          className={
+                            'text-slate-400 transition-transform duration-200 dark:text-slate-500 ' +
+                            (expanded ? 'rotate-180' : '')
+                          }
+                          aria-hidden
+                        >
+                          ▾
+                        </span>
+                      </span>
+                    </button>
+
+                    {expanded ? (
+                      <div className="border-t border-slate-100 bg-white px-3 pb-4 pt-2 dark:border-slate-700 dark:bg-slate-800/80">
+                        <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                          {formatFactoryNewsDate(item.created_at)} · 対象: {describeNewsTargets(item, factoryNameById)}
+                        </p>
+                        <p className="mt-2 line-clamp-4 whitespace-pre-wrap text-xs leading-relaxed text-slate-700 dark:text-slate-300">
+                          {item.body}
+                        </p>
+                        <p className="mt-3 text-xs font-bold text-emerald-800 dark:text-emerald-300">
+                          既読: {readNames.length ? readNames.join('、') : '—'}
+                        </p>
+                        <p className="mt-1 text-xs font-bold text-amber-800 dark:text-amber-200">
+                          未読: {unreadNames.length ? unreadNames.join('、') : '—'}
+                        </p>
+                        <div className="mt-3">
+                          <FactoryNewsReadStatus news={item} reads={reads} factories={factories} compact />
+                        </div>
                       </div>
-                    </td>
-                  </tr>
+                    ) : null}
+                  </li>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
+            </ul>
+          </div>
+        ) : null}
       </section>
     </div>
   );
