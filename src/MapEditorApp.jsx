@@ -73,6 +73,11 @@ export function MapEditorApp() {
     return () => clearTimeout(t);
   }, []);
 
+  const safeParseFloat = useCallback((value) => {
+    const n = parseFloat(String(value ?? ''));
+    return Number.isFinite(n) ? n : null;
+  }, []);
+
   const revokeLocalBlob = useCallback(() => {
     if (localBlobUrlRef.current) {
       URL.revokeObjectURL(localBlobUrlRef.current);
@@ -191,9 +196,25 @@ export function MapEditorApp() {
         setOverrideMapUrl(result.overrideMapImageUrl || '');
         setDefaultMapUrl(result.defaultMapImageUrl || '');
         const loaded = result.mapAnnotations || emptyMapAnnotations();
+        const centerLat = safeParseFloat(loaded?.center?.lat);
+        const centerLng = safeParseFloat(loaded?.center?.lng);
+        const centerZoom = safeParseFloat(loaded?.center?.zoom);
+        if (centerLat != null && centerLng != null) {
+          loaded.center = {
+            ...loaded.center,
+            lat: centerLat,
+            lng: centerLng,
+            zoom: Number.isFinite(centerZoom) ? centerZoom : loaded?.center?.zoom ?? 17,
+          };
+        }
         setAnnotations(loaded);
         if (result.initialFlyTarget) {
-          setFlyTarget({ ...result.initialFlyTarget, key: Date.now() });
+          const lat = safeParseFloat(result.initialFlyTarget.lat);
+          const lng = safeParseFloat(result.initialFlyTarget.lng);
+          const zoom = safeParseFloat(result.initialFlyTarget.zoom);
+          if (lat != null && lng != null) {
+            setFlyTarget({ lat, lng, zoom: Number.isFinite(zoom) ? zoom : 17, key: Date.now() });
+          }
         }
       } catch (err) {
         if (!cancelled) {
@@ -208,7 +229,7 @@ export function MapEditorApp() {
     return () => {
       cancelled = true;
     };
-  }, [orderId, revokeLocalBlob]);
+  }, [orderId, revokeLocalBlob, safeParseFloat]);
 
   const handleBaseImageUpload = (e) => {
     const file = e.target.files?.[0];
@@ -391,7 +412,7 @@ export function MapEditorApp() {
   const siteSubtitle = siteLabel.trim() || '（現場名未設定）';
 
   return (
-    <div className="map-editor-app flex h-[100dvh] flex-col overflow-hidden bg-slate-100 text-slate-900 dark:bg-gray-900 dark:text-gray-100">
+    <div className="map-editor-app relative w-screen h-screen overflow-hidden bg-slate-100 text-slate-900 dark:bg-gray-900 dark:text-gray-100">
       <div className="map-editor-print-only map-editor-print-header">
         <h1>現場地図</h1>
         <p>
@@ -399,7 +420,23 @@ export function MapEditorApp() {
         </p>
       </div>
 
-      <header className="map-editor-no-print shrink-0 border-b border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900">
+      <div className="absolute inset-0 w-full h-full z-0">
+        <MapEditorInteractive
+          ref={editorRef}
+          annotations={annotations}
+          onAnnotationsChange={setAnnotations}
+          activeTool={activeTool}
+          selectedStampType={selectedStampType}
+          defaultUnloadRadius={unloadRadius}
+          flyTarget={flyTarget}
+          disabled={saving}
+          selected={selection}
+          onSelectionChange={setSelection}
+          className="map-editor-print-map w-full h-full"
+        />
+      </div>
+
+      <header className="map-editor-no-print fixed top-0 left-0 right-0 z-30 border-b border-slate-200 bg-white/95 px-3 py-2 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <h1 className="text-sm font-black sm:text-base">現場地図</h1>
@@ -458,9 +495,12 @@ export function MapEditorApp() {
           </div>
         </div>
 
-        <form onSubmit={handleSearch} className="mt-2 flex w-full max-w-md gap-1.5 sm:max-w-sm md:max-w-md">
+        <form onSubmit={handleSearch} className="mt-2 flex w-full max-w-[calc(100%-2rem)] gap-1.5 md:max-w-md">
           <input
             type="search"
+            id="map-search-input"
+            name="map_search"
+            autoComplete="off"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="町名・地名で検索（例: 福岡市博多区博多駅前）"
@@ -477,7 +517,7 @@ export function MapEditorApp() {
         </form>
       </header>
 
-      <div className="map-editor-no-print flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-900">
+      <div className="map-editor-no-print fixed top-[calc(env(safe-area-inset-top)+6.5rem)] left-0 right-0 z-20 flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50/95 px-3 py-2 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
         <input
           ref={baseUploadRef}
           type="file"
@@ -498,37 +538,23 @@ export function MapEditorApp() {
         </p>
       </div>
 
-      <div className="map-editor-workspace flex min-h-0 flex-1">
-        <MapEditorToolbar
-          activeTool={activeTool}
-          onToolChange={setActiveTool}
-          selectedStampType={selectedStampType}
-          onStampTypeChange={(t) => {
-            setSelectedStampType(t);
-            setActiveTool(MAP_EDITOR_TOOLS.STAMP);
-          }}
-          selectedUnloadRadius={unloadRadius}
-          onUnloadRadiusChange={handleUnloadRadiusChange}
-          selection={selection}
-          selectedStampScale={selectedStamp?.scale ?? 1}
-          onStampScaleChange={handleStampScaleChange}
-          onDeleteSelection={handleDeleteSelection}
-          disabled={saving}
-        />
-        <MapEditorInteractive
-          ref={editorRef}
-          annotations={annotations}
-          onAnnotationsChange={setAnnotations}
-          activeTool={activeTool}
-          selectedStampType={selectedStampType}
-          defaultUnloadRadius={unloadRadius}
-          flyTarget={flyTarget}
-          disabled={saving}
-          selected={selection}
-          onSelectionChange={setSelection}
-          className="map-editor-print-map flex-1"
-        />
-      </div>
+      <MapEditorToolbar
+        activeTool={activeTool}
+        onToolChange={setActiveTool}
+        selectedStampType={selectedStampType}
+        onStampTypeChange={(t) => {
+          setSelectedStampType(t);
+          setActiveTool(MAP_EDITOR_TOOLS.STAMP);
+        }}
+        selectedUnloadRadius={unloadRadius}
+        onUnloadRadiusChange={handleUnloadRadiusChange}
+        selection={selection}
+        selectedStampScale={selectedStamp?.scale ?? 1}
+        onStampScaleChange={handleStampScaleChange}
+        onDeleteSelection={handleDeleteSelection}
+        disabled={saving}
+        className="fixed left-2 top-[calc(env(safe-area-inset-top)+10.5rem)] z-30 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700"
+      />
 
       {confirmMode ? (
         <div className="map-editor-no-print fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-6">

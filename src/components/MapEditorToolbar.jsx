@@ -17,6 +17,7 @@ export function MapEditorToolbar({
   onStampScaleChange,
   onDeleteSelection,
   disabled = false,
+  className = '',
 }) {
   const toolActive = (t) =>
     activeTool === t
@@ -24,7 +25,7 @@ export function MapEditorToolbar({
       : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700';
 
   return (
-    <aside className="map-editor-toolbar map-editor-no-print flex w-[4.5rem] shrink-0 flex-col gap-2 border-r border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-900 sm:w-52 sm:p-3">
+    <aside className={"map-editor-toolbar map-editor-no-print flex w-[4.5rem] shrink-0 flex-col gap-2 border-r border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-900 sm:w-52 sm:p-3 " + className}>
       <p className="hidden text-[10px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400 sm:block">ツール</p>
       <button
         type="button"
