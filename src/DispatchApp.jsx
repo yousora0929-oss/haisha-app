@@ -18,8 +18,6 @@ import {
   ensurePanelRealtimeAuth,
   CUSTOMER_PANEL_PHONE_KEY,
 } from './supabaseClient.js';
-import { MapPicker } from './MapPicker.jsx';
-import { geocodeAddress } from './utils/nominatimGeocode.js';
 import {
   PUSH_CHAT_REDIRECT_SESSION_KEY,
   clearAppBadge,
@@ -726,101 +724,128 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [order?.id, messages, onMarkChatRead]);
 
       return (
-        <article className={'overflow-hidden rounded-2xl border-2 bg-white p-4 shadow-md sm:p-5 ' + (isCustomerCancelled ? 'border-red-500 ring-2 ring-red-100' : 'border-slate-200')}>
-          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-3">
-            <div className="min-w-0">
-              <p className="text-[11px] font-black uppercase tracking-wider text-indigo-600">現在のステータス</p>
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                <OrderStatusBadges order={order} />
-                {hasUnreadChat ? (
-                  <span className="inline-flex animate-pulse rounded-full border-2 border-red-500 bg-red-600 px-2.5 py-1 text-xs font-black text-white shadow-sm">
-                    新着チャット
-                  </span>
-                ) : null}
-                {order.is_admin_modified ? (
-                  <span className="inline-flex rounded-full border-2 border-violet-400 bg-violet-50 px-2.5 py-1 text-xs font-black text-violet-800">
-                    管理者変更あり
-                  </span>
-                ) : null}
-                <LocationPendingBadge order={order} />
+        <article
+          className={
+            'overflow-hidden rounded-2xl border-2 bg-white p-4 shadow-md sm:p-5 md:p-4 ' +
+            (isCustomerCancelled ? 'border-red-500 ring-2 ring-red-100' : 'border-slate-200')
+          }
+        >
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:gap-5">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-start justify-between gap-3 md:flex-nowrap">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-black uppercase tracking-wider text-indigo-600">現在のステータス</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <OrderStatusBadges order={order} />
+                    {hasUnreadChat ? (
+                      <span className="inline-flex animate-pulse rounded-full border-2 border-red-500 bg-red-600 px-2.5 py-1 text-xs font-black text-white shadow-sm">
+                        新着チャット
+                      </span>
+                    ) : null}
+                    {order.is_admin_modified ? (
+                      <span className="inline-flex rounded-full border-2 border-violet-400 bg-violet-50 px-2.5 py-1 text-xs font-black text-violet-800">
+                        管理者変更あり
+                      </span>
+                    ) : null}
+                    <LocationPendingBadge order={order} />
+                  </div>
+                </div>
+                <div className="min-w-0 text-left md:text-right">
+                  <p className={lbl}>希望日 · 時刻</p>
+                  <p className="mt-1 break-words text-sm font-black leading-tight text-slate-900 sm:text-base md:mt-0.5">
+                    {timeSummary}
+                  </p>
+                </div>
               </div>
-            </div>
-            <div className="min-w-0 text-left sm:text-right">
-              <p className={lbl}>希望日 · 時刻</p>
-              <p className="mt-1 break-words text-sm font-black leading-tight text-slate-900 sm:text-base">{timeSummary}</p>
-            </div>
-          </div>
 
-          <div className="mt-4">
-            <OrderMapEditorUrlActions
-              orderId={order.id}
-              siteName={party.site}
-              order={order}
-              guestToken={guestToken}
-            />
-          </div>
+              <dl className="mt-3 grid gap-2 rounded-2xl border-2 border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-bold sm:grid-cols-2 md:grid-cols-4 md:gap-3 md:px-3 md:py-2.5">
+                {[
+                  ['業者', party.contractor],
+                  ['商社', trader],
+                  ['現場名', party.site],
+                  ['現場住所', addrDisp],
+                ].map(([label, value]) => (
+                  <div key={label} className="min-w-0">
+                    <dt className="text-[10px] font-black uppercase tracking-wider text-indigo-600">{label}</dt>
+                    <dd className="mt-0.5 break-words font-black text-indigo-950">{value || '—'}</dd>
+                  </div>
+                ))}
+              </dl>
 
-          <dl className="mt-4 grid gap-2 rounded-2xl border-2 border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-bold sm:grid-cols-2">
-            {[
-              ['業者', party.contractor],
-              ['商社', trader],
-              ['現場名', party.site],
-              ['現場住所', addrDisp],
-            ].map(([label, value]) => (
-              <div key={label} className="min-w-0">
-                <dt className="text-[10px] font-black uppercase tracking-wider text-indigo-600">{label}</dt>
-                <dd className="mt-0.5 break-words font-black text-indigo-950">{value || '—'}</dd>
-              </div>
-            ))}
-          </dl>
+              <dl className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 md:mt-2">
+                {[
+                  ['車種', vehicle],
+                  ['数量', qtyDisp],
+                  ['配合', mixStr],
+                  ['連絡先', party.phone],
+                ].map(([label, value]) => (
+                  <div key={label} className="min-w-0 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 md:px-2.5 md:py-2">
+                    <dt className={lbl}>{label}</dt>
+                    <dd
+                      className={
+                        val +
+                        (label === '配合'
+                          ? ' break-all font-mono text-xs'
+                          : label === '連絡先'
+                            ? ' break-words font-mono text-xs'
+                            : ' break-words')
+                      }
+                    >
+                      {value || '—'}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
 
-          <dl className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {[
-              ['車種', vehicle],
-              ['数量', qtyDisp],
-              ['配合', mixStr],
-              ['連絡先', party.phone],
-            ].map(([label, value]) => (
-              <div key={label} className="min-w-0 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
-                <dt className={lbl}>{label}</dt>
-                <dd className={val + (label === '配合' ? ' break-all font-mono text-xs' : label === '連絡先' ? ' break-words font-mono text-xs' : ' break-words')}>{value || '—'}</dd>
-              </div>
-            ))}
-          </dl>
-
-          <MasterPendingBanner order={order} />
-          {order.factoryUnlockRequested ? (
-            <div className="mt-4 rounded-xl border-2 border-indigo-300 bg-indigo-50 px-4 py-3">
-              <p className="text-xs font-black text-indigo-950">工場からステータス変更のロック解除が依頼されています。</p>
-              {typeof onAllowStatusReset === 'function' ? (
-                <button
-                  type="button"
-                  onClick={() => onAllowStatusReset(order.id)}
-                  className="mt-2 w-full rounded-xl border-2 border-indigo-700 bg-indigo-700 py-2.5 text-sm font-black text-white shadow hover:bg-indigo-800"
-                >
-                  ステータス再設定許可
-                </button>
+              <MasterPendingBanner order={order} />
+              {order.factoryUnlockRequested ? (
+                <div className="mt-3 rounded-xl border-2 border-indigo-300 bg-indigo-50 px-4 py-3">
+                  <p className="text-xs font-black text-indigo-950">工場からステータス変更のロック解除が依頼されています。</p>
+                  {typeof onAllowStatusReset === 'function' ? (
+                    <button
+                      type="button"
+                      onClick={() => onAllowStatusReset(order.id)}
+                      className="mt-2 w-full rounded-xl border-2 border-indigo-700 bg-indigo-700 py-2.5 text-sm font-black text-white shadow hover:bg-indigo-800"
+                    >
+                      ステータス再設定許可
+                    </button>
+                  ) : null}
+                </div>
               ) : null}
             </div>
-          ) : null}
 
-          <div className="mt-4">
-            <ConfirmedDetailsBlock order={order} />
+            <div className="flex w-full flex-col gap-3 md:w-[19rem] md:shrink-0">
+              <OrderMapEditorUrlActions
+                orderId={order.id}
+                siteName={party.site}
+                order={order}
+                guestToken={guestToken}
+                variant="compact"
+              />
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+                <ConfirmedDetailsBlock order={order} />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (typeof onOpenChat === 'function') onOpenChat(order.id);
+                }}
+                className="flex min-h-[52px] w-full items-center justify-center rounded-2xl border-2 border-indigo-600 bg-indigo-600 px-4 py-3 text-base font-black text-white shadow-lg shadow-indigo-500/20 transition hover:bg-indigo-700 active:scale-[0.99] md:min-h-[44px] md:rounded-xl md:text-sm"
+              >
+                工場とチャット
+                {hasUnreadChat ? (
+                  <span className="ml-2 rounded-full bg-red-600 px-2 py-0.5 text-xs font-black text-white ring-2 ring-white">
+                    新着
+                  </span>
+                ) : null}
+              </button>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              if (typeof onOpenChat === 'function') onOpenChat(order.id);
-            }}
-            className="mt-5 flex min-h-[56px] w-full items-center justify-center rounded-2xl border-2 border-indigo-600 bg-indigo-600 px-4 py-3 text-base font-black text-white shadow-lg shadow-indigo-500/20 transition hover:bg-indigo-700 active:scale-[0.99]"
-          >
-            工場とチャットする
-            {hasUnreadChat ? (
-              <span className="ml-2 rounded-full bg-red-600 px-2 py-0.5 text-xs font-black text-white ring-2 ring-white">新着</span>
-            ) : null}
-          </button>
+
           {isCustomerCancelled ? (
-            <div className="-mx-4 -mb-4 mt-4 border-t border-red-200 bg-red-50 px-4 py-3 text-center text-sm font-black text-red-700 sm:-mx-5 sm:-mb-5">
+            <div className="-mx-4 -mb-4 mt-4 border-t border-red-200 bg-red-50 px-4 py-3 text-center text-sm font-black text-red-700 sm:-mx-5 sm:-mb-5 md:-mx-4 md:-mb-4">
               ⚠️お客様都合キャンセル
             </div>
           ) : null}
@@ -1072,9 +1097,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [selectedProjectId, setSelectedProjectId] = useState('');
       const [deliveryLat, setDeliveryLat] = useState('');
       const [deliveryLng, setDeliveryLng] = useState('');
-      const [mapPanTarget, setMapPanTarget] = useState(null);
-      const [addressSearchLoading, setAddressSearchLoading] = useState(false);
-      const [addressSearchError, setAddressSearchError] = useState('');
       const [preferredFactoryId, setPreferredFactoryId] = useState('');
       const [siteOrderLinkNotice, setSiteOrderLinkNotice] = useState('');
       const [guestOrderToken] = useState(() => parseSiteOrderTokenFromPath());
@@ -1120,7 +1142,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           );
           setDeliveryArea(area);
           setSiteAddressDetail(detail);
-          setAddressSearchError('');
           if (project.trading_company_name || project.trading_company) {
             setTraderName(String(project.trading_company_name || project.trading_company));
           }
@@ -1489,7 +1510,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 );
                 setDeliveryArea(locked.deliveryArea);
                 setSiteAddressDetail(locked.siteAddressDetail);
-                setAddressSearchError('');
                 setTraderName(locked.traderNameRaw);
                 setContractorName(locked.contractorName);
                 if (locked.projectName) setSiteName(sanitizeSiteNameValue(locked.projectName));
@@ -1878,24 +1898,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           /* ignore */
         }
       }, []);
-
-      const handleAddressMapSearch = useCallback(async () => {
-        const addr = combineDeliveryAddress(deliveryArea, siteAddressDetail).trim();
-        if (!addr) {
-          setAddressSearchError('現場住所を入力してから検索してください。');
-          return;
-        }
-        setAddressSearchError('');
-        setAddressSearchLoading(true);
-        try {
-          const { lat, lng } = await geocodeAddress(addr);
-          setMapPanTarget({ lat, lng, key: Date.now() });
-        } catch (e) {
-          setAddressSearchError(e?.message || '住所検索に失敗しました。');
-        } finally {
-          setAddressSearchLoading(false);
-        }
-      }, [deliveryArea, siteAddressDetail]);
 
       const openRepeatOrderForm = useCallback((row) => {
         const next = nextAvailableOrderDateTime(today);
@@ -2551,7 +2553,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </section>
               ) : null}
               {customerOrderTab === 'new' && newOrderMode ? (
-              <div ref={orderFormRef} className="w-full min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6 lg:p-8">
+              <div ref={orderFormRef} className="mx-auto w-full max-w-4xl min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6 lg:max-w-4xl lg:p-8">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h2 className="text-sm font-black uppercase tracking-wider text-indigo-700">新規発注</h2>
@@ -2566,15 +2568,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   ) : null}
                 </div>
                 <form
-                  className="mt-6 grid min-w-0 gap-6 overflow-hidden lg:grid-cols-[minmax(0,1fr)_minmax(280px,22rem)] lg:items-start lg:gap-8 xl:grid-cols-[1.15fr_0.85fr] xl:gap-10"
+                  className="mt-6 flex min-w-0 flex-col gap-6 overflow-hidden"
                   onSubmit={(e) => e.preventDefault()}
                 >
-              <div className="flex min-w-0 flex-col gap-6 lg:col-start-1">
+              <div className="flex min-w-0 flex-col gap-6">
               {!isGuestSiteOrder ? (
               <div className="flex flex-col gap-3">
                 <span className="text-sm font-semibold text-slate-700">注文種別</span>
                 <p className="text-xs leading-relaxed text-slate-500">
-                  スポット注文は地図で現場位置を指定します。物件は管理画面で登録した座標を使います。
+                  スポット注文の現場地図は、確定後にURLで送付するか、確定直後に地図エディタを開いて作成します。
                 </p>
                 <div className="flex gap-3">
                   <button
@@ -2621,7 +2623,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         : ' border-slate-200 bg-white text-slate-700 hover:bg-slate-50')
                     }
                   >
-                    新規スポット注文
+                    スポット
                   </button>
                 </div>
               </div>
@@ -2735,34 +2737,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     onDeliveryAreaChange={(v) => {
                       setDeliveryArea(v);
                       setSiteAddressDetail('');
-                      setAddressSearchError('');
                       setSubmitError('');
                     }}
                     addressDetail={siteAddressDetail}
                     onAddressDetailChange={(v) => {
                       setSiteAddressDetail(v);
-                      setAddressSearchError('');
                     }}
                     showTownSuggestions
                     townSuggestions={townSuggestionNames}
                     townSuggestionsLoading={townOptionsLoading}
                     townSuggestionsError={townOptionsError}
                   />
-                  <div className="flex flex-col gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void handleAddressMapSearch()}
-                      disabled={addressSearchLoading || isLocationPending}
-                      className="min-h-[52px] w-full rounded-xl border-2 border-sky-600 bg-sky-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60 lg:min-h-[48px]"
-                    >
-                      {addressSearchLoading ? '検索中…' : '住所から地図を検索'}
-                    </button>
-                    {addressSearchError ? (
-                      <p className="text-xs font-bold text-red-700" role="alert">
-                        {addressSearchError}
-                      </p>
-                    ) : null}
-                  </div>
                   <div className="flex flex-col gap-2">
                     <span className="text-sm font-semibold text-slate-700">現場地図の扱い</span>
                     <div className="grid gap-2 sm:grid-cols-2">
@@ -3129,62 +3114,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 />
               </div>
 
-              </div>
-
-              <div className="flex min-w-0 flex-col gap-6 lg:col-start-2 lg:sticky lg:top-24 lg:max-h-[calc(100dvh-7rem)] lg:overflow-y-auto lg:gap-5">
-              {orderKind === 'project' &&
-              !isGuestSiteOrder &&
-              selectedProject &&
-              Number.isFinite(selectedProject.lat) &&
-              Number.isFinite(selectedProject.lng) ? (
-                <div className="flex flex-col gap-2">
-                  <Label>物件の位置（確認用）</Label>
-                  <MapPicker
-                    lat={String(selectedProject.lat)}
-                    lng={String(selectedProject.lng)}
-                    interactive={false}
-                    className="min-h-[280px] lg:min-h-[320px]"
-                  />
-                </div>
-              ) : null}
-
-              {orderKind === 'spot' ? (
-                <div className="flex min-h-[280px] flex-col gap-2 lg:min-h-[320px]">
-                  <Label>現場位置（地図）</Label>
-                  <p className="text-xs leading-relaxed text-slate-500">
-                    {isLocationPending
-                      ? spotMapFlowMode === 'create'
-                        ? '作成フローのため、確定直後に地図エディタが開きます。指示に従ってスタンプを配置してください。'
-                        : '地図待ちのため、確定時点では位置の指定は不要です。後から地図を送付してください。'
-                      : '地図をクリックして緯度・経度を指定してください。'}
-                  </p>
-                  {deliveryLat || deliveryLng ? (
-                    <p className="font-mono text-xs font-bold text-slate-600">
-                      緯度: {deliveryLat || '—'} / 経度: {deliveryLng || '—'}
-                    </p>
-                  ) : null}
-                  <MapPicker
-                    lat={deliveryLat}
-                    lng={deliveryLng}
-                    panTarget={mapPanTarget}
-                    interactive={!isLocationPending}
-                    className={'min-h-[260px] lg:min-h-[300px]' + (isLocationPending ? ' opacity-60' : '')}
-                    onPositionChange={(la, ln) => {
-                      if (isLocationPending) return;
-                      setDeliveryLat(la);
-                      setDeliveryLng(ln);
-                      setSubmitError('');
-                    }}
-                  />
-                </div>
-              ) : null}
-
               <div className="flex flex-col gap-3 border-t-2 border-slate-200 pt-6 dark:border-slate-600">
                 <button
                   type="button"
                   onClick={handleAddToCart}
                   disabled={isSubmittingOrder || !hasCurrentCustomer}
-                  className="flex min-h-[52px] w-full items-center justify-center rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-3.5 text-base font-bold text-white shadow-lg shadow-orange-500/30 transition hover:from-orange-600 hover:to-amber-600 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 lg:min-h-[48px]"
+                  className="flex min-h-[56px] w-full items-center justify-center rounded-2xl bg-gradient-to-r from-orange-500 to-amber-500 px-5 py-4 text-lg font-black text-white shadow-lg shadow-orange-500/30 transition hover:from-orange-600 hover:to-amber-600 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {hasCurrentCustomer
                     ? isGuestSiteOrder
