@@ -313,7 +313,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
     }
 
-    function AutocompleteField({ labelText, value, onValueChange, suggestions, placeholder, autoComplete }) {
+    function AutocompleteField({ labelText, name, value, onValueChange, suggestions, placeholder, autoComplete }) {
       const [panelOpen, setPanelOpen] = useState(false);
       const filtered = useMemo(() => filterMasterSuggestions(suggestions, value), [suggestions, value]);
       const showList = panelOpen && String(value ?? '').trim().length > 0 && filtered.length > 0;
@@ -324,6 +324,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           <div className="relative">
             <input
               type="text"
+              name={name}
               autoComplete={autoComplete || 'off'}
               placeholder={placeholder}
               value={value}
@@ -1170,6 +1171,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         [orderFormFieldPrefix],
       );
 
+      const orderFormNamePrefix = useMemo(() => {
+        if (isGuestSiteOrder) return 'guest';
+        return orderKind === 'spot' ? 'spot' : 'regular';
+      }, [isGuestSiteOrder, orderKind]);
+
+      const orderFieldName = useCallback(
+        (name) => `${orderFormNamePrefix}_${name}`,
+        [orderFormNamePrefix],
+      );
+
       const selectedProject = useMemo(
         () => (projects || []).find((p) => p && p.id === selectedProjectId) || null,
         [projects, selectedProjectId],
@@ -1273,8 +1284,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [siteAddressDetail, townList]);
 
       const townSuggestionNames = useMemo(() => {
-        const names = townNamesFromLocationList(townList);
-        return [...names].sort((a, b) => a.localeCompare(b, 'ja', { sensitivity: 'base' }));
+        return (Array.isArray(townList) ? townList : []).map((row) => ({
+          town: row?.town ?? '',
+          town_kana: row?.town_kana ?? row?.kana ?? '',
+        }));
       }, [townList]);
 
       const currentCustomer = useMemo(
@@ -2710,6 +2723,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   <Label htmlFor={orderFieldId('dispatch-project')}>物件を選択</Label>
                   <select
                     id={orderFieldId('dispatch-project')}
+                    name="regular_project_id"
                     value={selectedProjectId}
                     disabled={!hasCurrentCustomer || (isGuestSiteOrder && Boolean(guestSiteOrderCtx?.project?.id))}
                     onChange={(e) => {
@@ -2768,6 +2782,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     </p>
                     <input
                       id={orderFieldId('site-name')}
+                      name="spot_site_name"
                       type="text"
                       autoComplete="off"
                       placeholder="例：〇〇ビル新築工事"
@@ -2881,6 +2896,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 <div className="w-full min-w-0 max-w-full overflow-hidden">
                   <input
                     id={orderFieldId('preferred-date')}
+                    name={orderKind === 'spot' ? 'spot_delivery_date' : 'delivery_date'}
                     type="date"
                     min={today}
                     value={preferredDate}
@@ -2910,6 +2926,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </p>
                 <select
                   id={orderFieldId('time-slot')}
+                  name={orderFieldName('time_slot')}
+                  autoComplete="off"
                   value={timeSlot}
                   onChange={(e) => {
                     setTimeSlot(e.target.value);
@@ -2945,6 +2963,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </p>
                 <select
                   id={orderFieldId('dispatch-factory')}
+                  name={orderFieldName('preferred_factory_id')}
+                  autoComplete="off"
                   value={preferredFactoryId}
                   onChange={(e) => {
                     setPreferredFactoryId(e.target.value);
@@ -3004,6 +3024,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 <>
                   <AutocompleteField
                     labelText="商社（任意）"
+                    name={orderFieldName('trader_name')}
                     value={traderName}
                     onValueChange={(v) => {
                       setTraderName(v);
@@ -3016,6 +3037,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
                   <AutocompleteField
                     labelText="業者"
+                    name={orderFieldName('contractor_name')}
                     value={contractorName}
                     onValueChange={(v) => {
                       setContractorName(v);
@@ -3035,6 +3057,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </p>
                 <input
                   id={orderFieldId('mix-spec')}
+                  name={orderFieldName('mix_spec')}
                   type="text"
                   inputMode="text"
                   autoComplete="off"
@@ -3069,6 +3092,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </p>
                 <input
                   id={orderFieldId('quantity-m3')}
+                  name={orderKind === 'spot' ? 'spot_quantity' : 'quantity'}
                   type="text"
                   inputMode="decimal"
                   autoComplete="off"
@@ -3091,6 +3115,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </p>
                 <select
                   id={orderFieldId('unload-duration')}
+                  name={orderFieldName('unload_duration')}
+                  autoComplete="off"
                   value={unloadDuration}
                   onChange={(e) => {
                     setUnloadDuration(e.target.value);
@@ -3110,6 +3136,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 <label className="flex cursor-pointer items-start gap-3 rounded-xl border-2 border-slate-200 bg-slate-50/90 px-4 py-3 transition hover:border-slate-300 hover:bg-white">
                   <input
                     type="checkbox"
+                    name={orderFieldName('has_test')}
+                    autoComplete="off"
                     checked={hasTest}
                     onChange={(e) => {
                       setHasTest(e.target.checked);
@@ -3131,6 +3159,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 <p className="text-xs leading-relaxed text-slate-500">当日連絡が取れる担当者名を自由入力してください（例：山田、佐藤）。</p>
                 <input
                   id={orderFieldId('ordered-by')}
+                  name={orderFieldName('ordered_by')}
                   type="text"
                   autoComplete="name"
                   placeholder="例：山田"
@@ -3147,6 +3176,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 <Label htmlFor={orderFieldId('site-phone')}>電話番号</Label>
                 <input
                   id={orderFieldId('site-phone')}
+                  name={orderKind === 'spot' ? 'spot_phone' : 'phone'}
                   type="tel"
                   inputMode="tel"
                   autoComplete="tel"

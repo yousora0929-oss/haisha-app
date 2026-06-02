@@ -81,6 +81,7 @@ export function DeliveryAreaAddressField({
       </label>
       <select
         id={`${idPrefix}-area`}
+        name={`${idPrefix}_delivery_area`}
         value={deliveryArea || ''}
         disabled={disabled || areas.length === 0}
         required={detailRequired}
@@ -100,6 +101,7 @@ export function DeliveryAreaAddressField({
       </label>
       <input
         id={`${idPrefix}-detail`}
+        name={`${idPrefix}_address_detail`}
         type="text"
         value={addressDetail || ''}
         disabled={disabled}

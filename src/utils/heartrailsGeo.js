@@ -29,16 +29,18 @@ function parseCoord(value) {
 
 /**
  * HeartRails location 行を正規化
- * @returns {{ town: string, lat: number|null, lng: number|null, x: string, y: string, postal: string, prefecture: string, city: string }}
+ * @returns {{ town: string, town_kana: string, lat: number|null, lng: number|null, x: string, y: string, postal: string, prefecture: string, city: string }}
  */
 export function normalizeTownLocationRow(row) {
   if (!row || typeof row !== 'object') return null;
   const town = normalizeTownName(row.town);
   if (!town) return null;
+  const town_kana = normalizeTownName(row.town_kana ?? row.kana ?? '');
   const lat = parseCoord(row.y);
   const lng = parseCoord(row.x);
   return {
     town,
+    town_kana,
     lat,
     lng,
     x: row.x != null ? String(row.x) : '',
@@ -62,7 +64,13 @@ function parseTownLocationsFromResponse(payload) {
     }
   }
 
-  return [...byTown.values()].sort((a, b) => a.town.localeCompare(b.town, 'ja'));
+  return [...byTown.values()].sort((a, b) => {
+    const ka = a.town_kana || a.town;
+    const kb = b.town_kana || b.town;
+    const byKana = ka.localeCompare(kb, 'ja', { sensitivity: 'base' });
+    if (byKana !== 0) return byKana;
+    return a.town.localeCompare(b.town, 'ja', { sensitivity: 'base' });
+  });
 }
 
 function fetchHeartrailsJson(params) {

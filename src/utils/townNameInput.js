@@ -13,6 +13,50 @@ export function sortTownNamesJa(names) {
     .sort((a, b) => a.localeCompare(b, 'ja', { sensitivity: 'base' }));
 }
 
+function normalizeTownKana(value) {
+  return String(value || '').trim().replace(/\s+/g, '');
+}
+
+/**
+ * API 町名候補（{town, town_kana} 等）を「フリガナ」基準で五十音ソートして町名だけ返す
+ */
+export function sortTownSuggestionsByKana(townSuggestions) {
+  const list = Array.isArray(townSuggestions) ? townSuggestions : [];
+  const normalized = [];
+
+  for (const item of list) {
+    if (item == null) continue;
+    if (typeof item === 'string') {
+      const town = normalizeTownName(item);
+      if (town) normalized.push({ town, kana: '' });
+      continue;
+    }
+    if (typeof item === 'object') {
+      const town = normalizeTownName(item.town ?? item.name ?? item.value);
+      if (!town) continue;
+      const kana = normalizeTownKana(item.town_kana ?? item.kana ?? item.kanaTown ?? '');
+      normalized.push({ town, kana });
+    }
+  }
+
+  normalized.sort((a, b) => {
+    const ka = a.kana || a.town;
+    const kb = b.kana || b.town;
+    const byKana = ka.localeCompare(kb, 'ja', { sensitivity: 'base' });
+    if (byKana !== 0) return byKana;
+    return a.town.localeCompare(b.town, 'ja', { sensitivity: 'base' });
+  });
+
+  const out = [];
+  const seen = new Set();
+  for (const row of normalized) {
+    if (seen.has(row.town)) continue;
+    seen.add(row.town);
+    out.push(row.town);
+  }
+  return out;
+}
+
 export function loadTownNameHistory(deliveryArea) {
   const area = normalizeTownName(deliveryArea);
   if (!area || typeof localStorage === 'undefined') return [];
@@ -53,7 +97,7 @@ export function saveTownNameToHistory(deliveryArea, townName) {
  * datalist 用: 履歴（新しい順）を先頭、続けて API 候補をあいうえお順（重複除外）
  */
 export function buildTownDatalistOptions(townSuggestions, deliveryArea) {
-  const apiSorted = sortTownNamesJa(townSuggestions);
+  const apiSorted = sortTownSuggestionsByKana(townSuggestions);
   const history = loadTownNameHistory(deliveryArea);
   const apiSet = new Set(apiSorted);
   const historyUnique = history.filter((t) => !apiSet.has(t));

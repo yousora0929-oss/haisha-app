@@ -133,25 +133,23 @@ export function MapEditorApp() {
   }, []);
 
   const askReturnAfterSave = useCallback(() => {
-    const ok = window.confirm('保存が完了しました。元のページに戻りますか？');
-    if (!ok) return;
+    window.alert('地図を保存しました。');
 
-    // 別タブ（window.open）で開かれた場合は閉じられる可能性がある
+    // 別タブ/別窓（window.open）または履歴が浅い場合は閉じる
     try {
-      if (window.opener) {
+      if (window.opener || window.history.length <= 1) {
         window.close();
-        // close できないブラウザもあるため、後続でフォールバックする
+        return;
       }
     } catch {
       /* ignore */
     }
 
-    // 通常遷移: 前画面へ戻る（戻り先が無い場合は history.back を試す）
+    // 同一タブ遷移: 前画面へ戻る
     if (!navigateBackFromMapEditor()) {
       try {
         window.history.back();
       } catch {
-        // 最終フォールバック（従来挙動）
         navigateAfterMapEditorSave();
       }
     }
