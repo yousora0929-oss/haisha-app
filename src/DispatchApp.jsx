@@ -3241,7 +3241,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                             該当する注文がありません
                           </p>
                         ) : (
-                          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3 gap-6">
+                          <div className="grid grid-cols-1 gap-6 md:grid-cols-[repeat(auto-fit,minmax(420px,1fr))]">
                           {filteredInProgressOrders.map((ord, i) => (
                             <InProgressOrderCard
                               key={ord.id || `ord-${i}`}
@@ -3292,7 +3292,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   条件に一致する注文履歴はありません。
                 </p>
               ) : (
-                <ul className="mt-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3 gap-6">
+                <ul className="mt-5 grid grid-cols-1 gap-6 md:grid-cols-[repeat(auto-fit,minmax(420px,1fr))]">
                   {filteredHistoryRows.map((row) => (
                     <li key={row.id}>
                       <article className="h-full overflow-hidden rounded-2xl border-2 border-slate-200 bg-slate-50 shadow-sm">
