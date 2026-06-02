@@ -44,7 +44,7 @@ import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/site
 import { MAP_EDITOR_ORDER_SAVED_DOM_EVENT, MAP_EDITOR_ORDER_SAVED_EVENT_KEY } from './mapEditorConstants.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
-import { ThemeToggle } from './components/ThemeToggle.jsx';
+import { FactorySettingsPanel } from './components/FactorySettingsPanel.jsx';
 import { OrderAcceptModal } from './components/OrderAcceptModal.jsx';
 import {
   detectFactoryNotifyOrderIds,
@@ -3524,12 +3524,13 @@ function orderPartyInfo(order) {
               </div>
             </div>
             <div className="flex flex-1 flex-wrap items-center justify-end gap-1.5">
-              <div className="grid min-w-full flex-1 grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800 sm:grid-cols-4 sm:min-w-[32rem] sm:flex-none lg:min-w-[40rem]">
+              <div className="grid min-w-full flex-1 grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800 sm:grid-cols-5 sm:min-w-[36rem] sm:flex-none lg:min-w-[44rem]">
                 {[
                   ['schedule', '⚙️ スケジュール'],
                   ['orders', '🚚 注文'],
                   ['assignments', '割当物件'],
                   ['calendar', '📅 カレンダー'],
+                  ['settings', '⚙️ 設定'],
                 ].map(([id, label]) => {
                   const active = activeTab === id;
                   return (
@@ -3554,14 +3555,6 @@ function orderPartyInfo(order) {
                   );
                 })}
               </div>
-            <ThemeToggle compact />
-            <button
-              type="button"
-              onClick={handleDownloadFactoryCsv}
-              className="min-h-[36px] rounded-lg border-2 border-emerald-300 bg-emerald-50 px-3 py-1 text-[11px] font-black text-emerald-800 shadow-sm transition hover:bg-emerald-100 active:scale-95 active:bg-emerald-200 sm:text-xs"
-            >
-              CSVダウンロード
-            </button>
             <button
               type="button"
               disabled={hiddenOrderIds.size === 0}
@@ -3575,13 +3568,6 @@ function orderPartyInfo(order) {
             >
               非表示にした注文を一括再表示
               {hiddenOrderIds.size > 0 ? `（${hiddenOrderIds.size}件）` : ''}
-            </button>
-            <button
-              type="button"
-              onClick={handleFactoryLogout}
-              className="min-h-[36px] rounded-lg border-2 border-slate-300 bg-white px-2 py-1 text-[11px] font-black text-slate-700 shadow-sm hover:border-slate-500 hover:bg-slate-50 active:scale-95 active:bg-gray-200 sm:text-xs"
-            >
-              工場ログアウト
             </button>
             </div>
           </div>
@@ -3650,6 +3636,14 @@ function orderPartyInfo(order) {
                   currentMonth={currentMonth}
                   onMonthChange={handleCalendarMonthChange}
                   onOpenOrder={handleOpenOrderFromCalendar}
+                />
+              ) : null}
+              {activeTab === 'settings' ? (
+                <FactorySettingsPanel
+                  projects={projects}
+                  customers={customers}
+                  onExportOrders={handleDownloadFactoryCsv}
+                  onLogout={handleFactoryLogout}
                 />
               ) : null}
             </div>
