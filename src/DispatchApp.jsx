@@ -771,10 +771,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         >
           <div className="flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between md:gap-4 md:py-2">
             {/* 左〜中央：情報セグメント */}
-            <div className="min-w-0 flex-1 md:grid md:grid-cols-2 md:gap-4 xl:flex xl:items-stretch xl:gap-0">
+            <div className="min-w-0 flex-1 md:grid md:grid-cols-2 md:gap-4 2xl:flex 2xl:items-stretch 2xl:gap-0">
               {/* 第一セグメント：日時とステータス */}
-              <div className="min-w-0 md:col-span-2 xl:col-span-1 xl:flex-[0.95] xl:pr-5 xl:border-r xl:border-gray-200">
-                <p className="truncate text-lg font-black text-gray-900 md:text-lg xl:text-xl" title={timeSummary}>
+              <div className="min-w-0 md:col-span-2 2xl:col-span-1 2xl:flex-[0.95] 2xl:pr-5 2xl:border-r 2xl:border-gray-200">
+                <p className="truncate text-lg font-black text-gray-900 md:text-lg 2xl:text-xl" title={timeSummary}>
                   {timeSummary}
                 </p>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -787,7 +787,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </div>
 
               {/* 第二セグメント：配合と数量 */}
-              <div className="mt-2 min-w-0 md:mt-0 xl:flex-[1.05] xl:px-5 xl:border-r xl:border-gray-200">
+              <div className="mt-2 min-w-0 md:mt-0 2xl:flex-[1.05] 2xl:px-5 2xl:border-r 2xl:border-gray-200">
                 <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400">数量 / 配合</p>
                 <div className="mt-0.5 flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
                   <span className="text-base font-black text-gray-900">{qtyDisp.replace('m³', '㎥')}</span>
@@ -799,7 +799,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </div>
 
               {/* 第三セグメント：現場名と連絡先 */}
-              <div className="mt-2 min-w-0 md:mt-0 xl:flex-[1.1] xl:pl-5">
+              <div className="mt-2 min-w-0 md:mt-0 2xl:flex-[1.1] 2xl:pl-5">
                 <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400">現場 / 連絡先</p>
                 <div className="mt-0.5 grid min-w-0 gap-1">
                   <p className="min-w-0 truncate text-base font-black text-gray-900" title={party.site || ''}>
@@ -3235,7 +3235,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     </p>
                   </div>
                 </div>
-                  <div className="mt-4 grid gap-4 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  <div className="mt-4 grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(380px,1fr))]">
                     {activeOrders.length === 0 ? (
                       <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
                         進行中の注文はありません。「新規発注」タブから発注してください。
@@ -3252,7 +3252,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                             該当する注文がありません
                           </p>
                         ) : (
-                          <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                          <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(380px,1fr))]">
                           {filteredInProgressOrders.map((ord, i) => (
                             <InProgressOrderCard
                               key={ord.id || `ord-${i}`}
