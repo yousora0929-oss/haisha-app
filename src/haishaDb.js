@@ -1063,6 +1063,37 @@ export async function fetchCustomers() {
   return (data || []).map(mapCustomerRow).filter(Boolean);
 }
 
+const BULK_INSERT_CHUNK = 100;
+
+export async function bulkInsertCustomers(customerRows) {
+  const list = Array.isArray(customerRows) ? customerRows.filter((r) => r && typeof r === 'object') : [];
+  if (list.length === 0) return [];
+
+  const prepared = list.map((customerData) => {
+    const companyName = String(customerData?.company_name || customerData?.name || '').trim();
+    if (!companyName) throw new Error('業者名（会社名）が空の行があります');
+    const loginPassword = String(customerData?.login_password || '').trim();
+    if (!loginPassword) throw new Error('ログインパスワードが空の行があります');
+    const phoneNumber = String(customerData?.phone_number || '').trim();
+    if (!phoneNumber) throw new Error('電話番号が空の行があります');
+    return {
+      company_name: companyName,
+      manager_name: String(customerData?.manager_name || '').trim() || null,
+      phone_number: phoneNumber,
+      login_password: loginPassword,
+    };
+  });
+
+  const inserted = [];
+  for (let i = 0; i < prepared.length; i += BULK_INSERT_CHUNK) {
+    const chunk = prepared.slice(i, i + BULK_INSERT_CHUNK);
+    const { data, error } = await supabase.from('customers').insert(chunk).select('*');
+    if (error) throw error;
+    inserted.push(...(data || []));
+  }
+  return inserted.map(mapCustomerRow).filter(Boolean);
+}
+
 export async function addCustomer(customerData) {
   const companyName = String(customerData?.company_name || customerData?.name || '').trim();
   if (!companyName) throw new Error('業者名（会社名）を入力してください');
@@ -1354,6 +1385,52 @@ export async function fetchProjects() {
   const { data, error } = await supabase.from('projects').select('*').order('name', { ascending: true });
   if (error) throw error;
   const mapped = (data || []).map(mapProjectRow).filter(Boolean);
+  return enrichProjectsWithCustomerUrlTokens(mapped);
+}
+
+export async function bulkInsertProjects(projectRows) {
+  const list = Array.isArray(projectRows) ? projectRows.filter((r) => r && typeof r === 'object') : [];
+  if (list.length === 0) return [];
+
+  const prepared = list.map((payload) => {
+    const main_factory_id = String(payload.main_factory_id || '').trim();
+    if (!main_factory_id) throw new Error('メイン工場が未設定の行があります');
+    const name = String(payload.name || '').trim();
+    if (!name) throw new Error('物件名が空の行があります');
+    const sub_factory_ids = normalizeSubFactoryIds(payload.sub_factory_ids).filter((id) => id !== main_factory_id);
+    return {
+      name,
+      customer_id: sanitizeRefId(payload.customer_id),
+      main_factory_id,
+      sub_factory_ids,
+      lat:
+        payload.lat != null && payload.lat !== '' && Number.isFinite(Number(payload.lat))
+          ? Number(payload.lat)
+          : null,
+      lng:
+        payload.lng != null && payload.lng !== '' && Number.isFinite(Number(payload.lng))
+          ? Number(payload.lng)
+          : null,
+      trading_company_name: String(payload.trading_company_name || payload.trading_company || '').trim() || null,
+      trading_company: String(payload.trading_company || payload.trading_company_name || '').trim() || null,
+      contractor: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
+      sub_contractor_name: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
+      delivery_area: String(payload.delivery_area || '').trim() || null,
+      site_address: String(payload.site_address || '').trim() || null,
+      folder_url: normalizeExternalUrl(payload.folder_url) || null,
+      sheet_url: normalizeExternalUrl(payload.sheet_url) || null,
+      url_token: resolveUrlTokenForInsert(payload),
+    };
+  });
+
+  const inserted = [];
+  for (let i = 0; i < prepared.length; i += BULK_INSERT_CHUNK) {
+    const chunk = prepared.slice(i, i + BULK_INSERT_CHUNK);
+    const { data, error } = await supabase.from('projects').insert(chunk).select('*');
+    if (error) throw error;
+    inserted.push(...(data || []));
+  }
+  const mapped = inserted.map(mapProjectRow).filter(Boolean);
   return enrichProjectsWithCustomerUrlTokens(mapped);
 }
 

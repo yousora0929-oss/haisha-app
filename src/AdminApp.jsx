@@ -38,6 +38,15 @@ import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/site
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
+import { AdminCsvImportButton } from './components/AdminCsvImportButton.jsx';
+import { AdminCsvDownloadButton } from './components/AdminCsvDownloadButton.jsx';
+import {
+  downloadCustomersExportCsv,
+  downloadProjectsExportCsv,
+  parseCustomersCsvFile,
+  parseProjectsCsvFile,
+  stripImportMeta,
+} from './utils/adminCsvImport.js';
 
 const ADMIN_AUTH_SESSION_KEY = 'concrete_link_admin_auth_v1';
 
@@ -610,6 +619,9 @@ function ProjectsSection({ factories, factoryNameById }) {
   const [formMode, setFormMode] = useState(null);
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [importNotice, setImportNotice] = useState('');
+
+  const defaultMainFactoryId = factories?.[0]?.id ?? '';
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -692,8 +704,61 @@ function ProjectsSection({ factories, factoryNameById }) {
           <h2 className="text-lg font-black text-slate-900">物件管理</h2>
           <p className="mt-1 text-xs text-slate-500">projects テーブル · メイン／サブ工場・位置情報</p>
         </div>
-        <button type="button" onClick={() => { setEditing(null); setFormMode('add'); }} className="min-h-[44px] rounded-lg bg-indigo-600 px-4 text-sm font-black text-white hover:bg-indigo-700">＋ 物件を追加</button>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => { setEditing(null); setFormMode('add'); }} className="min-h-[44px] rounded-lg bg-indigo-600 px-4 text-sm font-black text-white hover:bg-indigo-700">＋ 物件を追加</button>
+          <AdminCsvImportButton
+            label="CSV一括取込"
+            disabled={!defaultMainFactoryId}
+            entityLabel="件の物件"
+            parseFile={(file) =>
+              parseProjectsCsvFile(file, {
+                customers,
+                mainFactoryId: defaultMainFactoryId,
+                allowedDeliveryAreas,
+              })
+            }
+            previewColumns={[
+              { key: 'name', label: '物件名' },
+              {
+                key: 'contractor',
+                label: '元請業者',
+                render: (r) => r.__contractorLabel || customers.find((c) => c.id === r.customer_id)?.company_name || '—',
+              },
+              { key: 'trading_company_name', label: '商社名' },
+              { key: 'delivery_area', label: 'エリア' },
+              { key: 'site_address', label: '現場住所' },
+            ]}
+            onImport={async (preview) => {
+              const payload = preview.rows.map(stripImportMeta);
+              await db.bulkInsertProjects(payload);
+              const skipped = preview.skipped?.length ?? 0;
+              setImportNotice(
+                `${payload.length}件の物件を取り込みました。${skipped > 0 ? `（${skipped}行スキップ）` : ''}`,
+              );
+            }}
+            onComplete={() => {
+              void load();
+              window.setTimeout(() => setImportNotice(''), 5000);
+            }}
+          />
+          <AdminCsvDownloadButton
+            disabled={loading}
+            onDownload={() => {
+              downloadProjectsExportCsv(projects, customers);
+              setImportNotice(`${projects.length}件の物件をCSVでダウンロードしました。`);
+              window.setTimeout(() => setImportNotice(''), 4000);
+            }}
+          />
+        </div>
       </div>
+      {!defaultMainFactoryId ? (
+        <p className="mt-2 text-xs font-bold text-amber-800">CSV取込には工場マスタの登録が必要です。</p>
+      ) : null}
+      {importNotice ? (
+        <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800" role="status">
+          {importNotice}
+        </p>
+      ) : null}
       {error ? <p className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-bold text-red-800" role="alert">{error}</p> : null}
       {formMode ? (
         <div className="mt-4">
@@ -895,6 +960,39 @@ function CustomersSection() {
         <div>
           <h2 className="text-lg font-black text-slate-900">業者管理</h2>
           <p className="mt-1 text-xs text-slate-500">customers テーブル · 物件管理と注文画面の業者選択に反映されます</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <AdminCsvImportButton
+            label="CSV一括取込"
+            entityLabel="件の業者"
+            parseFile={parseCustomersCsvFile}
+            previewColumns={[
+              { key: 'company_name', label: '業者名' },
+              { key: 'manager_name', label: '担当者' },
+              { key: 'phone_number', label: '電話番号' },
+              { key: 'login_password', label: 'PW' },
+            ]}
+            onImport={async (preview) => {
+              const payload = preview.rows.map(stripImportMeta);
+              await db.bulkInsertCustomers(payload);
+              const skipped = preview.skipped?.length ?? 0;
+              setNotice(
+                `${payload.length}件の業者を取り込みました。${skipped > 0 ? `（${skipped}行スキップ）` : ''}`,
+              );
+            }}
+            onComplete={() => {
+              void load();
+              window.setTimeout(() => setNotice(''), 5000);
+            }}
+          />
+          <AdminCsvDownloadButton
+            disabled={loading}
+            onDownload={() => {
+              downloadCustomersExportCsv(customers);
+              setNotice(`${customers.length}件の業者をCSVでダウンロードしました。`);
+              window.setTimeout(() => setNotice(''), 4000);
+            }}
+          />
         </div>
       </div>
 
