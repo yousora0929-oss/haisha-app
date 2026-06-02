@@ -27,8 +27,14 @@ const ORDER_SELECT =
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
 
+// projects は環境差分（未適用マイグレーション）でカラム欠損しやすい。
+// まずは trading_company_name を優先し、無ければ段階的にフォールバックする。
 const PROJECT_SELECT_MIN =
-  'id, name, customer_id, trading_company_name, trading_company, main_factory_id, sub_factory_ids, lat, lng, contractor, sub_contractor_name, delivery_area, site_address, created_at, updated_at';
+  'id, name, customer_id, trading_company_name, main_factory_id, sub_factory_ids, lat, lng, contractor, sub_contractor_name, delivery_area, site_address, created_at, updated_at';
+const PROJECT_SELECT_MIN_LEGACY =
+  'id, name, main_factory_id, sub_factory_ids, lat, lng, trading_company, contractor, created_at, updated_at';
+const PROJECT_SELECT_MIN_BASE =
+  'id, name, main_factory_id, sub_factory_ids, lat, lng, created_at, updated_at';
 
 /** 物件の url_token が無い場合、紐づく業者（customers）の url_token を補完する */
 function pickSiteUrlToken(project, customer) {
@@ -283,7 +289,25 @@ export async function fetchOrdersWithChat() {
     customerById = new Map((customers || []).map((c) => [String(c.id), c]));
   }
   if (projectIds.length) {
-    const { data: projects } = await supabase.from('projects').select(PROJECT_SELECT_MIN).in('id', projectIds);
+    let projects = null;
+    let pErr = null;
+    ({ data: projects, error: pErr } = await supabase.from('projects').select(PROJECT_SELECT_MIN).in('id', projectIds));
+    if (pErr && isMissingRelationOrColumnError(pErr)) {
+      ({ data: projects, error: pErr } = await supabase
+        .from('projects')
+        .select(PROJECT_SELECT_MIN_LEGACY)
+        .in('id', projectIds));
+    }
+    if (pErr && isMissingRelationOrColumnError(pErr)) {
+      ({ data: projects, error: pErr } = await supabase
+        .from('projects')
+        .select(PROJECT_SELECT_MIN_BASE)
+        .in('id', projectIds));
+    }
+    if (pErr) {
+      console.warn('[fetchOrdersWithChat] projects load failed', pErr);
+      projects = [];
+    }
     projectById = new Map((projects || []).map((p) => [String(p.id), p]));
   }
   for (let i = 0; i < orders.length; i += 1) {
