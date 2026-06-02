@@ -313,17 +313,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
     }
 
-    function AutocompleteField({ id, labelText, value, onValueChange, suggestions, placeholder, autoComplete }) {
+    function AutocompleteField({ labelText, value, onValueChange, suggestions, placeholder, autoComplete }) {
       const [panelOpen, setPanelOpen] = useState(false);
       const filtered = useMemo(() => filterMasterSuggestions(suggestions, value), [suggestions, value]);
       const showList = panelOpen && String(value ?? '').trim().length > 0 && filtered.length > 0;
 
       return (
-        <div className="flex flex-col gap-3">
-          <Label htmlFor={id}>{labelText}</Label>
+        <label className="flex flex-col gap-3">
+          <span className="block text-sm font-semibold text-slate-700">{labelText}</span>
           <div className="relative">
             <input
-              id={id}
               type="text"
               autoComplete={autoComplete || 'off'}
               placeholder={placeholder}
@@ -360,7 +359,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </ul>
             ) : null}
           </div>
-        </div>
+        </label>
       );
     }
 
@@ -1160,6 +1159,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const orderFormRef = useRef(null);
       const lastAutofillProjectIdRef = useRef('');
       const guestInitCompletedTokenRef = useRef('');
+
+      const orderFormFieldPrefix = useMemo(() => {
+        if (isGuestSiteOrder) return 'guest-order';
+        return orderKind === 'spot' ? 'spot-order' : 'project-order';
+      }, [isGuestSiteOrder, orderKind]);
+
+      const orderFieldId = useCallback(
+        (name) => `${orderFormFieldPrefix}-${name}`,
+        [orderFormFieldPrefix],
+      );
 
       const selectedProject = useMemo(
         () => (projects || []).find((p) => p && p.id === selectedProjectId) || null,
@@ -2391,120 +2400,40 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }
 
       return (
-        <div className="min-h-[100dvh] w-full overflow-x-hidden bg-slate-100 pt-11 pb-[max(7rem,env(safe-area-inset-bottom))] dark:bg-gray-900 dark:text-gray-100 lg:pb-[max(2.5rem,env(safe-area-inset-bottom))]">
-          <header className="border-b border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
-            <div className="mx-auto w-full max-w-7xl px-4 py-4 lg:px-6 lg:py-5">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="min-w-0 flex-1">
-                  {isGuestSiteOrder ? (
-                    <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-10 w-auto" />
-                  ) : (
-                    <a href="/" className="inline-flex w-fit items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label={APP_BRAND_HOME_LABEL}>
-                      <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-10 w-auto" />
-                    </a>
-                  )}
-                  {isGuestSiteOrder ? (
-                    <div className="mt-3 space-y-1">
-                      <p className="text-xs font-black uppercase tracking-wider text-indigo-600">物件専用発注フォーム</p>
-                      {guestVendorLabel ? (
-                        <p className="text-xl font-bold leading-snug text-slate-900 dark:text-slate-100">
-                          <span className="text-slate-500 text-sm font-bold">元請・商社</span>
-                          <br />
-                          {guestVendorLabel}
-                        </p>
-                      ) : null}
-                      {guestSiteLabel ? (
-                        <p className="text-2xl font-black leading-tight text-slate-900 dark:text-white">
-                          <span className="text-slate-500 text-sm font-bold">物件名</span>
-                          <br />
-                          {guestSiteLabel}
-                        </p>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{APP_BRAND_NAME}</p>
-                  )}
-                </div>
-                <div className="flex shrink-0 flex-col items-end gap-1">
-                  <ThemeToggle compact />
-                  {!isGuestSiteOrder ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={handleCustomerLogout}
-                        className="rounded-xl border-2 border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 shadow-sm transition hover:border-red-300 hover:bg-red-50 hover:text-red-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:border-red-500 sm:text-sm"
-                      >
-                        ログアウト
-                      </button>
-                      <p className="max-w-[10rem] break-words text-right text-xs font-black leading-snug text-indigo-700 dark:text-indigo-300">
-                        ログイン中：{currentCustomer?.company_name || currentCustomer?.name || '認証済み業者'}
-                      </p>
-                    </>
-                  ) : null}
-                </div>
-              </div>
-              {isGuestSiteOrder && siteOrderLinkNotice ? (
-                <p className="mt-3 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-bold text-indigo-900 dark:border-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-100" role="status">
-                  {siteOrderLinkNotice}
-                </p>
-              ) : null}
-            </div>
-          </header>
-
-          {!isGuestSiteOrder ? (
-          <div className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 lg:hidden">
-            <div className="mx-auto w-full max-w-7xl overflow-x-auto">
-            <div className="grid min-w-[32rem] grid-cols-4 gap-1 rounded-2xl bg-slate-100 p-1 dark:bg-slate-800">
-              {CUSTOMER_ORDER_TABS.map(([id, label]) => {
-                const active = customerOrderTab === id;
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => selectCustomerTab(id)}
-                    className={
-                      'min-h-[46px] rounded-xl px-1 text-sm font-black transition ' +
-                      (active
-                        ? 'bg-indigo-600 text-white shadow-md ring-2 ring-indigo-200'
-                        : 'bg-transparent text-slate-500 hover:bg-white hover:text-slate-800')
-                    }
-                    aria-pressed={active}
-                  >
-                    <span className="inline-flex items-center justify-center">
-                      {label}
-                      {id === 'active' && unreadChatCount > 0 ? (
-                        <span className="ml-2 rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
-                          {unreadChatCount}
-                        </span>
-                      ) : null}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            </div>
-          </div>
-          ) : null}
-
-          <PullToRefresh
-            onRefresh={
-              isGuestSiteOrder
-                ? hasGuestSiteOrderSession()
-                  ? () => refreshDashboard({ playSound: false })
-                  : async () => {}
-                : refreshDashboard
-            }
-            className="mx-auto w-full max-w-7xl px-4 py-5 lg:px-6 lg:py-8"
-          >
-          <div className={isGuestSiteOrder ? '' : 'lg:grid lg:grid-cols-[minmax(11rem,14rem)_minmax(0,1fr)] lg:items-start lg:gap-8 xl:grid-cols-[15rem_1fr] xl:gap-10'}>
+        <div className="min-h-screen bg-gray-50 text-gray-900 antialiased">
+          <div className="mx-auto min-h-screen max-w-[1440px] shadow-sm flex flex-col lg:flex-row">
             {!isGuestSiteOrder ? (
-              <aside
-                className="mb-2 hidden lg:flex lg:flex-col lg:gap-3 lg:sticky lg:top-24 lg:self-start"
-                aria-label="メインメニュー"
-              >
-                <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-md dark:border-slate-700 dark:bg-slate-900">
+              <aside className="hidden lg:block w-[260px] shrink-0 bg-white border-r border-gray-200 min-h-screen sticky top-0">
+                <div className="p-5 space-y-4">
+                  <a
+                    href="/"
+                    className="inline-flex w-fit items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                    aria-label={APP_BRAND_HOME_LABEL}
+                  >
+                    <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-10 w-auto" />
+                  </a>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-black uppercase tracking-wider text-slate-400">ログイン中</p>
+                      <p className="mt-1 break-words text-sm font-black leading-snug text-slate-900">
+                        {currentCustomer?.company_name || currentCustomer?.name || '認証済み業者'}
+                      </p>
+                    </div>
+                    <div className="shrink-0">
+                      <ThemeToggle compact />
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCustomerLogout}
+                    className="w-full rounded-xl border-2 border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 shadow-sm transition hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+                  >
+                    ログアウト
+                  </button>
+                </div>
+                <div className="px-4 pb-6">
                   <p className="px-2 text-[10px] font-black uppercase tracking-wider text-slate-400">メニュー</p>
-                  <nav className="mt-2 flex flex-col gap-1">
+                  <nav className="mt-2 flex flex-col gap-1" aria-label="メインメニュー">
                     {CUSTOMER_ORDER_TABS.map(([id, label, icon]) => {
                       const active = customerOrderTab === id;
                       return (
@@ -2514,9 +2443,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           onClick={() => selectCustomerTab(id)}
                           className={
                             'flex min-h-[48px] items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-black transition ' +
-                            (active
-                              ? 'bg-indigo-600 text-white shadow-md'
-                              : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800')
+                            (active ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900')
                           }
                           aria-pressed={active}
                         >
@@ -2532,20 +2459,90 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     })}
                   </nav>
                 </div>
-                {currentCustomer ? (
-                  <div className="rounded-2xl border border-indigo-100 bg-indigo-50/80 p-3 dark:border-indigo-900 dark:bg-indigo-950/40">
-                    <p className="text-[10px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-300">
-                      ログイン中
-                    </p>
-                    <p className="mt-1 break-words text-sm font-black leading-snug text-indigo-950 dark:text-indigo-100">
-                      {currentCustomer?.company_name || currentCustomer?.name || '認証済み業者'}
-                    </p>
-                  </div>
-                ) : null}
               </aside>
             ) : null}
-          <main id="dispatch-dashboard" className="min-w-0">
-            <div className="grid min-w-0 gap-6">
+
+            <main id="dispatch-dashboard" className="flex-1 min-w-0 flex flex-col p-4 md:p-6 lg:p-8 pb-24 lg:pb-8">
+              <header className="mb-6 flex flex-col gap-4 border-b border-gray-200 pb-4">
+                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                  <div className="min-w-0">
+                    {isGuestSiteOrder ? (
+                      <>
+                        <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-10 w-auto" />
+                        <div className="mt-3 space-y-1">
+                          <p className="text-xs font-black uppercase tracking-wider text-indigo-600">物件専用発注フォーム</p>
+                          {guestVendorLabel ? (
+                            <p className="text-base font-bold leading-snug text-slate-900">
+                              <span className="text-slate-500 text-xs font-bold">元請・商社</span>
+                              <br />
+                              {guestVendorLabel}
+                            </p>
+                          ) : null}
+                          {guestSiteLabel ? (
+                            <p className="text-xl font-black leading-tight text-slate-900">
+                              <span className="text-slate-500 text-xs font-bold">物件名</span>
+                              <br />
+                              {guestSiteLabel}
+                            </p>
+                          ) : null}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="lg:hidden">
+                        <div className="flex items-start justify-between gap-4">
+                          <a
+                            href="/"
+                            className="inline-flex w-fit items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                            aria-label={APP_BRAND_HOME_LABEL}
+                          >
+                            <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-10 w-auto" />
+                          </a>
+                          <div className="flex items-start gap-2">
+                            <ThemeToggle compact />
+                            <button
+                              type="button"
+                              onClick={handleCustomerLogout}
+                              className="rounded-xl border-2 border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 shadow-sm transition hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+                            >
+                              ログアウト
+                            </button>
+                          </div>
+                        </div>
+                        <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{APP_BRAND_NAME}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col md:items-end gap-2">
+                    {!isGuestSiteOrder && customerOrderTab === 'active' ? (
+                      <div className="w-full md:w-auto max-w-md">
+                        <OrderListSearchInput
+                          id="master-in-progress-search"
+                          value={inProgressSearchQuery}
+                          onChange={setInProgressSearchQuery}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                {isGuestSiteOrder && siteOrderLinkNotice ? (
+                  <p className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-bold text-indigo-900" role="status">
+                    {siteOrderLinkNotice}
+                  </p>
+                ) : null}
+              </header>
+
+              <PullToRefresh
+                onRefresh={
+                  isGuestSiteOrder
+                    ? hasGuestSiteOrderSession()
+                      ? () => refreshDashboard({ playSound: false })
+                      : async () => {}
+                    : refreshDashboard
+                }
+                className="grid min-w-0 gap-6"
+              >
               {customerOrderTab === 'new' && !newOrderMode && !isGuestSiteOrder ? (
               <section className="w-full rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6 lg:p-8">
                 <p className="text-xs font-black uppercase tracking-wider text-indigo-700">新規発注</p>
@@ -2710,9 +2707,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
               {orderKind === 'project' && !isGuestSiteOrder ? (
                 <div className="flex flex-col gap-3">
-                  <Label htmlFor="dispatch-project">物件を選択</Label>
+                  <Label htmlFor={orderFieldId('dispatch-project')}>物件を選択</Label>
                   <select
-                    id="dispatch-project"
+                    id={orderFieldId('dispatch-project')}
                     value={selectedProjectId}
                     disabled={!hasCurrentCustomer || (isGuestSiteOrder && Boolean(guestSiteOrderCtx?.project?.id))}
                     onChange={(e) => {
@@ -2765,12 +2762,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               {orderKind === 'spot' ? (
                 <>
                   <div className="flex flex-col gap-3">
-                    <Label htmlFor="site-name">現場名</Label>
+                    <Label htmlFor={orderFieldId('site-name')}>現場名</Label>
                     <p className="text-xs leading-relaxed text-slate-500">
                       現場の通称など。空欄のまま送信した場合は、下の「現場住所」の内容が現場名として保存されます。
                     </p>
                     <input
-                      id="site-name"
+                      id={orderFieldId('site-name')}
                       type="text"
                       autoComplete="off"
                       placeholder="例：〇〇ビル新築工事"
@@ -2877,13 +2874,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               ) : null}
 
               <div className="flex min-w-0 max-w-full flex-col gap-3 overflow-hidden">
-                <Label htmlFor="preferred-date">希望日（納入日）</Label>
+                <Label htmlFor={orderFieldId('preferred-date')}>希望日（納入日）</Label>
                 <p className={'text-xs leading-relaxed text-slate-500' + (isGuestSiteOrder ? ' hidden' : '')}>
                   日付や試験の有無などを変えながら「リストに追加」でカートへ溜め、最後に一括確定できます。
                 </p>
                 <div className="w-full min-w-0 max-w-full overflow-hidden">
                   <input
-                    id="preferred-date"
+                    id={orderFieldId('preferred-date')}
                     type="date"
                     min={today}
                     value={preferredDate}
@@ -2907,12 +2904,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </div>
 
               <div className="flex flex-col gap-3">
-                <Label htmlFor="time-slot">希望時刻（8:00〜15:30・30分刻み）</Label>
+                <Label htmlFor={orderFieldId('time-slot')}>希望時刻（8:00〜15:30・30分刻み）</Label>
                 <p className={'text-xs leading-relaxed text-slate-500' + (isGuestSiteOrder ? ' hidden' : '')}>
                   到着・打設の目安時刻を、30分単位で指定します（最遅 15:30）。
                 </p>
                 <select
-                  id="time-slot"
+                  id={orderFieldId('time-slot')}
                   value={timeSlot}
                   onChange={(e) => {
                     setTimeSlot(e.target.value);
@@ -2940,14 +2937,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </div>
 
               <div className="flex flex-col gap-3">
-                <Label htmlFor="dispatch-factory">第一希望工場（任意）</Label>
+                <Label htmlFor={orderFieldId('dispatch-factory')}>第一希望工場（任意）</Label>
                 <p className="text-xs leading-relaxed text-slate-500">
                   {isGuestSiteOrder
                     ? '指定した工場に最初に配車依頼が届きます。メイン工場が自動入力されています（変更可）。未指定の場合はエスカレーションルールに従います。'
                     : '指定した工場に最初に配車依頼が届きます。物件を選ぶとメイン工場が自動入力されます（変更可）。未指定の場合はエスカレーションルールに従います。'}
                 </p>
                 <select
-                  id="dispatch-factory"
+                  id={orderFieldId('dispatch-factory')}
                   value={preferredFactoryId}
                   onChange={(e) => {
                     setPreferredFactoryId(e.target.value);
@@ -3006,7 +3003,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               {!isGuestSiteOrder ? (
                 <>
                   <AutocompleteField
-                    id="trader-name"
                     labelText="商社（任意）"
                     value={traderName}
                     onValueChange={(v) => {
@@ -3019,7 +3015,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   />
 
                   <AutocompleteField
-                    id="contractor-name"
                     labelText="業者"
                     value={contractorName}
                     onValueChange={(v) => {
@@ -3034,12 +3029,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               ) : null}
 
               <div className="flex flex-col gap-3">
-                <Label htmlFor="mix-spec">配合（JIS規格など）</Label>
+                <Label htmlFor={orderFieldId('mix-spec')}>配合（JIS規格など）</Label>
                 <p className={'text-xs leading-relaxed text-slate-500' + (isGuestSiteOrder ? ' hidden' : '')}>
                   自由入力のほか、下のショートカットから選べます。
                 </p>
                 <input
-                  id="mix-spec"
+                  id={orderFieldId('mix-spec')}
                   type="text"
                   inputMode="text"
                   autoComplete="off"
@@ -3068,12 +3063,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </div>
 
               <div className="flex flex-col gap-3">
-                <Label htmlFor="quantity-m3">数量（m³）</Label>
+                <Label htmlFor={orderFieldId('quantity-m3')}>数量（m³）</Label>
                 <p className={'text-xs leading-relaxed text-slate-500' + (isGuestSiteOrder ? ' hidden' : '')}>
                   発注時は空欄にできません。
                 </p>
                 <input
-                  id="quantity-m3"
+                  id={orderFieldId('quantity-m3')}
                   type="text"
                   inputMode="decimal"
                   autoComplete="off"
@@ -3088,14 +3083,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </div>
 
               <div className="flex flex-col gap-3">
-                <Label htmlFor="unload-duration">1台あたりの荷卸し（車返却）予定時間</Label>
+                <Label htmlFor={orderFieldId('unload-duration')}>1台あたりの荷卸し（車返却）予定時間</Label>
                 <p className="text-xs leading-relaxed text-slate-500">
                   {isGuestSiteOrder
                     ? '物件での滞在想定時間です。工場側の帰着・次便計画に使用します。'
                     : '現場での滞在想定時間です。工場側の帰着・次便計画に使用します。'}
                 </p>
                 <select
-                  id="unload-duration"
+                  id={orderFieldId('unload-duration')}
                   value={unloadDuration}
                   onChange={(e) => {
                     setUnloadDuration(e.target.value);
@@ -3112,9 +3107,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </div>
 
               <div className={'flex flex-col gap-2' + (isGuestSiteOrder ? ' lg:col-span-2' : '')}>
-                <div className="flex cursor-pointer items-start gap-3 rounded-xl border-2 border-slate-200 bg-slate-50/90 px-4 py-3 transition hover:border-slate-300 hover:bg-white">
+                <label className="flex cursor-pointer items-start gap-3 rounded-xl border-2 border-slate-200 bg-slate-50/90 px-4 py-3 transition hover:border-slate-300 hover:bg-white">
                   <input
-                    id="order-has-test"
                     type="checkbox"
                     checked={hasTest}
                     onChange={(e) => {
@@ -3123,20 +3117,20 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     }}
                     className="mt-1 h-5 w-5 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                   />
-                  <label htmlFor="order-has-test" className="min-w-0 flex-1 cursor-pointer text-sm leading-snug text-slate-800">
+                  <span className="min-w-0 flex-1 text-sm leading-snug text-slate-800">
                     <span className="font-black text-slate-900">試験の有無</span>
                     <span className="mt-1 block text-xs font-medium text-slate-500">
                       チェックを入れると「試験あり」として工場に伝わります。未チェックのときは試験なしです。
                     </span>
-                  </label>
-                </div>
+                  </span>
+                </label>
               </div>
 
               <div className="flex flex-col gap-3">
-                <Label htmlFor="ordered-by">発注担当者名</Label>
+                <Label htmlFor={orderFieldId('ordered-by')}>発注担当者名</Label>
                 <p className="text-xs leading-relaxed text-slate-500">当日連絡が取れる担当者名を自由入力してください（例：山田、佐藤）。</p>
                 <input
-                  id="ordered-by"
+                  id={orderFieldId('ordered-by')}
                   type="text"
                   autoComplete="name"
                   placeholder="例：山田"
@@ -3150,9 +3144,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </div>
 
               <div className="flex flex-col gap-3">
-                <Label htmlFor="site-phone">電話番号</Label>
+                <Label htmlFor={orderFieldId('site-phone')}>電話番号</Label>
                 <input
-                  id="site-phone"
+                  id={orderFieldId('site-phone')}
                   type="tel"
                   inputMode="tel"
                   autoComplete="tel"
@@ -3234,13 +3228,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       工場画面の受注／拒否／保留がここに反映されます。
                     </p>
                   </div>
-                  <div className="hidden md:flex md:justify-end">
-                    <OrderListSearchInput
-                      id="master-in-progress-search"
-                      value={inProgressSearchQuery}
-                      onChange={setInProgressSearchQuery}
-                    />
-                  </div>
                 </div>
                   <div className="mt-4 grid grid-cols-1 gap-4">
                     {activeOrders.length === 0 ? (
@@ -3249,19 +3236,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       </p>
                     ) : (
                       <>
-                        <div className="flex flex-col gap-3 md:hidden">
-                          <OrderListSearchInput
-                            id="master-in-progress-search"
-                            value={inProgressSearchQuery}
-                            onChange={setInProgressSearchQuery}
-                          />
-                        </div>
                         {filteredInProgressOrders.length === 0 ? (
                           <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm font-bold text-slate-500">
                             該当する注文がありません
                           </p>
                         ) : (
-                          <div className="grid grid-cols-1 gap-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3 gap-6">
                           {filteredInProgressOrders.map((ord, i) => (
                             <InProgressOrderCard
                               key={ord.id || `ord-${i}`}
@@ -3281,7 +3261,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   </div>
               </aside>
               ) : null}
-            </div>
 
             {customerOrderTab === 'history' ? (
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6 lg:p-8">
@@ -3313,7 +3292,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   条件に一致する注文履歴はありません。
                 </p>
               ) : (
-                <ul className="mt-5 grid gap-4 lg:grid-cols-2">
+                <ul className="mt-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3 gap-6">
                   {filteredHistoryRows.map((row) => (
                     <li key={row.id}>
                       <article className="h-full overflow-hidden rounded-2xl border-2 border-slate-200 bg-slate-50 shadow-sm">
@@ -3437,38 +3416,44 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 }}
               />
             ) : null}
-          </main>
+              </PullToRefresh>
+            </main>
+
+            {!isGuestSiteOrder ? (
+              <nav className="block lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200" aria-label="カスタマー画面ナビゲーション">
+                <div className="px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2">
+                  <div className="mx-auto grid max-w-lg grid-cols-4 gap-1">
+                    {CUSTOMER_ORDER_TABS.map(([id, label, icon]) => {
+                      const active = customerOrderTab === id;
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => selectCustomerTab(id)}
+                          className={
+                            'flex min-h-[58px] flex-col items-center justify-center rounded-2xl px-1 text-[11px] font-black transition active:scale-[0.98] ' +
+                            (active ? 'bg-indigo-600 text-white shadow-md ring-2 ring-indigo-200' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900')
+                          }
+                          aria-pressed={active}
+                        >
+                          <span className="text-lg leading-none" aria-hidden="true">{icon}</span>
+                          <span className="mt-1 inline-flex items-center justify-center leading-none">
+                            {label}
+                            {id === 'active' && unreadChatCount > 0 ? (
+                              <span className="ml-1.5 rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
+                                {unreadChatCount}
+                              </span>
+                            ) : null}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </nav>
+            ) : null}
           </div>
-          </PullToRefresh>
-          <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-200 bg-white/95 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] backdrop-blur lg:hidden" aria-label="カスタマー画面ナビゲーション">
-            <div className="mx-auto grid max-w-lg grid-cols-4 gap-1">
-              {CUSTOMER_ORDER_TABS.map(([id, label, icon]) => {
-                const active = customerOrderTab === id;
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => selectCustomerTab(id)}
-                    className={
-                      'flex min-h-[58px] flex-col items-center justify-center rounded-2xl px-1 text-[11px] font-black transition active:scale-[0.98] ' +
-                      (active ? 'bg-indigo-600 text-white shadow-md ring-2 ring-indigo-200' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900')
-                    }
-                    aria-pressed={active}
-                  >
-                    <span className="text-lg leading-none" aria-hidden="true">{icon}</span>
-                    <span className="mt-1 inline-flex items-center justify-center leading-none">
-                      {label}
-                      {id === 'active' && unreadChatCount > 0 ? (
-                        <span className="ml-1.5 rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
-                          {unreadChatCount}
-                        </span>
-                      ) : null}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </nav>
+
           {activeChatOrder ? (
             <CustomerChatScreen
               order={activeChatOrder}
