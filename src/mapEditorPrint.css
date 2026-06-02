@@ -1,15 +1,17 @@
 /* 運行指示書 — A4縦1枚（詳細上半分 + 地図下半分） */
 
 .map-editor-print-sheet {
+  /* 画面外ではなくビューポート内に置き、Leaflet が全タイルを読み込めるようにする */
   position: fixed;
-  left: -12000px;
   top: 0;
+  left: 0;
   width: 210mm;
-  max-width: 210mm;
+  max-width: min(210mm, 100vw);
+  visibility: hidden;
   pointer-events: none;
-  opacity: 0;
-  z-index: -1;
+  z-index: 0;
   overflow: hidden;
+  background: #fff;
 }
 
 .map-editor-a4-instruction-page {
@@ -19,6 +21,20 @@
 
 .map-editor-print-map-caption {
   display: none;
+}
+
+.map-editor-print-map-frame {
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #e2e8f0;
+}
+
+.map-editor-print-map-frame .leaflet-container {
+  width: 100% !important;
+  height: 100% !important;
+  background: #e2e8f0;
 }
 
 @media print {
@@ -57,11 +73,9 @@
 
   .map-editor-print-sheet {
     position: static !important;
-    left: auto !important;
-    top: auto !important;
+    visibility: visible !important;
     width: 100% !important;
     max-width: none !important;
-    opacity: 1 !important;
     pointer-events: auto !important;
     z-index: auto !important;
     display: block !important;
@@ -112,6 +126,8 @@
     display: block !important;
     margin: 0 0 1mm !important;
     font-size: 9pt !important;
+    font-weight: 800;
+    color: #334155;
   }
 
   .map-editor-print-map-slot {
@@ -160,7 +176,6 @@
     display: none !important;
   }
 
-  /* 地図のみ印刷 */
   .map-editor-print-sheet.print-include-map:not(.print-include-details) .map-editor-print-map-frame,
   .map-editor-print-sheet.print-include-map:not(.print-include-details) .map-editor-print-map-frame .leaflet-container {
     height: 95vh !important;
@@ -168,7 +183,6 @@
     max-height: 95vh !important;
   }
 
-  /* 詳細のみ印刷 */
   .map-editor-print-sheet.print-include-details:not(.print-include-map) .map-editor-a4-instruction-page {
     max-height: none !important;
   }

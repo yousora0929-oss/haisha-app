@@ -1,11 +1,10 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { Circle, ImageOverlay, MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
+import { Circle, MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { MAP_STAMP_EMOJI } from '../mapEditorConstants.js';
 import {
   applyInitialViewCenter,
-  boundsFromCenter,
   DEFAULT_MAP_CENTER,
   DEFAULT_UNLOAD_RADIUS_M,
 } from '../utils/mapAnnotations.js';
@@ -58,12 +57,20 @@ function MapViewportSync({ viewport, onViewportChange, syncKey }) {
   return null;
 }
 
-function MapResizeFix() {
+function MapResizeFix({ fixedHeightPx = 0 }) {
   const map = useMap();
   useEffect(() => {
-    const t = window.setTimeout(() => map.invalidateSize(), 80);
-    return () => window.clearTimeout(t);
-  }, [map]);
+    const run = () => map.invalidateSize({ animate: false });
+    run();
+    const delays = fixedHeightPx > 0 ? [50, 200, 500, 900] : [80];
+    const timers = delays.map((ms) => window.setTimeout(run, ms));
+    const onBeforePrint = () => run();
+    window.addEventListener('beforeprint', onBeforePrint);
+    return () => {
+      timers.forEach((t) => window.clearTimeout(t));
+      window.removeEventListener('beforeprint', onBeforePrint);
+    };
+  }, [map, fixedHeightPx]);
   return null;
 }
 
@@ -84,6 +91,7 @@ export function MapEditorViewportMap({
   viewport,
   onViewportChange,
   onMapReady,
+  fixedHeightPx = 0,
   className = '',
   mapKey = 'default',
 }) {
@@ -106,15 +114,19 @@ export function MapEditorViewportMap({
     return Number.isFinite(z) ? z : DEFAULT_MAP_CENTER.zoom;
   })();
 
-  const overlayBounds = useMemo(() => {
-    if (annotations?.imageOverlay?.bounds) return annotations.imageOverlay.bounds;
-    return boundsFromCenter(displayCenter.lat, displayCenter.lng);
-  }, [annotations?.imageOverlay?.bounds, displayCenter.lat, displayCenter.lng]);
+  // 印刷・プレビューは OSM タイル＋注釈のみ（保存済み合成 PNG は重ねない）
 
   const syncKey = `${mapKey}-${viewport?.lat}-${viewport?.lng}-${viewport?.zoom}`;
+  const heightPx = Number(fixedHeightPx) > 0 ? Number(fixedHeightPx) : null;
+  const rootStyle = heightPx
+    ? { height: `${heightPx}px`, width: '100%', minHeight: `${heightPx}px` }
+    : undefined;
 
   return (
-    <div className={'relative h-full w-full min-h-[200px] ' + className}>
+    <div
+      className={'relative h-full w-full ' + (heightPx ? '' : 'min-h-[200px] ') + className}
+      style={rootStyle}
+    >
       <style>{`
         .${LEAFLET_DIV_ICON_CLASS} {
           background: transparent !important;
@@ -125,19 +137,22 @@ export function MapEditorViewportMap({
         center={mapCenter}
         zoom={mapZoom}
         className="z-0 h-full w-full cursor-grab"
-        style={{ height: '100%', width: '100%', minHeight: '200px' }}
+        style={
+          heightPx
+            ? { height: `${heightPx}px`, width: '100%', minHeight: `${heightPx}px` }
+            : { height: '100%', width: '100%', minHeight: '200px' }
+        }
         scrollWheelZoom
       >
-        <MapResizeFix />
+        <MapResizeFix fixedHeightPx={heightPx || 0} />
         {onMapReady ? <MapReadyBridge onMapReady={onMapReady} /> : null}
         <MapViewportSync viewport={viewport} onViewportChange={onViewportChange} syncKey={syncKey} />
         <TileLayer
           attribution='&copy; OpenStreetMap'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          updateWhenIdle={Boolean(heightPx)}
+          keepBuffer={heightPx ? 3 : 1}
         />
-        {annotations?.imageOverlay?.url && overlayBounds ? (
-          <ImageOverlay url={annotations.imageOverlay.url} bounds={overlayBounds} opacity={0.92} />
-        ) : null}
         {(annotations?.unloadPoints || []).map((u) => (
           <Circle
             key={u.id}

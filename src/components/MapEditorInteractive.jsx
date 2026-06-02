@@ -179,6 +179,7 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
     disabled = false,
     selected = null,
     onSelectionChange,
+    blueprintOverlayUrl = '',
     className = '',
   },
   ref,
@@ -205,10 +206,13 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
     return Number.isFinite(z) ? z : DEFAULT_MAP_CENTER.zoom;
   })();
 
+  const blueprintUrl = String(blueprintOverlayUrl ?? '').trim();
+
   const overlayBounds = useMemo(() => {
+    if (!blueprintUrl) return null;
     if (annotations?.imageOverlay?.bounds) return annotations.imageOverlay.bounds;
     return boundsFromCenter(displayCenter.lat, displayCenter.lng);
-  }, [annotations?.imageOverlay?.bounds, displayCenter.lat, displayCenter.lng]);
+  }, [annotations?.imageOverlay?.bounds, blueprintUrl, displayCenter.lat, displayCenter.lng]);
 
   const patchAnnotations = useCallback(
     (patch) => {
@@ -385,8 +389,8 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        {annotations?.imageOverlay?.url && overlayBounds ? (
-          <ImageOverlay url={annotations.imageOverlay.url} bounds={overlayBounds} opacity={0.92} />
+        {blueprintUrl && overlayBounds ? (
+          <ImageOverlay url={blueprintUrl} bounds={overlayBounds} opacity={0.85} />
         ) : null}
         <UnloadCircles
           points={annotations.unloadPoints}

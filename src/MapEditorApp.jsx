@@ -20,6 +20,7 @@ import { ThemeToggle } from './components/ThemeToggle.jsx';
 import { MapEditorPrintModal } from './components/MapEditorPrintModal.jsx';
 import { MapEditorPrintSheet } from './components/MapEditorPrintSheet.jsx';
 import { resolvePrintMapViewport } from './utils/mapEditorPrintViewport.js';
+import { shouldShowBlueprintOverlay, stripSavedSnapshotOverlay } from './utils/mapEditorOverlay.js';
 
 const MAP_SOURCE_LABEL = {
   override: 'この打設日の専用マップ',
@@ -183,22 +184,33 @@ export function MapEditorApp() {
     const onAfterPrint = () => {
       setPrintSession(null);
     };
+    const onBeforePrint = () => {
+      printSheetRef.current?.invalidateMapSize?.();
+    };
+
     window.addEventListener('afterprint', onAfterPrint);
+    window.addEventListener('beforeprint', onBeforePrint);
 
     const runId = printSession.runId;
-    const t1 = window.setTimeout(() => {
+    let cancelled = false;
+
+    const startPrint = async () => {
+      await new Promise((r) => window.setTimeout(r, 80));
+      if (cancelled || printRunIdRef.current !== runId) return;
+      await printSheetRef.current?.prepareForPrint?.();
+      if (cancelled || printRunIdRef.current !== runId) return;
       printSheetRef.current?.invalidateMapSize?.();
-    }, 50);
-    const t2 = window.setTimeout(() => {
-      if (printRunIdRef.current !== runId) return;
-      printSheetRef.current?.invalidateMapSize?.();
+      await new Promise((r) => window.setTimeout(r, 150));
+      if (cancelled || printRunIdRef.current !== runId) return;
       window.print();
-    }, 450);
+    };
+
+    startPrint();
 
     return () => {
+      cancelled = true;
       window.removeEventListener('afterprint', onAfterPrint);
-      window.clearTimeout(t1);
-      window.clearTimeout(t2);
+      window.removeEventListener('beforeprint', onBeforePrint);
     };
   }, [printSession]);
 
@@ -256,7 +268,7 @@ export function MapEditorApp() {
             zoom: Number.isFinite(centerZoom) ? centerZoom : loaded?.center?.zoom ?? 17,
           };
         }
-        setAnnotations(loaded);
+        setAnnotations(stripSavedSnapshotOverlay(loaded, result.displayImageUrl || ''));
         if (result.initialFlyTarget) {
           const lat = safeParseFloat(result.initialFlyTarget.lat);
           const lng = safeParseFloat(result.initialFlyTarget.lng);
@@ -458,6 +470,13 @@ export function MapEditorApp() {
 
   const siteSubtitle = siteLabel.trim() || '（現場名未設定）';
 
+  const blueprintOverlayUrl = shouldShowBlueprintOverlay(
+    mapSource,
+    annotations?.imageOverlay?.url || baseImageUrl,
+  )
+    ? String(annotations?.imageOverlay?.url || baseImageUrl).trim()
+    : '';
+
   const actionBtn =
     'min-h-[44px] rounded-xl px-3 text-xs font-black shadow-md active:scale-[0.98] disabled:opacity-50 sm:text-sm';
 
@@ -494,6 +513,7 @@ export function MapEditorApp() {
           disabled={saving}
           selected={selection}
           onSelectionChange={setSelection}
+          blueprintOverlayUrl={blueprintOverlayUrl}
           className="h-full w-full"
         />
       </div>

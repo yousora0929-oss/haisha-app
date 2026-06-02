@@ -5,6 +5,7 @@ import {
   getInitialMapViewFromAnnotations,
   normalizeMapAnnotations,
 } from './utils/mapAnnotations.js';
+import { stripSavedSnapshotOverlay } from './utils/mapEditorOverlay.js';
 import { normalizeExternalUrl } from './utils/urlValidation.js';
 import { supabase, ensurePanelRealtimeAuth } from './supabaseClient.js';
 import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils/deliveryAreas.js';
@@ -1812,9 +1813,9 @@ export async function fetchOrderForMapEditor(orderId) {
   let mapAnnotations = normalizeMapAnnotations(rawAnnotations, {
     legacyStamps,
     projectCenter,
-    imageUrl: displayImageUrl,
+    imageUrl: '',
   });
-  mapAnnotations = withImageOverlay(mapAnnotations, displayImageUrl);
+  mapAnnotations = stripSavedSnapshotOverlay(mapAnnotations, displayImageUrl);
   const { annotations: viewAnnotations, flyTarget: initialFlyTarget } =
     getInitialMapViewFromAnnotations(mapAnnotations);
   mapAnnotations = viewAnnotations;
