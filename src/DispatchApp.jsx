@@ -719,6 +719,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return buildMapEditorUrl(order.id, undefined, token ? { guestToken: token } : {});
       }, [guestToken, order?.id]);
 
+      const orderedByDisp = String(order.ordered_by ?? order.orderedBy ?? '').trim();
+      const compactMeta = [
+        vehicle ? `車種:${vehicle}` : '',
+        trader && trader !== '—' ? `商社:${trader}` : '',
+        orderedByDisp ? `担当:${orderedByDisp}` : '',
+      ]
+        .filter(Boolean)
+        .join(' / ');
+
       const handleOpenMap = useCallback(
         (e) => {
           e?.stopPropagation?.();
@@ -762,44 +771,62 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         >
           <div className="flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between md:gap-4 md:py-2">
             {/* 左〜中央：情報セグメント */}
-            <div className="min-w-0 flex-1 md:grid md:grid-cols-3 md:items-center md:gap-6">
-              <div className="min-w-0">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">日付・時刻</p>
-                <p className="mt-0.5 truncate text-sm font-black text-slate-900 md:text-[13px]">{timeSummary}</p>
+            <div className="min-w-0 flex-1 md:flex md:items-stretch md:gap-0">
+              {/* 第一セグメント：日時とステータス */}
+              <div className="min-w-0 md:flex-[0.95] md:pr-5 md:border-r md:border-gray-200">
+                <p className="truncate text-lg font-black text-gray-900 md:text-xl" title={timeSummary}>
+                  {timeSummary}
+                </p>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <OrderStatusBadges order={order} />
+                  <LocationPendingBadge order={order} />
+                </div>
+                {hasUnreadChat ? (
+                  <p className="mt-1 text-xs font-black text-red-700">新着チャットあり</p>
+                ) : null}
               </div>
 
-              <div className="min-w-0">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">数量・配合</p>
-                <p className="mt-0.5 truncate text-sm font-black text-slate-900 md:text-[13px]">
-                  {qtyDisp}
-                  <span className="mx-2 text-slate-300">/</span>
-                  <span className="font-mono">{mixStr}</span>
-                </p>
+              {/* 第二セグメント：配合と数量 */}
+              <div className="mt-2 min-w-0 md:mt-0 md:flex-[1.05] md:px-5 md:border-r md:border-gray-200">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400">数量 / 配合</p>
+                <div className="mt-0.5 flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span className="text-base font-black text-gray-900">{qtyDisp.replace('m³', '㎥')}</span>
+                  <span className="min-w-0 truncate font-mono text-sm font-black text-gray-900">{mixStr}</span>
+                  {compactMeta ? (
+                    <span className="min-w-0 truncate text-sm font-bold text-gray-500">{compactMeta}</span>
+                  ) : null}
+                </div>
               </div>
 
-              <div className="min-w-0">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">現場・連絡先</p>
-                <p className="mt-0.5 truncate text-sm font-black text-slate-900 md:text-[13px]">
-                  {party.site || '—'}
-                  <span className="mx-2 text-slate-300">/</span>
-                  <span className="font-mono">{party.phone || '—'}</span>
-                </p>
+              {/* 第三セグメント：現場名と連絡先 */}
+              <div className="mt-2 min-w-0 md:mt-0 md:flex-[1.1] md:pl-5">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400">現場 / 連絡先</p>
+                <div className="mt-0.5 grid min-w-0 gap-1">
+                  <p className="min-w-0 truncate text-base font-black text-gray-900" title={party.site || ''}>
+                    <span className="mr-1 text-gray-400" aria-hidden>
+                      📍
+                    </span>
+                    {party.site || '—'}
+                  </p>
+                  <p className="min-w-0 truncate text-sm font-bold text-gray-600">
+                    <span className="mr-1 text-gray-400" aria-hidden>
+                      ☎
+                    </span>
+                    <span className="font-mono">{party.phone || '—'}</span>
+                    {orderedByDisp ? (
+                      <span className="ml-2 text-gray-400">（{orderedByDisp}）</span>
+                    ) : null}
+                  </p>
+                </div>
               </div>
             </div>
 
             {/* 右：ステータス + アクション */}
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 md:flex-nowrap md:justify-end">
               <div className="flex flex-wrap items-center gap-2">
-                <OrderStatusBadges order={order} />
-                <LocationPendingBadge order={order} />
                 {order.is_admin_modified ? (
                   <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-black text-violet-800">
                     管理者変更
-                  </span>
-                ) : null}
-                {hasUnreadChat ? (
-                  <span className="inline-flex rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-black text-red-700">
-                    新着チャット
                   </span>
                 ) : null}
               </div>
