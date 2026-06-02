@@ -3242,7 +3242,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     />
                   </div>
                 </div>
-                  <div className="mt-4 grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(380px,1fr))]">
+                  <div className="mt-4 grid grid-cols-1 gap-4">
                     {activeOrders.length === 0 ? (
                       <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
                         進行中の注文はありません。「新規発注」タブから発注してください。
@@ -3261,7 +3261,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                             該当する注文がありません
                           </p>
                         ) : (
-                          <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(380px,1fr))]">
+                          <div className="grid grid-cols-1 gap-4">
                           {filteredInProgressOrders.map((ord, i) => (
                             <InProgressOrderCard
                               key={ord.id || `ord-${i}`}
