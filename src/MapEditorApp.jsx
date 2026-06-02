@@ -17,7 +17,9 @@ import { isValidExternalUrl, normalizeExternalUrl } from './utils/urlValidation.
 import { geocodeAddress } from './utils/nominatimGeocode.js';
 import { boundsFromCenter, emptyMapAnnotations } from './utils/mapAnnotations.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
-import { MapEditorPrintDetails } from './components/MapEditorPrintDetails.jsx';
+import { MapEditorPrintModal } from './components/MapEditorPrintModal.jsx';
+import { MapEditorPrintSheet } from './components/MapEditorPrintSheet.jsx';
+import { resolvePrintMapViewport } from './utils/mapEditorPrintViewport.js';
 
 const MAP_SOURCE_LABEL = {
   override: 'この打設日の専用マップ',
@@ -69,8 +71,15 @@ export function MapEditorApp() {
   const [selection, setSelection] = useState(null);
   const [editorOrder, setEditorOrder] = useState(null);
   const [editorProject, setEditorProject] = useState(null);
-  const [printIncludeMap, setPrintIncludeMap] = useState(true);
-  const [printIncludeDetails, setPrintIncludeDetails] = useState(true);
+  const [printModalOpen, setPrintModalOpen] = useState(false);
+  const [printSession, setPrintSession] = useState(null);
+  const printSheetRef = useRef(null);
+  const printRunIdRef = useRef(0);
+
+  const initialPrintViewport = useMemo(
+    () => resolvePrintMapViewport(editorOrder, annotations),
+    [editorOrder, annotations],
+  );
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -152,19 +161,46 @@ export function MapEditorApp() {
   };
 
   const handlePrint = useCallback(() => {
-    if (!printIncludeMap && !printIncludeDetails) {
-      showToast('印刷する項目を1つ以上選択してください');
-      return;
-    }
-    const map = editorRef.current?.getMap?.();
-    const runPrint = () => window.print();
-    if (map && printIncludeMap) {
-      map.invalidateSize();
-      window.setTimeout(runPrint, 200);
-    } else {
-      runPrint();
-    }
-  }, [printIncludeMap, printIncludeDetails, showToast]);
+    setPrintModalOpen(true);
+  }, []);
+
+  const handlePrintConfirm = useCallback(({ includeMap, includeDetails, viewport }) => {
+    setPrintModalOpen(false);
+    printRunIdRef.current += 1;
+    const runId = printRunIdRef.current;
+    setPrintSession({
+      active: true,
+      includeMap,
+      includeDetails,
+      viewport,
+      runId,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!printSession?.active) return undefined;
+
+    const onAfterPrint = () => {
+      setPrintSession(null);
+    };
+    window.addEventListener('afterprint', onAfterPrint);
+
+    const runId = printSession.runId;
+    const t1 = window.setTimeout(() => {
+      printSheetRef.current?.invalidateMapSize?.();
+    }, 50);
+    const t2 = window.setTimeout(() => {
+      if (printRunIdRef.current !== runId) return;
+      printSheetRef.current?.invalidateMapSize?.();
+      window.print();
+    }, 450);
+
+    return () => {
+      window.removeEventListener('afterprint', onAfterPrint);
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, [printSession]);
 
   const askReturnAfterSave = useCallback(() => {
     window.alert('地図を保存しました。');
@@ -422,26 +458,31 @@ export function MapEditorApp() {
 
   const siteSubtitle = siteLabel.trim() || '（現場名未設定）';
 
-  const printShellClass =
-    'map-editor-app relative w-screen h-screen overflow-hidden bg-gray-100 text-slate-900 dark:bg-gray-900 dark:text-gray-100' +
-    (printIncludeMap ? ' print-include-map' : '') +
-    (printIncludeDetails ? ' print-include-details' : '');
-
   const actionBtn =
     'min-h-[44px] rounded-xl px-3 text-xs font-black shadow-md active:scale-[0.98] disabled:opacity-50 sm:text-sm';
 
   return (
-    <div className={printShellClass}>
-      <MapEditorPrintDetails order={editorOrder} project={editorProject} siteTitle={siteSubtitle} />
+    <div className="map-editor-app relative w-screen h-screen overflow-hidden bg-gray-100 text-slate-900 dark:bg-gray-900 dark:text-gray-100">
+      <MapEditorPrintSheet
+        ref={printSheetRef}
+        session={printSession}
+        order={editorOrder}
+        project={editorProject}
+        siteTitle={siteSubtitle}
+        annotations={annotations}
+      />
 
-      <div className="map-editor-print-only map-editor-print-header map-editor-print-map-header">
-        <h1>現場地図</h1>
-        <p>
-          {siteSubtitle} · {sourceLabel} · 注釈 {annCount} 件
-        </p>
-      </div>
+      <MapEditorPrintModal
+        open={printModalOpen}
+        initialIncludeMap
+        initialIncludeDetails
+        initialViewport={initialPrintViewport}
+        annotations={annotations}
+        onCancel={() => setPrintModalOpen(false)}
+        onConfirm={handlePrintConfirm}
+      />
 
-      <div className="map-editor-print-map-container absolute inset-0 z-0 h-full w-full">
+      <div className="map-editor-screen-ui absolute inset-0 z-0 h-full w-full">
         <MapEditorInteractive
           ref={editorRef}
           annotations={annotations}
@@ -453,7 +494,7 @@ export function MapEditorApp() {
           disabled={saving}
           selected={selection}
           onSelectionChange={setSelection}
-          className="map-editor-print-map h-full w-full"
+          className="h-full w-full"
         />
       </div>
 
@@ -488,30 +529,6 @@ export function MapEditorApp() {
           {searchLoading ? '…' : '🔍'}
         </button>
       </form>
-
-      <div className="map-editor-no-print absolute top-4 right-4 z-10 hidden max-w-xs rounded-xl border border-slate-200 bg-white p-3 shadow-lg print:hidden md:block dark:border-slate-600 dark:bg-slate-900">
-        <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">印刷する項目</p>
-        <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100">
-          <input
-            type="checkbox"
-            name="print_include_map"
-            checked={printIncludeMap}
-            onChange={(e) => setPrintIncludeMap(e.target.checked)}
-            className="h-4 w-4 rounded border-slate-300"
-          />
-          現場地図を印刷する
-        </label>
-        <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100">
-          <input
-            type="checkbox"
-            name="print_include_details"
-            checked={printIncludeDetails}
-            onChange={(e) => setPrintIncludeDetails(e.target.checked)}
-            className="h-4 w-4 rounded border-slate-300"
-          />
-          物件詳細（発注内容）を印刷する
-        </label>
-      </div>
 
       <input
         ref={baseUploadRef}
@@ -571,7 +588,7 @@ export function MapEditorApp() {
             onClick={handlePrint}
             disabled={saving}
             className={actionBtn + ' border border-slate-300 bg-white text-slate-800'}
-            title="選択した項目を印刷"
+            title="運行指示書の印刷プレビューを開く"
           >
             🖨️ 印刷
           </button>
@@ -593,27 +610,6 @@ export function MapEditorApp() {
           >
             💾 保存する
           </button>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white/95 p-2 shadow-md md:hidden print:hidden dark:border-slate-600 dark:bg-slate-900/95">
-          <p className="text-[10px] font-black text-slate-500">印刷する項目</p>
-          <label className="mt-1.5 flex items-center gap-2 text-xs font-bold text-slate-800">
-            <input
-              type="checkbox"
-              checked={printIncludeMap}
-              onChange={(e) => setPrintIncludeMap(e.target.checked)}
-              className="h-4 w-4"
-            />
-            現場地図
-          </label>
-          <label className="mt-1 flex items-center gap-2 text-xs font-bold text-slate-800">
-            <input
-              type="checkbox"
-              checked={printIncludeDetails}
-              onChange={(e) => setPrintIncludeDetails(e.target.checked)}
-              className="h-4 w-4"
-            />
-            物件詳細
-          </label>
         </div>
       </div>
 

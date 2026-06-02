@@ -33,80 +33,121 @@ export function formatTimeSlotLabel(slotValue) {
   return hit?.label || v;
 }
 
+function formatVehicleLabel(order) {
+  const raw = String(
+    order?.vehicleType ?? order?.vehicle_type ?? order?.car_size ?? order?.vehicleLabel ?? '',
+  )
+    .trim()
+    .toLowerCase();
+  if (!raw) return '—';
+  if (raw === 'large' || raw === 'big' || raw.includes('大型')) return '大型';
+  if (raw === 'small' || raw.includes('小型')) return '小型';
+  return raw;
+}
+
+function field(value) {
+  const s = String(value ?? '').trim();
+  return s || '—';
+}
+
 /**
- * 地図エディタ印刷用の物件・出荷明細
- * @param {object|null} order
- * @param {object|null} project
+ * 運行指示書（A4上半分）用グリッドデータ
  */
-export function buildMapEditorPrintDetailSections(order, project) {
+export function buildOperationInstructionPrintGrid(order, project, siteTitle) {
   if (!order) {
-    return { siteSection: [], shipmentSection: [] };
+    return { siteTitle: siteTitle || '—', siteName: '—', address: '—', cells: [] };
   }
 
   const siteName = resolveOrderSiteDisplayName(order, project) || '—';
-  const prime =
-    String(
-      order.primeContractorName ||
-        order.prime_contractor_name ||
-        project?.contractor ||
-        project?.sub_contractor_name ||
-        '',
-    ).trim() || '—';
-  const trader =
-    String(
-      order.trading_company_name ||
-        order.tradingCompanyName ||
-        order.traderName ||
-        order.projectTradingCompanyName ||
-        '',
-    ).trim();
-  const contractorLine = trader ? `${prime}（商社: ${trader}）` : prime;
+  const contractor = field(
+    order.contractorName ??
+      order.contractor_name ??
+      order.contractor ??
+      project?.contractor ??
+      project?.sub_contractor_name,
+  );
+  const trader = field(
+    order.trading_company_name ??
+      order.tradingCompanyName ??
+      order.traderName ??
+      order.projectTradingCompanyName,
+  );
 
-  const deliveryArea = order.deliveryArea ?? order.delivery_area ?? project?.delivery_area ?? '';
-  const addressDetail = order.siteAddressDetail ?? order.site_address_detail ?? '';
-  const combinedAddr =
-    String(order.siteAddress ?? order.site_address ?? '').trim() ||
-    combineDeliveryAddress(deliveryArea, addressDetail) ||
-    String(project?.site_address ?? '').trim() ||
-    '—';
-
-  const orderedBy = String(order.orderedBy ?? order.ordered_by ?? '').trim() || '—';
-  const phone =
-    String(order.sitePhone ?? order.phone ?? order.site_phone ?? order.phone_number ?? '').trim() || '—';
-
-  const dateLabel = formatPreferredDateLabel(order.preferredDate ?? order.preferred_date ?? order.delivery_date);
-  const timeLabel = formatTimeSlotLabel(order.timeSlot ?? order.time_slot ?? order.preferredTimeSlot);
-  const dateTimeLabel = timeLabel ? `${dateLabel} ${timeLabel}` : dateLabel;
+  const dateLabel = formatPreferredDateLabel(
+    order.preferredDate ?? order.preferred_date ?? order.delivery_date,
+  );
+  const timeLabel = formatTimeSlotLabel(
+    order.timeSlot ?? order.time_slot ?? order.preferredTimeSlot,
+  );
 
   const qtyRaw = order.quantityM3 ?? order.quantity_m3 ?? order.quantityCube ?? order.quantity;
   const quantityLabel =
-    qtyRaw !== '' && qtyRaw != null && String(qtyRaw).trim() !== '' ? `${String(qtyRaw).trim()} ㎥` : '—';
-
-  const mix = parseMixComponents(order.mixText ?? order.mix ?? order.confirmedMixText ?? '');
-  const mixDisplay =
-    mix.raw && mix.raw !== '—'
-      ? `${mix.strength !== '—' ? mix.strength : '—'} - ${mix.slump !== '—' ? mix.slump : '—'} - ${mix.aggregate !== '—' ? mix.aggregate : '—'} - ${mix.cement !== '—' ? mix.cement : '—'}`
+    qtyRaw !== '' && qtyRaw != null && String(qtyRaw).trim() !== ''
+      ? `${String(qtyRaw).trim()} ㎥`
       : '—';
 
-  const hasTest = order.has_test === true || order.hasTest === true;
+  const orderedBy = field(order.orderedBy ?? order.ordered_by);
+  const phone = field(
+    order.sitePhone ?? order.phone ?? order.site_phone ?? order.phone_number,
+  );
+
+  const deliveryArea = order.deliveryArea ?? order.delivery_area ?? project?.delivery_area ?? '';
+  const addressDetail = order.siteAddressDetail ?? order.site_address_detail ?? '';
+  const address =
+    field(order.siteAddress ?? order.site_address) !== '—'
+      ? field(order.siteAddress ?? order.site_address)
+      : field(combineDeliveryAddress(deliveryArea, addressDetail) || project?.site_address);
 
   return {
-    siteSection: [
-      { label: '物件名（現場名）', value: siteName },
-      { label: '元請業者', value: contractorLine },
-      { label: '現場住所', value: combinedAddr },
-      { label: '発注担当者', value: orderedBy },
-      { label: '担当者連絡先', value: phone },
+    siteTitle: siteTitle || siteName,
+    siteName,
+    address,
+    cells: [
+      {
+        section: '配送日時',
+        leftLabel: '配達日付',
+        leftValue: dateLabel,
+        rightLabel: '配達時間',
+        rightValue: timeLabel || '—',
+      },
+      {
+        section: '出荷数量',
+        leftLabel: '予定数量',
+        leftValue: quantityLabel,
+        rightLabel: '指定車両',
+        rightValue: formatVehicleLabel(order),
+      },
+      {
+        section: '関係業者',
+        leftLabel: '発注業者（元請）',
+        leftValue: contractor,
+        rightLabel: '担当商社',
+        rightValue: trader,
+      },
+      {
+        section: '現場担当',
+        leftLabel: '現場担当者名',
+        leftValue: orderedBy,
+        rightLabel: '担当者連絡先',
+        rightValue: phone,
+      },
     ],
+  };
+}
+
+export function buildMapEditorPrintDetailSections(order, project) {
+  const grid = buildOperationInstructionPrintGrid(order, project);
+  if (!order) {
+    return { siteSection: [], shipmentSection: [] };
+  }
+  return {
+    siteSection: grid.cells.flatMap((c) => [
+      { label: `${c.section}（${c.leftLabel}）`, value: c.leftValue },
+      { label: c.rightLabel, value: c.rightValue },
+    ]),
     shipmentSection: [
-      { label: '配達日時', value: dateTimeLabel },
-      { label: '予定数量', value: quantityLabel },
-      { label: '配合（呼び強度）', value: mix.strength },
-      { label: 'スランプ', value: mix.slump },
-      { label: '粗骨材', value: mix.aggregate },
-      { label: 'セメント種別', value: mix.cement },
-      { label: '配合（表示）', value: mixDisplay },
-      { label: '試験', value: hasTest ? '試験あり' : '試験なし' },
+      { label: '物件名', value: grid.siteName },
+      { label: '住所', value: grid.address },
     ],
   };
 }
