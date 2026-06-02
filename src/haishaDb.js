@@ -2163,6 +2163,9 @@ export async function publishFactoryNews({ title, body, targetFactoryIds = [] })
   if (!t) throw new Error('件名を入力してください');
   if (!b) throw new Error('本文を入力してください');
   const targets = [...new Set((targetFactoryIds || []).map((x) => sanitizeRefId(x)).filter(Boolean))];
+  if (targets.length === 0) {
+    throw new Error('配信先の工場を1件以上選択してください');
+  }
   const { data, error } = await supabase
     .from('factory_news')
     .insert({
@@ -2195,4 +2198,12 @@ export async function fetchFactoryNewsAdminFeed() {
     reads = (readRows || []).map(mapFactoryNewsReadRow).filter(Boolean);
   }
   return { news, reads };
+}
+
+/** 管理画面: ニュース削除（既読ログは CASCADE） */
+export async function deleteFactoryNews(newsId) {
+  const id = String(newsId || '').trim();
+  if (!id) throw new Error('削除対象がありません');
+  const { error } = await supabase.from('factory_news').delete().eq('id', id);
+  if (error) throw error;
 }

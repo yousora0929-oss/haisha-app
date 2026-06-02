@@ -26,6 +26,7 @@ export function AdminFactoryNewsSection({ factories = [] }) {
   const [body, setBody] = useState('');
   const [selectedFactoryIds, setSelectedFactoryIds] = useState(() => new Set());
   const [expandedHistoryId, setExpandedHistoryId] = useState(null);
+  const [deletingNewsId, setDeletingNewsId] = useState(null);
 
   const factoryNameById = useMemo(
     () => Object.fromEntries((factories || []).filter((f) => f?.id).map((f) => [String(f.id), f.name || f.id])),
@@ -64,8 +65,16 @@ export function AdminFactoryNewsSection({ factories = [] }) {
     return () => unsub();
   }, [load]);
 
-  const allSelected = factories.length > 0 && selectedFactoryIds.size === factories.length;
-  const broadcastAll = selectedFactoryIds.size === 0;
+  const allFactoryIds = useMemo(
+    () => factories.map((f) => String(f.id)).filter(Boolean),
+    [factories],
+  );
+  const allSelected = allFactoryIds.length > 0 && selectedFactoryIds.size === allFactoryIds.length;
+
+  useEffect(() => {
+    if (allFactoryIds.length === 0) return;
+    setSelectedFactoryIds((prev) => (prev.size === 0 ? new Set(allFactoryIds) : prev));
+  }, [allFactoryIds]);
 
   const toggleFactory = (id) => {
     setSelectedFactoryIds((prev) => {
@@ -77,10 +86,34 @@ export function AdminFactoryNewsSection({ factories = [] }) {
   };
 
   const selectAllFactories = () => {
-    setSelectedFactoryIds(new Set(factories.map((f) => String(f.id))));
+    setSelectedFactoryIds(new Set(allFactoryIds));
   };
 
-  const clearTargets = () => setSelectedFactoryIds(new Set());
+  const clearAllFactories = () => setSelectedFactoryIds(new Set());
+
+  const handleDeleteNews = async (item) => {
+    if (!item?.id) return;
+    const label = String(item.title || '').trim() || '（無題）';
+    if (
+      !window.confirm(
+        `「${label}」を配信履歴から削除しますか？\n工場のお知らせからも表示されなくなります。`,
+      )
+    ) {
+      return;
+    }
+    const id = String(item.id);
+    setDeletingNewsId(id);
+    setError('');
+    try {
+      await db.deleteFactoryNews(id);
+      setExpandedHistoryId((prev) => (prev === id ? null : prev));
+      await load();
+    } catch (err) {
+      setError(err?.message || '削除に失敗しました');
+    } finally {
+      setDeletingNewsId(null);
+    }
+  };
 
   const handlePublish = async (e) => {
     e.preventDefault();
@@ -88,7 +121,11 @@ export function AdminFactoryNewsSection({ factories = [] }) {
     setError('');
     setNotice('');
     try {
-      const targetIds = broadcastAll ? [] : [...selectedFactoryIds];
+      const targetIds = [...selectedFactoryIds];
+      if (targetIds.length === 0) {
+        setError('配信先の工場を1件以上選択してください');
+        return;
+      }
       await db.publishFactoryNews({
         title,
         body,
@@ -96,7 +133,7 @@ export function AdminFactoryNewsSection({ factories = [] }) {
       });
       setTitle('');
       setBody('');
-      setSelectedFactoryIds(new Set());
+      setSelectedFactoryIds(new Set(allFactoryIds));
       setNotice('ニュースを配信しました。');
       await load();
       window.setTimeout(() => setNotice(''), 4000);
@@ -115,7 +152,7 @@ export function AdminFactoryNewsSection({ factories = [] }) {
       <section className={SECTION}>
         <h2 className="text-lg font-black text-slate-900 dark:text-slate-100">ニュース配信</h2>
         <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-          工場タブレットの「お知らせ」に即時反映されます。配信先を未選択の場合は全工場向けです。
+          工場タブレットの「お知らせ」に即時反映されます。チェックした工場にのみ配信されます。
         </p>
 
         {error ? (
@@ -165,22 +202,22 @@ export function AdminFactoryNewsSection({ factories = [] }) {
                 onClick={selectAllFactories}
                 className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-black text-indigo-900 dark:border-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-100"
               >
-                全工場にチェック
+                すべてにチェック
               </button>
               <button
                 type="button"
-                onClick={clearTargets}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-black text-slate-700 dark:border-slate-600 dark:bg-slate-800"
+                onClick={clearAllFactories}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-black text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
               >
-                全工場向け（チェックなし）
+                すべてのチェックを外す
               </button>
             </div>
-            <p className="mt-2 text-[10px] font-medium text-slate-500">
-              {broadcastAll
-                ? '現在: 全工場向けに配信します'
+            <p className="mt-2 text-[10px] font-medium text-slate-500 dark:text-slate-400">
+              {selectedFactoryIds.size === 0
+                ? '配信先が未選択です（1件以上チェックしてください）'
                 : allSelected
-                  ? '現在: 全工場を個別指定（全工場向けと同等）'
-                  : `現在: ${selectedFactoryIds.size} 工場を指定`}
+                  ? `配信先: 全 ${selectedFactoryIds.size} 工場`
+                  : `配信先: ${selectedFactoryIds.size} 工場`}
             </p>
             <ul className="mt-3 max-h-40 space-y-1 overflow-y-auto">
               {factories.map((f) => (
@@ -201,7 +238,7 @@ export function AdminFactoryNewsSection({ factories = [] }) {
 
           <button
             type="submit"
-            disabled={saving}
+            disabled={saving || selectedFactoryIds.size === 0}
             className="min-h-[48px] w-full rounded-xl bg-indigo-600 text-sm font-black text-white shadow hover:bg-indigo-700 disabled:opacity-50 sm:w-auto sm:px-8"
           >
             {saving ? '配信中…' : 'ニュースを配信する'}
@@ -227,10 +264,13 @@ export function AdminFactoryNewsSection({ factories = [] }) {
             role="region"
             aria-label="配信履歴（過去ログ）"
           >
-            <div className="sticky top-0 z-10 grid grid-cols-[5.5rem_1fr_auto] gap-2 border-b border-slate-200 bg-slate-100/95 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-slate-500 backdrop-blur-sm dark:border-slate-600 dark:bg-slate-800/95 dark:text-slate-400">
-              <span>送信日</span>
-              <span>件名</span>
-              <span className="text-right">進捗</span>
+            <div className="sticky top-0 z-10 flex items-center gap-1 border-b border-slate-200 bg-slate-100/95 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-slate-500 backdrop-blur-sm dark:border-slate-600 dark:bg-slate-800/95 dark:text-slate-400">
+              <div className="grid min-w-0 flex-1 grid-cols-[5.5rem_1fr_auto] gap-2">
+                <span>送信日</span>
+                <span>件名</span>
+                <span className="text-right">進捗</span>
+              </div>
+              <span className="w-12 shrink-0 text-center">操作</span>
             </div>
             <ul>
               {news.map((item) => {
@@ -238,58 +278,71 @@ export function AdminFactoryNewsSection({ factories = [] }) {
                 const readCount = statuses.filter((s) => s.read).length;
                 const total = statuses.length;
                 const expanded = expandedHistoryId === String(item.id);
-                const readNames = statuses.filter((s) => s.read).map((s) => s.factoryName);
-                const unreadNames = statuses.filter((s) => !s.read).map((s) => s.factoryName);
-                const hasUnread = unreadNames.length > 0;
+                const hasUnread = statuses.some((s) => !s.read);
+                const deleting = deletingNewsId === String(item.id);
 
                 return (
                   <li key={item.id} className="border-b border-slate-100 last:border-b-0 dark:border-slate-700/80">
-                    <button
-                      type="button"
-                      aria-expanded={expanded}
-                      onClick={() =>
-                        setExpandedHistoryId((prev) => (prev === String(item.id) ? null : String(item.id)))
-                      }
+                    <div
                       className={
-                        'grid w-full min-h-[40px] grid-cols-[5.5rem_1fr_auto] items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white dark:hover:bg-slate-800 ' +
-                        (expanded ? 'bg-white dark:bg-slate-800' : '')
+                        'flex min-h-[40px] items-stretch ' + (expanded ? 'bg-white dark:bg-slate-800' : '')
                       }
                     >
-                      <span className="text-[11px] font-bold tabular-nums text-slate-500 dark:text-slate-400">
-                        {formatFactoryNewsDateShort(item.created_at)}
-                      </span>
-                      <span className="flex min-w-0 items-center gap-1.5">
-                        {hasUnread ? (
+                      <button
+                        type="button"
+                        aria-expanded={expanded}
+                        onClick={() =>
+                          setExpandedHistoryId((prev) => (prev === String(item.id) ? null : String(item.id)))
+                        }
+                        className="grid min-w-0 flex-1 grid-cols-[5.5rem_1fr_auto] items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white dark:hover:bg-slate-800"
+                      >
+                        <span className="text-[11px] font-bold tabular-nums text-slate-500 dark:text-slate-400">
+                          {formatFactoryNewsDateShort(item.created_at)}
+                        </span>
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          {hasUnread ? (
+                            <span
+                              className="h-2 w-2 shrink-0 rounded-full bg-red-500 shadow-[0_0_0_2px_rgba(239,68,68,0.25)]"
+                              title="未読の工場あり"
+                              aria-hidden
+                            />
+                          ) : null}
+                          <span className="truncate text-sm font-black text-slate-900 dark:text-slate-100">
+                            {item.title}
+                          </span>
+                        </span>
+                        <span className="flex shrink-0 items-center gap-1.5 justify-self-end">
                           <span
-                            className="h-2 w-2 shrink-0 rounded-full bg-red-500 shadow-[0_0_0_2px_rgba(239,68,68,0.25)]"
-                            title="未読の工場あり"
+                            className={
+                              'rounded-full px-2 py-0.5 text-[10px] font-black ' +
+                              (readCount === total && total > 0
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200'
+                                : 'bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-100')
+                            }
+                          >
+                            {total > 0 ? `${readCount}/${total}` : '—'}
+                          </span>
+                          <span
+                            className={
+                              'text-slate-400 transition-transform duration-200 dark:text-slate-500 ' +
+                              (expanded ? 'rotate-180' : '')
+                            }
                             aria-hidden
-                          />
-                        ) : null}
-                        <span className="truncate text-sm font-black text-slate-900 dark:text-slate-100">{item.title}</span>
-                      </span>
-                      <span className="flex shrink-0 items-center gap-1.5 justify-self-end">
-                        <span
-                          className={
-                            'rounded-full px-2 py-0.5 text-[10px] font-black ' +
-                            (readCount === total && total > 0
-                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200'
-                              : 'bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-100')
-                          }
-                        >
-                          {total > 0 ? `${readCount}/${total}` : '—'}
+                          >
+                            ▾
+                          </span>
                         </span>
-                        <span
-                          className={
-                            'text-slate-400 transition-transform duration-200 dark:text-slate-500 ' +
-                            (expanded ? 'rotate-180' : '')
-                          }
-                          aria-hidden
-                        >
-                          ▾
-                        </span>
-                      </span>
-                    </button>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={deleting}
+                        onClick={() => void handleDeleteNews(item)}
+                        className="shrink-0 border-l border-slate-100 px-2 py-2 text-[11px] font-black text-red-600 transition hover:bg-red-50 disabled:opacity-50 dark:border-slate-700 dark:text-red-400 dark:hover:bg-red-950/40"
+                        aria-label={`「${item.title}」を削除`}
+                      >
+                        {deleting ? '…' : '削除'}
+                      </button>
+                    </div>
 
                     {expanded ? (
                       <div className="border-t border-slate-100 bg-white px-3 pb-4 pt-2 dark:border-slate-700 dark:bg-slate-800/80">
@@ -298,12 +351,6 @@ export function AdminFactoryNewsSection({ factories = [] }) {
                         </p>
                         <p className="mt-2 line-clamp-4 whitespace-pre-wrap text-xs leading-relaxed text-slate-700 dark:text-slate-300">
                           {item.body}
-                        </p>
-                        <p className="mt-3 text-xs font-bold text-emerald-800 dark:text-emerald-300">
-                          既読: {readNames.length ? readNames.join('、') : '—'}
-                        </p>
-                        <p className="mt-1 text-xs font-bold text-amber-800 dark:text-amber-200">
-                          未読: {unreadNames.length ? unreadNames.join('、') : '—'}
                         </p>
                         <div className="mt-3">
                           <FactoryNewsReadStatus news={item} reads={reads} factories={factories} compact />
