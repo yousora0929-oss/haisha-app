@@ -40,6 +40,7 @@ import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
 import { AdminCsvImportButton } from './components/AdminCsvImportButton.jsx';
 import { AdminCsvDownloadButton } from './components/AdminCsvDownloadButton.jsx';
+import { AdminFactoryNewsSection } from './components/AdminFactoryNewsSection.jsx';
 import {
   downloadCustomersExportCsv,
   downloadProjectsExportCsv,
@@ -2421,6 +2422,7 @@ export function AdminApp() {
           <div className="flex flex-wrap gap-2">
             {tabBtn('monitor', '注文モニター')}
             {tabBtn('availability', '工場稼働')}
+            {tabBtn('factoryNews', 'ニュース配信')}
             {tabBtn('adminSettings', '管理者情報設定')}
             {tabBtn('projects', '物件管理')}
             {tabBtn('customers', '業者管理')}
@@ -2447,6 +2449,7 @@ export function AdminApp() {
             onScheduleDateChange={setScheduleDate}
           />
         ) : null}
+        {tab === 'factoryNews' ? <AdminFactoryNewsSection factories={factories} /> : null}
         {tab === 'adminSettings' ? <AdminSettingsSection /> : null}
         {tab === 'projects' ? <ProjectsSection factories={factories} factoryNameById={factoryNameById} /> : null}
         {tab === 'customers' ? <CustomersSection /> : null}

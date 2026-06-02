@@ -991,6 +991,8 @@ export async function subscribeHaishaRealtime(onEvent) {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'factories' }, onEvent)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, onEvent)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_settings' }, onEvent)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news' }, onEvent)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news_reads' }, onEvent)
     .subscribe();
   return () => {
     void supabase.removeChannel(channel);
@@ -2085,4 +2087,107 @@ export async function saveOrderOverrideMap(orderId, imageDataUrl, mapAnnotations
 /** @deprecated saveOrderOverrideMap を使用 */
 export async function uploadMapEditorResult(orderId, imageDataUrl, mapAnnotations) {
   return saveOrderOverrideMap(orderId, imageDataUrl, mapAnnotations);
+}
+
+function mapFactoryNewsRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const targets = Array.isArray(row.target_factory_ids)
+    ? row.target_factory_ids.map((x) => String(x ?? '').trim()).filter(Boolean)
+    : [];
+  return {
+    id: row.id != null ? String(row.id) : '',
+    title: String(row.title ?? '').trim(),
+    body: String(row.body ?? '').trim(),
+    target_factory_ids: targets,
+    created_at: row.created_at != null ? String(row.created_at) : '',
+  };
+}
+
+function mapFactoryNewsReadRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    news_id: row.news_id != null ? String(row.news_id) : '',
+    factory_id: row.factory_id != null ? String(row.factory_id) : '',
+    read_at: row.read_at != null ? String(row.read_at) : '',
+  };
+}
+
+/** 工場画面: 閲覧可能なニュース＋全既読ログ */
+export async function fetchFactoryNewsFeed(factoryId) {
+  const fid = sanitizeRefId(factoryId);
+  const { data: newsRows, error: newsErr } = await supabase
+    .from('factory_news')
+    .select('id, title, body, target_factory_ids, created_at')
+    .order('created_at', { ascending: false });
+  if (newsErr) throw newsErr;
+
+  const allNews = (newsRows || []).map(mapFactoryNewsRow).filter(Boolean);
+  const visible = fid
+    ? allNews.filter((n) => {
+        if (!n.target_factory_ids?.length) return true;
+        return n.target_factory_ids.includes(fid);
+      })
+    : [];
+
+  const ids = visible.map((n) => n.id).filter(Boolean);
+  let reads = [];
+  if (ids.length > 0) {
+    const { data: readRows, error: readErr } = await supabase
+      .from('factory_news_reads')
+      .select('news_id, factory_id, read_at')
+      .in('news_id', ids);
+    if (readErr) throw readErr;
+    reads = (readRows || []).map(mapFactoryNewsReadRow).filter(Boolean);
+  }
+
+  return { news: visible, reads };
+}
+
+/** 工場: 既読登録（RPC・重複はスキップ） */
+export async function markFactoryNewsRead(newsId) {
+  const id = String(newsId || '').trim();
+  if (!id) return;
+  const { error } = await supabase.rpc('mark_factory_news_read', { p_news_id: id });
+  if (error) throw error;
+}
+
+/** 管理画面: ニュース配信 */
+export async function publishFactoryNews({ title, body, targetFactoryIds = [] }) {
+  const t = String(title ?? '').trim();
+  const b = String(body ?? '').trim();
+  if (!t) throw new Error('件名を入力してください');
+  if (!b) throw new Error('本文を入力してください');
+  const targets = [...new Set((targetFactoryIds || []).map((x) => sanitizeRefId(x)).filter(Boolean))];
+  const { data, error } = await supabase
+    .from('factory_news')
+    .insert({
+      title: t,
+      body: b,
+      target_factory_ids: targets,
+    })
+    .select('id, title, body, target_factory_ids, created_at')
+    .single();
+  if (error) throw error;
+  return mapFactoryNewsRow(data);
+}
+
+/** 管理画面: 配信履歴＋既読一覧 */
+export async function fetchFactoryNewsAdminFeed() {
+  const { data: newsRows, error: newsErr } = await supabase
+    .from('factory_news')
+    .select('id, title, body, target_factory_ids, created_at')
+    .order('created_at', { ascending: false });
+  if (newsErr) throw newsErr;
+  const news = (newsRows || []).map(mapFactoryNewsRow).filter(Boolean);
+  const ids = news.map((n) => n.id).filter(Boolean);
+  let reads = [];
+  if (ids.length > 0) {
+    const { data: readRows, error: readErr } = await supabase
+      .from('factory_news_reads')
+      .select('news_id, factory_id, read_at')
+      .in('news_id', ids);
+    if (readErr) throw readErr;
+    reads = (readRows || []).map(mapFactoryNewsReadRow).filter(Boolean);
+  }
+  return { news, reads };
 }

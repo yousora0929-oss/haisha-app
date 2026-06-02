@@ -45,6 +45,8 @@ import { MAP_EDITOR_ORDER_SAVED_DOM_EVENT, MAP_EDITOR_ORDER_SAVED_EVENT_KEY } fr
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
 import { FactorySettingsPanel } from './components/FactorySettingsPanel.jsx';
+import { FactoryNewsPanel } from './components/FactoryNewsPanel.jsx';
+import { countUnreadNewsForFactory } from './utils/factoryNews.js';
 import { OrderAcceptModal } from './components/OrderAcceptModal.jsx';
 import {
   detectFactoryNotifyOrderIds,
@@ -2465,6 +2467,7 @@ function orderPartyInfo(order) {
       const [chatThreads, setChatThreads] = useState({});
       const [readChatKeys, setReadChatKeys] = useState({});
       const [activeTab, setActiveTab] = useState('orders');
+      const [factoryNewsUnread, setFactoryNewsUnread] = useState(0);
       const [focusedOrderId, setFocusedOrderId] = useState('');
       const [scheduleMonth, setScheduleMonth] = useState(() => {
         const now = new Date();
@@ -2929,6 +2932,37 @@ function orderPartyInfo(order) {
         setActionNotice('注文詳細を開きました');
         window.setTimeout(() => setActionNotice(''), 2500);
       }, []);
+
+      const refreshFactoryNewsUnread = useCallback(async () => {
+        if (!activeFactoryId) {
+          setFactoryNewsUnread(0);
+          return;
+        }
+        try {
+          const feed = await db.fetchFactoryNewsFeed(activeFactoryId);
+          setFactoryNewsUnread(countUnreadNewsForFactory(feed.news, feed.reads, activeFactoryId));
+        } catch (e) {
+          console.error('[FactoryApp] news unread count failed', e);
+        }
+      }, [activeFactoryId]);
+
+      useEffect(() => {
+        void refreshFactoryNewsUnread();
+      }, [refreshFactoryNewsUnread]);
+
+      useEffect(() => {
+        if (!activeFactoryId) return undefined;
+        let unsub = () => {};
+        void (async () => {
+          unsub = await db.subscribeHaishaRealtime((payload) => {
+            const table = payload?.table;
+            if (table === 'factory_news' || table === 'factory_news_reads') {
+              void refreshFactoryNewsUnread();
+            }
+          });
+        })();
+        return () => unsub();
+      }, [activeFactoryId, refreshFactoryNewsUnread]);
 
       useEffect(() => {
         let cancelled = false;
@@ -3524,8 +3558,9 @@ function orderPartyInfo(order) {
               </div>
             </div>
             <div className="flex flex-1 flex-wrap items-center justify-end gap-1.5">
-              <div className="grid min-w-full flex-1 grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800 sm:grid-cols-5 sm:min-w-[36rem] sm:flex-none lg:min-w-[44rem]">
+              <div className="grid min-w-full flex-1 grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800 sm:grid-cols-6 sm:min-w-[42rem] sm:flex-none lg:min-w-[52rem]">
                 {[
+                  ['news', '📢 お知らせ'],
                   ['schedule', '⚙️ スケジュール'],
                   ['orders', '🚚 注文'],
                   ['assignments', '割当物件'],
@@ -3548,6 +3583,11 @@ function orderPartyInfo(order) {
                         {id === 'orders' && newOrdersCount > 0 ? (
                           <span className="ml-2 rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
                             {newOrdersCount}
+                          </span>
+                        ) : null}
+                        {id === 'news' && factoryNewsUnread > 0 ? (
+                          <span className="ml-2 rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm">
+                            {factoryNewsUnread}
                           </span>
                         ) : null}
                       </span>
@@ -3573,6 +3613,9 @@ function orderPartyInfo(order) {
           </div>
           <PullToRefresh onRefresh={handleFactoryRefresh} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 py-1">
             <div className="mx-auto grid max-w-6xl gap-2">
+              {activeTab === 'news' ? (
+                <FactoryNewsPanel factoryId={activeFactoryId} factories={factories} />
+              ) : null}
               {activeTab === 'schedule' ? (
                 <FactoryScheduleSettings
                   selectedDate={selectedDate}
