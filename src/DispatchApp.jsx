@@ -34,6 +34,7 @@ import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { buildDispatchOrderForDate, validateCartLineForm } from './utils/dispatchBulkOrder.js';
+import { buildMapEditorUrl, rememberMapEditorReturnUrl } from './mapEditorConstants.js';
 import { combineDeliveryAddress, extractProjectAddressFields, normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
 import {
   fetchTownLocationsForMunicipality,
@@ -82,6 +83,16 @@ const UNLOAD_DURATION_OPTIONS = [
   { value: '60', label: '60分（手押し車など時間要）' },
   { value: '95_plus', label: '95分以上（要相談）' },
 ];
+
+const CUSTOMER_ORDER_TABS = [
+  ['new', '新規発注', '📝'],
+  ['active', '進行中', '🚚'],
+  ['history', '履歴', '📋'],
+  ['calendar', 'カレンダー', '📅'],
+];
+
+const CUSTOMER_FIELD_CLASS =
+  'min-h-[52px] w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-base font-medium text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-300 lg:min-h-[48px] lg:py-2.5';
 
 function unloadDurationLabel(value) {
   return UNLOAD_DURATION_OPTIONS.find((o) => o.value === String(value || ''))?.label || '30分（標準）';
@@ -875,18 +886,20 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         lastTapRef.current = { orderId: id, at: now };
       };
       return (
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-md sm:p-5">
-          <div className="flex items-center justify-between gap-3">
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-md sm:p-5 lg:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-base font-black text-slate-900">注文カレンダー</h2>
               <p className="mt-1 text-xs font-bold text-slate-500">自分が発注した注文を月間表示します。</p>
             </div>
             <span className="rounded-full bg-slate-900 px-3 py-1 text-xs font-black text-white">{selectedOrders.length}件</span>
           </div>
-          <div className="mt-4 flex items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-2">
-            <button type="button" onClick={() => { const next = new Date(currentMonth); next.setMonth(next.getMonth() - 1); onMonthChange(next); }} className="min-h-[44px] rounded-xl border-2 border-slate-300 bg-white px-3 text-sm font-black text-slate-700">◀ 前月</button>
+          <div className="mt-4 flex flex-col gap-6 lg:grid lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:items-start">
+          <div className="min-w-0">
+          <div className="flex items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-2">
+            <button type="button" onClick={() => { const next = new Date(currentMonth); next.setMonth(next.getMonth() - 1); onMonthChange(next); }} className="min-h-[44px] rounded-xl border-2 border-slate-300 bg-white px-3 text-sm font-black text-slate-700 lg:min-h-[40px]">◀ 前月</button>
             <p className="text-lg font-black text-slate-900">{monthLabel}</p>
-            <button type="button" onClick={() => { const next = new Date(currentMonth); next.setMonth(next.getMonth() + 1); onMonthChange(next); }} className="min-h-[44px] rounded-xl border-2 border-slate-300 bg-white px-3 text-sm font-black text-slate-700">次月 ▶</button>
+            <button type="button" onClick={() => { const next = new Date(currentMonth); next.setMonth(next.getMonth() + 1); onMonthChange(next); }} className="min-h-[44px] rounded-xl border-2 border-slate-300 bg-white px-3 text-sm font-black text-slate-700 lg:min-h-[40px]">次月 ▶</button>
           </div>
           <div className="mt-3 grid grid-cols-7 gap-1 text-center text-xs font-black text-slate-500">
             {['日', '月', '火', '水', '木', '金', '土'].map((d) => <div key={d} className="rounded-lg bg-slate-100 py-1">{d}</div>)}
@@ -898,12 +911,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               const inMonth = day.startsWith(monthKey);
               const d = new Date(`${day}T12:00:00`);
               return (
-                <button key={day} type="button" onClick={() => onSelectDate(day)} className={'min-h-[6rem] rounded-xl border-2 p-1.5 text-left transition active:scale-[0.99] sm:min-h-[7rem] sm:p-2 ' + (active ? 'border-indigo-600 bg-indigo-50 ring-2 ring-indigo-200' : inMonth ? 'border-slate-200 bg-white hover:bg-slate-50' : 'border-slate-100 bg-slate-50 opacity-45')}>
+                <button key={day} type="button" onClick={() => onSelectDate(day)} className={'min-h-[5.5rem] rounded-xl border-2 p-1.5 text-left transition active:scale-[0.99] lg:min-h-[6rem] sm:p-2 ' + (active ? 'border-indigo-600 bg-indigo-50 ring-2 ring-indigo-200' : inMonth ? 'border-slate-200 bg-white hover:bg-slate-50' : 'border-slate-100 bg-slate-50 opacity-45')}>
                   <p className="text-xs font-black text-slate-500">{d.getDate()}</p>
-                  <div className="mt-2 space-y-1">
+                  <div className="mt-1 space-y-0.5">
                     {list.slice(0, 3).map((order) => {
                       const party = orderPartyInfo(order);
-                      return <span key={order.id} className={'block truncate rounded-md px-1.5 py-1 text-[10px] font-black ' + statusClass(order)}>{party.site || '現場未設定'}</span>;
+                      return <span key={order.id} className={'block truncate rounded-md px-1.5 py-0.5 text-[10px] font-black ' + statusClass(order)}>{party.site || '現場未設定'}</span>;
                     })}
                     {list.length > 3 ? <span className="block text-[10px] font-black text-indigo-700">+{list.length - 3}件</span> : null}
                   </div>
@@ -911,7 +924,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               );
             })}
           </div>
-          <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          </div>
+          <div className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-4 lg:sticky lg:top-24">
             <h3 className="text-sm font-black text-slate-900">{selectedDate.replace(/-/g, '/')} の注文</h3>
             {selectedOrders.length === 0 ? (
               <p className="mt-3 rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm font-bold text-slate-500">この日の注文はありません。</p>
@@ -953,6 +967,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 })}
               </ul>
             )}
+          </div>
           </div>
         </section>
       );
@@ -999,6 +1014,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [deliveryArea, setDeliveryArea] = useState('');
       const [siteAddressDetail, setSiteAddressDetail] = useState('');
       const [isLocationPending, setIsLocationPending] = useState(false);
+      const [spotMapFlowMode, setSpotMapFlowMode] = useState('later'); // later | create
       const [townList, setTownList] = useState([]);
       const [townOptionsLoading, setTownOptionsLoading] = useState(false);
       const [townOptionsError, setTownOptionsError] = useState('');
@@ -1174,7 +1190,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         }
       }, [siteAddressDetail, townList]);
 
-      const townSuggestionNames = useMemo(() => townNamesFromLocationList(townList), [townList]);
+      const townSuggestionNames = useMemo(() => {
+        const names = townNamesFromLocationList(townList);
+        return [...names].sort((a, b) => a.localeCompare(b, 'ja', { sensitivity: 'base' }));
+      }, [townList]);
 
       const currentCustomer = useMemo(
         () => (customers || []).find((c) => c && c.id === currentCustomerId) || null,
@@ -2052,6 +2071,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setDeliveryArea('');
         setSiteAddressDetail('');
         setIsLocationPending(false);
+        setSpotMapFlowMode('later');
         setTownList([]);
         setTownOptionsError('');
         setRepresentativeLat('');
@@ -2082,11 +2102,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           const order = buildDispatchOrderForDate(date, orderFormContext);
           const cartId = `cart_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
           const addedAt = Date.now();
-          setCartItems((prev) => [...prev, { cartId, order, addedAt }]);
+          setCartItems((prev) => [
+            ...prev,
+            { cartId, order, addedAt, mapEditorFlowMode: spotMapFlowMode },
+          ]);
           setSubmitNotice('リストに追加しました。日付や配合を変えて続けて追加できます。');
           window.setTimeout(() => setSubmitNotice(null), 2500);
         },
-        [preferredDate, orderFormContext, today, isGuestSiteOrder],
+        [preferredDate, orderFormContext, today, isGuestSiteOrder, spotMapFlowMode],
       );
 
       const handleRemoveFromCart = useCallback((cartId) => {
@@ -2110,10 +2133,42 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             status: bulkStatus,
           }));
           const count = orders.length;
+          const mapCreateCount = cartItems.filter((it) => it?.mapEditorFlowMode === 'create').length;
           if (isGuestSiteOrder && guestOrderToken) {
-            await db.submitGuestOrders(guestOrderToken, orders);
+            const insertedGuestOrders = await db.submitGuestOrders(guestOrderToken, orders);
+            if (mapCreateCount > 0 && Array.isArray(insertedGuestOrders) && insertedGuestOrders.length) {
+              try {
+                rememberMapEditorReturnUrl();
+              } catch {
+                /* ignore */
+              }
+              for (let i = 0; i < insertedGuestOrders.length; i++) {
+                const cartItem = cartItems[i];
+                if (cartItem?.mapEditorFlowMode !== 'create') continue;
+                const id = insertedGuestOrders[i]?.id;
+                const url = buildMapEditorUrl(id, undefined, { guestToken: guestOrderToken });
+                if (!url) continue;
+                window.open(url, '_blank', 'noopener,noreferrer');
+              }
+            }
           } else {
-            await db.insertOrdersBulk(orders);
+            const insertedOrders = await db.insertOrdersBulk(orders);
+            if (mapCreateCount > 0 && Array.isArray(insertedOrders) && insertedOrders.length) {
+              // popup blocker を避けるため refresh より先に開く
+              try {
+                rememberMapEditorReturnUrl();
+              } catch {
+                /* ignore */
+              }
+              for (let i = 0; i < insertedOrders.length; i++) {
+                const cartItem = cartItems[i];
+                if (cartItem?.mapEditorFlowMode !== 'create') continue;
+                const id = insertedOrders[i]?.id;
+                const url = buildMapEditorUrl(id);
+                if (!url) continue;
+                window.open(url, '_blank', 'noopener,noreferrer');
+              }
+            }
             await refreshDashboard();
             setCustomerOrderTab(count > 1 ? 'calendar' : 'active');
             setExpandedHistoryOrderId('');
@@ -2126,7 +2181,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               ? `${count}件を登録しました（スポット数量が上限を超えるため、組合承認後に工場へ配車されます）`
               : `${count}件の注文を確定しました`;
           const mapHint = hasMapPending
-            ? '\n\n⚠️ 地図待ちの注文があります。「進行中」タブの「現場地図URL」から図面を送付してください。'
+            ? !isGuestSiteOrder && mapCreateCount > 0
+              ? '\n\n地図作成フローの注文があります。開いた地図エディタでスタンプを配置して保存してください（未開封の注文は「進行中」タブから開けます）。'
+              : '\n\n⚠️ 地図待ちの注文があります。「進行中」タブの「現場地図URL」から図面を送付してください。'
             : '';
           setSubmitNotice(message + mapHint);
           window.alert(message + mapHint);
@@ -2152,7 +2209,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       ]);
 
       const btnBase =
-        'min-h-[56px] flex-1 rounded-xl border-2 px-4 py-3.5 text-base font-bold transition-colors';
+        'min-h-[52px] flex-1 rounded-xl border-2 px-4 py-3 text-base font-bold transition-colors lg:min-h-[48px] lg:py-2.5';
       const adminPhoneNumber = String(adminSettings?.phone_number || '').trim();
       const adminTelHref = adminPhoneNumber ? `tel:${adminPhoneNumber.replace(/[^\d+]/g, '')}` : '';
       const guestVendorLabel = useMemo(() => {
@@ -2205,7 +2262,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       if (!canAccessDispatch) {
         return (
           <div className="flex min-h-[100dvh] w-full items-center justify-center overflow-x-hidden bg-gradient-to-br from-slate-100 via-indigo-50 to-slate-100 px-4 py-[max(2rem,env(safe-area-inset-top))]">
-            <form onSubmit={handleCustomerLogin} className="w-full max-w-md rounded-3xl border-2 border-slate-200 bg-white p-6 shadow-2xl sm:p-8">
+            <form onSubmit={handleCustomerLogin} className="w-full max-w-md rounded-3xl border-2 border-slate-200 bg-white p-6 shadow-2xl sm:max-w-lg sm:p-8">
               <p className="text-xs font-black uppercase tracking-widest text-indigo-600">現場注文ログイン</p>
               <h1 className="mt-2 break-words text-2xl font-black text-slate-900">カスタマーログイン</h1>
               <p className="mt-2 break-words text-sm font-bold leading-relaxed text-slate-500">
@@ -2282,7 +2339,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       return (
         <div className="min-h-[100dvh] w-full overflow-x-hidden bg-slate-100 pt-11 pb-[max(7rem,env(safe-area-inset-bottom))] dark:bg-gray-900 dark:text-gray-100 lg:pb-[max(2.5rem,env(safe-area-inset-bottom))]">
           <header className="border-b border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
-            <div className="mx-auto w-full max-w-6xl px-4 py-5">
+            <div className="mx-auto w-full max-w-7xl px-4 py-4 lg:px-6 lg:py-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   {isGuestSiteOrder ? (
@@ -2341,15 +2398,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           </header>
 
           {!isGuestSiteOrder ? (
-          <div className="sticky top-0 z-30 hidden border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 lg:block">
-            <div className="mx-auto w-full max-w-6xl overflow-x-auto">
+          <div className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 lg:hidden">
+            <div className="mx-auto w-full max-w-7xl overflow-x-auto">
             <div className="grid min-w-[32rem] grid-cols-4 gap-1 rounded-2xl bg-slate-100 p-1 dark:bg-slate-800">
-              {[
-                ['new', '新規発注'],
-                ['active', '進行中'],
-                ['history', '履歴'],
-                ['calendar', 'カレンダー'],
-              ].map(([id, label]) => {
+              {CUSTOMER_ORDER_TABS.map(([id, label]) => {
                 const active = customerOrderTab === id;
                 return (
                   <button
@@ -2388,12 +2440,60 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   : async () => {}
                 : refreshDashboard
             }
-            className="mx-auto w-full max-w-6xl px-4 py-6"
+            className="mx-auto w-full max-w-7xl px-4 py-5 lg:px-6 lg:py-8"
           >
-          <main id="dispatch-dashboard">
+          <div className={isGuestSiteOrder ? '' : 'lg:grid lg:grid-cols-[minmax(11rem,14rem)_minmax(0,1fr)] lg:items-start lg:gap-8 xl:grid-cols-[15rem_1fr] xl:gap-10'}>
+            {!isGuestSiteOrder ? (
+              <aside
+                className="mb-2 hidden lg:flex lg:flex-col lg:gap-3 lg:sticky lg:top-24 lg:self-start"
+                aria-label="メインメニュー"
+              >
+                <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-md dark:border-slate-700 dark:bg-slate-900">
+                  <p className="px-2 text-[10px] font-black uppercase tracking-wider text-slate-400">メニュー</p>
+                  <nav className="mt-2 flex flex-col gap-1">
+                    {CUSTOMER_ORDER_TABS.map(([id, label, icon]) => {
+                      const active = customerOrderTab === id;
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => selectCustomerTab(id)}
+                          className={
+                            'flex min-h-[48px] items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-black transition ' +
+                            (active
+                              ? 'bg-indigo-600 text-white shadow-md'
+                              : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800')
+                          }
+                          aria-pressed={active}
+                        >
+                          <span aria-hidden>{icon}</span>
+                          <span className="flex-1">{label}</span>
+                          {id === 'active' && unreadChatCount > 0 ? (
+                            <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold text-white">
+                              {unreadChatCount}
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </nav>
+                </div>
+                {currentCustomer ? (
+                  <div className="rounded-2xl border border-indigo-100 bg-indigo-50/80 p-3 dark:border-indigo-900 dark:bg-indigo-950/40">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-300">
+                      ログイン中
+                    </p>
+                    <p className="mt-1 break-words text-sm font-black leading-snug text-indigo-950 dark:text-indigo-100">
+                      {currentCustomer?.company_name || currentCustomer?.name || '認証済み業者'}
+                    </p>
+                  </div>
+                ) : null}
+              </aside>
+            ) : null}
+          <main id="dispatch-dashboard" className="min-w-0">
             <div className="grid min-w-0 gap-6">
               {customerOrderTab === 'new' && !newOrderMode && !isGuestSiteOrder ? (
-              <section className="mx-auto w-full max-w-6xl rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6">
+              <section className="w-full rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6 lg:p-8">
                 <p className="text-xs font-black uppercase tracking-wider text-indigo-700">新規発注</p>
                 <h2 className="mt-1 text-2xl font-black text-slate-900">発注スタイルを選択</h2>
                 <p className="mt-2 text-sm font-bold leading-relaxed text-slate-500">現場に合わせて、最短の発注方法を選んでください。</p>
@@ -2419,6 +2519,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         setOrderKind('spot');
                         setSelectedProjectId('');
                         setPreferredFactoryId('');
+                        setIsLocationPending(true);
+                        setSpotMapFlowMode('later');
+                        setDeliveryLat('');
+                        setDeliveryLng('');
+                        setDeliveryArea('');
+                        setSiteAddressDetail('');
                         setNewOrderMode('form');
                       },
                     },
@@ -2435,7 +2541,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       key={card.title}
                       type="button"
                       onClick={card.onClick}
-                      className="min-h-[150px] rounded-2xl border-2 border-slate-200 bg-slate-50 p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-white hover:shadow-lg active:scale-[0.99]"
+                      className="min-h-[150px] rounded-2xl border-2 border-slate-200 bg-slate-50 p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-white hover:shadow-lg active:scale-[0.99] lg:min-h-[140px]"
                     >
                       <span className="text-xl font-black text-slate-900">{card.title}</span>
                       <span className="mt-3 block text-sm font-bold leading-relaxed text-slate-600">{card.body}</span>
@@ -2445,7 +2551,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </section>
               ) : null}
               {customerOrderTab === 'new' && newOrderMode ? (
-              <div ref={orderFormRef} className="mx-auto w-full max-w-6xl min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6">
+              <div ref={orderFormRef} className="w-full min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6 lg:p-8">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h2 className="text-sm font-black uppercase tracking-wider text-indigo-700">新規発注</h2>
@@ -2460,9 +2566,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   ) : null}
                 </div>
                 <form
-                  className="mt-6 grid min-w-0 gap-6 overflow-hidden lg:grid-cols-2 lg:items-start"
+                  className="mt-6 grid min-w-0 gap-6 overflow-hidden lg:grid-cols-[minmax(0,1fr)_minmax(280px,22rem)] lg:items-start lg:gap-8 xl:grid-cols-[1.15fr_0.85fr] xl:gap-10"
                   onSubmit={(e) => e.preventDefault()}
                 >
+              <div className="flex min-w-0 flex-col gap-6 lg:col-start-1">
               {!isGuestSiteOrder ? (
               <div className="flex flex-col gap-3">
                 <span className="text-sm font-semibold text-slate-700">注文種別</span>
@@ -2497,6 +2604,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       setOrderKind('spot');
                       setSelectedProjectId('');
                       setPreferredFactoryId('');
+                      setIsLocationPending(true);
+                      setSpotMapFlowMode('later');
+                      setDeliveryLat('');
+                      setDeliveryLng('');
                       setDeliveryArea('');
                       setSiteAddressDetail('');
                       lastAutofillProjectIdRef.current = '';
@@ -2597,22 +2708,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </div>
               ) : null}
 
-              {orderKind === 'project' &&
-              !isGuestSiteOrder &&
-              selectedProject &&
-              Number.isFinite(selectedProject.lat) &&
-              Number.isFinite(selectedProject.lng) ? (
-                <div className="flex flex-col gap-2 lg:row-span-3">
-                  <Label>物件の位置（確認用）</Label>
-                  <MapPicker
-                    lat={String(selectedProject.lat)}
-                    lng={String(selectedProject.lng)}
-                    interactive={false}
-                    className="min-h-[320px]"
-                  />
-                </div>
-              ) : null}
-
               {orderKind === 'spot' ? (
                 <>
                   <div className="flex flex-col gap-3">
@@ -2630,7 +2725,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         setSiteName(e.target.value);
                         setSubmitError('');
                       }}
-                      className="min-h-[56px] w-full rounded-xl border-2 border-slate-200 px-4 py-3 text-base font-semibold text-slate-900 placeholder:text-slate-400 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
+                      className={CUSTOMER_FIELD_CLASS + ' font-semibold'}
                     />
                   </div>
                   <DeliveryAreaAddressField
@@ -2658,7 +2753,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       type="button"
                       onClick={() => void handleAddressMapSearch()}
                       disabled={addressSearchLoading || isLocationPending}
-                      className="min-h-[52px] w-full rounded-xl border-2 border-sky-600 bg-sky-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="min-h-[52px] w-full rounded-xl border-2 border-sky-600 bg-sky-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60 lg:min-h-[48px]"
                     >
                       {addressSearchLoading ? '検索中…' : '住所から地図を検索'}
                     </button>
@@ -2668,52 +2763,55 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       </p>
                     ) : null}
                   </div>
-                  <label className="flex cursor-pointer items-start gap-3 rounded-xl border-2 border-amber-200 bg-amber-50/80 p-4">
-                    <input
-                      type="checkbox"
-                      checked={isLocationPending}
-                      onChange={(e) => {
-                        setIsLocationPending(e.target.checked);
-                        if (e.target.checked) {
-                          setDeliveryLat('');
-                          setDeliveryLng('');
-                        }
-                        setSubmitError('');
-                      }}
-                      className="mt-1 h-5 w-5 shrink-0 rounded border-amber-400 text-amber-600"
-                    />
-                      <span className="text-sm font-bold leading-relaxed text-amber-950">
-                      あとから地図を送る（詳細未定・枠のみ確保）
-                      <span className="mt-1 block text-xs font-medium text-amber-900/90">
-                        チェック時は地図の指定は不要です。発注確定後「進行中」タブに表示される現場地図URLから、スマホで図面を送付できます。
-                      </span>
-                    </span>
-                  </label>
-                  <div className="flex min-h-[360px] flex-col gap-2 lg:row-span-3">
-                    <Label>現場位置（地図）</Label>
-                    <p className="text-xs leading-relaxed text-slate-500">
-                      {isLocationPending
-                        ? '地図待ちのため、確定時点では位置の指定は不要です。後から地図を送付してください。'
-                        : '地図をクリックして緯度・経度を指定してください。納入場所からご指定、または近隣の工場へ確認を行います。'}
-                    </p>
-                    {deliveryLat || deliveryLng ? (
-                      <p className="font-mono text-xs font-bold text-slate-600">
-                        緯度: {deliveryLat || '—'} / 経度: {deliveryLng || '—'}
-                      </p>
-                    ) : null}
-                    <MapPicker
-                      lat={deliveryLat}
-                      lng={deliveryLng}
-                      panTarget={mapPanTarget}
-                      interactive={!isLocationPending}
-                      className={'min-h-[320px]' + (isLocationPending ? ' opacity-60' : '')}
-                      onPositionChange={(la, ln) => {
-                        if (isLocationPending) return;
-                        setDeliveryLat(la);
-                        setDeliveryLng(ln);
-                        setSubmitError('');
-                      }}
-                    />
+                  <div className="flex flex-col gap-2">
+                    <span className="text-sm font-semibold text-slate-700">現場地図の扱い</span>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <label className="flex cursor-pointer items-start gap-3 rounded-xl border-2 border-amber-200 bg-amber-50/80 p-4">
+                        <input
+                          type="radio"
+                          name="spot-map-flow"
+                          value="later"
+                          checked={spotMapFlowMode === 'later'}
+                          onChange={() => {
+                            setSpotMapFlowMode('later');
+                            setIsLocationPending(true);
+                            setDeliveryLat('');
+                            setDeliveryLng('');
+                            setSubmitError('');
+                          }}
+                          className="mt-1 h-5 w-5 shrink-0 rounded border-amber-400 text-amber-600"
+                        />
+                        <span className="text-sm font-bold leading-relaxed text-amber-950">
+                          あとから地図を送る
+                          <span className="mt-1 block text-xs font-medium text-amber-900/90">
+                            発注確定後は「進行中」タブの現場地図URLから送付できます（自動で開きません）。
+                          </span>
+                        </span>
+                      </label>
+
+                      <label className="flex cursor-pointer items-start gap-3 rounded-xl border-2 border-indigo-200 bg-indigo-50/80 p-4">
+                        <input
+                          type="radio"
+                          name="spot-map-flow"
+                          value="create"
+                          checked={spotMapFlowMode === 'create'}
+                          onChange={() => {
+                            setSpotMapFlowMode('create');
+                            setIsLocationPending(true);
+                            setDeliveryLat('');
+                            setDeliveryLng('');
+                            setSubmitError('');
+                          }}
+                          className="mt-1 h-5 w-5 shrink-0 rounded border-indigo-400 text-indigo-600"
+                        />
+                        <span className="text-sm font-bold leading-relaxed text-indigo-950">
+                          現場地図を作成する
+                          <span className="mt-1 block text-xs font-medium text-indigo-900/90">
+                            確定直後に地図エディタ（別タブ）が開き、すぐにスタンプ作成できます。
+                          </span>
+                        </span>
+                      </label>
+                    </div>
                   </div>
                 </>
               ) : null}
@@ -2741,7 +2839,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 />
               ) : null}
 
-              <div className="flex min-w-0 max-w-full flex-col gap-3 overflow-hidden lg:col-start-1">
+              <div className="flex min-w-0 max-w-full flex-col gap-3 overflow-hidden">
                 <Label htmlFor="preferred-date">希望日（納入日）</Label>
                 <p className={'text-xs leading-relaxed text-slate-500' + (isGuestSiteOrder ? ' hidden' : '')}>
                   日付や試験の有無などを変えながら「リストに追加」でカートへ溜め、最後に一括確定できます。
@@ -3027,16 +3125,66 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     setSitePhone(e.target.value);
                     setSubmitError('');
                   }}
-                  className="min-h-[56px] w-full rounded-xl border-2 border-slate-200 px-4 py-3 text-base text-slate-900 placeholder:text-slate-400 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
+                  className={CUSTOMER_FIELD_CLASS}
                 />
               </div>
 
-              <div className="order-last col-span-1 flex flex-col gap-3 border-t-2 border-slate-200 pt-6 mt-2 dark:border-slate-600 lg:col-span-2">
+              </div>
+
+              <div className="flex min-w-0 flex-col gap-6 lg:col-start-2 lg:sticky lg:top-24 lg:max-h-[calc(100dvh-7rem)] lg:overflow-y-auto lg:gap-5">
+              {orderKind === 'project' &&
+              !isGuestSiteOrder &&
+              selectedProject &&
+              Number.isFinite(selectedProject.lat) &&
+              Number.isFinite(selectedProject.lng) ? (
+                <div className="flex flex-col gap-2">
+                  <Label>物件の位置（確認用）</Label>
+                  <MapPicker
+                    lat={String(selectedProject.lat)}
+                    lng={String(selectedProject.lng)}
+                    interactive={false}
+                    className="min-h-[280px] lg:min-h-[320px]"
+                  />
+                </div>
+              ) : null}
+
+              {orderKind === 'spot' ? (
+                <div className="flex min-h-[280px] flex-col gap-2 lg:min-h-[320px]">
+                  <Label>現場位置（地図）</Label>
+                  <p className="text-xs leading-relaxed text-slate-500">
+                    {isLocationPending
+                      ? spotMapFlowMode === 'create'
+                        ? '作成フローのため、確定直後に地図エディタが開きます。指示に従ってスタンプを配置してください。'
+                        : '地図待ちのため、確定時点では位置の指定は不要です。後から地図を送付してください。'
+                      : '地図をクリックして緯度・経度を指定してください。'}
+                  </p>
+                  {deliveryLat || deliveryLng ? (
+                    <p className="font-mono text-xs font-bold text-slate-600">
+                      緯度: {deliveryLat || '—'} / 経度: {deliveryLng || '—'}
+                    </p>
+                  ) : null}
+                  <MapPicker
+                    lat={deliveryLat}
+                    lng={deliveryLng}
+                    panTarget={mapPanTarget}
+                    interactive={!isLocationPending}
+                    className={'min-h-[260px] lg:min-h-[300px]' + (isLocationPending ? ' opacity-60' : '')}
+                    onPositionChange={(la, ln) => {
+                      if (isLocationPending) return;
+                      setDeliveryLat(la);
+                      setDeliveryLng(ln);
+                      setSubmitError('');
+                    }}
+                  />
+                </div>
+              ) : null}
+
+              <div className="flex flex-col gap-3 border-t-2 border-slate-200 pt-6 dark:border-slate-600">
                 <button
                   type="button"
                   onClick={handleAddToCart}
                   disabled={isSubmittingOrder || !hasCurrentCustomer}
-                  className="flex min-h-[56px] w-full items-center justify-center rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-4 text-base font-bold text-white shadow-lg shadow-orange-500/30 transition hover:from-orange-600 hover:to-amber-600 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="flex min-h-[52px] w-full items-center justify-center rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-3.5 text-base font-bold text-white shadow-lg shadow-orange-500/30 transition hover:from-orange-600 hover:to-amber-600 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 lg:min-h-[48px]"
                 >
                   {hasCurrentCustomer
                     ? isGuestSiteOrder
@@ -3080,6 +3228,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   </div>
                 ) : null}
               </div>
+              </div>
             </form>
               </div>
               ) : null}
@@ -3099,7 +3248,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     </p>
                   </div>
                 </div>
-                  <div className="mt-4 space-y-5">
+                  <div className="mt-4 grid gap-4 lg:grid-cols-2 xl:grid-cols-2">
                     {activeOrders.length === 0 ? (
                       <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
                         進行中の注文はありません。「新規発注」タブから発注してください。
@@ -3116,7 +3265,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                             該当する注文がありません
                           </p>
                         ) : (
-                          filteredInProgressOrders.map((ord, i) => (
+                          <div className="grid gap-4 lg:grid-cols-2">
+                          {filteredInProgressOrders.map((ord, i) => (
                             <InProgressOrderCard
                               key={ord.id || `ord-${i}`}
                               order={ord}
@@ -3127,7 +3277,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                               onAllowStatusReset={handleAllowStatusReset}
                               guestToken={isGuestSiteOrder ? guestOrderToken : ''}
                             />
-                          ))
+                          ))}
+                          </div>
                         )}
                       </>
                     )}
@@ -3137,7 +3288,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             </div>
 
             {customerOrderTab === 'history' ? (
-            <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6">
+            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6 lg:p-8">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <h2 className="text-base font-black text-slate-900">注文履歴</h2>
@@ -3291,15 +3442,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               />
             ) : null}
           </main>
+          </div>
           </PullToRefresh>
           <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-200 bg-white/95 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] backdrop-blur lg:hidden" aria-label="カスタマー画面ナビゲーション">
-            <div className="mx-auto grid max-w-md grid-cols-4 gap-1">
-              {[
-                ['new', '📝', '新規発注'],
-                ['active', '🚚', '進行中'],
-                ['calendar', '📅', 'カレンダー'],
-                ['history', '📜', '履歴'],
-              ].map(([id, icon, label]) => {
+            <div className="mx-auto grid max-w-lg grid-cols-4 gap-1">
+              {CUSTOMER_ORDER_TABS.map(([id, label, icon]) => {
                 const active = customerOrderTab === id;
                 return (
                   <button

@@ -192,10 +192,6 @@ function factoryAreaMatchesTown(factoryArea, deliveryArea, town, debugSink = nul
 
   if (!fa || !t) return emit(false, 'empty_input');
 
-  if (isMunicipalityOnlyFactoryArea(fa, city)) {
-    return emit(false, 'municipality_only_factory_area');
-  }
-
   const tNorm = normalizeTownNameForMatch(t);
   const faNorm = normalizeTownNameForMatch(fa);
   const faTownNorm = extractTownSegmentFromFactoryArea(fa, city);
@@ -285,9 +281,20 @@ export function evaluateFactoryDeliveryAreaCoverage(
     let covers = false;
     for (const fa of factoryAreas) {
       const sink = [];
-      const matched = factoryAreaMatchesTown(fa, city, effectiveTown, sink);
+      const townMatched = factoryAreaMatchesTown(fa, city, effectiveTown, sink);
+      const muniMatched = factoryAreaMatchesMunicipality(fa, city);
       comparisons.push(...sink);
-      if (matched) covers = true;
+      if (muniMatched && !townMatched) {
+        comparisons.push({
+          factoryArea: fa,
+          orderTown: normalizeTownNameForMatch(effectiveTown),
+          factoryTownCandidate: normalizeTownNameForMatch(fa),
+          comparing: `市町村マッチ（町名指定中）: "${normalizeTownNameForMatch(city)}" vs "${normalizeTownNameForMatch(fa)}" -> true`,
+          matched: true,
+          reason: 'municipality_match_in_town_mode',
+        });
+      }
+      if (townMatched || muniMatched) covers = true;
     }
     return { covers, mode: 'town_strict', effectiveTown, comparisons };
   }
@@ -311,25 +318,12 @@ export function evaluateFactoryDeliveryAreaCoverage(
         comparisons,
       };
     }
-    const globalAreas = normalizeAllowedDeliveryAreas(globalAllowedAreas);
-    if (!globalAreas.length) {
-      return { covers: true, mode: 'municipality_global_fallback', effectiveTown: '', comparisons: [] };
-    }
-    const globalMatches = globalAreas.map((fa) => {
-      const matched = factoryAreaMatchesMunicipality(fa, city);
-      return {
-        factoryArea: fa,
-        matched,
-        comparing: `グローバル市町村マッチ: "${normalizeTownNameForMatch(city)}" vs "${normalizeTownNameForMatch(fa)}" -> ${matched}`,
-        reason: matched ? 'global_municipality_match' : 'global_municipality_no_match',
-      };
-    });
-    comparisons.push(...globalMatches);
+    // グローバル設定へのフォールバックは使わず、factory.allowed_delivery_areas のみで判定
     return {
-      covers: globalMatches.some((row) => row.matched),
-      mode: 'municipality_global',
+      covers: false,
+      mode: 'municipality_factory_areas_empty',
       effectiveTown: '',
-      comparisons,
+      comparisons: [],
     };
   }
 
@@ -338,11 +332,11 @@ export function evaluateFactoryDeliveryAreaCoverage(
     return { covers: false, mode: 'address_candidates_empty', effectiveTown: '', comparisons: [] };
   }
 
-  const areas = factoryAreas.length ? factoryAreas : normalizeAllowedDeliveryAreas(globalAllowedAreas);
-  if (!areas.length) {
-    return { covers: true, mode: 'no_area_restriction', effectiveTown: '', comparisons: [] };
+  if (!factoryAreas.length) {
+    // グローバル設定へのフォールバックは使わず、factory.allowed_delivery_areas のみで判定
+    return { covers: false, mode: 'address_factory_areas_empty', effectiveTown: '', comparisons: [] };
   }
-
+  const areas = factoryAreas;
   const addressMatches = areas.map((fa) => {
     const matched = areaStringsMatch(fa, candidates);
     const candidate = candidates.find((c) => areaStringsMatch(fa, [c])) || candidates[0];
@@ -440,7 +434,6 @@ export function rankFactoryIdsByDeliveryArea(order, projectById, factories, glob
   );
   const text = fullAddress || combineDeliveryAddress(deliveryArea, addressDetail) || deliveryArea;
   const effectiveTown = resolveEffectiveTown(deliveryArea, addressDetail, text, globalAllowedAreas);
-  const strictTownFilter = Boolean(effectiveTown);
 
   const pid = order?.project_id ?? order?.projectId;
   const project = pid != null ? projectById[String(pid)] : null;
@@ -456,42 +449,15 @@ export function rankFactoryIdsByDeliveryArea(order, projectById, factories, glob
   if (preferredId && preferredId !== '[object Object]') preferred.add(preferredId);
 
   const matching = [];
-  const fallback = [];
-  const knownFactoryIds = new Set(list.map((f) => (f?.id != null ? String(f.id) : '')).filter(Boolean));
 
   for (const f of list) {
     const id = f?.id != null ? String(f.id) : '';
     if (!id) continue;
     if (factoryCoversDeliveryArea(f, deliveryArea, text, globalAllowedAreas, addressDetail)) {
       matching.push(id);
-    } else if (!strictTownFilter) {
-      fallback.push(id);
     }
   }
-
-  let pool = matching.length
-    ? matching
-    : strictTownFilter
-      ? []
-      : fallback.length
-        ? fallback
-        : list.map((f) => String(f.id)).filter(Boolean);
-
-  // エリア一致0件でも第一希望・物件メイン・全工場へフォールバック
-  if (!pool.length && knownFactoryIds.size > 0) {
-    if (preferredId && knownFactoryIds.has(preferredId)) {
-      pool = [preferredId];
-    } else if (project?.main_factory_id && knownFactoryIds.has(String(project.main_factory_id))) {
-      pool = [String(project.main_factory_id)];
-    } else {
-      pool = [...knownFactoryIds];
-    }
-  }
-
-  // VIP: 第一希望はエリア外でも先頭に必ず含める
-  if (preferredId && knownFactoryIds.has(preferredId)) {
-    pool = [preferredId, ...pool.filter((id) => id !== preferredId)];
-  }
+  const pool = matching;
 
   logEscalationDebug({
     deliveryArea,
@@ -500,7 +466,7 @@ export function rankFactoryIdsByDeliveryArea(order, projectById, factories, glob
     factories: list,
     globalAllowedAreas,
     matching,
-    fallback,
+    fallback: [],
     pool,
   });
 

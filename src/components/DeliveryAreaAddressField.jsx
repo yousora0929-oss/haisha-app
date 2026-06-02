@@ -1,5 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useCallback } from 'react';
 import { combineDeliveryAddress, getDeliveryAreaValidationMessage } from '../utils/deliveryAreas.js';
+import { buildTownDatalistOptions, saveTownNameToHistory } from '../utils/townNameInput.js';
 
 const DEFAULT_DETAIL_LABEL = '町名・地名';
 const DEFAULT_DETAIL_PLACEHOLDER = '町名・地名を入力してください';
@@ -33,17 +34,31 @@ export function DeliveryAreaAddressField({
   const townMissing = detailRequired && !String(addressDetail || '').trim();
   const townListId = `${idPrefix}-town-suggestions`;
   const suggestionOptions = useMemo(
-    () =>
-      [...new Set((Array.isArray(townSuggestions) ? townSuggestions : []).map((t) => String(t || '').trim()).filter(Boolean))],
-    [townSuggestions],
+    () => buildTownDatalistOptions(townSuggestions, deliveryArea),
+    [townSuggestions, deliveryArea],
   );
   const showDatalist = showTownSuggestions && suggestionOptions.length > 0;
+
+  const handleDetailFocus = useCallback((e) => {
+    try {
+      e.target.select();
+    } catch {
+      /* readonly 等 */
+    }
+  }, []);
+
+  const handleDetailBlur = useCallback(() => {
+    const town = String(addressDetail || '').trim();
+    if (town && deliveryArea) {
+      saveTownNameToHistory(deliveryArea, town);
+    }
+  }, [addressDetail, deliveryArea]);
 
   const resolvedDetailHint = showTownSuggestions
     ? townSuggestionsLoading
       ? '町名リストを読み込み中…（その間も手入力できます）'
       : showDatalist
-        ? '候補から選ぶか、町名・地名を入力してください（未掲載の地名も手入力可）'
+        ? '最近使った町名が上に表示されます。候補から選ぶか、町名・地名を入力してください（未掲載の地名も手入力可）'
         : townSuggestionsError
           ? `${townSuggestionsError}（手入力で続行できます）`
           : deliveryArea
@@ -93,6 +108,8 @@ export function DeliveryAreaAddressField({
         placeholder={detailPlaceholder}
         list={showDatalist ? townListId : undefined}
         autoComplete={showDatalist ? 'address-level3' : 'off'}
+        onFocus={handleDetailFocus}
+        onBlur={handleDetailBlur}
         onChange={(e) => onAddressDetailChange?.(e.target.value)}
         className={
           'min-h-[52px] w-full rounded-xl border-2 px-4 py-3 text-base text-slate-900 placeholder:text-slate-400 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300 ' +

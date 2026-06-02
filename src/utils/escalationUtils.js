@@ -3,6 +3,7 @@ import { calculateDistance } from './geoUtils.js';
 import { normalizeAllowedDeliveryAreas } from './deliveryAreas.js';
 import {
   getOrderDeliveryAreaContext,
+  factoryCoversDeliveryArea,
   rankFactoryIdsByDeliveryArea,
 } from './deliveryAreaEscalation.js';
 import { associationAssignedFactoryIds } from './associationFactoryAssignment.js';
@@ -246,7 +247,7 @@ export function rankFactoryIdsForOrder(order, projectById, factories, globalAllo
   if (rankMode.mode === 'AREA_BASED') {
     ranked = rankFactoryIdsByDeliveryArea(order, projectById, factories, globalAllowedAreas);
   } else {
-    ranked = rankFactoryIdsByDistance(siteCoords, factories);
+    ranked = rankFactoryIdsByDistance(order, projectById, siteCoords, factories, globalAllowedAreas);
   }
 
   const finalized = finalizeEscalationRank(ranked, order, projectById, factories);
@@ -264,9 +265,25 @@ export function rankFactoryIdsForOrder(order, projectById, factories, globalAllo
 }
 
 /** 距離の近い順に工場 ID を並べる */
-export function rankFactoryIdsByDistance(siteCoords, factories) {
+export function rankFactoryIdsByDistance(order, projectById, siteCoords, factories, globalAllowedAreas) {
   const list = Array.isArray(factories) ? factories : [];
-  return list
+  const addrCtx = getOrderDeliveryAreaContext(order, projectById, globalAllowedAreas);
+  const hasAddress =
+    Boolean(addrCtx.deliveryArea) || Boolean(addrCtx.addressDetail) || Boolean(addrCtx.fullAddress);
+
+  const deliveryArea = addrCtx.deliveryArea;
+  const addressDetail = addrCtx.addressDetail;
+  const addressText = addrCtx.fullAddress || addrCtx.deliveryArea || '';
+
+  // 「allowed_delivery_areas に含まれる工場だけ」を配達可能プールにする
+  const eligible = hasAddress
+    ? list.filter((f) => factoryCoversDeliveryArea(f, deliveryArea, addressText, globalAllowedAreas, addressDetail))
+    : list;
+
+  // 空になった場合は安全のため全体へフォールバック（VIP/空配列回避は finalizeEscalationRank 側でも行う）
+  const eligibleWithFallback = eligible.length ? eligible : list;
+
+  const rankedWithDist = eligibleWithFallback
     .map((f) => {
       const id = f?.id != null ? String(f.id) : '';
       if (!id) return null;
@@ -276,8 +293,21 @@ export function rankFactoryIdsByDistance(siteCoords, factories) {
       return { id, dist };
     })
     .filter(Boolean)
-    .sort((a, b) => a.dist - b.dist || a.id.localeCompare(b.id))
-    .map((x) => x.id);
+    .sort((a, b) => a.dist - b.dist || a.id.localeCompare(b.id));
+
+  const ids = rankedWithDist.map((x) => x.id);
+
+  if (typeof console !== 'undefined' && typeof console.log === 'function') {
+    console.log('【Escalation Debug】DISTANCE eligible', {
+      判定対象の市町村: deliveryArea,
+      判定対象の町名: addressDetail,
+      許容プール数: eligible.length,
+      許容プールフォールバック: eligible.length === 0,
+      距離順: rankedWithDist.map((x) => ({ id: x.id, km: Number.isFinite(x.dist) ? Number(x.dist.toFixed(3)) : x.dist })),
+    });
+  }
+
+  return ids;
 }
 
 export function enrichOrderWithProject(order, projectById) {
