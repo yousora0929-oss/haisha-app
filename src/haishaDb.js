@@ -993,7 +993,7 @@ export async function subscribeHaishaRealtime(onEvent) {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_settings' }, onEvent)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news' }, onEvent)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news_reads' }, onEvent)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_escalation_settings' }, onEvent)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_escalation_steps' }, onEvent)
     .subscribe();
   return () => {
     void supabase.removeChannel(channel);
@@ -2209,56 +2209,83 @@ export async function deleteFactoryNews(newsId) {
   if (error) throw error;
 }
 
-const ESCALATION_SCOPE_VALUES = new Set(['admin', 'area', 'all']);
-
-function mapEscalationSettingRow(row) {
+function mapEscalationStepRow(row) {
   if (!row || typeof row !== 'object') return null;
   const factory_id = sanitizeRefId(row.factory_id);
   if (!factory_id) return null;
-  const scopeRaw = String(row.escalation_scope ?? 'admin').trim();
-  const escalation_scope = ESCALATION_SCOPE_VALUES.has(scopeRaw) ? scopeRaw : 'admin';
-  const minutes = Number(row.unread_idle_minutes);
+  const stepNum = Number(row.step_number);
+  const trigger = Number(row.trigger_minutes);
+  const count = Number(row.target_factory_count);
   return {
     factory_id,
-    enabled: Boolean(row.enabled),
-    unread_idle_minutes: Number.isFinite(minutes) && minutes >= 1 ? Math.floor(minutes) : 15,
-    escalation_scope,
-    updated_at: row.updated_at != null ? String(row.updated_at) : null,
+    step_number: Number.isFinite(stepNum) && stepNum >= 1 ? Math.floor(stepNum) : 1,
+    trigger_minutes: Number.isFinite(trigger) && trigger >= 0 ? Math.floor(trigger) : 0,
+    target_factory_count: Number.isFinite(count) && count >= 1 ? Math.floor(count) : 1,
   };
 }
 
-function normalizeEscalationSettingUpsert(input) {
-  if (!input || typeof input !== 'object') return null;
-  const factory_id = sanitizeRefId(input.factory_id);
-  if (!factory_id) return null;
-  const scopeRaw = String(input.escalation_scope ?? 'admin').trim();
-  const escalation_scope = ESCALATION_SCOPE_VALUES.has(scopeRaw) ? scopeRaw : 'admin';
-  const minutes = Number(input.unread_idle_minutes);
-  return {
-    factory_id,
-    enabled: Boolean(input.enabled),
-    unread_idle_minutes: Number.isFinite(minutes) && minutes >= 1 ? Math.floor(minutes) : 15,
-    escalation_scope,
-  };
+function normalizeEscalationStepsForSave(stepsArray) {
+  const list = Array.isArray(stepsArray) ? stepsArray : [];
+  const out = [];
+  for (let i = 0; i < list.length; i += 1) {
+    const raw = list[i];
+    if (!raw || typeof raw !== 'object') continue;
+    const trigger = Number(raw.trigger_minutes);
+    const count = Number(raw.target_factory_count);
+    out.push({
+      step_number: i + 1,
+      trigger_minutes: Number.isFinite(trigger) && trigger >= 0 ? Math.floor(trigger) : 0,
+      target_factory_count: Number.isFinite(count) && count >= 1 ? Math.floor(count) : 1,
+    });
+  }
+  return out;
 }
 
-/** factory_escalation_settings から全工場の設定を取得 */
-export async function fetchEscalationSettings() {
+/**
+ * factory_escalation_steps を工場IDごとにグループ化（step_number 昇順）
+ * @returns {Record<string, Array<{ step_number: number, trigger_minutes: number, target_factory_count: number }>>}
+ */
+export async function fetchEscalationSteps() {
   const { data, error } = await supabase
-    .from('factory_escalation_settings')
-    .select('factory_id, enabled, unread_idle_minutes, escalation_scope, updated_at');
+    .from('factory_escalation_steps')
+    .select('factory_id, step_number, trigger_minutes, target_factory_count')
+    .order('factory_id', { ascending: true })
+    .order('step_number', { ascending: true });
   if (error) throw error;
-  return (data || []).map(mapEscalationSettingRow).filter(Boolean);
+
+  /** @type {Record<string, Array<{ step_number: number, trigger_minutes: number, target_factory_count: number }>>} */
+  const byFactory = {};
+  for (const row of data || []) {
+    const mapped = mapEscalationStepRow(row);
+    if (!mapped) continue;
+    const { factory_id, step_number, trigger_minutes, target_factory_count } = mapped;
+    if (!byFactory[factory_id]) byFactory[factory_id] = [];
+    byFactory[factory_id].push({ step_number, trigger_minutes, target_factory_count });
+  }
+  for (const fid of Object.keys(byFactory)) {
+    byFactory[fid].sort((a, b) => a.step_number - b.step_number);
+  }
+  return byFactory;
 }
 
-/** 複数工場のエスカレーション設定を一括 upsert */
-export async function saveEscalationSettings(settingsArray) {
-  const rows = (Array.isArray(settingsArray) ? settingsArray : [])
-    .map(normalizeEscalationSettingUpsert)
-    .filter(Boolean);
-  if (rows.length === 0) return;
-  const { error } = await supabase
-    .from('factory_escalation_settings')
-    .upsert(rows, { onConflict: 'factory_id' });
-  if (error) throw error;
+/** 対象工場のステップを全削除のうえ、新しい配列を一括 insert */
+export async function saveEscalationSteps(factoryId, stepsArray) {
+  const fid = sanitizeRefId(factoryId);
+  if (!fid) throw new Error('factoryId が必要です');
+
+  const { error: deleteError } = await supabase.from('factory_escalation_steps').delete().eq('factory_id', fid);
+  if (deleteError) throw deleteError;
+
+  const steps = normalizeEscalationStepsForSave(stepsArray);
+  if (steps.length === 0) return;
+
+  const rows = steps.map((step) => ({
+    factory_id: fid,
+    step_number: step.step_number,
+    trigger_minutes: step.trigger_minutes,
+    target_factory_count: step.target_factory_count,
+  }));
+
+  const { error: insertError } = await supabase.from('factory_escalation_steps').insert(rows);
+  if (insertError) throw insertError;
 }
