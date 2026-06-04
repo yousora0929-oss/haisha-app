@@ -31,6 +31,8 @@ import { OrderCartPreview } from './components/OrderCartPreview.jsx';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
+import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
+import { customerSuggestTexts, projectSuggestTexts } from './utils/masterSuggest.js';
 import { buildDispatchOrderForDate, validateCartLineForm } from './utils/dispatchBulkOrder.js';
 import { buildMapEditorUrl, rememberMapEditorReturnUrl } from './mapEditorConstants.js';
 import { combineDeliveryAddress, extractProjectAddressFields, normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
@@ -231,13 +233,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
     const MASTER_TRADER_SUGGESTIONS = ['梅田建材', '大分商事', '九州生コン販売', '共栄商事'];
     const MASTER_CONTRACTOR_SUGGESTIONS = ['佐藤建設', '田中組', '大分土木', '九州コンクリート工業'];
 
-    function filterMasterSuggestions(suggestions, inputValue) {
-      const t = String(inputValue ?? '').trim();
-      if (!t) return [];
-      const tl = t.toLowerCase();
-      return suggestions.filter((s) => String(s).toLowerCase().includes(tl));
-    }
-
     function preferredDateTime(dateStr, timeSlotValue) {
       const m = String(dateStr || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
       if (!m) return null;
@@ -309,57 +304,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       return (
         <label htmlFor={htmlFor} className="block text-sm font-semibold text-slate-700">
           {children}
-        </label>
-      );
-    }
-
-    function AutocompleteField({ labelText, name, value, onValueChange, suggestions, placeholder, autoComplete }) {
-      const [panelOpen, setPanelOpen] = useState(false);
-      const filtered = useMemo(() => filterMasterSuggestions(suggestions, value), [suggestions, value]);
-      const showList = panelOpen && String(value ?? '').trim().length > 0 && filtered.length > 0;
-
-      return (
-        <label className="flex flex-col gap-3">
-          <span className="block text-sm font-semibold text-slate-700">{labelText}</span>
-          <div className="relative">
-            <input
-              type="text"
-              name={name}
-              autoComplete={autoComplete || 'off'}
-              placeholder={placeholder}
-              value={value}
-              onChange={(e) => {
-                onValueChange(e.target.value);
-                setPanelOpen(true);
-              }}
-              onFocus={() => setPanelOpen(true)}
-              onBlur={() => window.setTimeout(() => setPanelOpen(false), 200)}
-              className="min-h-[56px] w-full rounded-xl border-2 border-slate-200 px-4 py-3 text-base text-slate-900 placeholder:text-slate-400 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
-            />
-            {showList ? (
-              <ul
-                className="absolute left-0 right-0 top-full z-[60] mt-1 max-h-52 overflow-y-auto rounded-xl border-2 border-indigo-200 bg-white py-1 shadow-xl ring-1 ring-slate-200/80"
-                role="listbox"
-                aria-label={`${labelText}の候補`}
-              >
-                {filtered.map((item) => (
-                  <li key={item} role="option">
-                    <button
-                      type="button"
-                      className="w-full px-4 py-3 text-left text-base font-medium text-slate-900 hover:bg-indigo-50 active:bg-indigo-100"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        onValueChange(item);
-                        setPanelOpen(false);
-                      }}
-                    >
-                      {item}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
         </label>
       );
     }
@@ -765,16 +709,19 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       return (
         <article
           className={
-            'rounded-xl border bg-white shadow-sm transition ' +
-            (isCustomerCancelled ? 'border-red-200' : 'border-gray-100')
+            'rounded-xl border bg-white shadow-sm transition dark:bg-slate-800 ' +
+            (isCustomerCancelled ? 'border-red-200 dark:border-red-800' : 'border-gray-100 dark:border-slate-700')
           }
         >
           <div className="flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between md:gap-4 md:py-2">
             {/* 左〜中央：情報セグメント */}
             <div className="min-w-0 flex-1 md:grid md:grid-cols-2 md:gap-4 2xl:flex 2xl:items-stretch 2xl:gap-0">
               {/* 第一セグメント：日時とステータス */}
-              <div className="min-w-0 md:col-span-2 2xl:col-span-1 2xl:flex-[0.95] 2xl:pr-5 2xl:border-r 2xl:border-gray-200">
-                <p className="truncate text-lg font-black text-gray-900 md:text-lg 2xl:text-xl" title={timeSummary}>
+              <div className="min-w-0 md:col-span-2 2xl:col-span-1 2xl:flex-[0.95] 2xl:pr-5 2xl:border-r 2xl:border-gray-200 dark:2xl:border-slate-600">
+                <p
+                  className="truncate text-lg font-black text-gray-900 dark:text-gray-100 md:text-lg 2xl:text-xl"
+                  title={timeSummary}
+                >
                   {timeSummary}
                 </p>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -787,34 +734,41 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </div>
 
               {/* 第二セグメント：配合と数量 */}
-              <div className="mt-2 min-w-0 md:mt-0 2xl:flex-[1.05] 2xl:px-5 2xl:border-r 2xl:border-gray-200">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400">数量 / 配合</p>
+              <div className="mt-2 min-w-0 md:mt-0 2xl:flex-[1.05] 2xl:px-5 2xl:border-r 2xl:border-gray-200 dark:2xl:border-slate-600">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                  数量 / 配合
+                </p>
                 <div className="mt-0.5 flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-                  <span className="text-base font-black text-gray-900">{qtyDisp.replace('m³', '㎥')}</span>
-                  <span className="min-w-0 truncate font-mono text-sm font-black text-gray-900">{mixStr}</span>
+                  <span className="text-base font-black text-gray-900 dark:text-gray-100">{qtyDisp.replace('m³', '㎥')}</span>
+                  <span className="min-w-0 truncate font-mono text-sm font-black text-gray-900 dark:text-gray-100">
+                    {mixStr}
+                  </span>
                   {compactMeta ? (
-                    <span className="min-w-0 truncate text-sm font-bold text-gray-500">{compactMeta}</span>
+                    <span className="min-w-0 truncate text-sm font-bold text-gray-500 dark:text-gray-300">{compactMeta}</span>
                   ) : null}
                 </div>
               </div>
 
               {/* 第三セグメント：現場名と連絡先 */}
               <div className="mt-2 min-w-0 md:mt-0 2xl:flex-[1.1] 2xl:pl-5">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400">現場 / 連絡先</p>
+                <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 dark:text-gray-500">現場 / 連絡先</p>
                 <div className="mt-0.5 grid min-w-0 gap-1">
-                  <p className="min-w-0 truncate text-base font-black text-gray-900" title={party.site || ''}>
-                    <span className="mr-1 text-gray-400" aria-hidden>
+                  <p
+                    className="min-w-0 truncate text-base font-black text-gray-900 dark:text-gray-100"
+                    title={party.site || ''}
+                  >
+                    <span className="mr-1 text-gray-400 dark:text-gray-500" aria-hidden>
                       📍
                     </span>
                     {party.site || '—'}
                   </p>
-                  <p className="min-w-0 truncate text-sm font-bold text-gray-600">
-                    <span className="mr-1 text-gray-400" aria-hidden>
+                  <p className="min-w-0 truncate text-sm font-bold text-gray-600 dark:text-gray-300">
+                    <span className="mr-1 text-gray-400 dark:text-gray-500" aria-hidden>
                       ☎
                     </span>
                     <span className="font-mono">{party.phone || '—'}</span>
                     {orderedByDisp ? (
-                      <span className="ml-2 text-gray-400">（{orderedByDisp}）</span>
+                      <span className="ml-2 text-gray-400 dark:text-gray-500">（{orderedByDisp}）</span>
                     ) : null}
                   </p>
                 </div>
@@ -867,16 +821,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           </div>
 
           {/* モバイルのみ：補足情報（縦に読めるように） */}
-          <div className="border-t border-slate-100 px-4 py-2 text-xs font-bold text-slate-600 md:hidden">
+          <div className="border-t border-slate-100 px-4 py-2 text-xs font-bold text-slate-600 dark:border-slate-700 dark:text-slate-300 md:hidden">
             <div className="flex flex-wrap gap-x-3 gap-y-1">
-              <span className="font-semibold text-slate-500">車種</span>
-              <span className="text-slate-900">{vehicle}</span>
-              <span className="text-slate-300">|</span>
-              <span className="font-semibold text-slate-500">業者</span>
-              <span className="text-slate-900">{party.contractor || '—'}</span>
-              <span className="text-slate-300">|</span>
-              <span className="font-semibold text-slate-500">住所</span>
-              <span className="truncate text-slate-900">{addrDisp}</span>
+              <span className="font-semibold text-slate-500 dark:text-slate-400">車種</span>
+              <span className="text-slate-900 dark:text-gray-100">{vehicle}</span>
+              <span className="text-slate-300 dark:text-slate-600">|</span>
+              <span className="font-semibold text-slate-500 dark:text-slate-400">業者</span>
+              <span className="text-slate-900 dark:text-gray-100">{party.contractor || '—'}</span>
+              <span className="text-slate-300 dark:text-slate-600">|</span>
+              <span className="font-semibold text-slate-500 dark:text-slate-400">住所</span>
+              <span className="truncate text-slate-900 dark:text-gray-100">{addrDisp}</span>
             </div>
             <MasterPendingBanner order={order} />
           </div>
@@ -1147,6 +1101,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       });
       const [orderKind, setOrderKind] = useState('spot');
       const [selectedProjectId, setSelectedProjectId] = useState('');
+      const [customerSearchText, setCustomerSearchText] = useState('');
+      const [projectSearchText, setProjectSearchText] = useState('');
       const [deliveryLat, setDeliveryLat] = useState('');
       const [deliveryLng, setDeliveryLng] = useState('');
       const [preferredFactoryId, setPreferredFactoryId] = useState('');
@@ -1328,6 +1284,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         [projects, currentCustomerId],
       );
       const hasCurrentCustomer = Boolean(String(currentCustomerId || '').trim());
+
+      useEffect(() => {
+        setCustomerSearchText(currentCustomerDisplayName);
+      }, [currentCustomerDisplayName, currentCustomerId]);
+
+      useEffect(() => {
+        setProjectSearchText(selectedProject?.name ? String(selectedProject.name) : '');
+      }, [selectedProject, selectedProjectId]);
       const selectCustomerTab = useCallback((tabId) => {
         setCustomerOrderTab(tabId);
         if (tabId === 'new') setNewOrderMode('');
@@ -2413,7 +2377,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }
 
       return (
-        <div className="min-h-screen bg-gray-50 text-gray-900 antialiased">
+        <div className="min-h-screen bg-gray-50 text-gray-900 antialiased dark:bg-gray-900 dark:text-gray-100">
           <div className="mx-auto min-h-screen max-w-[1440px] shadow-sm flex flex-col lg:flex-row">
             {!isGuestSiteOrder ? (
               <aside className="hidden lg:block w-[260px] shrink-0 bg-white border-r border-gray-200 min-h-screen sticky top-0">
@@ -2719,33 +2683,85 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               ) : null}
 
               {orderKind === 'project' && !isGuestSiteOrder ? (
-                <div className="flex flex-col gap-3">
-                  <Label htmlFor={orderFieldId('dispatch-project')}>物件を選択</Label>
-                  <select
-                    id={orderFieldId('dispatch-project')}
-                    name="regular_project_id"
-                    value={selectedProjectId}
-                    disabled={!hasCurrentCustomer || (isGuestSiteOrder && Boolean(guestSiteOrderCtx?.project?.id))}
-                    onChange={(e) => {
-                      const id = e.target.value;
-                      setSelectedProjectId(id);
+                <div className="flex flex-col gap-4">
+                  <MasterSuggestInput
+                    label="業者（会社）"
+                    htmlFor={orderFieldId('dispatch-customer')}
+                    name={orderFieldName('customer_company')}
+                    value={customerSearchText}
+                    disabled={customers.length === 0}
+                    placeholder="業者名を入力して候補から選択"
+                    items={customers}
+                    getItemKey={(c) => String(c.id)}
+                    getItemLabel={(c) => String(c.company_name || c.name || c.id || '').trim()}
+                    getSearchTexts={customerSuggestTexts}
+                    onValueChange={(text) => {
+                      setCustomerSearchText(text);
                       setSubmitError('');
-                      const p = id ? (filteredProjects || []).find((x) => x && x.id === id) : null;
-                      applyProjectSelection(p);
+                      const hit = (customers || []).find(
+                        (c) =>
+                          String(c.company_name || c.name || '')
+                            .trim()
+                            .toLowerCase() === String(text).trim().toLowerCase(),
+                      );
+                      if (hit) {
+                        setCurrentCustomerId(String(hit.id));
+                      }
                     }}
-                    className="min-h-[56px] w-full appearance-none rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-base font-medium text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-                  >
-                    <option value="">{hasCurrentCustomer ? '物件を選択してください' : '先に業者を選択してください'}</option>
-                    {filteredProjects.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
+                    onSelect={(c) => {
+                      setCurrentCustomerId(String(c.id));
+                      setCustomerSearchText(String(c.company_name || c.name || '').trim());
+                      setSelectedProjectId('');
+                      lastAutofillProjectIdRef.current = '';
+                      applyProjectSelection(null);
+                      setSubmitError('');
+                    }}
+                    emptyHint="該当する業者がありません"
+                  />
+                  <MasterSuggestInput
+                    label="物件を選択"
+                    htmlFor={orderFieldId('dispatch-project')}
+                    name="regular_project_search"
+                    value={projectSearchText}
+                    disabled={!hasCurrentCustomer}
+                    placeholder={hasCurrentCustomer ? '物件名を入力して候補から選択' : '先に業者を選択してください'}
+                    items={filteredProjects}
+                    getItemKey={(p) => String(p.id)}
+                    getItemLabel={(p) => String(p.name || p.id || '').trim()}
+                    getSearchTexts={projectSuggestTexts}
+                    onValueChange={(text) => {
+                      setProjectSearchText(text);
+                      setSubmitError('');
+                      const hit = (filteredProjects || []).find(
+                        (p) => String(p.name || '').trim().toLowerCase() === String(text).trim().toLowerCase(),
+                      );
+                      if (hit) {
+                        setSelectedProjectId(String(hit.id));
+                        applyProjectSelection(hit);
+                      } else {
+                        setSelectedProjectId('');
+                        if (lastAutofillProjectIdRef.current) {
+                          lastAutofillProjectIdRef.current = '';
+                          applyProjectSelection(null);
+                        }
+                      }
+                    }}
+                    onSelect={(p) => {
+                      setSelectedProjectId(String(p.id));
+                      setProjectSearchText(String(p.name || '').trim());
+                      applyProjectSelection(p);
+                      setSubmitError('');
+                    }}
+                    emptyHint="該当する物件がありません"
+                  />
                   {!hasCurrentCustomer ? (
-                    <p className="text-xs font-bold text-amber-800">ログイン中の業者情報を確認できません。再ログインしてください。</p>
+                    <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
+                      ログイン中の業者情報を確認できません。再ログインするか、上の欄で業者を選択してください。
+                    </p>
                   ) : filteredProjects.length === 0 ? (
-                    <p className="text-xs font-bold text-amber-800">この業者に紐づく物件がありません。管理画面で物件に業者（会社）を設定するか、スポット注文を選んでください。</p>
+                    <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
+                      この業者に紐づく物件がありません。管理画面で物件に業者（会社）を設定するか、スポット注文を選んでください。
+                    </p>
                   ) : null}
                   {selectedProject ? (
                     <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -3022,28 +3038,40 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
               {!isGuestSiteOrder ? (
                 <>
-                  <AutocompleteField
-                    labelText="商社（任意）"
+                  <MasterSuggestInput
+                    label="商社（任意）"
                     name={orderFieldName('trader_name')}
                     value={traderName}
                     onValueChange={(v) => {
                       setTraderName(v);
                       setSubmitError('');
                     }}
-                    suggestions={MASTER_TRADER_SUGGESTIONS}
+                    items={MASTER_TRADER_SUGGESTIONS}
+                    getItemKey={(s) => s}
+                    getItemLabel={(s) => s}
+                    onSelect={(s) => {
+                      setTraderName(s);
+                      setSubmitError('');
+                    }}
                     placeholder="例：梅田建材（入力すると候補が表示されます）"
                     autoComplete="organization"
                   />
 
-                  <AutocompleteField
-                    labelText="業者"
+                  <MasterSuggestInput
+                    label="業者（下請・現場名義など）"
                     name={orderFieldName('contractor_name')}
                     value={contractorName}
                     onValueChange={(v) => {
                       setContractorName(v);
                       setSubmitError('');
                     }}
-                    suggestions={MASTER_CONTRACTOR_SUGGESTIONS}
+                    items={MASTER_CONTRACTOR_SUGGESTIONS}
+                    getItemKey={(s) => s}
+                    getItemLabel={(s) => s}
+                    onSelect={(s) => {
+                      setContractorName(s);
+                      setSubmitError('');
+                    }}
                     placeholder="例：佐藤建設（入力すると候補が表示されます）"
                     autoComplete="off"
                   />
@@ -3245,7 +3273,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               ) : null}
 
               {customerOrderTab === 'active' ? (
-              <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-md sm:p-5">
+              <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-md dark:border-slate-700 dark:bg-slate-800 sm:p-5">
                 {adminNotice ? (
                   <div className="mb-3 rounded-xl border-2 border-violet-300 bg-violet-50 px-3 py-2 text-sm font-black text-violet-800" role="status">
                     {adminNotice}
@@ -3253,21 +3281,21 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 ) : null}
                 <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
                   <div className="min-w-0">
-                    <h2 className="text-base font-black text-slate-900">進行中の注文ステータス</h2>
-                    <p className="mt-1.5 text-xs leading-relaxed text-slate-400">
+                    <h2 className="text-base font-black text-slate-900 dark:text-gray-100">進行中の注文ステータス</h2>
+                    <p className="mt-1.5 text-xs leading-relaxed text-slate-400 dark:text-gray-300">
                       工場画面の受注／拒否／保留がここに反映されます。
                     </p>
                   </div>
                 </div>
                   <div className="mt-4 grid grid-cols-1 gap-4">
                     {activeOrders.length === 0 ? (
-                      <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                      <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-600 dark:bg-slate-900/50 dark:text-gray-300">
                         進行中の注文はありません。「新規発注」タブから発注してください。
                       </p>
                     ) : (
                       <>
                         {filteredInProgressOrders.length === 0 ? (
-                          <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm font-bold text-slate-500">
+                          <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm font-bold text-slate-500 dark:border-slate-600 dark:bg-slate-900/50 dark:text-gray-300">
                             該当する注文がありません
                           </p>
                         ) : (

@@ -1,6 +1,7 @@
 import React, { useMemo, useCallback } from 'react';
 import { combineDeliveryAddress, getDeliveryAreaValidationMessage } from '../utils/deliveryAreas.js';
 import { buildTownDatalistOptions, saveTownNameToHistory } from '../utils/townNameInput.js';
+import { MasterSuggestInput } from './MasterSuggestInput.jsx';
 
 const DEFAULT_DETAIL_LABEL = '町名・地名';
 const DEFAULT_DETAIL_PLACEHOLDER = '町名・地名を入力してください';
@@ -32,20 +33,11 @@ export function DeliveryAreaAddressField({
   const full = combineDeliveryAddress(deliveryArea, addressDetail);
   const warning = showWarning ? getDeliveryAreaValidationMessage(full, areas) : '';
   const townMissing = detailRequired && !String(addressDetail || '').trim();
-  const townListId = `${idPrefix}-town-suggestions`;
   const suggestionOptions = useMemo(
     () => buildTownDatalistOptions(townSuggestions, deliveryArea),
     [townSuggestions, deliveryArea],
   );
-  const showDatalist = showTownSuggestions && suggestionOptions.length > 0;
-
-  const handleDetailFocus = useCallback((e) => {
-    try {
-      e.target.select();
-    } catch {
-      /* readonly 等 */
-    }
-  }, []);
+  const useTownSuggest = showTownSuggestions && suggestionOptions.length > 0;
 
   const handleDetailBlur = useCallback(() => {
     const town = String(addressDetail || '').trim();
@@ -57,7 +49,7 @@ export function DeliveryAreaAddressField({
   const resolvedDetailHint = showTownSuggestions
     ? townSuggestionsLoading
       ? '町名リストを読み込み中…（その間も手入力できます）'
-      : showDatalist
+      : useTownSuggest
         ? '最近使った町名が上に表示されます。候補から選ぶか、町名・地名を入力してください（未掲載の地名も手入力可）'
         : townSuggestionsError
           ? `${townSuggestionsError}（手入力で続行できます）`
@@ -66,17 +58,25 @@ export function DeliveryAreaAddressField({
             : detailHint
     : detailHint;
 
+  const detailInputClass =
+    'min-h-[52px] w-full rounded-xl border-2 px-4 py-3 text-base outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300 dark:focus:border-slate-500 ' +
+    (townMissing ? 'border-amber-400 bg-amber-50/40 dark:bg-amber-950/30' : 'border-slate-200');
+
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-sm font-semibold text-slate-700" htmlFor={`${idPrefix}-area`}>
+      <label className="text-sm font-semibold text-slate-700 dark:text-slate-300" htmlFor={`${idPrefix}-area`}>
         {label}
       </label>
       {areas.length > 0 ? (
-        <p className="text-xs font-medium text-slate-500">組合の納入可能エリアから市町村を選択し、町名・地名まで入力してください。</p>
+        <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+          組合の納入可能エリアから市町村を選択し、町名・地名まで入力してください。
+        </p>
       ) : (
-        <p className="text-xs font-bold text-amber-800">納入エリアが未設定です。管理画面でエリアを登録してください。</p>
+        <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
+          納入エリアが未設定です。管理画面でエリアを登録してください。
+        </p>
       )}
-      <label className="text-xs font-bold text-slate-600" htmlFor={`${idPrefix}-area`}>
+      <label className="text-xs font-bold text-slate-600 dark:text-slate-300" htmlFor={`${idPrefix}-area`}>
         市町村 <span className="text-red-600">*</span>
       </label>
       <select
@@ -87,7 +87,7 @@ export function DeliveryAreaAddressField({
         required={detailRequired}
         aria-required={detailRequired}
         onChange={(e) => onDeliveryAreaChange?.(e.target.value)}
-        className="min-h-[52px] w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-base font-medium text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300 disabled:bg-slate-100"
+        className="min-h-[52px] w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-base font-medium text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-900 dark:text-gray-100 dark:disabled:bg-slate-800"
       >
         <option value="">エリアを選択</option>
         {areas.map((a) => (
@@ -96,45 +96,65 @@ export function DeliveryAreaAddressField({
           </option>
         ))}
       </select>
-      <label className="text-xs font-bold text-slate-600" htmlFor={`${idPrefix}-detail`}>
-        {detailLabel} <span className="text-red-600">*</span>
-      </label>
-      <input
-        id={`${idPrefix}-detail`}
-        name={`${idPrefix}_address_detail`}
-        type="text"
-        value={addressDetail || ''}
-        disabled={disabled}
-        required={detailRequired}
-        aria-required={detailRequired}
-        placeholder={detailPlaceholder}
-        list={showDatalist ? townListId : undefined}
-        autoComplete={showDatalist ? 'address-level3' : 'off'}
-        onFocus={handleDetailFocus}
-        onBlur={handleDetailBlur}
-        onChange={(e) => onAddressDetailChange?.(e.target.value)}
-        className={
-          'min-h-[52px] w-full rounded-xl border-2 px-4 py-3 text-base text-slate-900 placeholder:text-slate-400 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300 ' +
-          (townMissing ? 'border-amber-400 bg-amber-50/40' : 'border-slate-200')
-        }
-      />
-      {showDatalist ? (
-        <datalist id={townListId}>
-          {suggestionOptions.map((town) => (
-            <option key={town} value={town} />
-          ))}
-        </datalist>
-      ) : null}
+
+      {useTownSuggest ? (
+        <div onBlur={handleDetailBlur}>
+          <MasterSuggestInput
+            label={
+              <>
+                {detailLabel} <span className="text-red-600">*</span>
+              </>
+            }
+            htmlFor={`${idPrefix}-detail`}
+            name={`${idPrefix}_address_detail`}
+            value={addressDetail || ''}
+            disabled={disabled}
+            required={detailRequired}
+            placeholder={detailPlaceholder}
+            items={suggestionOptions}
+            getItemKey={(town) => town}
+            getItemLabel={(town) => town}
+            onValueChange={(v) => onAddressDetailChange?.(v)}
+            onSelect={(town) => onAddressDetailChange?.(town)}
+            inputClassName={townMissing ? 'border-amber-400 bg-amber-50/40 dark:bg-amber-950/30' : ''}
+            emptyHint="該当する町名がありません（手入力で続行できます）"
+          />
+        </div>
+      ) : (
+        <>
+          <label className="text-xs font-bold text-slate-600 dark:text-slate-300" htmlFor={`${idPrefix}-detail`}>
+            {detailLabel} <span className="text-red-600">*</span>
+          </label>
+          <input
+            id={`${idPrefix}-detail`}
+            name={`${idPrefix}_address_detail`}
+            type="text"
+            value={addressDetail || ''}
+            disabled={disabled}
+            required={detailRequired}
+            aria-required={detailRequired}
+            placeholder={detailPlaceholder}
+            autoComplete="off"
+            onBlur={handleDetailBlur}
+            onChange={(e) => onAddressDetailChange?.(e.target.value)}
+            className={detailInputClass + ' bg-white text-slate-900 placeholder:text-slate-400 dark:bg-slate-900 dark:text-gray-100'}
+          />
+        </>
+      )}
+
       {resolvedDetailHint ? (
-        <p className="text-xs font-medium leading-relaxed text-slate-600">{resolvedDetailHint}</p>
+        <p className="text-xs font-medium leading-relaxed text-slate-600 dark:text-slate-300">{resolvedDetailHint}</p>
       ) : null}
       {full ? (
-        <p className="text-xs font-mono font-bold text-slate-600">
+        <p className="text-xs font-mono font-bold text-slate-600 dark:text-slate-300">
           登録住所プレビュー: {full}
         </p>
       ) : null}
       {warning ? (
-        <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900" role="alert">
+        <p
+          className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100"
+          role="alert"
+        >
           {warning}
         </p>
       ) : null}
