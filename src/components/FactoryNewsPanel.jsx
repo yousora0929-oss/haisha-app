@@ -20,7 +20,7 @@ const ROW_EXPANDED = 'bg-slate-50 dark:bg-slate-900/60';
 /**
  * 工場画面 — お知らせタブ（縮小1行 + アコーディオン展開・タブレット向け大きめUI）
  */
-export function FactoryNewsPanel({ factoryId, factories = [] }) {
+export function FactoryNewsPanel({ factoryId, factories = [], onUnreadChange }) {
   const [news, setNews] = useState([]);
   const [reads, setReads] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -46,13 +46,14 @@ export function FactoryNewsPanel({ factoryId, factories = [] }) {
       const feed = await db.fetchFactoryNewsFeed(factoryId);
       setNews(feed.news || []);
       setReads(feed.reads || []);
+      onUnreadChange?.();
     } catch (e) {
       console.error('[FactoryNewsPanel] load failed', e);
       setError(e?.message || 'お知らせの取得に失敗しました');
     } finally {
       setLoading(false);
     }
-  }, [factoryId]);
+  }, [factoryId, onUnreadChange]);
 
   useEffect(() => {
     void load();
@@ -91,8 +92,19 @@ export function FactoryNewsPanel({ factoryId, factories = [] }) {
     setExpandedId(id);
     if (!isSelfRead(id)) {
       setMarkingId(id);
+      const fid = String(factoryId);
       try {
         await db.markFactoryNewsRead(id, factoryId);
+        setReads((prev) => {
+          if (prev.some((r) => String(r.news_id) === id && String(r.factory_id) === fid)) {
+            return prev;
+          }
+          return [
+            ...prev,
+            { news_id: id, factory_id: fid, read_at: new Date().toISOString() },
+          ];
+        });
+        onUnreadChange?.();
         await load();
       } catch (e) {
         console.error('[FactoryNewsPanel] mark read failed', e);

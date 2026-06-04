@@ -2951,6 +2951,12 @@ function orderPartyInfo(order) {
       }, [refreshFactoryNewsUnread]);
 
       useEffect(() => {
+        if (activeTab === 'news') {
+          void refreshFactoryNewsUnread();
+        }
+      }, [activeTab, refreshFactoryNewsUnread]);
+
+      useEffect(() => {
         if (!activeFactoryId) return undefined;
         let unsub = () => {};
         void (async () => {
@@ -3615,7 +3621,11 @@ function orderPartyInfo(order) {
             <div className="mx-auto grid max-w-6xl gap-2">
               {activeTab === 'news' ? (
                 <div className="py-2 sm:py-4">
-                  <FactoryNewsPanel factoryId={activeFactoryId} factories={factories} />
+                  <FactoryNewsPanel
+                    factoryId={activeFactoryId}
+                    factories={factories}
+                    onUnreadChange={refreshFactoryNewsUnread}
+                  />
                 </div>
               ) : null}
               {activeTab === 'schedule' ? (
