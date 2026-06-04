@@ -1,6 +1,11 @@
 import React, { useMemo, useCallback } from 'react';
 import { combineDeliveryAddress, getDeliveryAreaValidationMessage } from '../utils/deliveryAreas.js';
-import { buildTownDatalistOptions, saveTownNameToHistory } from '../utils/townNameInput.js';
+import {
+  buildTownSuggestPool,
+  filterTownSuggestByQuery,
+  getFavoriteTownNames,
+  saveTownNameToHistory,
+} from '../utils/townNameInput.js';
 import { MasterSuggestInput } from './MasterSuggestInput.jsx';
 
 const DEFAULT_DETAIL_LABEL = '町名・地名';
@@ -33,11 +38,19 @@ export function DeliveryAreaAddressField({
   const full = combineDeliveryAddress(deliveryArea, addressDetail);
   const warning = showWarning ? getDeliveryAreaValidationMessage(full, areas) : '';
   const townMissing = detailRequired && !String(addressDetail || '').trim();
-  const suggestionOptions = useMemo(
-    () => buildTownDatalistOptions(townSuggestions, deliveryArea),
+  const townPool = useMemo(
+    () => buildTownSuggestPool(townSuggestions, deliveryArea),
     [townSuggestions, deliveryArea],
   );
-  const useTownSuggest = showTownSuggestions && suggestionOptions.length > 0;
+  const favoriteTowns = useMemo(
+    () => getFavoriteTownNames(deliveryArea, undefined, townPool),
+    [deliveryArea, townPool],
+  );
+  const filteredTowns = useMemo(
+    () => filterTownSuggestByQuery(townPool, addressDetail),
+    [townPool, addressDetail],
+  );
+  const useTownSuggest = showTownSuggestions && townPool.length > 0;
 
   const handleDetailBlur = useCallback(() => {
     const town = String(addressDetail || '').trim();
@@ -50,7 +63,7 @@ export function DeliveryAreaAddressField({
     ? townSuggestionsLoading
       ? '町名リストを読み込み中…（その間も手入力できます）'
       : useTownSuggest
-        ? '最近使った町名が上に表示されます。候補から選ぶか、町名・地名を入力してください（未掲載の地名も手入力可）'
+        ? '⭐よく使う地名が先頭に出ます。入力すると前方一致の候補が上に並びます（未掲載の地名も手入力可）'
         : townSuggestionsError
           ? `${townSuggestionsError}（手入力で続行できます）`
           : deliveryArea
@@ -111,11 +124,18 @@ export function DeliveryAreaAddressField({
             disabled={disabled}
             required={detailRequired}
             placeholder={detailPlaceholder}
-            items={suggestionOptions}
+            items={filteredTowns}
+            pinnedItems={favoriteTowns}
+            pinnedSectionLabel="⭐ よく使うエリア"
+            emptyQueryShowsPinnedOnly
+            searchResultLimit={36}
             getItemKey={(town) => town}
             getItemLabel={(town) => town}
             onValueChange={(v) => onAddressDetailChange?.(v)}
-            onSelect={(town) => onAddressDetailChange?.(town)}
+            onSelect={(town) => {
+              onAddressDetailChange?.(town);
+              if (town && deliveryArea) saveTownNameToHistory(deliveryArea, town);
+            }}
             inputClassName={townMissing ? 'border-amber-400 bg-amber-50/40 dark:bg-amber-950/30' : ''}
             emptyHint="該当する町名がありません（手入力で続行できます）"
           />

@@ -52,6 +52,13 @@ import {
   detectFactoryNotifyOrderIds,
   analyzeFactoryOrderRealtimePayload,
 } from './utils/factoryOrderRealtime.js';
+import {
+  getOrderDeliveryDateISO,
+  isOrderInHistoryView,
+  isOrderInProgressView,
+  isOrderManuallyCompleted,
+  sortOrdersForHistory,
+} from './utils/orderDeliverySchedule.js';
 
 const todayLocalISO = todayLocalISODate;
 
@@ -2237,7 +2244,17 @@ function orderPartyInfo(order) {
       );
     }
 
-    function FactoryAllocationCalendar({ orders, currentFactoryId, selectedDate, onSelectDate, currentMonth, onMonthChange, onOpenOrder }) {
+    function FactoryAllocationCalendar({
+      orders,
+      scheduleOrders,
+      todayIso,
+      currentFactoryId,
+      selectedDate,
+      onSelectDate,
+      currentMonth,
+      onMonthChange,
+      onOpenOrder,
+    }) {
       const lastTapRef = useRef({ orderId: null, at: 0 });
       const isAcceptedCalendarOrder = (order) => {
         const responseStatus = normalizeFactoryResponse(order?.factoryResponseStatus);
@@ -2280,7 +2297,21 @@ function orderPartyInfo(order) {
         }
         return map;
       }, [orders, currentFactoryId]);
-      const selectedOrders = ordersByDate[selectedDate] || [];
+      const dayListSource =
+        String(selectedDate || '').slice(0, 10) < String(todayIso || '').slice(0, 10)
+          ? orders || []
+          : scheduleOrders || orders || [];
+      const dayOrdersByDate = useMemo(() => {
+        const map = {};
+        for (const order of dayListSource) {
+          const day = getOrderDeliveryDateISO(order);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+          if (!map[day]) map[day] = [];
+          map[day].push(order);
+        }
+        return map;
+      }, [dayListSource]);
+      const selectedOrders = dayOrdersByDate[selectedDate] || [];
       const getOrderKindClass = (order) => {
         const rawType = String(order?.type || order?.order_type || order?.project_type || order?.projectType || '').toLowerCase();
         const isSpot = Boolean(order?.is_spot || order?.isSpot || rawType.includes('spot') || rawType.includes('スポット'));
@@ -2924,14 +2955,18 @@ function orderPartyInfo(order) {
         [handleFactoryRefresh],
       );
 
-      const handleOpenOrderFromCalendar = useCallback((orderId) => {
-        const id = String(orderId || '').trim();
-        if (!id) return;
-        setFocusedOrderId(id);
-        setActiveTab('orders');
-        setActionNotice('注文詳細を開きました');
-        window.setTimeout(() => setActionNotice(''), 2500);
-      }, []);
+      const handleOpenOrderFromCalendar = useCallback(
+        (orderId) => {
+          const id = String(orderId || '').trim();
+          if (!id) return;
+          const target = (orders || []).find((o) => String(o?.id) === id);
+          setFocusedOrderId(id);
+          setActiveTab(target && isOrderInHistoryView(target, todaySchedule) ? 'history' : 'orders');
+          setActionNotice('注文詳細を開きました');
+          window.setTimeout(() => setActionNotice(''), 2500);
+        },
+        [orders, todaySchedule],
+      );
 
       const refreshFactoryNewsUnread = useCallback(async () => {
         if (!activeFactoryId) {
@@ -3454,9 +3489,22 @@ function orderPartyInfo(order) {
         downloadCsv(`concrete-link-factory-${todayLocalISO()}.csv`, rows);
       }, [orders]);
 
+      const todaySchedule = useMemo(() => todayLocalISO(), [escalationTick]);
+
+      const factoryInProgressOrders = useMemo(
+        () => (orders || []).filter((o) => isOrderInProgressView(o, todaySchedule)),
+        [orders, todaySchedule],
+      );
+
+      const factoryHistoryOrders = useMemo(
+        () =>
+          sortOrdersForHistory((orders || []).filter((o) => isOrderInHistoryView(o, todaySchedule))),
+        [orders, todaySchedule],
+      );
+
       const newOrdersCount = useMemo(
         () =>
-          (orders || []).filter((order) => {
+          (factoryInProgressOrders || []).filter((order) => {
             if (!order?.id) return false;
             if (readOrderIds.has(String(order.id))) return false;
             if (isRejectedByFactory(order, activeFactoryId)) return false;
@@ -3468,7 +3516,7 @@ function orderPartyInfo(order) {
             const assignedFactoryId = getAssignedFactoryId(order);
             return !assignedFactoryId || isSameFactoryId(assignedFactoryId, activeFactoryId);
           }).length,
-        [orders, activeFactoryId, readOrderIds],
+        [factoryInProgressOrders, activeFactoryId, readOrderIds],
       );
 
       if (!isFactoryAuthenticated) {
@@ -3564,13 +3612,14 @@ function orderPartyInfo(order) {
               </div>
             </div>
             <div className="flex flex-1 flex-wrap items-center justify-end gap-1.5">
-              <div className="grid min-w-full flex-1 grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800 sm:grid-cols-6 sm:min-w-[42rem] sm:flex-none lg:min-w-[52rem]">
+              <div className="grid min-w-full flex-1 grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800 sm:grid-cols-7 sm:min-w-[48rem] sm:flex-none lg:min-w-[58rem]">
                 {[
                   ['news', '📢 お知らせ'],
                   ['schedule', '⚙️ スケジュール'],
                   ['orders', '🚚 注文'],
                   ['assignments', '割当物件'],
                   ['calendar', '📅 カレンダー'],
+                  ['history', '📋 履歴'],
                   ['settings', '⚙️ 設定'],
                 ].map(([id, label]) => {
                   const active = activeTab === id;
@@ -3659,7 +3708,7 @@ function orderPartyInfo(order) {
               {activeTab === 'orders' ? (
                 <div className="grid gap-2">
                   <DispatchInbox
-                    orders={orders}
+                    orders={factoryInProgressOrders}
                     currentFactoryId={activeFactoryId}
                     readOrderIds={readOrderIds}
                     factorySearchLabel={activeFactoryName}
@@ -3685,6 +3734,8 @@ function orderPartyInfo(order) {
               {activeTab === 'calendar' ? (
                 <FactoryAllocationCalendar
                   orders={orders}
+                  scheduleOrders={factoryInProgressOrders}
+                  todayIso={todaySchedule}
                   currentFactoryId={activeFactoryId}
                   selectedDate={calendarSelectedDate}
                   onSelectDate={setCalendarSelectedDate}
@@ -3692,6 +3743,53 @@ function orderPartyInfo(order) {
                   onMonthChange={handleCalendarMonthChange}
                   onOpenOrder={handleOpenOrderFromCalendar}
                 />
+              ) : null}
+              {activeTab === 'history' ? (
+                <section className="mx-auto max-w-4xl space-y-3 pb-8">
+                  <header>
+                    <h2 className="text-xl font-black text-slate-900 dark:text-slate-100">注文履歴</h2>
+                    <p className="mt-1 text-sm font-medium text-slate-600 dark:text-slate-400">
+                      手動完了した注文と、予定日が過去（昨日以前）の注文を表示します（予定日の新しい順）。
+                    </p>
+                  </header>
+                  {factoryHistoryOrders.length === 0 ? (
+                    <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm font-bold text-slate-500 dark:border-slate-600 dark:bg-slate-900/50 dark:text-slate-400">
+                      履歴に表示する注文はありません
+                    </p>
+                  ) : (
+                    <ul className="max-h-[min(70vh,640px)] space-y-2 overflow-y-auto rounded-2xl border-2 border-slate-200 bg-white p-2 dark:border-slate-600 dark:bg-slate-800">
+                      {factoryHistoryOrders.map((order) => {
+                        const party = orderPartyInfo(order);
+                        const delivery = factoryOrderDate(order);
+                        const autoPast =
+                          !isOrderManuallyCompleted(order) &&
+                          !['customer_cancelled', 'cancelled', 'deleted'].includes(String(order?.status || ''));
+                        return (
+                          <li
+                            key={order.id}
+                            className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-600 dark:bg-slate-900/50"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <p className="text-sm font-black tabular-nums text-slate-700 dark:text-slate-300">
+                                予定日 {delivery.replace(/-/g, '/')}
+                              </p>
+                              <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                                {autoPast ? '自動履歴' : '完了'}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-base font-black text-slate-900 dark:text-gray-100">
+                              {party.site || '現場未設定'}
+                            </p>
+                            <p className="mt-1 text-sm font-bold text-slate-600 dark:text-gray-300">
+                              {party.contractor || '—'} · {getOrderTimeDisplay(order)} ·{' '}
+                              {factoryOrderQuantity(order)}㎡
+                            </p>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </section>
               ) : null}
               {activeTab === 'settings' ? (
                 <FactorySettingsPanel

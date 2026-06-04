@@ -1,5 +1,7 @@
 const TOWN_HISTORY_STORAGE_KEY = 'haisha_town_name_history_v1';
 const MAX_TOWN_HISTORY = 5;
+/** 空欄フォーカス時に固定表示する「よく使う」件数 */
+export const TOWN_FAVORITE_DISPLAY_COUNT = 5;
 
 function normalizeTownName(value) {
   return String(value || '').trim().replace(/\s+/g, ' ');
@@ -79,14 +81,21 @@ export function saveTownNameToHistory(deliveryArea, townName) {
 
   try {
     const raw = localStorage.getItem(TOWN_HISTORY_STORAGE_KEY);
-    const data = raw ? JSON.parse(raw) : null;
+    let data = {};
+    if (raw) {
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        data = {};
+      }
+    }
     if (!data || typeof data !== 'object') return;
 
     const withoutDup = (Array.isArray(data[area]) ? data[area] : [])
       .map((t) => normalizeTownName(t))
       .filter((t) => t && t !== town);
 
-    data[area] = [town, ...withoutDup].slice(0, MAX_TOWN_HISTORY - 1);
+    data[area] = [town, ...withoutDup].slice(0, MAX_TOWN_HISTORY);
     localStorage.setItem(TOWN_HISTORY_STORAGE_KEY, JSON.stringify(data));
   } catch {
     /* ignore quota / private mode */
@@ -94,12 +103,77 @@ export function saveTownNameToHistory(deliveryArea, townName) {
 }
 
 /**
- * datalist 用: 履歴（新しい順）を先頭、続けて API 候補をあいうえお順（重複除外）
+ * 空欄時に表示する「よく使う地名」（直近履歴優先・最大5件）
+ * 履歴が足りない場合は apiPool の先頭から補完（初回利用時のスクロール回避）
  */
-export function buildTownDatalistOptions(townSuggestions, deliveryArea) {
+export function getFavoriteTownNames(
+  deliveryArea,
+  limit = TOWN_FAVORITE_DISPLAY_COUNT,
+  apiPool = [],
+) {
+  const history = loadTownNameHistory(deliveryArea).slice(0, limit);
+  if (history.length >= limit) return history;
+
+  const seen = new Set(history);
+  const out = [...history];
+  const pool = Array.isArray(apiPool) ? apiPool : [];
+  for (const name of pool) {
+    if (out.length >= limit) break;
+    const town = normalizeTownName(name);
+    if (!town || seen.has(town)) continue;
+    seen.add(town);
+    out.push(town);
+  }
+  return out;
+}
+
+/** マッチ優先度: 0=前方一致, 1=部分一致, 2=非該当 */
+export function getTownNameMatchRank(townName, query) {
+  const town = normalizeTownName(townName).toLowerCase();
+  const q = normalizeTownName(query).toLowerCase();
+  if (!q) return 0;
+  if (!town) return 2;
+  if (town.startsWith(q)) return 0;
+  if (town.includes(q)) return 1;
+  return 2;
+}
+
+/**
+ * 全候補プール（履歴＋API・重複除外）
+ */
+export function buildTownSuggestPool(townSuggestions, deliveryArea) {
   const apiSorted = sortTownSuggestionsByKana(townSuggestions);
   const history = loadTownNameHistory(deliveryArea);
-  const apiSet = new Set(apiSorted);
-  const historyUnique = history.filter((t) => !apiSet.has(t));
-  return [...historyUnique, ...apiSorted];
+  const seen = new Set();
+  const out = [];
+  for (const name of [...history, ...apiSorted]) {
+    const t = normalizeTownName(name);
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
+}
+
+/** @deprecated buildTownSuggestPool を使用 */
+export function buildTownDatalistOptions(townSuggestions, deliveryArea) {
+  return buildTownSuggestPool(townSuggestions, deliveryArea);
+}
+
+/**
+ * 入力文字列で絞り込み＋前方一致優先ソート（スクロール削減）
+ */
+export function filterTownSuggestByQuery(townPool, query, limit = 36) {
+  const list = Array.isArray(townPool) ? townPool : [];
+  const q = normalizeTownName(query);
+  if (!q) return [];
+  return list
+    .filter((town) => getTownNameMatchRank(town, q) < 2)
+    .sort((a, b) => {
+      const ra = getTownNameMatchRank(a, q);
+      const rb = getTownNameMatchRank(b, q);
+      if (ra !== rb) return ra - rb;
+      return a.localeCompare(b, 'ja', { sensitivity: 'base' });
+    })
+    .slice(0, limit);
 }

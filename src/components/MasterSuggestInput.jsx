@@ -10,6 +10,12 @@ const INPUT_CLASS =
 const OPTION_CLASS =
   'w-full px-4 py-3.5 text-left text-base font-medium text-gray-900 hover:bg-indigo-50 active:bg-indigo-100 dark:text-gray-100 dark:hover:bg-slate-700 dark:active:bg-slate-600';
 
+const FAVORITE_OPTION_CLASS =
+  'w-full px-4 py-3 text-left text-base font-bold text-amber-950 hover:bg-amber-100/80 active:bg-amber-100 dark:text-amber-100 dark:hover:bg-amber-900/40 dark:active:bg-amber-900/50';
+
+const FAVORITE_HEADER_CLASS =
+  'sticky top-0 z-10 border-b border-amber-200/80 bg-amber-50/90 px-4 py-2 text-[11px] font-black tracking-wide text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200';
+
 /**
  * iOS Safari 対応カスタムサジェスト（datalist 非使用）
  */
@@ -30,11 +36,20 @@ export function MasterSuggestInput({
   required = false,
   emptyHint = '該当する候補がありません',
   inputClassName = '',
+  /** 空欄フォーカス時のみ表示するピン留め候補（よく使う地名など） */
+  pinnedItems = [],
+  pinnedSectionLabel = '⭐ よく使うエリア',
+  /** true: 空欄時はピン留めのみ表示（マスタ全件は出さない） */
+  emptyQueryShowsPinnedOnly = false,
+  searchResultLimit = 80,
 }) {
   const autoId = useId();
   const inputId = htmlFor || `suggest-${autoId.replace(/:/g, '')}`;
   const [panelOpen, setPanelOpen] = useState(false);
   const blurTimerRef = useRef(null);
+
+  const queryTrimmed = String(value ?? '').trim();
+  const isEmptyQuery = queryTrimmed.length === 0;
 
   const resolveSearchTexts = useCallback(
     (item) => {
@@ -45,12 +60,34 @@ export function MasterSuggestInput({
     [getSearchTexts, getItemLabel, getItemKey],
   );
 
-  const filtered = useMemo(
-    () => filterSuggestItems(items, value, resolveSearchTexts),
-    [items, value, resolveSearchTexts],
-  );
+  const pinnedList = useMemo(() => {
+    const raw = Array.isArray(pinnedItems) ? pinnedItems : [];
+    const seen = new Set();
+    const out = [];
+    for (const item of raw) {
+      if (item == null) continue;
+      const key = getItemKey(item);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(item);
+    }
+    return out;
+  }, [pinnedItems, getItemKey]);
 
-  const showList = panelOpen && !disabled && (String(value ?? '').trim().length > 0 || filtered.length > 0);
+  const filtered = useMemo(() => {
+    if (isEmptyQuery && emptyQueryShowsPinnedOnly) return [];
+    return filterSuggestItems(items, value, resolveSearchTexts, searchResultLimit);
+  }, [items, value, resolveSearchTexts, isEmptyQuery, emptyQueryShowsPinnedOnly, searchResultLimit]);
+
+  const showPinned = panelOpen && !disabled && isEmptyQuery && pinnedList.length > 0;
+  const showFiltered = panelOpen && !disabled && !isEmptyQuery && filtered.length > 0;
+  const showEmpty =
+    panelOpen &&
+    !disabled &&
+    !isEmptyQuery &&
+    filtered.length === 0 &&
+    !(emptyQueryShowsPinnedOnly && pinnedList.length > 0);
+  const showList = showPinned || showFiltered || showEmpty;
 
   const openPanel = () => {
     if (blurTimerRef.current) {
@@ -111,27 +148,63 @@ export function MasterSuggestInput({
             role="listbox"
             aria-label={typeof label === 'string' ? `${label}の候補` : '候補一覧'}
           >
-            {filtered.length === 0 ? (
+            {showPinned ? (
+              <>
+                <li className={FAVORITE_HEADER_CLASS} role="presentation">
+                  {pinnedSectionLabel}
+                </li>
+                {pinnedList.map((item) => {
+                  const key = `fav-${getItemKey(item)}`;
+                  return (
+                    <li key={key} role="option" className="bg-amber-50/50 dark:bg-amber-950/20">
+                      <button
+                        type="button"
+                        className={FAVORITE_OPTION_CLASS}
+                        onMouseDown={(e) => pickItem(item, e)}
+                        onTouchStart={(e) => pickItem(item, e)}
+                      >
+                        <span className="mr-1.5" aria-hidden>
+                          ⭐
+                        </span>
+                        {getItemLabel(item)}
+                      </button>
+                    </li>
+                  );
+                })}
+              </>
+            ) : null}
+            {showFiltered
+              ? filtered.map((item) => {
+                  const key = getItemKey(item);
+                  const isPinnedHit = pinnedList.some((p) => getItemKey(p) === key);
+                  return (
+                    <li
+                      key={key}
+                      role="option"
+                      className={isPinnedHit ? 'bg-amber-50/30 dark:bg-amber-950/15' : undefined}
+                    >
+                      <button
+                        type="button"
+                        className={OPTION_CLASS}
+                        onMouseDown={(e) => pickItem(item, e)}
+                        onTouchStart={(e) => pickItem(item, e)}
+                      >
+                        {isPinnedHit ? (
+                          <span className="mr-1.5 text-amber-600 dark:text-amber-400" aria-hidden>
+                            ⭐
+                          </span>
+                        ) : null}
+                        {getItemLabel(item)}
+                      </button>
+                    </li>
+                  );
+                })
+              : null}
+            {showEmpty ? (
               <li className="px-4 py-3 text-sm font-medium text-slate-500 dark:text-slate-400" role="presentation">
                 {emptyHint}
               </li>
-            ) : (
-              filtered.map((item) => {
-                const key = getItemKey(item);
-                return (
-                  <li key={key} role="option">
-                    <button
-                      type="button"
-                      className={OPTION_CLASS}
-                      onMouseDown={(e) => pickItem(item, e)}
-                      onTouchStart={(e) => pickItem(item, e)}
-                    >
-                      {getItemLabel(item)}
-                    </button>
-                  </li>
-                );
-              })
-            )}
+            ) : null}
           </ul>
         ) : null}
       </div>

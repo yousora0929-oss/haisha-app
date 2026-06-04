@@ -56,6 +56,12 @@ import {
   analyzeCustomerOrderRealtimePayload,
 } from './utils/customerOrderRealtime.js';
 import {
+  getOrderDeliveryDateISO,
+  isOrderInHistoryView,
+  isOrderInProgressView,
+  sortOrdersForHistory,
+} from './utils/orderDeliverySchedule.js';
+import {
   primeNotificationAlarm,
   startNotificationAlarm,
   stopNotificationAlarm,
@@ -1687,13 +1693,18 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const filteredInProgressOrders = useMemo(
         () =>
           dashboardOrders
-            .filter((o) => o && historyStatusMeta(o).key === 'active' && orderMatchesMasterSearch(o, inProgressSearchQuery))
+            .filter(
+              (o) =>
+                o &&
+                isOrderInProgressView(o, today) &&
+                orderMatchesMasterSearch(o, inProgressSearchQuery),
+            )
             .slice(0, 15),
-        [dashboardOrders, inProgressSearchQuery],
+        [dashboardOrders, inProgressSearchQuery, today],
       );
       const activeOrders = useMemo(
-        () => (dashboardOrders || []).filter((o) => o && historyStatusMeta(o).key === 'active'),
-        [dashboardOrders],
+        () => (dashboardOrders || []).filter((o) => o && isOrderInProgressView(o, today)),
+        [dashboardOrders, today],
       );
       const unreadChatCount = useMemo(
         () =>
@@ -1710,9 +1721,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         if (activeChatOrderId && !activeChatOrder) setActiveChatOrderId('');
       }, [activeChatOrderId, activeChatOrder]);
       const historyRows = useMemo(() => {
-        const realRows = (dashboardOrders || [])
-          .filter((o) => o && ['completed', 'cancelled'].includes(historyStatusMeta(o).key))
-          .map((o) => {
+        const sorted = sortOrdersForHistory(
+          (dashboardOrders || []).filter((o) => o && isOrderInHistoryView(o, today)),
+        );
+        return sorted.map((o) => {
           const party = orderPartyInfo(o);
           return {
             id: o.id,
@@ -1728,14 +1740,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             quantityM3: o.confirmedQuantityM3 ?? o.quantityM3 ?? '',
             siteAddress: o.siteAddress ?? '',
             statusMeta: historyStatusMeta(o),
+            deliveryDate: getOrderDeliveryDateISO(o),
             createdAt: o.createdAt || '',
           };
         });
-        if (realRows.length > 0) {
-          return realRows.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-        }
-        return [];
-      }, [dashboardOrders]);
+      }, [dashboardOrders, today]);
       const filteredHistoryRows = useMemo(
         () =>
           historyRows.filter((row) => {
