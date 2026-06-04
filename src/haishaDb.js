@@ -993,6 +993,7 @@ export async function subscribeHaishaRealtime(onEvent) {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_settings' }, onEvent)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news' }, onEvent)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news_reads' }, onEvent)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_escalation_settings' }, onEvent)
     .subscribe();
   return () => {
     void supabase.removeChannel(channel);
@@ -2205,5 +2206,59 @@ export async function deleteFactoryNews(newsId) {
   const id = String(newsId || '').trim();
   if (!id) throw new Error('削除対象がありません');
   const { error } = await supabase.from('factory_news').delete().eq('id', id);
+  if (error) throw error;
+}
+
+const ESCALATION_SCOPE_VALUES = new Set(['admin', 'area', 'all']);
+
+function mapEscalationSettingRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const factory_id = sanitizeRefId(row.factory_id);
+  if (!factory_id) return null;
+  const scopeRaw = String(row.escalation_scope ?? 'admin').trim();
+  const escalation_scope = ESCALATION_SCOPE_VALUES.has(scopeRaw) ? scopeRaw : 'admin';
+  const minutes = Number(row.unread_idle_minutes);
+  return {
+    factory_id,
+    enabled: Boolean(row.enabled),
+    unread_idle_minutes: Number.isFinite(minutes) && minutes >= 1 ? Math.floor(minutes) : 15,
+    escalation_scope,
+    updated_at: row.updated_at != null ? String(row.updated_at) : null,
+  };
+}
+
+function normalizeEscalationSettingUpsert(input) {
+  if (!input || typeof input !== 'object') return null;
+  const factory_id = sanitizeRefId(input.factory_id);
+  if (!factory_id) return null;
+  const scopeRaw = String(input.escalation_scope ?? 'admin').trim();
+  const escalation_scope = ESCALATION_SCOPE_VALUES.has(scopeRaw) ? scopeRaw : 'admin';
+  const minutes = Number(input.unread_idle_minutes);
+  return {
+    factory_id,
+    enabled: Boolean(input.enabled),
+    unread_idle_minutes: Number.isFinite(minutes) && minutes >= 1 ? Math.floor(minutes) : 15,
+    escalation_scope,
+  };
+}
+
+/** factory_escalation_settings から全工場の設定を取得 */
+export async function fetchEscalationSettings() {
+  const { data, error } = await supabase
+    .from('factory_escalation_settings')
+    .select('factory_id, enabled, unread_idle_minutes, escalation_scope, updated_at');
+  if (error) throw error;
+  return (data || []).map(mapEscalationSettingRow).filter(Boolean);
+}
+
+/** 複数工場のエスカレーション設定を一括 upsert */
+export async function saveEscalationSettings(settingsArray) {
+  const rows = (Array.isArray(settingsArray) ? settingsArray : [])
+    .map(normalizeEscalationSettingUpsert)
+    .filter(Boolean);
+  if (rows.length === 0) return;
+  const { error } = await supabase
+    .from('factory_escalation_settings')
+    .upsert(rows, { onConflict: 'factory_id' });
   if (error) throw error;
 }

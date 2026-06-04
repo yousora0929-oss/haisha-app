@@ -38,6 +38,7 @@ import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/site
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
+import { AdminEscalationSection } from './components/AdminEscalationSection.jsx';
 import { AdminCsvImportButton } from './components/AdminCsvImportButton.jsx';
 import { AdminCsvDownloadButton } from './components/AdminCsvDownloadButton.jsx';
 import { AdminFactoryNewsSection } from './components/AdminFactoryNewsSection.jsx';
@@ -2428,6 +2429,7 @@ export function AdminApp() {
             {tabBtn('customers', '業者管理')}
             {tabBtn('inquiries', '問い合わせ対応')}
             {tabBtn('settings', '休日・稼働時間')}
+            {tabBtn('escalation', '🚨 エスカレーション設定')}
           </div>
         </div>
         {tab === 'monitor' ? (
@@ -2455,6 +2457,7 @@ export function AdminApp() {
         {tab === 'customers' ? <CustomersSection /> : null}
         {tab === 'inquiries' ? <CustomerInquirySection /> : null}
         {tab === 'settings' ? <HolidaysAndSettingsSection /> : null}
+        {tab === 'escalation' ? <AdminEscalationSection factories={factories} /> : null}
       </main>
     </div>
   );
