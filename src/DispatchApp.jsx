@@ -72,6 +72,12 @@ import {
   startNotificationAlarm,
   stopNotificationAlarm,
 } from './utils/notificationAlarm.js';
+import { dispatchRealtimePayloadByKind } from './utils/realtimePayloadRouting.js';
+import { createSplitRealtimeSyncScheduler } from './utils/realtimeSyncScheduler.js';
+import {
+  resolveOrderScheduleMatchDate,
+  shouldShowMapPendingPlaceholder,
+} from './utils/orderSiteMapDisplay.js';
 
 function isOrderForGuestSite(order, ctx) {
   if (!order || !ctx?.customer?.id) return false;
@@ -657,6 +663,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
     function InProgressOrderCard({
       order,
+      project,
       hasUnreadChat,
       onOpenChat,
       onAllowStatusReset,
@@ -675,6 +682,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
       const timeSummary = `${formatOrderDate(order)} · ${order.timePointLabel || order.timeSlotLabel || '—'}`;
       const isCustomerCancelled = order.status === 'customer_cancelled';
+      const showMapPlaceholder = useMemo(
+        () => shouldShowMapPendingPlaceholder(order, project),
+        [order, project],
+      );
+      const scheduleDateLabel = useMemo(() => resolveOrderScheduleMatchDate(order), [order]);
       const mapUrl = useMemo(() => {
         if (!order?.id) return '';
         const token = String(guestToken || '').trim();
@@ -733,6 +745,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             >
               💬 新着メッセージ
             </span>
+          ) : null}
+          {showMapPlaceholder ? (
+            <div
+              className="mx-4 mt-3 rounded-lg border border-dashed border-slate-300 bg-slate-100 px-3 py-2 text-xs font-bold text-slate-500 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-300"
+              role="status"
+            >
+              <span aria-hidden>📍</span> 地図未送信
+              {scheduleDateLabel ? (
+                <span className="ml-2 font-semibold text-slate-400 dark:text-slate-400">（予定: {scheduleDateLabel}）</span>
+              ) : null}
+            </div>
           ) : null}
           <div className="flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between md:gap-4 md:py-2">
             {/* 左〜中央：情報セグメント */}
@@ -1740,6 +1763,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         }
       }, [activeChatOrderId, dashboardOrders, isLoggedIn]);
 
+      const projectById = useMemo(
+        () =>
+          Object.fromEntries(
+            (projects || []).filter((p) => p?.id).map((p) => [String(p.id), p]),
+          ),
+        [projects],
+      );
       const filteredInProgressOrders = useMemo(
         () =>
           (dashboardOrders || [])
@@ -1812,30 +1842,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         if (!canSubscribe) return undefined;
 
         let disposed = false;
-        let timerId = null;
-        let running = false;
-        let pending = false;
-        let pendingPayload = null;
-        const runRefresh = async () => {
-          if (running) {
-            pending = true;
-            return;
-          }
-          running = true;
+        const handleChatRealtimePayload = (payload) => {
           try {
-            do {
-              pending = false;
-              const payload = pendingPayload;
-              pendingPayload = null;
-              await refreshDashboard({ playSound: true }, payload);
-            } while (pending && !disposed);
-          } finally {
-            running = false;
-          }
-        };
-        const scheduleRefresh = (payload) => {
-          if (payload) {
-            pendingPayload = payload;
             const chatHint = analyzeCustomerChatRealtimePayload(
               payload,
               isRelevantDashboardOrder,
@@ -1847,14 +1855,21 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               const audible = chatHint.notifyOrderIds.some((id) => String(id) !== viewingId);
               if (audible) playChatNotificationSound();
             }
+          } catch (chatErr) {
+            logDispatchError('[DispatchApp] チャット Realtime 処理に失敗（続行）', chatErr);
           }
-          pending = true;
-          if (timerId != null) return;
-          timerId = window.setTimeout(() => {
-            timerId = null;
-            void runRefresh();
-          }, 500);
         };
+        const realtimeSync = createSplitRealtimeSyncScheduler({
+          debounceMs: 500,
+          onOrderSync: async (payload) => {
+            if (disposed) return;
+            await refreshDashboard({ playSound: true }, payload);
+          },
+          onChatSync: async () => {
+            if (disposed) return;
+            await refreshDashboard({ playSound: false }, null);
+          },
+        });
         void refreshDashboard({ playSound: false }).catch((loadErr) => {
           logDispatchError('[DispatchApp] 初回ダッシュボード読み込みに失敗', loadErr);
         });
@@ -1868,7 +1883,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             if (disposed || !supabase?.channel) return;
             channel = supabase
               .channel(channelKey)
-              .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleRefresh)
+              .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
+                dispatchRealtimePayloadByKind({ ...payload, table: payload?.table || 'orders' }, {
+                  onOrder: (p) => realtimeSync.scheduleOrder(p),
+                  onChat: (p) => {
+                    handleChatRealtimePayload(p);
+                    realtimeSync.scheduleChat(p);
+                  },
+                });
+              })
               .subscribe();
           } catch (realtimeErr) {
             logDispatchError('[DispatchApp] orders realtime 購読の開始に失敗', realtimeErr);
@@ -1876,7 +1899,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         })();
         return () => {
           disposed = true;
-          if (timerId != null) window.clearTimeout(timerId);
+          realtimeSync.dispose();
           try {
             if (channel) void supabase?.removeChannel?.(channel);
           } catch {
@@ -3449,6 +3472,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                             <InProgressOrderCard
                               key={ord.id || `ord-${i}`}
                               order={ord}
+                              project={projectById[String(ord?.project_id ?? ord?.projectId ?? '')] ?? null}
                               hasUnreadChat={Boolean(
                                 unreadChatsByOrder[ord.id] ||
                                   isUnreadForDispatch(chatThreads[ord.id], readChatKeys[ord.id]),

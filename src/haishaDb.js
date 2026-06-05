@@ -985,9 +985,27 @@ export async function persistScheduleAutoRejections({
   return { changed: true, orders: next, chatThreads: nextThreads };
 }
 
+function enrichRealtimePayload(payload, tableName) {
+  if (!payload || typeof payload !== 'object') return payload;
+  const table = payload.table != null ? String(payload.table).trim() : '';
+  if (table) return payload;
+  return { ...payload, table: tableName };
+}
+
+function createIsolatedRealtimeHandler(onEvent) {
+  const dispatch = typeof onEvent === 'function' ? onEvent : () => {};
+  return (payload, tableName) => {
+    try {
+      dispatch(enrichRealtimePayload(payload, tableName));
+    } catch (err) {
+      console.error(`[realtime] handler error (${tableName})`, err);
+    }
+  };
+}
+
 /** 工場・カスタマー画面向け: orders / schedules のみ（軽量購読） */
 export async function subscribeOrdersRealtime(onEvent, options = {}) {
-  const handler = typeof onEvent === 'function' ? onEvent : () => {};
+  const route = createIsolatedRealtimeHandler(onEvent);
   const skipAuth = Boolean(options?.skipAuth);
   if (!skipAuth) {
     try {
@@ -1002,8 +1020,8 @@ export async function subscribeOrdersRealtime(onEvent, options = {}) {
   const channelName = `haisha-orders-rt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const channel = supabase
     .channel(channelName)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, handler)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, handler)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => route(payload, 'orders'))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, (payload) => route(payload, 'schedules'))
     .subscribe((status, err) => {
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
         console.error('[subscribeOrdersRealtime] channel error', status, err);
@@ -1019,7 +1037,7 @@ export async function subscribeOrdersRealtime(onEvent, options = {}) {
 }
 
 export async function subscribeHaishaRealtime(onEvent) {
-  const handler = typeof onEvent === 'function' ? onEvent : () => {};
+  const route = createIsolatedRealtimeHandler(onEvent);
   try {
     await ensurePanelRealtimeAuth?.();
   } catch (e) {
@@ -1031,13 +1049,15 @@ export async function subscribeHaishaRealtime(onEvent) {
   const channelName = `haisha-realtime-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const channel = supabase
     .channel(channelName)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, handler)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, handler)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'factories' }, handler)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, handler)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_settings' }, handler)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news' }, handler)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news_reads' }, handler)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => route(payload, 'orders'))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, (payload) => route(payload, 'schedules'))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'factories' }, (payload) => route(payload, 'factories'))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, (payload) => route(payload, 'customers'))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_settings' }, (payload) => route(payload, 'admin_settings'))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news' }, (payload) => route(payload, 'factory_news'))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news_reads' }, (payload) =>
+      route(payload, 'factory_news_reads'),
+    )
     .subscribe((status, err) => {
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
         console.error('[subscribeHaishaRealtime] channel error', status, err);

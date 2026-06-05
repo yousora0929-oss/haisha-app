@@ -1,5 +1,6 @@
 import { associationAssignedFactoryIds } from './associationFactoryAssignment.js';
 import { filterOrdersForFactory, isOrderVisibleToFactory } from './escalationUtils.js';
+import { isChatOnlyOrdersUpdate, isOrderMessagesTablePayload } from './realtimePayloadRouting.js';
 
 function orderStatus(order) {
   return String(order?.status || 'pending').trim();
@@ -95,6 +96,11 @@ export function analyzeFactoryOrderRealtimePayload(payload, factoryId, ctx) {
   const fid = String(factoryId || '').trim();
   const result = { notifyOrderIds: new Set(), reassignNotifyOrderIds: new Set(), refetch: true };
   if (!fid || !ctx || !payload) return result;
+
+  if (isOrderMessagesTablePayload(payload) || isChatOnlyOrdersUpdate(payload)) {
+    result.refetch = true;
+    return result;
+  }
 
   const eventType = String(payload.eventType || payload.event || '').toUpperCase();
   if (eventType !== 'UPDATE' && eventType !== 'INSERT') return result;

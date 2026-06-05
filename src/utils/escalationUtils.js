@@ -148,7 +148,7 @@ export function getOrderSiteCoords(order, projectById) {
   const pid = orderProjectId(order);
   const locationPending = Boolean(order?.is_location_pending ?? order?.isLocationPending);
 
-  if (!locationPending && pid && projectById[pid]) {
+  if (!locationPending && pid && projectById?.[pid]) {
     const p = projectById[pid];
     if (Number.isFinite(p.lat) && Number.isFinite(p.lng)) {
       return { lat: p.lat, lng: p.lng };

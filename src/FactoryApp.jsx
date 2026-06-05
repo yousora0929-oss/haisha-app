@@ -58,6 +58,8 @@ import {
   sortOrdersForHistory,
 } from './utils/orderDeliverySchedule.js';
 import { resolveFactoryIdFromProject } from './utils/dispatchBulkOrder.js';
+import { dispatchRealtimePayloadByKind } from './utils/realtimePayloadRouting.js';
+import { createSplitRealtimeSyncScheduler } from './utils/realtimeSyncScheduler.js';
 import { normalizeFactoryRefId } from './utils/escalationUtils.js';
 
 const FACTORY_SESSION_STORAGE_KEY = 'haisha_factory_site_id_v1';
@@ -2823,18 +2825,22 @@ function orderPartyInfo(order) {
             for (const id of detected.notifyOrderIds) notifyOrderIds.add(id);
             for (const id of detected.reassignNotifyOrderIds) reassignNotifyOrderIds.add(id);
             if (realtimePayload) {
-              const normalizedPayload = { ...realtimePayload };
-              if (realtimePayload.new && typeof realtimePayload.new === 'object') {
-                const normalizedNew = db.normalizeOrderRow(realtimePayload.new);
-                if (normalizedNew) normalizedPayload.new = normalizedNew;
+              try {
+                const normalizedPayload = { ...realtimePayload };
+                if (realtimePayload.new && typeof realtimePayload.new === 'object') {
+                  const normalizedNew = db.normalizeOrderRow(realtimePayload.new);
+                  if (normalizedNew) normalizedPayload.new = normalizedNew;
+                }
+                if (realtimePayload.old && typeof realtimePayload.old === 'object') {
+                  const normalizedOld = db.normalizeOrderRow(realtimePayload.old);
+                  if (normalizedOld) normalizedPayload.old = normalizedOld;
+                }
+                const analysis = analyzeFactoryOrderRealtimePayload(normalizedPayload, activeFactoryId, ctx);
+                for (const id of analysis.notifyOrderIds) notifyOrderIds.add(id);
+                for (const id of analysis.reassignNotifyOrderIds) reassignNotifyOrderIds.add(id);
+              } catch (realtimeErr) {
+                console.error('[FactoryApp] Realtime ペイロード解析に失敗（再フェッチ結果を優先）', realtimeErr);
               }
-              if (realtimePayload.old && typeof realtimePayload.old === 'object') {
-                const normalizedOld = db.normalizeOrderRow(realtimePayload.old);
-                if (normalizedOld) normalizedPayload.old = normalizedOld;
-              }
-              const analysis = analyzeFactoryOrderRealtimePayload(normalizedPayload, activeFactoryId, ctx);
-              for (const id of analysis.notifyOrderIds) notifyOrderIds.add(id);
-              for (const id of analysis.reassignNotifyOrderIds) reassignNotifyOrderIds.add(id);
             }
           }
 
@@ -3146,10 +3152,6 @@ function orderPartyInfo(order) {
         if (!activeFactoryId) return undefined;
         const factoryId = activeFactoryId;
         let cancel = false;
-        let realtimeTimerId = null;
-        let realtimeRunning = false;
-        let realtimePending = false;
-        let pendingRealtimePayload = null;
         (async () => {
           try {
             const m = await db.fetchSchedulesForFactory(factoryId);
@@ -3161,38 +3163,28 @@ function orderPartyInfo(order) {
         const muteInitial = !initialNotificationMuteDoneRef.current;
         if (muteInitial) initialNotificationMuteDoneRef.current = true;
         void syncFromStorageRef.current({ playSound: true, muteExisting: muteInitial });
-        const runRealtimeSync = async () => {
-          if (realtimeRunning) {
-            realtimePending = true;
-            return;
-          }
-          realtimeRunning = true;
-          try {
-            do {
-              realtimePending = false;
-              const payload = pendingRealtimePayload;
-              pendingRealtimePayload = null;
-              await syncFromStorageRef.current({ playSound: true }, payload);
-              try {
-                const m = await db.fetchSchedulesForFactory(factoryId);
-                if (!cancel) setScheduleByDate(m);
-              } catch {
-                /* ignore */
-              }
-            } while (realtimePending && !cancel);
-          } finally {
-            realtimeRunning = false;
-          }
-        };
-        const scheduleRealtimeSync = (payload) => {
-          if (payload) pendingRealtimePayload = payload;
-          realtimePending = true;
-          if (realtimeTimerId != null) return;
-          realtimeTimerId = window.setTimeout(() => {
-            realtimeTimerId = null;
-            void runRealtimeSync();
-          }, 500);
-        };
+        const realtimeSync = createSplitRealtimeSyncScheduler({
+          debounceMs: 500,
+          onOrderSync: async (payload) => {
+            if (cancel) return;
+            await syncFromStorageRef.current({ playSound: true }, payload);
+            try {
+              const m = await db.fetchSchedulesForFactory(factoryId);
+              if (!cancel) setScheduleByDate(m);
+            } catch {
+              /* ignore */
+            }
+          },
+          onChatSync: async () => {
+            if (cancel) return;
+            try {
+              const { chatThreads: th } = await db.fetchOrdersWithChat();
+              if (!cancel) setChatThreads(th);
+            } catch (e) {
+              console.error('[FactoryApp] chat realtime sync failed', e);
+            }
+          },
+        });
         let unsubRealtime = () => {};
         void (async () => {
           try {
@@ -3210,10 +3202,11 @@ function orderPartyInfo(order) {
             if (typeof subscribe !== 'function') return;
             unsubRealtime = await subscribe(
               (payload) => {
-                const table = payload?.table;
-                if (table === 'orders' || table === 'schedules') {
-                  scheduleRealtimeSync(payload);
-                }
+                dispatchRealtimePayloadByKind(payload, {
+                  onOrder: (p) => realtimeSync.scheduleOrder(p),
+                  onSchedule: (p) => realtimeSync.scheduleOrder(p),
+                  onChat: (p) => realtimeSync.scheduleChat(p),
+                });
               },
               { skipAuth: true },
             );
@@ -3223,7 +3216,7 @@ function orderPartyInfo(order) {
         })();
         return () => {
           cancel = true;
-          if (realtimeTimerId != null) window.clearTimeout(realtimeTimerId);
+          realtimeSync.dispose();
           try {
             unsubRealtime();
           } catch {
