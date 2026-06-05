@@ -986,12 +986,15 @@ export async function persistScheduleAutoRejections({
 }
 
 /** 工場・カスタマー画面向け: orders / schedules のみ（軽量購読） */
-export async function subscribeOrdersRealtime(onEvent) {
+export async function subscribeOrdersRealtime(onEvent, options = {}) {
   const handler = typeof onEvent === 'function' ? onEvent : () => {};
-  try {
-    await ensurePanelRealtimeAuth?.();
-  } catch (e) {
-    console.warn('[subscribeOrdersRealtime] panel auth skipped', e);
+  const skipAuth = Boolean(options?.skipAuth);
+  if (!skipAuth) {
+    try {
+      await ensurePanelRealtimeAuth?.();
+    } catch (e) {
+      console.warn('[subscribeOrdersRealtime] panel auth skipped', e);
+    }
   }
   if (!supabase?.channel) {
     return () => {};

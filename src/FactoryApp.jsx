@@ -58,6 +58,8 @@ import {
   isOrderManuallyCompleted,
   sortOrdersForHistory,
 } from './utils/orderDeliverySchedule.js';
+import { resolveFactoryIdFromProject } from './utils/dispatchBulkOrder.js';
+import { normalizeFactoryRefId } from './utils/escalationUtils.js';
 
 const FACTORY_SESSION_STORAGE_KEY = 'haisha_factory_site_id_v1';
 const FACTORY_AUTH_STORAGE_KEY = 'haisha_factory_auth_id_v1';
@@ -2798,10 +2800,33 @@ function orderPartyInfo(order) {
         [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById],
       );
 
+      const enrichOrdersWithProjectFactory = useCallback((list) => {
+        const projectById = Object.fromEntries(
+          (projects || []).filter((p) => p?.id).map((p) => [String(p.id), p]),
+        );
+        return (Array.isArray(list) ? list : []).map((order) => {
+          if (!order) return order;
+          const existing = normalizeFactoryRefId(order.preferred_factory_id ?? order.preferredFactoryId);
+          if (existing) return order;
+          const pid = String(order.project_id ?? order.projectId ?? '').trim();
+          if (!pid) return order;
+          const mainId = resolveFactoryIdFromProject(projectById[pid]);
+          if (!mainId) return order;
+          return {
+            ...order,
+            preferred_factory_id: mainId,
+            preferredFactoryId: mainId,
+            main_factory_id: mainId,
+            mainFactoryId: mainId,
+          };
+        });
+      }, [projects]);
+
       const syncFromStorage = useCallback(
         async (options, realtimePayload) => {
           const prevOrders = rawOrdersRef.current;
           let { orders: list, chatThreads: th } = await db.fetchOrdersWithChat();
+          list = enrichOrdersWithProjectFactory(list);
           setChatThreads(th);
 
           const notifyOrderIds = new Set();
@@ -2861,7 +2886,7 @@ function orderPartyInfo(order) {
             applyIncomingOrders(r.orders, { playSound: false });
           }
         },
-        [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById, factories, projects, escalationSettings, holidays],
+        [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById, factories, projects, escalationSettings, holidays, enrichOrdersWithProjectFactory],
       );
 
       const syncFromStorageRef = useRef(syncFromStorage);
@@ -2872,6 +2897,27 @@ function orderPartyInfo(order) {
       useEffect(() => {
         runScheduleAutoPipelineRef.current = runScheduleAutoPipeline;
       }, [runScheduleAutoPipeline]);
+
+      useEffect(() => {
+        if (!activeFactoryId) return undefined;
+        void syncFromStorage({ playSound: false });
+        return undefined;
+      }, [activeFactoryId, factories, projects, holidays, escalationSettings, syncFromStorage]);
+
+      useEffect(() => {
+        if (!activeFactoryId) return undefined;
+        const pollId = window.setInterval(() => {
+          void syncFromStorageRef.current({ playSound: true });
+        }, 30000);
+        const onFocus = () => {
+          void syncFromStorageRef.current({ playSound: true });
+        };
+        window.addEventListener('focus', onFocus);
+        return () => {
+          window.clearInterval(pollId);
+          window.removeEventListener('focus', onFocus);
+        };
+      }, [activeFactoryId]);
 
       useEffect(() => {
         const refreshAfterMapSave = () => {
@@ -3091,12 +3137,12 @@ function orderPartyInfo(order) {
               try {
                 const storedPassword = String(sessionStorage.getItem(FACTORY_PANEL_PASSWORD_KEY) || '').trim();
                 if (storedPassword) {
-                  void issuePanelRealtimeAuth('factory', stored, storedPassword);
+                  await issuePanelRealtimeAuth('factory', stored, storedPassword);
                 } else {
-                  void ensurePanelRealtimeAuth();
+                  await ensurePanelRealtimeAuth();
                 }
               } catch {
-                void ensurePanelRealtimeAuth();
+                await ensurePanelRealtimeAuth();
               }
             } else {
               clearFactoryPanelSession();
@@ -3151,7 +3197,6 @@ function orderPartyInfo(order) {
               try {
                 const m = await db.fetchSchedulesForFactory(factoryId);
                 if (!cancel) setScheduleByDate(m);
-                await runScheduleAutoPipelineRef.current(m);
               } catch {
                 /* ignore */
               }
@@ -3184,12 +3229,15 @@ function orderPartyInfo(order) {
             if (cancel) return;
             const subscribe = db?.subscribeOrdersRealtime;
             if (typeof subscribe !== 'function') return;
-            unsubRealtime = await subscribe((payload) => {
-              const table = payload?.table;
-              if (table === 'orders' || table === 'schedules') {
-                scheduleRealtimeSync(payload);
-              }
-            });
+            unsubRealtime = await subscribe(
+              (payload) => {
+                const table = payload?.table;
+                if (table === 'orders' || table === 'schedules') {
+                  scheduleRealtimeSync(payload);
+                }
+              },
+              { skipAuth: true },
+            );
           } catch (e) {
             console.error('[FactoryApp] realtime subscribe failed', e);
           }

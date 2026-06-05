@@ -419,13 +419,13 @@ export async function ensurePanelRealtimeAuth(preferredToken) {
   if (panelRealtimeAuthPromise) return panelRealtimeAuthPromise;
   panelRealtimeAuthPromise = (async () => {
     try {
-      const creds = detectPanelCredentials();
-      if (creds) {
-        return issuePanelRealtimeAuth(creds.panelType, creds.credentialA, creds.credentialB);
-      }
       const stored = readPanelAuthValue(PANEL_REALTIME_TOKEN_KEY);
       if (stored) {
         return applyPanelRealtimeAuth(stored);
+      }
+      const creds = detectPanelCredentials();
+      if (creds) {
+        return issuePanelRealtimeAuth(creds.panelType, creds.credentialA, creds.credentialB);
       }
       await supabase.realtime.setAuth(null);
       return null;
