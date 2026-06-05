@@ -8,7 +8,7 @@ import {
   issuePanelRealtimeAuth,
   FACTORY_PANEL_PASSWORD_KEY,
 } from './supabaseClient.js';
-import { MapPicker } from './MapPicker.jsx';
+import { OrderSiteMapPanel } from './components/OrderSiteMapPanel.jsx';
 import { buildEscalationContext, filterOrdersForFactory, getEffectiveEscalationMinutes } from './utils/escalationUtils.js';
 import {
   FACTORY_SITE_ID,
@@ -1164,9 +1164,8 @@ function orderPartyInfo(order) {
         order.timeSlotMinutes ??
         (String(order.timeSlot || '').match(/^\d+$/) ? parseInt(String(order.timeSlot), 10) : NaN);
       const matchMinOk = Number.isFinite(matchMinRaw);
-      const mapLat = order.delivery_lat ?? order.deliveryLat ?? order.lat ?? order.latitude ?? null;
-      const mapLng = order.delivery_lng ?? order.deliveryLng ?? order.lng ?? order.longitude ?? null;
-      const hasMapPoint = Number.isFinite(Number(mapLat)) && Number.isFinite(Number(mapLng));
+      const orderProject =
+        projectById?.[String(order?.project_id ?? order?.projectId ?? '')] ?? null;
 
       const pad = isToast ? 'p-3.5' : 'p-3 sm:p-3.5';
       const mixSize = isToast ? 'text-base' : 'text-base sm:text-lg';
@@ -1410,21 +1409,13 @@ function orderPartyInfo(order) {
             <p className="mt-1 text-sm font-black text-slate-900 sm:text-base">{escalationLabel}</p>
           </div>
 
-          {hasMapPoint ? (
-            <div className="mt-3 border-t border-slate-200 pt-3">
-              <p className="text-xs font-black uppercase tracking-wider text-slate-500 sm:text-sm">現場地図</p>
-              <MapPicker
-                lat={String(mapLat)}
-                lng={String(mapLng)}
-                interactive={false}
-                className="mt-2 min-h-[260px]"
-              />
-            </div>
-          ) : (
-            <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-xs font-bold text-slate-500">
-              この注文には地図座標が保存されていません。現場住所: {addr || '—'}
-            </div>
-          )}
+          <div className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-700">
+            <OrderSiteMapPanel
+              order={order}
+              project={orderProject}
+              mapPickerClassName="min-h-[260px]"
+            />
+          </div>
 
           {!isToast && order.id ? (
             <div className="mt-3">

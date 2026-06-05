@@ -30,6 +30,8 @@ import { ThemeToggle } from './components/ThemeToggle.jsx';
 import { OrderCartPreview } from './components/OrderCartPreview.jsx';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
+import { OrderSiteMapPanel } from './components/OrderSiteMapPanel.jsx';
+import { hasOrderSiteMapData } from './utils/orderSiteMap.js';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { customerSuggestTexts, projectSuggestTexts } from './utils/masterSuggest.js';
@@ -805,15 +807,20 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     <button
                       type="button"
                       onClick={handleOpenMap}
-                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-black text-white shadow-sm hover:bg-emerald-700 active:scale-[0.99]"
-                      title="現場地図を開く"
+                      className={
+                        'rounded-lg px-3 py-1.5 text-sm font-black shadow-sm active:scale-[0.99] ' +
+                        (hasOrderSiteMapData(order)
+                          ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                          : 'border border-dashed border-gray-300 bg-gray-100 text-gray-500 hover:bg-gray-200 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400')
+                      }
+                      title={hasOrderSiteMapData(order) ? '現場地図を開く' : '地図エディタを開く（未送信）'}
                     >
-                      地図
+                      {hasOrderSiteMapData(order) ? '地図' : '地図作成'}
                     </button>
                     <button
                       type="button"
                       onClick={(e) => void handleCopyMapUrl(e)}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-black text-slate-700 shadow-sm hover:bg-slate-50 active:scale-[0.99]"
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-black text-slate-700 shadow-sm hover:bg-slate-50 active:scale-[0.99] dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
                       title="現場地図URLをコピー"
                     >
                       URL
@@ -832,6 +839,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </button>
               </div>
             </div>
+          </div>
+
+          <div className="border-t border-gray-100 px-4 py-3 dark:border-slate-700">
+            <OrderSiteMapPanel order={order} />
           </div>
 
           {/* モバイルのみ：補足情報（縦に読めるように） */}
