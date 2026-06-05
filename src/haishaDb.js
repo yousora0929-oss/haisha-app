@@ -449,7 +449,11 @@ function buildOrderInsertRow(order) {
   const deliveryLat = isSpot ? parseDeliveryCoord(order.delivery_lat ?? order.deliveryLat) : null;
   const deliveryLng = isSpot ? parseDeliveryCoord(order.delivery_lng ?? order.deliveryLng) : null;
   const safeOrder = sanitizeOrderRefs(order);
-  const preferredFactoryId = sanitizeRefId(safeOrder.preferred_factory_id);
+  let preferredFactoryId = sanitizeRefId(safeOrder.preferred_factory_id);
+  const mainFactoryId = sanitizeRefId(safeOrder.main_factory_id ?? safeOrder.mainFactoryId);
+  if (!preferredFactoryId && mainFactoryId) {
+    preferredFactoryId = mainFactoryId;
+  }
   const statusRaw = String(order.status || 'pending').trim() || 'pending';
   const nextOrder = sanitizeOrderDataForDb({
     ...safeOrder,
@@ -467,8 +471,8 @@ function buildOrderInsertRow(order) {
     factorySiteId: null,
     preferred_factory_id: preferredFactoryId,
     preferredFactoryId: preferredFactoryId,
-    main_factory_id: sanitizeRefId(safeOrder.main_factory_id),
-    mainFactoryId: sanitizeRefId(safeOrder.mainFactoryId),
+    main_factory_id: mainFactoryId,
+    mainFactoryId: mainFactoryId,
     delivery_lat: deliveryLat,
     delivery_lng: deliveryLng,
     deliveryLat,

@@ -7,6 +7,48 @@ import {
 import { looksLikeUrlText, sanitizeSiteNameValue } from './siteNameDisplay.js';
 import { normalizeFactoryRefId } from './escalationUtils.js';
 
+/** 物件マスタから工場ID（main_factory_id）を抽出 */
+export function resolveFactoryIdFromProject(project) {
+  if (!project || typeof project !== 'object') return '';
+  return (
+    normalizeFactoryRefId(
+      project.main_factory_id ?? project.mainFactoryId ?? project.factory_id ?? project.factoryId,
+    ) || ''
+  );
+}
+
+/** selectedProjectId から物件オブジェクトを確実に特定 */
+export function resolveTargetProject(context) {
+  const selectedProject = context?.selectedProject;
+  const selectedProjectId = String(context?.selectedProjectId || '').trim();
+  if (selectedProject && selectedProject.id != null) {
+    const projectId = String(selectedProject.id).trim();
+    if (!selectedProjectId || projectId === selectedProjectId) return selectedProject;
+  }
+  if (!selectedProjectId) return null;
+  const pools = [
+    ...(Array.isArray(context?.filteredProjects) ? context.filteredProjects : []),
+    ...(Array.isArray(context?.projects) ? context.projects : []),
+  ];
+  const seen = new Set();
+  for (const p of pools) {
+    if (!p?.id) continue;
+    const id = String(p.id).trim();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    if (id === selectedProjectId) return p;
+  }
+  return null;
+}
+
+/** 発注ペイロード用の工場ID（フォーム値 → 物件メイン工場の順で解決） */
+export function resolveOrderPreferredFactoryId(context) {
+  const fromForm = normalizeFactoryRefId(context?.preferredFactoryId);
+  if (fromForm) return fromForm;
+  if (context?.orderKind === 'spot') return '';
+  return resolveFactoryIdFromProject(resolveTargetProject(context));
+}
+
 const UNLOAD_LABELS = {
   '15': '15分',
   '30': '30分（標準）',
@@ -97,8 +139,8 @@ export function buildEscalationOrderFromFormContext(context) {
     isLocationPending: locationPending,
     project_id: !isSpot && context.selectedProjectId ? String(context.selectedProjectId) : null,
     projectId: !isSpot && context.selectedProjectId ? String(context.selectedProjectId) : null,
-    preferred_factory_id: normalizeFactoryRefId(context.preferredFactoryId) || null,
-    preferredFactoryId: normalizeFactoryRefId(context.preferredFactoryId) || null,
+    preferred_factory_id: resolveOrderPreferredFactoryId(context) || null,
+    preferredFactoryId: resolveOrderPreferredFactoryId(context) || null,
     delivery_lat: isSpot && escalationLat != null ? escalationLat : null,
     delivery_lng: isSpot && escalationLng != null ? escalationLng : null,
     representative_lat: hasRepresentativeCoords ? representativeCoords.lat : null,
@@ -155,7 +197,12 @@ export function buildDispatchOrderForDate(preferredDate, context) {
   const resolvedSiteName =
     !isSpot && projectName ? nameTrim || projectName : nameTrim || addrForName;
 
-  const prefFid = normalizeFactoryRefId(preferredFactoryId);
+  const targetProject = !isSpot ? resolveTargetProject(context) : null;
+  const prefFid = resolveOrderPreferredFactoryId({
+    ...context,
+    selectedProject: targetProject ?? selectedProject,
+  });
+  const mainFactoryId = !isSpot ? resolveFactoryIdFromProject(targetProject) || prefFid : '';
   const preferredFactoryName =
     prefFid && (Array.isArray(factories) ? factories : []).find((f) => f && String(f.id) === prefFid)?.name?.trim();
 
@@ -189,7 +236,7 @@ export function buildDispatchOrderForDate(preferredDate, context) {
     ordered_by: String(orderedBy || '').trim(),
     orderedBy: String(orderedBy || '').trim(),
     project_id: !isSpot && selectedProjectId ? String(selectedProjectId) : null,
-    projectName: selectedProject?.name || '',
+    projectName: targetProject?.name || selectedProject?.name || '',
     delivery_lat: deliveryLatValue,
     delivery_lng: deliveryLngValue,
     deliveryLat: deliveryLatValue,
@@ -202,6 +249,8 @@ export function buildDispatchOrderForDate(preferredDate, context) {
     rough_lng: locationPending ? representativeCoords.lng : null,
     preferred_factory_id: prefFid || null,
     preferredFactoryId: prefFid || null,
+    main_factory_id: mainFactoryId || null,
+    mainFactoryId: mainFactoryId || null,
     preferredFactoryName: preferredFactoryName || '',
     preferredDate: date,
     timeSlot: slot,
@@ -264,6 +313,17 @@ export function validateMultiDateOrderForm(context, dates, { today, isPastPrefer
     !String(context.selectedProjectId || '').trim()
   ) {
     missing.push('物件');
+  }
+  if (!isGuestSiteOrder && context.orderKind === 'project' && String(context.selectedProjectId || '').trim()) {
+    const targetProject = resolveTargetProject(context);
+    if (!targetProject) {
+      missing.push('物件（サジェストから選択し直してください）');
+    } else {
+      const factoryId = resolveOrderPreferredFactoryId(context);
+      if (!factoryId) {
+        missing.push('工場（物件にメイン工場が未設定です。管理画面で設定するか、第一希望工場を選択してください）');
+      }
+    }
   }
   if (context.orderKind === 'spot') {
     const locationPending = Boolean(context.isLocationPending);

@@ -1152,7 +1152,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
 
       const selectedProject = useMemo(
-        () => (projects || []).find((p) => p && p.id === selectedProjectId) || null,
+        () => (projects || []).find((p) => p && String(p.id) === String(selectedProjectId)) || null,
         [projects, selectedProjectId],
       );
       const allowedDeliveryAreas = useMemo(
@@ -2097,6 +2097,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           currentCustomer,
           selectedProject,
           selectedProjectId,
+          filteredProjects,
+          projects,
           preferredFactoryId,
           factories,
           traderName,
@@ -2127,6 +2129,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           currentCustomer,
           selectedProject,
           selectedProjectId,
+          filteredProjects,
+          projects,
           preferredFactoryId,
           factories,
           traderName,
@@ -2221,6 +2225,21 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
       const handleCartBulkConfirm = useCallback(async () => {
         if (!cartItems.length || isSubmittingOrder) return;
+        for (const item of cartItems) {
+          const order = item?.order;
+          if (!order || order.is_spot) continue;
+          const projectId = String(order.project_id || order.projectId || '').trim();
+          if (!projectId) continue;
+          const factoryId = String(
+            order.preferred_factory_id ?? order.preferredFactoryId ?? order.main_factory_id ?? order.mainFactoryId ?? '',
+          ).trim();
+          if (!factoryId) {
+            setSubmitError(
+              '工場情報が不足している注文があります。物件をサジェストから選び直すか、第一希望工場を指定してください。',
+            );
+            return;
+          }
+        }
         setIsSubmittingOrder(true);
         setSubmitError('');
         try {
@@ -2810,9 +2829,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       }
                     }}
                     onSelect={(p) => {
-                      setSelectedProjectId(String(p.id));
+                      const pid = String(p.id);
+                      setSelectedProjectId(pid);
                       setProjectSearchText(String(p.name || '').trim());
                       applyProjectSelection(p);
+                      const factoryId = String(p.main_factory_id ?? p.mainFactoryId ?? '').trim();
+                      if (factoryId) setPreferredFactoryId(factoryId);
                       setSubmitError('');
                     }}
                     emptyHint="該当する物件がありません"
