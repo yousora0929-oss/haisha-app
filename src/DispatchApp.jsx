@@ -256,7 +256,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
     }
 
     async function appendOrderChatMessage(orderId, from, body) {
-      await db.appendChatMessage(orderId, from, body);
+      return db.appendChatMessage(orderId, from, body);
     }
 
     const MIX_SHORTCUTS = ['18-8-20BB', '18-12-20BB', '18-15-20N', '21-15-20N'];
@@ -504,11 +504,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           onMarkChatRead(orderId, messages);
         }
       }, [orderId, messages, onMarkChatRead]);
-      const send = useCallback(() => {
+      const send = useCallback(async () => {
         const t = draft.trim();
         if (!t || !orderId) return;
-        onSendMessage(orderId, t);
-        setDraft('');
+        const ok = await onSendMessage(orderId, t);
+        if (ok !== false) setDraft('');
       }, [draft, onSendMessage, orderId]);
       if (!order) return null;
       return (
@@ -1951,12 +1951,34 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return () => window.removeEventListener('pointerdown', onGesture);
       }, [isLoggedIn, isGuestSiteOrder]);
 
+      const refreshChatThreadsOnly = useCallback(async (orderId, mergedMessages) => {
+        if (orderId && mergedMessages) {
+          setChatThreads((prev) => ({ ...prev, [orderId]: mergedMessages }));
+          return;
+        }
+        try {
+          const { chatThreads: threads } = await db.fetchOrdersWithChat();
+          if (threads && typeof threads === 'object') {
+            setChatThreads(threads);
+          }
+        } catch (err) {
+          logDispatchError('[DispatchApp] チャットスレッド更新に失敗', err);
+        }
+      }, []);
+
       const handleSendMasterChat = useCallback(
         async (orderId, text) => {
-          await appendOrderChatMessage(orderId, 'master', text);
-          await refreshDashboard();
+          try {
+            const messages = await appendOrderChatMessage(orderId, 'customer', text);
+            await refreshChatThreadsOnly(orderId, messages);
+            return true;
+          } catch (err) {
+            db.logChatSendError(err, { orderId, surface: 'DispatchApp' });
+            window.alert(db.formatChatAppendError(err));
+            return false;
+          }
         },
-        [refreshDashboard],
+        [refreshChatThreadsOnly],
       );
 
       const markChatRead = useCallback((orderId, messages) => {

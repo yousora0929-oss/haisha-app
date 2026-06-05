@@ -797,26 +797,118 @@ export async function rejectOrderForFactory(orderId, factoryId) {
   return nextIds;
 }
 
+function normalizeChatMessageSender(from) {
+  const f = String(from || '').trim().toLowerCase();
+  if (f === 'factory') return 'factory';
+  if (f === 'system') return 'system';
+  if (f === 'admin') return 'admin';
+  if (f === 'customer') return 'customer';
+  return 'master';
+}
+
+export function buildChatMessageEntry(from, body) {
+  const text = String(body || '').trim();
+  if (!text) return null;
+  return {
+    id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    from: normalizeChatMessageSender(from),
+    body: text,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function chatMessagesToJsonbArray(messages) {
+  return (Array.isArray(messages) ? messages : [])
+    .filter((m) => m && typeof m === 'object')
+    .map((m) => ({
+      id: m.id != null ? String(m.id) : `msg_${Date.now()}`,
+      from: normalizeChatMessageSender(m.from),
+      body: String(m.body ?? ''),
+      createdAt: m.createdAt != null ? String(m.createdAt) : new Date().toISOString(),
+    }));
+}
+
+export function logChatSendError(error, context = {}) {
+  console.error(
+    'チャット送信エラー詳細:',
+    error?.message,
+    error?.details,
+    error?.hint,
+    { code: error?.code, ...context },
+  );
+}
+
+export function formatChatAppendError(err, fallback = '送信に失敗しました') {
+  const msg = err?.message ? String(err.message) : '';
+  const details = err?.details ? ` (${String(err.details)})` : '';
+  if (msg) return `${fallback}: ${msg}${details}`;
+  return fallback;
+}
+
 export async function appendChatMessage(orderId, from, body) {
-  const t = String(body || '').trim();
-  if (!orderId || !t) return;
-  const id = String(orderId);
+  const id = String(orderId || '').trim();
+  const entry = buildChatMessageEntry(from, body);
+  if (!id || !entry) return null;
+
+  const { data: rpcData, error: rpcErr } = await supabase.rpc('append_order_chat_message', {
+    p_order_id: id,
+    p_from: entry.from,
+    p_body: entry.body,
+  });
+
+  if (!rpcErr) {
+    return normalizeChatMessages(rpcData);
+  }
+
+  const rpcMissing =
+    rpcErr.code === 'PGRST202' ||
+    String(rpcErr.message || '').includes('append_order_chat_message') ||
+    String(rpcErr.details || '').includes('append_order_chat_message');
+
+  if (!rpcMissing) {
+    logChatSendError(rpcErr, { orderId: id, via: 'rpc' });
+    throw rpcErr;
+  }
+
   const { data: row, error: selErr } = await supabase
     .from('orders')
     .select('chat_messages')
     .eq('id', id)
     .maybeSingle();
-  if (selErr) throw selErr;
+  if (selErr) {
+    logChatSendError(selErr, { orderId: id, via: 'select' });
+    throw selErr;
+  }
+  if (!row) {
+    const notFound = new Error('注文が見つからないか、参照権限がありません');
+    notFound.code = 'ORDER_NOT_FOUND';
+    logChatSendError(notFound, { orderId: id, via: 'select' });
+    throw notFound;
+  }
+
   const list = normalizeChatMessages(row?.chat_messages);
-  list.push({
-    id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-    from: from === 'factory' ? 'factory' : from === 'system' ? 'system' : 'master',
-    body: t,
-    createdAt: new Date().toISOString(),
-  });
-  const next = list.slice(-100);
-  const { error: upErr } = await supabase.from('orders').update({ chat_messages: next }).eq('id', id);
-  if (upErr) throw upErr;
+  list.push(entry);
+  const next = chatMessagesToJsonbArray(list.slice(-100));
+
+  const { data: updated, error: upErr } = await supabase
+    .from('orders')
+    .update({ chat_messages: next })
+    .eq('id', id)
+    .select('id, chat_messages')
+    .maybeSingle();
+
+  if (upErr) {
+    logChatSendError(upErr, { orderId: id, via: 'update', payloadKeys: ['chat_messages'] });
+    throw upErr;
+  }
+  if (!updated?.id) {
+    const denied = new Error('チャットの更新が拒否されました（権限またはRLSを確認してください）');
+    denied.code = 'CHAT_UPDATE_DENIED';
+    logChatSendError(denied, { orderId: id, via: 'update' });
+    throw denied;
+  }
+
+  return normalizeChatMessages(updated.chat_messages);
 }
 
 function mapFactoryRow(row) {

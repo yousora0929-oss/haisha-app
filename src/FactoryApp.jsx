@@ -362,7 +362,7 @@ function orderPartyInfo(order) {
 }
 
     async function appendOrderChatMessage(orderId, from, body) {
-      await db.appendChatMessage(orderId, from, body);
+      return db.appendChatMessage(orderId, from, body);
     }
 
     function FactoryOrderChatPanel({ order, orderId, messages, factoryName, onAfterSend }) {
@@ -377,13 +377,17 @@ function orderPartyInfo(order) {
         el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
       }, [list.length, messages]);
       if (!orderId) return null;
-      const send = () => {
+      const send = async () => {
         const t = txt.trim();
         if (!t) return;
-        void appendOrderChatMessage(orderId, 'factory', t).then(() => {
+        try {
+          await appendOrderChatMessage(orderId, 'factory', t);
           setTxt('');
           if (typeof onAfterSend === 'function') onAfterSend();
-        });
+        } catch (err) {
+          db.logChatSendError(err, { orderId, surface: 'FactoryOrderChatPanel' });
+          window.alert(db.formatChatAppendError(err));
+        }
       };
       return (
         <div className="mt-3 flex max-h-[28rem] min-h-0 flex-col rounded-lg border-2 border-slate-300 bg-[#e5ddd5] p-3 shadow-inner sm:mt-4">
