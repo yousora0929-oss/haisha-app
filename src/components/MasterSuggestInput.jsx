@@ -101,8 +101,7 @@ export function MasterSuggestInput({
     blurTimerRef.current = window.setTimeout(() => setPanelOpen(false), 220);
   };
 
-  const pickItem = (item, e) => {
-    e?.preventDefault?.();
+  const pickItem = (item) => {
     if (blurTimerRef.current) {
       window.clearTimeout(blurTimerRef.current);
       blurTimerRef.current = null;
@@ -160,8 +159,11 @@ export function MasterSuggestInput({
                       <button
                         type="button"
                         className={FAVORITE_OPTION_CLASS}
-                        onMouseDown={(e) => pickItem(item, e)}
-                        onTouchStart={(e) => pickItem(item, e)}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          pickItem(item);
+                        }}
+                        onTouchStart={() => pickItem(item)}
                       >
                         <span className="mr-1.5" aria-hidden>
                           ⭐
@@ -186,8 +188,11 @@ export function MasterSuggestInput({
                       <button
                         type="button"
                         className={OPTION_CLASS}
-                        onMouseDown={(e) => pickItem(item, e)}
-                        onTouchStart={(e) => pickItem(item, e)}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          pickItem(item);
+                        }}
+                        onTouchStart={() => pickItem(item)}
                       >
                         {isPinnedHit ? (
                           <span className="mr-1.5 text-amber-600 dark:text-amber-400" aria-hidden>

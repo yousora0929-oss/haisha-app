@@ -997,7 +997,11 @@ export async function subscribeOrdersRealtime(onEvent) {
     .channel(channelName)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, handler)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, handler)
-    .subscribe();
+    .subscribe((status, err) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.error('[subscribeOrdersRealtime] channel error', status, err);
+      }
+    });
   return () => {
     try {
       void supabase?.removeChannel?.(channel);
@@ -1027,7 +1031,11 @@ export async function subscribeHaishaRealtime(onEvent) {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_settings' }, handler)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news' }, handler)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news_reads' }, handler)
-    .subscribe();
+    .subscribe((status, err) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.error('[subscribeHaishaRealtime] channel error', status, err);
+      }
+    });
   return () => {
     try {
       void supabase?.removeChannel?.(channel);

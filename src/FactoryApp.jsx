@@ -1,7 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import * as db from './haishaDb.js';
 import {
-  supabase,
   setFactoryPanelSession,
   clearFactoryPanelSession,
   hasFactoryPanelSession,
@@ -2715,14 +2714,23 @@ function orderPartyInfo(order) {
             setActionNotice('⚠️ 管理者によって注文内容が変更されました。内容を確認してください。');
             window.setTimeout(() => setActionNotice(''), 6000);
           }
-          const head = visible.find((o) => {
+          const isNotifyCandidate = (o) => {
             if (!o?.id) return false;
             if (String(o.status || 'pending') !== 'pending') return false;
             if (isRejectedByFactory(o, activeFactoryId)) return false;
-            if (forceNotify(o.id)) return true;
-            if (notifiedOrderIds.current.has(o.id)) return false;
             return true;
-          }) ?? null;
+          };
+          const head =
+            (notifyOrderIds && notifyOrderIds.size > 0
+              ? visible.find((o) => isNotifyCandidate(o) && forceNotify(o.id))
+              : null) ??
+            visible.find((o) => {
+              if (!isNotifyCandidate(o)) return false;
+              if (forceNotify(o.id)) return true;
+              if (notifiedOrderIds.current.has(o.id)) return false;
+              return true;
+            }) ??
+            null;
           if (head && playSound) {
             const isReassign =
               reassignNotifyOrderIds instanceof Set
@@ -2811,7 +2819,16 @@ function orderPartyInfo(order) {
             for (const id of detected.notifyOrderIds) notifyOrderIds.add(id);
             for (const id of detected.reassignNotifyOrderIds) reassignNotifyOrderIds.add(id);
             if (realtimePayload) {
-              const analysis = analyzeFactoryOrderRealtimePayload(realtimePayload, activeFactoryId, ctx);
+              const normalizedPayload = { ...realtimePayload };
+              if (realtimePayload.new && typeof realtimePayload.new === 'object') {
+                const normalizedNew = db.normalizeOrderRow(realtimePayload.new);
+                if (normalizedNew) normalizedPayload.new = normalizedNew;
+              }
+              if (realtimePayload.old && typeof realtimePayload.old === 'object') {
+                const normalizedOld = db.normalizeOrderRow(realtimePayload.old);
+                if (normalizedOld) normalizedPayload.old = normalizedOld;
+              }
+              const analysis = analyzeFactoryOrderRealtimePayload(normalizedPayload, activeFactoryId, ctx);
               for (const id of analysis.notifyOrderIds) notifyOrderIds.add(id);
               for (const id of analysis.reassignNotifyOrderIds) reassignNotifyOrderIds.add(id);
             }
@@ -2846,6 +2863,15 @@ function orderPartyInfo(order) {
         },
         [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById, factories, projects, escalationSettings, holidays],
       );
+
+      const syncFromStorageRef = useRef(syncFromStorage);
+      const runScheduleAutoPipelineRef = useRef(runScheduleAutoPipeline);
+      useEffect(() => {
+        syncFromStorageRef.current = syncFromStorage;
+      }, [syncFromStorage]);
+      useEffect(() => {
+        runScheduleAutoPipelineRef.current = runScheduleAutoPipeline;
+      }, [runScheduleAutoPipeline]);
 
       useEffect(() => {
         const refreshAfterMapSave = () => {
@@ -3093,6 +3119,7 @@ function orderPartyInfo(order) {
 
       useEffect(() => {
         if (!activeFactoryId) return undefined;
+        const factoryId = activeFactoryId;
         let cancel = false;
         let realtimeTimerId = null;
         let realtimeRunning = false;
@@ -3100,7 +3127,7 @@ function orderPartyInfo(order) {
         let pendingRealtimePayload = null;
         (async () => {
           try {
-            const m = await db.fetchSchedulesForFactory(activeFactoryId);
+            const m = await db.fetchSchedulesForFactory(factoryId);
             if (!cancel) setScheduleByDate(m);
           } catch (e) {
             console.error(e);
@@ -3108,7 +3135,7 @@ function orderPartyInfo(order) {
         })();
         const muteInitial = !initialNotificationMuteDoneRef.current;
         if (muteInitial) initialNotificationMuteDoneRef.current = true;
-        void syncFromStorage({ playSound: true, muteExisting: muteInitial });
+        void syncFromStorageRef.current({ playSound: true, muteExisting: muteInitial });
         const runRealtimeSync = async () => {
           if (realtimeRunning) {
             realtimePending = true;
@@ -3120,11 +3147,11 @@ function orderPartyInfo(order) {
               realtimePending = false;
               const payload = pendingRealtimePayload;
               pendingRealtimePayload = null;
-              await syncFromStorage({ playSound: true }, payload);
+              await syncFromStorageRef.current({ playSound: true }, payload);
               try {
-                const m = await db.fetchSchedulesForFactory(activeFactoryId);
+                const m = await db.fetchSchedulesForFactory(factoryId);
                 if (!cancel) setScheduleByDate(m);
-                await runScheduleAutoPipeline(m);
+                await runScheduleAutoPipelineRef.current(m);
               } catch {
                 /* ignore */
               }
@@ -3145,18 +3172,22 @@ function orderPartyInfo(order) {
         let unsubRealtime = () => {};
         void (async () => {
           try {
-            await ensurePanelRealtimeAuth?.();
+            const factoryPassword =
+              typeof sessionStorage !== 'undefined'
+                ? String(sessionStorage.getItem(FACTORY_PANEL_PASSWORD_KEY) || '').trim()
+                : '';
+            if (factoryPassword) {
+              await issuePanelRealtimeAuth('factory', factoryId, factoryPassword);
+            } else {
+              await ensurePanelRealtimeAuth();
+            }
             if (cancel) return;
-            const subscribe = db?.subscribeHaishaRealtime;
+            const subscribe = db?.subscribeOrdersRealtime;
             if (typeof subscribe !== 'function') return;
             unsubRealtime = await subscribe((payload) => {
               const table = payload?.table;
               if (table === 'orders' || table === 'schedules') {
                 scheduleRealtimeSync(payload);
-                return;
-              }
-              if (table === 'factory_news' || table === 'factory_news_reads') {
-                void refreshFactoryNewsUnread();
               }
             });
           } catch (e) {
@@ -3172,7 +3203,7 @@ function orderPartyInfo(order) {
             /* ignore */
           }
         };
-      }, [activeFactoryId, syncFromStorage, runScheduleAutoPipeline, refreshFactoryNewsUnread]);
+      }, [activeFactoryId]);
 
       const handleToggleBlockVehicle = useCallback(
         (dateStr, blockId, vehicleKey, next) => {
