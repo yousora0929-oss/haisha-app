@@ -1,4 +1,18 @@
-import { todayLocalISODate } from '../haishaConstants.js';
+/** 純粋ユーティリティ（db / コンポーネントへ依存しない） */
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+function getTodayLocalISODate() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+function resolveTodayIso(todayIso) {
+  const iso = String(todayIso ?? '').slice(0, 10);
+  return isValidDeliveryDateISO(iso) ? iso : getTodayLocalISODate();
+}
 
 /** 予定日（delivery_date / preferredDate）を YYYY-MM-DD で取得 */
 export function getOrderDeliveryDateISO(order) {
@@ -21,38 +35,42 @@ export function isOrderCancelledForHistory(order) {
 }
 
 /** 予定日が今日以降（当日含む）。日付未設定は進行中に残す */
-export function isOrderDeliveryOnOrAfterToday(order, todayIso = todayLocalISODate()) {
+export function isOrderDeliveryOnOrAfterToday(order, todayIso) {
+  const today = resolveTodayIso(todayIso);
   const d = getOrderDeliveryDateISO(order);
   if (!isValidDeliveryDateISO(d)) return true;
-  return d >= todayIso;
+  return d >= today;
 }
 
 /** 予定日が今日より過去（昨日以前） */
-export function isOrderDeliveryBeforeToday(order, todayIso = todayLocalISODate()) {
+export function isOrderDeliveryBeforeToday(order, todayIso) {
+  const today = resolveTodayIso(todayIso);
   const d = getOrderDeliveryDateISO(order);
   if (!isValidDeliveryDateISO(d)) return false;
-  return d < todayIso;
+  return d < today;
 }
 
 /**
  * 進行中一覧: 手動完了・キャンセル以外で、予定日が今日以降（または未設定）
  */
-export function isOrderInProgressView(order, todayIso = todayLocalISODate()) {
+export function isOrderInProgressView(order, todayIso) {
   if (!order) return false;
+  const today = resolveTodayIso(todayIso);
   if (isOrderCancelledForHistory(order)) return false;
   if (isOrderManuallyCompleted(order)) return false;
-  if (isOrderDeliveryBeforeToday(order, todayIso)) return false;
+  if (isOrderDeliveryBeforeToday(order, today)) return false;
   return true;
 }
 
 /**
  * 履歴一覧: 手動完了 OR 予定日が昨日以前 OR キャンセル系
  */
-export function isOrderInHistoryView(order, todayIso = todayLocalISODate()) {
+export function isOrderInHistoryView(order, todayIso) {
   if (!order) return false;
+  const today = resolveTodayIso(todayIso);
   if (isOrderCancelledForHistory(order)) return true;
   if (isOrderManuallyCompleted(order)) return true;
-  if (isOrderDeliveryBeforeToday(order, todayIso)) return true;
+  if (isOrderDeliveryBeforeToday(order, today)) return true;
   return false;
 }
 

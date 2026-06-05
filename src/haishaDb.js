@@ -982,21 +982,33 @@ export async function persistScheduleAutoRejections({
 }
 
 export async function subscribeHaishaRealtime(onEvent) {
-  await ensurePanelRealtimeAuth();
+  const handler = typeof onEvent === 'function' ? onEvent : () => {};
+  try {
+    await ensurePanelRealtimeAuth?.();
+  } catch (e) {
+    console.warn('[subscribeHaishaRealtime] panel auth skipped', e);
+  }
+  if (!supabase?.channel) {
+    return () => {};
+  }
   const channelName = `haisha-realtime-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const channel = supabase
     .channel(channelName)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, onEvent)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, onEvent)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'factories' }, onEvent)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, onEvent)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_settings' }, onEvent)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news' }, onEvent)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news_reads' }, onEvent)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_escalation_steps' }, onEvent)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, handler)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, handler)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'factories' }, handler)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, handler)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_settings' }, handler)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news' }, handler)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news_reads' }, handler)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_escalation_steps' }, handler)
     .subscribe();
   return () => {
-    void supabase.removeChannel(channel);
+    try {
+      void supabase?.removeChannel?.(channel);
+    } catch {
+      /* ignore */
+    }
   };
 }
 

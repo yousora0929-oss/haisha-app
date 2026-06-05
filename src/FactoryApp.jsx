@@ -60,8 +60,6 @@ import {
   sortOrdersForHistory,
 } from './utils/orderDeliverySchedule.js';
 
-const todayLocalISO = todayLocalISODate;
-
 const FACTORY_SESSION_STORAGE_KEY = 'haisha_factory_site_id_v1';
 const FACTORY_AUTH_STORAGE_KEY = 'haisha_factory_auth_id_v1';
 const FACTORY_SPLIT_STORAGE_KEY = 'haisha_factory_split_left_pct_v1';
@@ -2461,7 +2459,7 @@ function orderPartyInfo(order) {
       const [loginLoading, setLoginLoading] = useState(false);
       const [isFactoryAuthenticated, setIsFactoryAuthenticated] = useState(false);
       const [selectedDate, setSelectedDate] = useState(() => {
-        const t = todayLocalISO();
+        const t = todayLocalISODate();
         const { minIso, maxIso } = getScheduleDateBoundsISO();
         if (t < minIso) return minIso;
         if (t > maxIso) return maxIso;
@@ -2504,7 +2502,7 @@ function orderPartyInfo(order) {
         const now = new Date();
         return new Date(now.getFullYear(), now.getMonth(), 1);
       });
-      const [calendarSelectedDate, setCalendarSelectedDate] = useState(() => todayLocalISO());
+      const [calendarSelectedDate, setCalendarSelectedDate] = useState(() => todayLocalISODate());
       const [currentMonth, setCurrentMonth] = useState(() => {
         const now = new Date();
         return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -2955,6 +2953,36 @@ function orderPartyInfo(order) {
         [handleFactoryRefresh],
       );
 
+      const todaySchedule = useMemo(() => todayLocalISODate(), [escalationTick]);
+
+      const factoryInProgressOrders = useMemo(
+        () => (orders || []).filter((o) => isOrderInProgressView(o, todaySchedule)),
+        [orders, todaySchedule],
+      );
+
+      const factoryHistoryOrders = useMemo(
+        () =>
+          sortOrdersForHistory((orders || []).filter((o) => isOrderInHistoryView(o, todaySchedule))),
+        [orders, todaySchedule],
+      );
+
+      const newOrdersCount = useMemo(
+        () =>
+          (factoryInProgressOrders || []).filter((order) => {
+            if (!order?.id) return false;
+            if (readOrderIds.has(String(order.id))) return false;
+            if (isRejectedByFactory(order, activeFactoryId)) return false;
+            const orderStatus = String(order.status || '').trim();
+            if (['accepted', 'rejected', 'customer_cancelled', 'cancelled', 'completed', 'deleted'].includes(orderStatus)) {
+              return false;
+            }
+            if (normalizeFactoryResponse(order.factoryResponseStatus)) return false;
+            const assignedFactoryId = getAssignedFactoryId(order);
+            return !assignedFactoryId || isSameFactoryId(assignedFactoryId, activeFactoryId);
+          }).length,
+        [factoryInProgressOrders, activeFactoryId, readOrderIds],
+      );
+
       const handleOpenOrderFromCalendar = useCallback(
         (orderId) => {
           const id = String(orderId || '').trim();
@@ -2995,12 +3023,18 @@ function orderPartyInfo(order) {
         if (!activeFactoryId) return undefined;
         let unsub = () => {};
         void (async () => {
-          unsub = await db.subscribeHaishaRealtime((payload) => {
-            const table = payload?.table;
-            if (table === 'factory_news' || table === 'factory_news_reads') {
-              void refreshFactoryNewsUnread();
-            }
-          });
+          try {
+            const subscribe = db?.subscribeHaishaRealtime;
+            if (typeof subscribe !== 'function') return;
+            unsub = await subscribe((payload) => {
+              const table = payload?.table;
+              if (table === 'factory_news' || table === 'factory_news_reads') {
+                void refreshFactoryNewsUnread();
+              }
+            });
+          } catch (e) {
+            console.error('[FactoryApp] factory_news realtime subscribe failed', e);
+          }
         })();
         return () => unsub();
       }, [activeFactoryId, refreshFactoryNewsUnread]);
@@ -3486,38 +3520,8 @@ function orderPartyInfo(order) {
             ];
           }),
         ];
-        downloadCsv(`concrete-link-factory-${todayLocalISO()}.csv`, rows);
+        downloadCsv(`concrete-link-factory-${todayLocalISODate()}.csv`, rows);
       }, [orders]);
-
-      const todaySchedule = useMemo(() => todayLocalISO(), [escalationTick]);
-
-      const factoryInProgressOrders = useMemo(
-        () => (orders || []).filter((o) => isOrderInProgressView(o, todaySchedule)),
-        [orders, todaySchedule],
-      );
-
-      const factoryHistoryOrders = useMemo(
-        () =>
-          sortOrdersForHistory((orders || []).filter((o) => isOrderInHistoryView(o, todaySchedule))),
-        [orders, todaySchedule],
-      );
-
-      const newOrdersCount = useMemo(
-        () =>
-          (factoryInProgressOrders || []).filter((order) => {
-            if (!order?.id) return false;
-            if (readOrderIds.has(String(order.id))) return false;
-            if (isRejectedByFactory(order, activeFactoryId)) return false;
-            const orderStatus = String(order.status || '').trim();
-            if (['accepted', 'rejected', 'customer_cancelled', 'cancelled', 'completed', 'deleted'].includes(orderStatus)) {
-              return false;
-            }
-            if (normalizeFactoryResponse(order.factoryResponseStatus)) return false;
-            const assignedFactoryId = getAssignedFactoryId(order);
-            return !assignedFactoryId || isSameFactoryId(assignedFactoryId, activeFactoryId);
-          }).length,
-        [factoryInProgressOrders, activeFactoryId, readOrderIds],
-      );
 
       if (!isFactoryAuthenticated) {
         return (
