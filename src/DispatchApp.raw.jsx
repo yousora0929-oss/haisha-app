@@ -971,8 +971,8 @@ const { useState, useCallback, useEffect, useRef, useMemo } = React;
             <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6 lg:px-8">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
-                  <a href="/" className="inline-flex w-fit items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label="CONCRETE_LINK トップへ戻る">
-                    <img src="src/assets/concrete-link-logo.svg" alt="CONCRETE_LINK" className="h-10 w-auto" />
+                  <a href="/" className="inline-flex w-fit items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label="CONCRETELINK トップへ戻る">
+                    <img src="src/assets/concrete-link-logo.svg" alt="CONCRETELINK" className="h-10 w-auto" />
                   </a>
                   <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">管理者</p>
                 </div>
