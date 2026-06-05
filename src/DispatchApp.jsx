@@ -56,6 +56,10 @@ import {
   analyzeCustomerOrderRealtimePayload,
 } from './utils/customerOrderRealtime.js';
 import {
+  detectCustomerChatNotifications,
+  analyzeCustomerChatRealtimePayload,
+} from './utils/customerChatRealtime.js';
+import {
   getOrderDeliveryDateISO,
   isOrderInHistoryView,
   isOrderInProgressView,
@@ -63,6 +67,8 @@ import {
 } from './utils/orderDeliverySchedule.js';
 import {
   primeNotificationAlarm,
+  primeChatNotificationSound,
+  playChatNotificationSound,
   startNotificationAlarm,
   stopNotificationAlarm,
 } from './utils/notificationAlarm.js';
@@ -651,9 +657,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
     function InProgressOrderCard({
       order,
-      messages,
       hasUnreadChat,
-      onMarkChatRead,
       onOpenChat,
       onAllowStatusReset,
       guestToken = '',
@@ -714,19 +718,22 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         [mapUrl],
       );
 
-      useEffect(() => {
-        if (order?.id && typeof onMarkChatRead === 'function') {
-          onMarkChatRead(order.id, messages);
-        }
-      }, [order?.id, messages, onMarkChatRead]);
-
       return (
         <article
           className={
-            'rounded-xl border bg-white shadow-sm transition dark:bg-slate-800 ' +
+            'relative rounded-xl border bg-white shadow-sm transition dark:bg-slate-800 ' +
             (isCustomerCancelled ? 'border-red-200 dark:border-red-800' : 'border-gray-100 dark:border-slate-700')
           }
         >
+          {hasUnreadChat ? (
+            <span
+              className="absolute right-3 top-3 z-10 inline-flex items-center rounded bg-amber-500 px-2 py-0.5 text-xs font-bold text-white shadow-sm animate-bounce dark:bg-amber-600"
+              role="status"
+              aria-label="新着チャットメッセージあり"
+            >
+              💬 新着メッセージ
+            </span>
+          ) : null}
           <div className="flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between md:gap-4 md:py-2">
             {/* 左〜中央：情報セグメント */}
             <div className="min-w-0 flex-1 md:grid md:grid-cols-2 md:gap-4 2xl:flex 2xl:items-stretch 2xl:gap-0">
@@ -742,9 +749,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   <OrderStatusBadges order={order} />
                   <LocationPendingBadge order={order} />
                 </div>
-                {hasUnreadChat ? (
-                  <p className="mt-1 text-xs font-black text-red-700">新着チャットあり</p>
-                ) : null}
               </div>
 
               {/* 第二セグメント：配合と数量 */}
@@ -1086,6 +1090,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [dashboardOrders, setDashboardOrders] = useState([]);
       const [chatThreads, setChatThreads] = useState({});
       const [readChatKeys, setReadChatKeys] = useState({});
+      const [unreadChatsByOrder, setUnreadChatsByOrder] = useState({});
       const [activeChatOrderId, setActiveChatOrderId] = useState('');
       const [adminNotice, setAdminNotice] = useState('');
       const [customerOrderTab, setCustomerOrderTab] = useState('active');
@@ -1312,6 +1317,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, []);
 
       const prevOrdersRef = useRef(null);
+      const prevChatThreadsRef = useRef(null);
+      const readChatKeysRef = useRef(readChatKeys);
+      readChatKeysRef.current = readChatKeys;
+      const activeChatOrderIdRef = useRef(activeChatOrderId);
+      activeChatOrderIdRef.current = activeChatOrderId;
       const dashboardNoticeTimerRef = useRef(null);
 
       const showDashboardNotice = useCallback((message, { playSound = false } = {}) => {
@@ -1397,7 +1407,34 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               }
             }
 
+            const prevThreads = prevChatThreadsRef.current;
+            if (prevThreads && !realtimePayload) {
+              const chatDetected = detectCustomerChatNotifications(
+                prevThreads,
+                newThreads,
+                displayOrders.map((o) => o?.id).filter(Boolean),
+                readChatKeysRef.current,
+              );
+              if (chatDetected.notifyOrderIds.length > 0) {
+                const viewingId = String(activeChatOrderIdRef.current || '');
+                const audibleIds = chatDetected.notifyOrderIds.filter((id) => String(id) !== viewingId);
+                if (audibleIds.length > 0) {
+                  playChatNotificationSound();
+                }
+              }
+            }
+
+            const unreadMap = {};
+            for (const order of displayOrders) {
+              if (!order?.id || !isOrderInProgressView(order, today)) continue;
+              if (isUnreadForDispatch(newThreads[order.id], readChatKeysRef.current[order.id])) {
+                unreadMap[order.id] = true;
+              }
+            }
+            setUnreadChatsByOrder(unreadMap);
+
             prevOrdersRef.current = displayOrders;
+            prevChatThreadsRef.current = newThreads;
             setDashboardOrders(Array.isArray(displayOrders) ? displayOrders : []);
             setChatThreads(newThreads);
           } catch (loadErr) {
@@ -1797,7 +1834,20 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           }
         };
         const scheduleRefresh = (payload) => {
-          if (payload) pendingPayload = payload;
+          if (payload) {
+            pendingPayload = payload;
+            const chatHint = analyzeCustomerChatRealtimePayload(
+              payload,
+              isRelevantDashboardOrder,
+              prevChatThreadsRef.current || {},
+              readChatKeysRef.current,
+            );
+            if (chatHint.shouldPlayChatSound) {
+              const viewingId = String(activeChatOrderIdRef.current || '');
+              const audible = chatHint.notifyOrderIds.some((id) => String(id) !== viewingId);
+              if (audible) playChatNotificationSound();
+            }
+          }
           pending = true;
           if (timerId != null) return;
           timerId = window.setTimeout(() => {
@@ -1852,7 +1902,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
       useEffect(() => {
         if (!isLoggedIn && !isGuestSiteOrder) return undefined;
-        const onGesture = () => primeNotificationAlarm();
+        const onGesture = () => {
+          primeNotificationAlarm();
+          primeChatNotificationSound();
+        };
         window.addEventListener('pointerdown', onGesture, { once: true, passive: true });
         return () => window.removeEventListener('pointerdown', onGesture);
       }, [isLoggedIn, isGuestSiteOrder]);
@@ -1870,6 +1923,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         if (!orderId || !key) return;
         clearAppBadge();
         setReadChatKeys((prev) => (prev?.[orderId] === key ? prev : { ...prev, [orderId]: key }));
+        setUnreadChatsByOrder((prev) => {
+          if (!prev[orderId]) return prev;
+          const next = { ...prev };
+          delete next[orderId];
+          return next;
+        });
       }, []);
 
       const handleAllowStatusReset = useCallback(
@@ -2509,9 +2568,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           <span aria-hidden>{icon}</span>
                           <span className="flex-1">{label}</span>
                           {id === 'active' && unreadChatCount > 0 ? (
-                            <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold text-white">
-                              {unreadChatCount}
-                            </span>
+                            <span
+                              className="ml-1 inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse"
+                              aria-label="未読チャットあり"
+                            />
                           ) : null}
                         </button>
                       );
@@ -3389,9 +3449,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                             <InProgressOrderCard
                               key={ord.id || `ord-${i}`}
                               order={ord}
-                              messages={chatThreads[ord.id]}
-                              hasUnreadChat={isUnreadForDispatch(chatThreads[ord.id], readChatKeys[ord.id])}
-                              onMarkChatRead={markChatRead}
+                              hasUnreadChat={Boolean(
+                                unreadChatsByOrder[ord.id] ||
+                                  isUnreadForDispatch(chatThreads[ord.id], readChatKeys[ord.id]),
+                              )}
                               onOpenChat={setActiveChatOrderId}
                               onAllowStatusReset={handleAllowStatusReset}
                               guestToken={isGuestSiteOrder ? guestOrderToken : ''}
@@ -3583,9 +3644,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           <span className="mt-1 inline-flex items-center justify-center leading-none">
                             {label}
                             {id === 'active' && unreadChatCount > 0 ? (
-                              <span className="ml-1.5 rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
-                                {unreadChatCount}
-                              </span>
+                              <span
+                                className="ml-1 inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse"
+                                aria-label="未読チャットあり"
+                              />
                             ) : null}
                           </span>
                         </button>

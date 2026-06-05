@@ -249,6 +249,52 @@ export function primeNotificationAlarm() {
   }
 }
 
+const CHAT_NOTE1_HZ = 880;
+const CHAT_NOTE2_HZ = 1175;
+const CHAT_NOTE3_HZ = 1318;
+const CHAT_PEAK_GAIN = 0.72;
+
+function scheduleChatNote(ctx, startTime, endTime, frequencyHz) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(frequencyHz, startTime);
+  const attackEnd = startTime + 0.015;
+  const releaseStart = Math.max(attackEnd, endTime - 0.05);
+  gain.gain.setValueAtTime(0, startTime);
+  gain.gain.linearRampToValueAtTime(CHAT_PEAK_GAIN, attackEnd);
+  if (releaseStart > attackEnd) gain.gain.setValueAtTime(CHAT_PEAK_GAIN, releaseStart);
+  gain.gain.linearRampToValueAtTime(0, endTime);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(startTime);
+  osc.stop(endTime + 0.03);
+}
+
+/** チャット着信 — 高音3音（ポーン♪）・1回のみ */
+export function playChatNotificationSound() {
+  const ctx = ensureContext();
+  if (!ctx) return;
+
+  const play = () => {
+    const t0 = ctx.currentTime + 0.01;
+    scheduleChatNote(ctx, t0, t0 + 0.16, CHAT_NOTE1_HZ);
+    scheduleChatNote(ctx, t0 + 0.12, t0 + 0.34, CHAT_NOTE2_HZ);
+    scheduleChatNote(ctx, t0 + 0.26, t0 + 0.52, CHAT_NOTE3_HZ);
+  };
+
+  if (ctx.state === 'suspended') {
+    void ctx.resume().then(play).catch(() => {});
+  } else {
+    play();
+  }
+}
+
+/** チャット通知音の再生許可（ユーザー操作後） */
+export function primeChatNotificationSound() {
+  primeNotificationAlarm();
+}
+
 export function startNotificationAlarm() {
   stopNotificationAlarm();
   isPlaying = true;
