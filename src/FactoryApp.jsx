@@ -3020,26 +3020,6 @@ function orderPartyInfo(order) {
       }, [activeTab, refreshFactoryNewsUnread]);
 
       useEffect(() => {
-        if (!activeFactoryId) return undefined;
-        let unsub = () => {};
-        void (async () => {
-          try {
-            const subscribe = db?.subscribeHaishaRealtime;
-            if (typeof subscribe !== 'function') return;
-            unsub = await subscribe((payload) => {
-              const table = payload?.table;
-              if (table === 'factory_news' || table === 'factory_news_reads') {
-                void refreshFactoryNewsUnread();
-              }
-            });
-          } catch (e) {
-            console.error('[FactoryApp] factory_news realtime subscribe failed', e);
-          }
-        })();
-        return () => unsub();
-      }, [activeFactoryId, refreshFactoryNewsUnread]);
-
-      useEffect(() => {
         let cancelled = false;
         (async () => {
           try {
@@ -3162,21 +3142,37 @@ function orderPartyInfo(order) {
             void runRealtimeSync();
           }, 500);
         };
-        let channel = null;
+        let unsubRealtime = () => {};
         void (async () => {
-          await ensurePanelRealtimeAuth();
-          if (cancel) return;
-          channel = supabase
-            .channel('custom-all-channel')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleRealtimeSync)
-            .subscribe();
+          try {
+            await ensurePanelRealtimeAuth?.();
+            if (cancel) return;
+            const subscribe = db?.subscribeHaishaRealtime;
+            if (typeof subscribe !== 'function') return;
+            unsubRealtime = await subscribe((payload) => {
+              const table = payload?.table;
+              if (table === 'orders' || table === 'schedules') {
+                scheduleRealtimeSync(payload);
+                return;
+              }
+              if (table === 'factory_news' || table === 'factory_news_reads') {
+                void refreshFactoryNewsUnread();
+              }
+            });
+          } catch (e) {
+            console.error('[FactoryApp] realtime subscribe failed', e);
+          }
         })();
         return () => {
           cancel = true;
           if (realtimeTimerId != null) window.clearTimeout(realtimeTimerId);
-          if (channel) void supabase.removeChannel(channel);
+          try {
+            unsubRealtime();
+          } catch {
+            /* ignore */
+          }
         };
-      }, [activeFactoryId, syncFromStorage, runScheduleAutoPipeline]);
+      }, [activeFactoryId, syncFromStorage, runScheduleAutoPipeline, refreshFactoryNewsUnread]);
 
       const handleToggleBlockVehicle = useCallback(
         (dateStr, blockId, vehicleKey, next) => {

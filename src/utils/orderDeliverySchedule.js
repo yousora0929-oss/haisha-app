@@ -14,9 +14,23 @@ function resolveTodayIso(todayIso) {
   return isValidDeliveryDateISO(iso) ? iso : getTodayLocalISODate();
 }
 
-/** 予定日（delivery_date / preferredDate）を YYYY-MM-DD で取得 */
+/** 予定日（delivery_date / preferredDate / scheduleMatchDate 等）を YYYY-MM-DD で取得 */
 export function getOrderDeliveryDateISO(order) {
-  return String(order?.delivery_date ?? order?.preferredDate ?? order?.preferred_date ?? '').slice(0, 10);
+  if (!order || typeof order !== 'object') return '';
+  const candidates = [
+    order.delivery_date,
+    order.deliveryDate,
+    order.preferredDate,
+    order.preferred_date,
+    order.scheduleMatchDate,
+    order.schedule_match_date,
+  ];
+  for (const raw of candidates) {
+    if (raw == null || raw === '') continue;
+    const iso = String(raw).trim().slice(0, 10);
+    if (isValidDeliveryDateISO(iso)) return iso;
+  }
+  return '';
 }
 
 export function isValidDeliveryDateISO(iso) {

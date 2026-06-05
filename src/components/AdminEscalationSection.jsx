@@ -81,15 +81,21 @@ export function AdminEscalationSection({ factories = [] }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [tableReady, setTableReady] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const stepsByFactoryId = await db.fetchEscalationSteps();
-      setRows(buildFactoryDrafts(factories, stepsByFactoryId));
+      const meta = await db.fetchEscalationStepsMeta();
+      setTableReady(Boolean(meta?.tableReady));
+      if (!meta?.tableReady) {
+        setError(db.ESCALATION_STEPS_MIGRATION_HINT);
+      }
+      setRows(buildFactoryDrafts(factories, meta?.byFactory || {}));
     } catch (e) {
       console.error('[AdminEscalationSection] load failed', e);
+      setTableReady(false);
       setError(e?.message || 'エスカレーション設定の取得に失敗しました');
       setRows(buildFactoryDrafts(factories, {}));
     } finally {
@@ -104,9 +110,15 @@ export function AdminEscalationSection({ factories = [] }) {
   useEffect(() => {
     let unsub = () => {};
     void (async () => {
-      unsub = await db.subscribeHaishaRealtime((payload) => {
-        if (payload?.table === 'factory_escalation_steps') void load();
-      });
+      try {
+        const subscribe = db?.subscribeEscalationStepsRealtime;
+        if (typeof subscribe !== 'function') return;
+        unsub = await subscribe((payload) => {
+          if (payload?.table === 'factory_escalation_steps') void load();
+        });
+      } catch (e) {
+        console.warn('[AdminEscalationSection] realtime subscribe skipped', e);
+      }
     })();
     return () => unsub();
   }, [load]);
@@ -192,6 +204,10 @@ export function AdminEscalationSection({ factories = [] }) {
   };
 
   const handleSaveAll = async () => {
+    if (!tableReady) {
+      setError(db.ESCALATION_STEPS_MIGRATION_HINT);
+      return;
+    }
     setSaving(true);
     setError('');
     setNotice('');
@@ -351,7 +367,7 @@ export function AdminEscalationSection({ factories = [] }) {
       <div className="mt-8 flex justify-end border-t border-gray-200 pt-6 dark:border-gray-700">
         <button
           type="button"
-          disabled={saving || loading || rows.length === 0}
+          disabled={saving || loading || rows.length === 0 || !tableReady}
           onClick={() => void handleSaveAll()}
           className="min-h-[52px] rounded-xl border-2 border-blue-500 bg-blue-600 px-8 text-sm font-black text-white shadow-lg shadow-blue-900/30 transition hover:bg-blue-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:border-slate-500 disabled:bg-slate-600 dark:border-blue-400 dark:bg-blue-500 dark:shadow-blue-950/50 dark:hover:bg-blue-400"
         >

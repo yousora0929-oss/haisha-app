@@ -981,6 +981,32 @@ export async function persistScheduleAutoRejections({
   return { changed: true, orders: next, chatThreads: nextThreads };
 }
 
+/** 工場・カスタマー画面向け: orders / schedules のみ（軽量購読） */
+export async function subscribeOrdersRealtime(onEvent) {
+  const handler = typeof onEvent === 'function' ? onEvent : () => {};
+  try {
+    await ensurePanelRealtimeAuth?.();
+  } catch (e) {
+    console.warn('[subscribeOrdersRealtime] panel auth skipped', e);
+  }
+  if (!supabase?.channel) {
+    return () => {};
+  }
+  const channelName = `haisha-orders-rt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const channel = supabase
+    .channel(channelName)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, handler)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, handler)
+    .subscribe();
+  return () => {
+    try {
+      void supabase?.removeChannel?.(channel);
+    } catch {
+      /* ignore */
+    }
+  };
+}
+
 export async function subscribeHaishaRealtime(onEvent) {
   const handler = typeof onEvent === 'function' ? onEvent : () => {};
   try {
@@ -1001,7 +1027,35 @@ export async function subscribeHaishaRealtime(onEvent) {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_settings' }, handler)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news' }, handler)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news_reads' }, handler)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_escalation_steps' }, handler)
+    .subscribe();
+  return () => {
+    try {
+      void supabase?.removeChannel?.(channel);
+    } catch {
+      /* ignore */
+    }
+  };
+}
+
+/** 管理画面専用: factory_escalation_steps の Realtime（旧 factory_escalation_settings は使用しない） */
+export async function subscribeEscalationStepsRealtime(onEvent) {
+  const handler = typeof onEvent === 'function' ? onEvent : () => {};
+  try {
+    await ensurePanelRealtimeAuth?.();
+  } catch (e) {
+    console.warn('[subscribeEscalationStepsRealtime] panel auth skipped', e);
+  }
+  if (!supabase?.channel) {
+    return () => {};
+  }
+  const channelName = `haisha-escalation-steps-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const channel = supabase
+    .channel(channelName)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'factory_escalation_steps' },
+      handler,
+    )
     .subscribe();
   return () => {
     try {
@@ -1164,7 +1218,10 @@ export async function loginCustomer(phoneNumber, password) {
 
   const missingFn =
     error && (error.code === '42883' || /login_customer/i.test(String(error.message || '')));
-  if (!missingFn) throw error;
+  if (!missingFn) {
+    if (error) throw error;
+    return null;
+  }
 
   const { data: legacy, error: legacyErr } = await supabase
     .from('customers')
@@ -1509,14 +1566,29 @@ export async function updateProject(projectId, payload) {
 function isMissingRelationOrColumnError(error) {
   const code = error?.code ? String(error.code) : '';
   const msg = error?.message ? String(error.message).toLowerCase() : '';
+  const status = error?.status ?? error?.statusCode;
   return (
     code === '42P01' ||
     code === '42703' ||
     code === 'PGRST204' ||
+    code === 'PGRST205' ||
+    status === 404 ||
     msg.includes('does not exist') ||
     msg.includes('could not find') ||
-    msg.includes('schema cache')
+    msg.includes('schema cache') ||
+    msg.includes('not found')
   );
+}
+
+export const ESCALATION_STEPS_MIGRATION_HINT =
+  'factory_escalation_steps テーブルが未作成です。Supabase でマイグレーション supabase/migrations/20260602160000_factory_escalation_steps.sql を適用してください（supabase db push）。';
+
+function escalationStepsUnavailableError(error) {
+  if (!isMissingRelationOrColumnError(error)) return null;
+  const err = new Error(ESCALATION_STEPS_MIGRATION_HINT);
+  err.code = 'ESCALATION_STEPS_TABLE_MISSING';
+  err.cause = error;
+  return err;
 }
 
 async function deleteProjectDependentRows(tableName, columnName, value) {
@@ -2253,18 +2325,7 @@ function normalizeEscalationStepsForSave(stepsArray) {
   return out;
 }
 
-/**
- * factory_escalation_steps を工場IDごとにグループ化（step_number 昇順）
- * @returns {Record<string, Array<{ step_number: number, trigger_minutes: number, target_factory_count: number }>>}
- */
-export async function fetchEscalationSteps() {
-  const { data, error } = await supabase
-    .from('factory_escalation_steps')
-    .select('factory_id, step_number, trigger_minutes, target_factory_count')
-    .order('factory_id', { ascending: true })
-    .order('step_number', { ascending: true });
-  if (error) throw error;
-
+function groupEscalationStepsRows(data) {
   /** @type {Record<string, Array<{ step_number: number, trigger_minutes: number, target_factory_count: number }>>} */
   const byFactory = {};
   for (const row of data || []) {
@@ -2280,13 +2341,54 @@ export async function fetchEscalationSteps() {
   return byFactory;
 }
 
-/** 対象工場のステップを全削除のうえ、新しい配列を一括 insert */
+/**
+ * factory_escalation_steps を工場IDごとにグループ化（step_number 昇順）
+ * テーブル未作成時は空オブジェクト（404 を投げない）
+ * @returns {Record<string, Array<{ step_number: number, trigger_minutes: number, target_factory_count: number }>>}
+ */
+export async function fetchEscalationSteps() {
+  const meta = await fetchEscalationStepsMeta();
+  return meta.byFactory;
+}
+
+/**
+ * @returns {Promise<{ byFactory: Record<string, Array<{ step_number: number, trigger_minutes: number, target_factory_count: number }>>, tableReady: boolean }>}
+ */
+export async function fetchEscalationStepsMeta() {
+  if (!supabase?.from) {
+    console.warn('[fetchEscalationSteps] Supabase client is not ready');
+    return { byFactory: {}, tableReady: false };
+  }
+
+  const { data, error } = await supabase
+    .from('factory_escalation_steps')
+    .select('factory_id, step_number, trigger_minutes, target_factory_count')
+    .order('factory_id', { ascending: true })
+    .order('step_number', { ascending: true });
+
+  if (error) {
+    if (isMissingRelationOrColumnError(error)) {
+      console.warn('[fetchEscalationSteps]', ESCALATION_STEPS_MIGRATION_HINT, error);
+      return { byFactory: {}, tableReady: false };
+    }
+    throw error;
+  }
+
+  return { byFactory: groupEscalationStepsRows(data), tableReady: true };
+}
+
+/** 対象工場のステップを全削除のうえ、新しい配列を一括 insert（.from のみ・RPC 不使用） */
 export async function saveEscalationSteps(factoryId, stepsArray) {
   const fid = sanitizeRefId(factoryId);
   if (!fid) throw new Error('factoryId が必要です');
+  if (!supabase?.from) throw new Error('Supabase クライアントが初期化されていません');
 
   const { error: deleteError } = await supabase.from('factory_escalation_steps').delete().eq('factory_id', fid);
-  if (deleteError) throw deleteError;
+  if (deleteError) {
+    const migrationErr = escalationStepsUnavailableError(deleteError);
+    if (migrationErr) throw migrationErr;
+    throw deleteError;
+  }
 
   const steps = normalizeEscalationStepsForSave(stepsArray);
   if (steps.length === 0) return;
@@ -2299,5 +2401,9 @@ export async function saveEscalationSteps(factoryId, stepsArray) {
   }));
 
   const { error: insertError } = await supabase.from('factory_escalation_steps').insert(rows);
-  if (insertError) throw insertError;
+  if (insertError) {
+    const migrationErr = escalationStepsUnavailableError(insertError);
+    if (migrationErr) throw migrationErr;
+    throw insertError;
+  }
 }

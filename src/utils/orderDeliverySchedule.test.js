@@ -21,6 +21,19 @@ describe('orderDeliverySchedule', () => {
     expect(isOrderInHistoryView(order, today)).toBe(false);
   });
 
+  it('keeps orders with unset or invalid delivery date in progress', () => {
+    expect(isOrderInProgressView({ status: 'pending' }, today)).toBe(true);
+    expect(isOrderInProgressView({ preferredDate: null, status: 'pending' }, today)).toBe(true);
+    expect(isOrderInProgressView({ preferredDate: 'invalid', status: 'pending' }, today)).toBe(true);
+    expect(isOrderInHistoryView({ preferredDate: null, status: 'pending' }, today)).toBe(false);
+  });
+
+  it('uses scheduleMatchDate when preferredDate is absent', () => {
+    const order = { scheduleMatchDate: '2026-06-02', status: 'pending' };
+    expect(getOrderDeliveryDateISO(order)).toBe('2026-06-02');
+    expect(isOrderInProgressView(order, today)).toBe(true);
+  });
+
   it('sorts history by delivery date descending', () => {
     const sorted = sortOrdersForHistory([
       { preferredDate: '2026-05-01', createdAt: '2026-05-01T10:00:00Z' },

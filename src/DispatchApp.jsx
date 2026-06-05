@@ -162,6 +162,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       return `${fallback}: ${message}${code}${details}${hint}`;
     }
 
+    function logDispatchError(label, err, extra = undefined) {
+      const payload =
+        err != null && typeof err === 'object'
+          ? { message: err.message, code: err.code, details: err.details, hint: err.hint, ...extra }
+          : { value: err, ...extra };
+      console.error(label, payload);
+    }
+
     function latestChatMessage(messages) {
       const list = Array.isArray(messages) ? messages.filter(Boolean) : [];
       return list.length ? list[list.length - 1] : null;
@@ -1329,9 +1337,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             const factoryNameById = Object.fromEntries(
               (Array.isArray(factories) ? factories : []).map((f) => [f.id, f.name]),
             );
-            let { orders: newOrders, chatThreads: newThreads } = await db.fetchOrdersWithChat();
+            let fetched = await db.fetchOrdersWithChat();
+            let newOrders = Array.isArray(fetched?.orders) ? fetched.orders : [];
+            let newThreads = fetched?.chatThreads && typeof fetched.chatThreads === 'object' ? fetched.chatThreads : {};
             const idSet = new Set(
-              (Array.isArray(newOrders) ? newOrders : [])
+              newOrders
                 .map((o) => (o && o.factory_site_id ? String(o.factory_site_id).trim() : ''))
                 .filter(Boolean),
             );
@@ -1351,12 +1361,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               defaultFactorySiteId: DISPATCH_DEFAULT_FACTORY_SITE_ID,
             });
             const final = await db.fetchOrdersWithChat();
-            newOrders = final.orders.filter((o) => o && o.status !== 'deleted');
+            newOrders = (Array.isArray(final?.orders) ? final.orders : []).filter(
+              (o) => o && o.status !== 'deleted',
+            );
             const displayOrders =
               isGuestSiteOrder || String(currentCustomerId || '').trim()
-                ? newOrders.filter((o) => isRelevantDashboardOrder(o))
+                ? newOrders.filter((o) => o && isRelevantDashboardOrder(o))
                 : newOrders;
-            newThreads = final.chatThreads;
+            newThreads =
+              final?.chatThreads && typeof final.chatThreads === 'object' ? final.chatThreads : {};
 
             const prevOrders = prevOrdersRef.current;
             if (prevOrders) {
@@ -1385,11 +1398,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             }
 
             prevOrdersRef.current = displayOrders;
-            setDashboardOrders(displayOrders);
+            setDashboardOrders(Array.isArray(displayOrders) ? displayOrders : []);
             setChatThreads(newThreads);
-          } catch (err) {
-            console.error(err);
-            window.alert(formatSupabaseError(err, '注文一覧の更新に失敗しました'));
+          } catch (loadErr) {
+            logDispatchError('[DispatchApp] ダッシュボード注文の取得・更新に失敗', loadErr);
+            window.alert(formatSupabaseError(loadErr, '注文一覧の更新に失敗しました'));
           }
         },
         [factories, preferredFactoryId, currentCustomerId, isGuestSiteOrder, isRelevantDashboardOrder, showDashboardNotice],
@@ -1692,7 +1705,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
       const filteredInProgressOrders = useMemo(
         () =>
-          dashboardOrders
+          (dashboardOrders || [])
             .filter(
               (o) =>
                 o &&
@@ -1792,23 +1805,33 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             void runRefresh();
           }, 500);
         };
-        void refreshDashboard({ playSound: false });
+        void refreshDashboard({ playSound: false }).catch((loadErr) => {
+          logDispatchError('[DispatchApp] 初回ダッシュボード読み込みに失敗', loadErr);
+        });
         const channelKey = isGuestSiteOrder
           ? `dispatch-guest-orders-${String(guestOrderToken || 'guest').replace(/[^a-zA-Z0-9_-]/g, '')}`
           : `dispatch-customer-orders-${String(currentCustomerId || 'customer').replace(/[^a-zA-Z0-9_-]/g, '')}`;
         let channel = null;
         void (async () => {
-          await ensurePanelRealtimeAuth();
-          if (disposed) return;
-          channel = supabase
-            .channel(channelKey)
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleRefresh)
-            .subscribe();
+          try {
+            await ensurePanelRealtimeAuth?.();
+            if (disposed || !supabase?.channel) return;
+            channel = supabase
+              .channel(channelKey)
+              .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleRefresh)
+              .subscribe();
+          } catch (realtimeErr) {
+            logDispatchError('[DispatchApp] orders realtime 購読の開始に失敗', realtimeErr);
+          }
         })();
         return () => {
           disposed = true;
           if (timerId != null) window.clearTimeout(timerId);
-          if (channel) void supabase.removeChannel(channel);
+          try {
+            if (channel) void supabase?.removeChannel?.(channel);
+          } catch {
+            /* ignore */
+          }
         };
       }, [
         isGuestSiteOrder,
@@ -1821,7 +1844,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
       useEffect(() => {
         if (!isLoggedIn || isGuestSiteOrder) return undefined;
-        void ensurePanelRealtimeAuth();
+        void ensurePanelRealtimeAuth?.().catch((realtimeErr) => {
+          logDispatchError('[DispatchApp] Realtime 認証の同期に失敗（続行）', realtimeErr);
+        });
         return undefined;
       }, [isLoggedIn, isGuestSiteOrder]);
 
@@ -1895,19 +1920,27 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             return;
           }
           setLoginLoading(true);
+          let customer = null;
           try {
-            const customer = await db.loginCustomer(phone, password);
-            if (!customer?.id) {
-              setLoginError('電話番号またはパスワードが間違っています。');
-              return;
-            }
+            customer = await db.loginCustomer(phone, password);
+          } catch (authErr) {
+            logDispatchError('カスタマーログイン認証エラー', authErr, { phone });
+            setLoginError('電話番号またはパスワードが間違っています。');
+            setLoginLoading(false);
+            return;
+          }
+
+          if (!customer?.id) {
+            setLoginError('電話番号またはパスワードが間違っています。');
+            setLoginLoading(false);
+            return;
+          }
+
+          try {
             setCurrentCustomerId(customer.id);
             setCustomers([customer]);
             setIsLoggedIn(true);
             setCustomerPanelSession(phone, password);
-            await ensurePanelRealtimeAuth(customer?.realtime_token);
-            primeNotificationAlarm();
-            void registerOneSignalUser(customer.phone_number, { role: 'customer', customer_id: customer.id });
             setLoginPhone('');
             setLoginPassword('');
             setLoginError('');
@@ -1917,9 +1950,30 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             } catch {
               /* ignore */
             }
-          } catch (err) {
-            console.error('カスタマーログインエラー', err);
-            setLoginError('電話番号またはパスワードが間違っています。');
+
+            try {
+              await ensurePanelRealtimeAuth?.(customer?.realtime_token);
+            } catch (realtimeErr) {
+              logDispatchError('[DispatchApp] ログイン後の Realtime 認証に失敗（続行）', realtimeErr, {
+                customerId: customer.id,
+              });
+            }
+
+            try {
+              primeNotificationAlarm?.();
+            } catch (alarmErr) {
+              logDispatchError('[DispatchApp] 通知アラーム初期化に失敗（続行）', alarmErr);
+            }
+
+            void registerOneSignalUser(customer.phone_number, {
+              role: 'customer',
+              customer_id: customer.id,
+            });
+          } catch (postLoginErr) {
+            logDispatchError('[DispatchApp] ログイン後の画面初期化に失敗', postLoginErr, {
+              customerId: customer.id,
+            });
+            setLoginError('ログイン後のデータ読み込みに失敗しました。再読み込みしてください。');
           } finally {
             setLoginLoading(false);
           }
