@@ -33,7 +33,11 @@ import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { customerSuggestTexts, projectSuggestTexts } from './utils/masterSuggest.js';
-import { buildDispatchOrderForDate, validateCartLineForm } from './utils/dispatchBulkOrder.js';
+import {
+  buildDispatchOrderForDate,
+  validateCartLineForm,
+  extractOrderFormDefaultsFromHistory,
+} from './utils/dispatchBulkOrder.js';
 import { buildMapEditorUrl, rememberMapEditorReturnUrl } from './mapEditorConstants.js';
 import { combineDeliveryAddress, extractProjectAddressFields, normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
 import {
@@ -69,6 +73,7 @@ import {
   primeNotificationAlarm,
   primeChatNotificationSound,
   playChatNotificationSound,
+  playOrderConfirmedSound,
   startNotificationAlarm,
   stopNotificationAlarm,
 } from './utils/notificationAlarm.js';
@@ -1345,6 +1350,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       readChatKeysRef.current = readChatKeys;
       const activeChatOrderIdRef = useRef(activeChatOrderId);
       activeChatOrderIdRef.current = activeChatOrderId;
+      const refreshDashboardRef = useRef(() => Promise.resolve());
+      const isRelevantDashboardOrderRef = useRef(() => true);
       const dashboardNoticeTimerRef = useRef(null);
 
       const showDashboardNotice = useCallback((message, { playSound = false } = {}) => {
@@ -1413,6 +1420,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 showDashboardNotice('⚠️ 管理者によって注文内容が変更されました。内容を確認してください。', { playSound });
               } else {
                 const detected = detectCustomerOrderNotifications(prevOrders, displayOrders, isRelevantDashboardOrder);
+                if (!Array.isArray(detected.acceptedSiteLabels)) detected.acceptedSiteLabels = [];
                 if (realtimePayload) {
                   const fromPayload = analyzeCustomerOrderRealtimePayload(
                     realtimePayload,
@@ -1421,9 +1429,20 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   );
                   if (fromPayload.factoryAccepted) detected.factoryAccepted = true;
                   if (fromPayload.factoryReassigned) detected.factoryReassigned = true;
+                  if (Array.isArray(fromPayload.acceptedSiteLabels)) {
+                    detected.acceptedSiteLabels.push(...fromPayload.acceptedSiteLabels.filter(Boolean));
+                  }
                 }
                 if (detected.factoryAccepted) {
-                  showDashboardNotice('注文が工場に受注されました', { playSound });
+                  const sites = Array.isArray(detected.acceptedSiteLabels)
+                    ? detected.acceptedSiteLabels.filter(Boolean)
+                    : [];
+                  const siteMsg =
+                    sites.length > 0
+                      ? `現場「${sites[0]}」の配車が決定しました${sites.length > 1 ? `（他${sites.length - 1}件）` : ''}`
+                      : '注文が工場に受注されました';
+                  showDashboardNotice(siteMsg, { playSound: false });
+                  playOrderConfirmedSound();
                 } else if (detected.factoryReassigned) {
                   showDashboardNotice('手配先工場が変更・調整されました', { playSound });
                 }
@@ -1467,6 +1486,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         },
         [factories, preferredFactoryId, currentCustomerId, isGuestSiteOrder, isRelevantDashboardOrder, showDashboardNotice],
       );
+
+      useEffect(() => {
+        refreshDashboardRef.current = refreshDashboard;
+        isRelevantDashboardOrderRef.current = isRelevantDashboardOrder;
+      }, [refreshDashboard, isRelevantDashboardOrder]);
 
       useEffect(() => {
         if (isGuestSiteOrder) return undefined;
@@ -1835,6 +1859,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         [historyRows, historyStatusFilter, historyCustomerFilter],
       );
 
+      /** チャット・注文の常時 Realtime 購読（チャット画面の開閉と無関係に稼働） */
       useEffect(() => {
         const canSubscribe = isGuestSiteOrder
           ? Boolean(guestSiteOrderCtx && hasGuestSiteOrderSession())
@@ -1846,7 +1871,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           try {
             const chatHint = analyzeCustomerChatRealtimePayload(
               payload,
-              isRelevantDashboardOrder,
+              isRelevantDashboardOrderRef.current,
               prevChatThreadsRef.current || {},
               readChatKeysRef.current,
             );
@@ -1863,14 +1888,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           debounceMs: 500,
           onOrderSync: async (payload) => {
             if (disposed) return;
-            await refreshDashboard({ playSound: true }, payload);
+            await refreshDashboardRef.current({ playSound: true }, payload);
           },
           onChatSync: async () => {
             if (disposed) return;
-            await refreshDashboard({ playSound: false }, null);
+            await refreshDashboardRef.current({ playSound: false }, null);
           },
         });
-        void refreshDashboard({ playSound: false }).catch((loadErr) => {
+        void refreshDashboardRef.current({ playSound: false }).catch((loadErr) => {
           logDispatchError('[DispatchApp] 初回ダッシュボード読み込みに失敗', loadErr);
         });
         const channelKey = isGuestSiteOrder
@@ -1906,14 +1931,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             /* ignore */
           }
         };
-      }, [
-        isGuestSiteOrder,
-        guestSiteOrderCtx,
-        guestOrderToken,
-        isLoggedIn,
-        currentCustomerId,
-        refreshDashboard,
-      ]);
+      }, [isGuestSiteOrder, guestSiteOrderCtx, guestOrderToken, isLoggedIn, currentCustomerId]);
 
       useEffect(() => {
         if (!isLoggedIn || isGuestSiteOrder) return undefined;
@@ -2069,8 +2087,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setCustomers([]);
         setSelectedProjectId('');
         setPreferredFactoryId('');
-        setShowConfirmModal(false);
-        setConfirmOrders([]);
         setLoginPassword('');
         setLoginError('');
         clearCustomerPanelSession();
@@ -2082,32 +2098,96 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         }
       }, []);
 
-      const openRepeatOrderForm = useCallback((row) => {
-        const next = nextAvailableOrderDateTime(today);
-        setExpandedHistoryOrderId((cur) => (cur === row?.id ? '' : row?.id || ''));
-        setRepeatPreferredDate(next.date);
-        setRepeatTimeSlot(next.slot);
-      }, [today]);
+      const applyHistoryOrderToNewForm = useCallback(
+        (row) => {
+          if (!row?.id) {
+            setSubmitError('再発注対象の注文が見つかりません。');
+            return;
+          }
+          const defaults = extractOrderFormDefaultsFromHistory(row);
+          const next = nextAvailableOrderDateTime(today);
+          setOrderKind(defaults.isSpot ? 'spot' : 'project');
+          setSelectedProjectId(defaults.projectId || '');
+          if (defaults.projectId) {
+            const proj = (projects || []).find((p) => p && String(p.id) === String(defaults.projectId));
+            if (proj) applyProjectSelection(proj);
+            else setPreferredFactoryId(defaults.preferredFactoryId || '');
+          } else {
+            setPreferredFactoryId('');
+          }
+          setQuantityM3(defaults.quantityM3 || '');
+          setMixText(defaults.mixText || '');
+          setTraderName(defaults.traderName || '');
+          setContractorName(defaults.contractorName || '');
+          setSiteName(defaults.siteName || '');
+          setDeliveryArea(defaults.deliveryArea || '');
+          setSiteAddressDetail(defaults.siteAddressDetail || '');
+          setSitePhone(defaults.sitePhone || currentCustomer?.phone_number || '');
+          setOrderedBy(defaults.orderedBy || '');
+          setVehicleType(defaults.vehicleType || 'large');
+          setUnloadDuration(defaults.unloadDuration || '30');
+          setHasTest(defaults.hasTest);
+          setIsLocationPending(defaults.isLocationPending);
+          setDeliveryLat(defaults.deliveryLat != null ? String(defaults.deliveryLat) : '');
+          setDeliveryLng(defaults.deliveryLng != null ? String(defaults.deliveryLng) : '');
+          setPreferredDate(next.date);
+          setTimeSlot(next.slot);
+          if (!defaults.preferredFactoryId && defaults.projectId) {
+            const proj = (projects || []).find((p) => p && String(p.id) === String(defaults.projectId));
+            if (proj?.main_factory_id) setPreferredFactoryId(String(proj.main_factory_id));
+          } else if (defaults.preferredFactoryId) {
+            setPreferredFactoryId(defaults.preferredFactoryId);
+          }
+          setSubmitError('');
+          setSubmitNotice('履歴の内容を新規発注フォームに反映しました。数量・配合を変更して発注できます。');
+          setCustomerOrderTab('new');
+          setNewOrderMode('form');
+          window.setTimeout(() => setSubmitNotice(null), 4000);
+          window.setTimeout(() => {
+            orderFormRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+          }, 120);
+        },
+        [applyProjectSelection, currentCustomer, projects, today],
+      );
 
       const confirmRepeatOrder = useCallback(
-        (row) => {
+        async (row) => {
           const item = row?.source || row || {};
-          if (!row?.id) return;
+          if (!row?.id) {
+            setSubmitError('再発注対象の注文が見つかりません。');
+            window.alert('再発注対象の注文が見つかりません。');
+            return;
+          }
           if (isPastPreferredDateTime(repeatPreferredDate, repeatTimeSlot)) {
-            window.alert('現在より過去の日時は指定できません。正しい希望日時を入力してください。');
+            const message = '現在より過去の日時は指定できません。正しい希望日時を入力してください。';
+            setSubmitError(message);
+            window.alert(message);
+            return;
+          }
+          const defaults = extractOrderFormDefaultsFromHistory(row);
+          if (!defaults.quantityM3) {
+            const message = '数量（m³）が履歴から取得できません。フォームから再発注してください。';
+            setSubmitError(message);
+            window.alert(message);
+            return;
+          }
+          if (!defaults.isSpot && !defaults.projectId) {
+            const message = '物件情報が履歴から取得できません。フォームから再発注してください。';
+            setSubmitError(message);
+            window.alert(message);
             return;
           }
           const slotMeta = TIME_SLOTS.find((s) => s.value === repeatTimeSlot);
           const slotLabel = slotMeta?.label ?? '';
           const timeMinutes = parseInt(repeatTimeSlot, 10);
-          const isSpot = item.is_spot === true || !String(item.project_id || row.project_id || '').trim();
-          const prefFid = String(
-            item.preferred_factory_id ??
-              item.preferredFactoryId ??
-              item.factory_site_id ??
-              item.factorySiteId ??
-              '',
-          ).trim();
+          const prefFid = defaults.preferredFactoryId;
+          if (!defaults.isSpot && !prefFid) {
+            const message =
+              '工場情報が不足しています。物件をサジェストから選び直すか、第一希望工場を指定してください。';
+            setSubmitError(message);
+            window.alert(message);
+            return;
+          }
           const repeatOrder = {
             ...item,
             id: undefined,
@@ -2127,8 +2207,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             customerName: currentCustomer?.company_name || currentCustomer?.name || item.customerName || item.customer_name || '',
             phone_number: currentCustomer?.phone_number || item.phone_number || item.customerPhone || '',
             customerPhone: currentCustomer?.phone_number || item.customerPhone || item.phone_number || '',
-            is_spot: isSpot,
-            project_id: !isSpot ? String(item.project_id || row.project_id || '') || null : null,
+            is_spot: defaults.isSpot,
+            project_id: !defaults.isSpot ? defaults.projectId || null : null,
             projectName: item.projectName || item.project_name || row.site || '',
             preferred_factory_id: prefFid || null,
             preferredFactoryId: prefFid || null,
@@ -2139,36 +2219,49 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             timePointLabel: slotLabel,
             scheduleMatchDate: repeatPreferredDate,
             scheduleMatchMinutes: Number.isFinite(timeMinutes) ? timeMinutes : null,
-            vehicleType: item.vehicleType || (item.vehicle === '小型' ? 'small' : 'large'),
-            vehicleLabel: item.vehicleLabel || item.vehicle || (item.vehicleType === 'small' ? '小型' : '大型'),
-            quantityM3: item.confirmedQuantityM3 ?? item.quantityM3 ?? row.quantityM3 ?? '',
+            vehicleType: defaults.vehicleType,
+            vehicleLabel: defaults.vehicleType === 'small' ? '小型' : '大型',
+            quantityM3: defaults.quantityM3,
             confirmedQuantityM3: undefined,
-            unloadDuration: item.unloadDuration || item.unloadDurationMinutes || item.unloadingTime || '30',
-            unloadDurationMinutes: item.unloadDurationMinutes || item.unloadDuration || item.unloadingTime || '30',
-            unloadDurationLabel: item.unloadDurationLabel || unloadDurationLabel(item.unloadDurationMinutes || item.unloadDuration || item.unloadingTime || '30'),
-            mixText: item.mixText || item.confirmedMixText || row.mix || '',
+            unloadDuration: defaults.unloadDuration,
+            unloadDurationMinutes: defaults.unloadDuration,
+            mixText: defaults.mixText,
             confirmedMixText: undefined,
-            traderName: item.traderName || item.trading_company_name || item.projectTradingCompanyName || '',
-            trading_company_name: item.trading_company_name || item.projectTradingCompanyName || item.traderName || '',
-            projectTradingCompanyName: item.projectTradingCompanyName || item.trading_company_name || item.traderName || '',
-            contractorName: item.contractorName || item.customerName || item.customer_name || row.contractor || '',
-            siteName:
-              sanitizeSiteNameValue(item.siteName) ||
-              sanitizeSiteNameValue(item.projectName) ||
-              sanitizeSiteNameValue(row.site) ||
-              '',
-            siteAddress: item.siteAddress || row.siteAddress || '',
-            sitePhone: item.sitePhone || item.phone || row.phone || currentCustomer?.phone_number || '',
-            ordered_by: item.ordered_by || item.orderedBy || row.orderedBy || '',
-            orderedBy: item.orderedBy || item.ordered_by || row.orderedBy || '',
-            has_test: Boolean(item.has_test),
-            delivery_lat: isSpot ? item.delivery_lat ?? item.deliveryLat ?? null : null,
-            delivery_lng: isSpot ? item.delivery_lng ?? item.deliveryLng ?? null : null,
+            traderName: defaults.traderName,
+            trading_company_name: defaults.traderName,
+            projectTradingCompanyName: defaults.traderName,
+            contractorName: defaults.contractorName,
+            siteName: defaults.siteName,
+            siteAddress: defaults.siteAddress || item.siteAddress || row.siteAddress || '',
+            sitePhone: defaults.sitePhone || currentCustomer?.phone_number || '',
+            ordered_by: defaults.orderedBy,
+            orderedBy: defaults.orderedBy,
+            has_test: defaults.hasTest,
+            delivery_lat: defaults.isSpot ? item.delivery_lat ?? item.deliveryLat ?? null : null,
+            delivery_lng: defaults.isSpot ? item.delivery_lng ?? item.deliveryLng ?? null : null,
           };
-          setConfirmOrders([repeatOrder]);
-          setShowConfirmModal(true);
+          setIsSubmittingOrder(true);
+          setSubmitError('');
+          try {
+            await db.insertOrdersBulk([repeatOrder]);
+            await refreshDashboard();
+            setCustomerOrderTab('active');
+            setExpandedHistoryOrderId('');
+            const siteLabel = row.site || defaults.siteName || '現場';
+            const message = `「${siteLabel}」の再発注を確定しました。`;
+            setSubmitNotice(message);
+            window.alert(message);
+            window.setTimeout(() => setSubmitNotice(null), 5000);
+          } catch (err) {
+            console.error('再発注の確定に失敗', err);
+            const message = formatSupabaseError(err, '再発注の確定に失敗しました');
+            setSubmitError(message);
+            window.alert(message);
+          } finally {
+            setIsSubmittingOrder(false);
+          }
         },
-        [currentCustomer, currentCustomerId, repeatPreferredDate, repeatTimeSlot],
+        [currentCustomer, currentCustomerId, repeatPreferredDate, repeatTimeSlot, refreshDashboard],
       );
 
       const orderFormContext = useMemo(
@@ -2284,7 +2377,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           if (missing.length) {
             const message = `次の項目を入力してください: ${missing.join('、')}`;
             setSubmitError(message);
-            if (missing.some((m) => m.includes('過去'))) window.alert(message);
+            window.alert(message);
             return;
           }
           setSubmitError('');
@@ -2306,7 +2399,49 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, []);
 
       const handleCartBulkConfirm = useCallback(async () => {
-        if (!cartItems.length || isSubmittingOrder) return;
+        if (isSubmittingOrder) return;
+        if (!cartItems.length) {
+          const message = '発注リストが空です。日付・配合を入力して「リストに追加」してください。';
+          setSubmitError(message);
+          window.alert(message);
+          return;
+        }
+        for (const item of cartItems) {
+          const order = item?.order;
+          if (!order) {
+            const message = '発注リストに不正な行があります。削除して再度追加してください。';
+            setSubmitError(message);
+            window.alert(message);
+            return;
+          }
+          const date = String(order.preferredDate ?? order.scheduleMatchDate ?? '').trim();
+          const lineContext = {
+            ...orderFormContext,
+            orderKind: order.is_spot ? 'spot' : 'project',
+            selectedProjectId: String(order.project_id ?? order.projectId ?? '').trim(),
+            preferredFactoryId: String(order.preferred_factory_id ?? order.preferredFactoryId ?? '').trim(),
+            quantityM3: String(order.quantityM3 ?? '').trim(),
+            mixText: String(order.mixText ?? '').trim(),
+            timeSlot: String(order.timeSlot ?? '').trim(),
+            deliveryArea: String(order.deliveryArea ?? order.delivery_area ?? '').trim(),
+            siteAddressDetail: String(order.siteAddressDetail ?? order.site_address_detail ?? '').trim(),
+            siteAddress: String(order.siteAddress ?? '').trim(),
+            sitePhone: String(order.sitePhone ?? '').trim(),
+            contractorName: String(order.contractorName ?? '').trim(),
+            isLocationPending: Boolean(order.is_location_pending ?? order.isLocationPending),
+          };
+          const missing = validateCartLineForm(lineContext, date, {
+            today,
+            isPastPreferredDateTime,
+            isGuestSiteOrder,
+          });
+          if (missing.length) {
+            const message = `発注できません。次の項目を確認してください: ${missing.join('、')}`;
+            setSubmitError(message);
+            window.alert(message);
+            return;
+          }
+        }
         for (const item of cartItems) {
           const order = item?.order;
           if (!order || order.is_spot) continue;
@@ -2316,9 +2451,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             order.preferred_factory_id ?? order.preferredFactoryId ?? order.main_factory_id ?? order.mainFactoryId ?? '',
           ).trim();
           if (!factoryId) {
-            setSubmitError(
-              '工場情報が不足している注文があります。物件をサジェストから選び直すか、第一希望工場を指定してください。',
-            );
+            const message =
+              '工場情報が不足している注文があります。物件をサジェストから選び直すか、第一希望工場を指定してください。';
+            setSubmitError(message);
+            window.alert(message);
             return;
           }
         }
@@ -2407,9 +2543,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         currentCustomer,
         resetOrderForm,
         orderKind,
-        adminSettings,
+        orderFormContext,
+        today,
         isGuestSiteOrder,
         guestOrderToken,
+        adminSettings,
       ]);
 
       const btnBase =
@@ -3496,7 +3634,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 <div>
                   <h2 className="text-base font-black text-slate-900">注文履歴</h2>
                   <p className="mt-2 text-xs leading-relaxed text-slate-500">
-                    完了・キャンセル済みの注文です。カードを展開して日付と時間だけ変更し、再発注できます。
+                    完了・キャンセル済みの注文です。「この内容で再発注」でフォームへ反映するか、カードを展開して日時だけ変えて即時再発注できます。
                   </p>
                 </div>
                 <div className="grid gap-2">
@@ -3532,13 +3670,24 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                             <p className="mt-2 break-words text-base font-black text-slate-900">{row.site || '現場未設定'}</p>
                             <p className="mt-1 text-xs font-bold text-slate-500">{row.dateLabel || '日時未設定'}</p>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => openRepeatOrderForm(row)}
-                            className="shrink-0 rounded-xl border-2 border-indigo-600 bg-indigo-600 px-3 py-2 text-xs font-black text-white shadow-sm transition hover:bg-indigo-700 active:scale-[0.99]"
-                          >
-                            この内容で再発注
-                          </button>
+                          <div className="flex shrink-0 flex-col gap-2">
+                            <button
+                              type="button"
+                              onClick={() => applyHistoryOrderToNewForm(row)}
+                              className="rounded-xl border-2 border-indigo-600 bg-indigo-600 px-3 py-2 text-xs font-black text-white shadow-sm transition hover:bg-indigo-700 active:scale-[0.99]"
+                            >
+                              この内容で再発注
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedHistoryOrderId((cur) => (cur === row.id ? '' : row.id || ''))
+                              }
+                              className="rounded-xl border-2 border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 shadow-sm transition hover:bg-slate-50 active:scale-[0.99]"
+                            >
+                              {expandedHistoryOrderId === row.id ? '日時指定を閉じる' : '日時だけ変えて再発注'}
+                            </button>
+                          </div>
                         </div>
 
                         <dl className="mx-4 grid gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-bold text-slate-600">
@@ -3614,10 +3763,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                 </label>
                                 <button
                                   type="button"
-                                  onClick={() => confirmRepeatOrder(row)}
-                                  className="min-h-[52px] rounded-xl border-2 border-orange-500 bg-orange-500 px-4 text-base font-black text-white shadow-sm transition hover:bg-orange-600 active:scale-[0.99]"
+                                  onClick={() => void confirmRepeatOrder(row)}
+                                  disabled={isSubmittingOrder}
+                                  className="min-h-[52px] rounded-xl border-2 border-orange-500 bg-orange-500 px-4 text-base font-black text-white shadow-sm transition hover:bg-orange-600 active:scale-[0.99] disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300"
                                 >
-                                  この日時で確定
+                                  {isSubmittingOrder ? '登録中…' : 'この日時で確定'}
                                 </button>
                               </div>
                             </div>

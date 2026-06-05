@@ -61,6 +61,74 @@ function unloadDurationLabel(value) {
   return UNLOAD_LABELS[String(value || '')] || UNLOAD_LABELS['30'];
 }
 
+/** 配合文字列から呼び強度・スランプ・粗骨材を抽出（例: 21-15-20N） */
+export function parseMixSpec(mixText) {
+  const m = String(mixText || '').trim().match(/^(\d+)-(\d+)-(\d+)([A-Za-z]+)?$/);
+  if (!m) return null;
+  return {
+    strength: m[1],
+    slump: m[2],
+    aggregate: m[3],
+    cement: m[4] ? String(m[4]).toUpperCase() : '',
+    mixText: String(mixText || '').trim(),
+  };
+}
+
+/** 履歴注文から新規発注フォームへ流し込む初期値 */
+export function extractOrderFormDefaultsFromHistory(row) {
+  const item = row?.source && typeof row.source === 'object' ? row.source : row && typeof row === 'object' ? row : {};
+  const projectId = String(item.project_id ?? item.projectId ?? row?.project_id ?? '').trim();
+  const isSpot = item.is_spot === true || !projectId;
+  const mixRaw = String(item.confirmedMixText ?? item.mixText ?? row?.mix ?? '').trim();
+  const mixParts = parseMixSpec(mixRaw);
+  const prefFid = normalizeFactoryRefId(
+    item.preferred_factory_id ??
+      item.preferredFactoryId ??
+      item.main_factory_id ??
+      item.mainFactoryId ??
+      '',
+  );
+
+  let deliveryArea = String(item.delivery_area ?? item.deliveryArea ?? '').trim();
+  let siteAddressDetail = String(item.site_address_detail ?? item.siteAddressDetail ?? '').trim();
+  if (!deliveryArea && !siteAddressDetail && item.siteAddress) {
+    const parts = String(item.siteAddress).split(/\s+/);
+    if (parts.length > 1) {
+      deliveryArea = parts[0];
+      siteAddressDetail = parts.slice(1).join(' ');
+    } else {
+      siteAddressDetail = String(item.siteAddress).trim();
+    }
+  }
+
+  return {
+    isSpot,
+    projectId,
+    preferredFactoryId: prefFid,
+    quantityM3: String(item.confirmedQuantityM3 ?? item.quantityM3 ?? row?.quantityM3 ?? '').trim(),
+    mixText: mixRaw,
+    strength: mixParts?.strength ?? '',
+    slump: mixParts?.slump ?? '',
+    aggregate: mixParts?.aggregate ?? '',
+    traderName: String(
+      item.traderName ?? item.trading_company_name ?? item.projectTradingCompanyName ?? '',
+    ).trim(),
+    contractorName: String(item.contractorName ?? item.customerName ?? item.customer_name ?? row?.contractor ?? '').trim(),
+    siteName: sanitizeSiteNameValue(item.siteName ?? item.projectName ?? item.project_name ?? row?.site ?? ''),
+    sitePhone: String(item.sitePhone ?? item.phone ?? row?.phone ?? '').trim(),
+    orderedBy: String(item.ordered_by ?? item.orderedBy ?? row?.orderedBy ?? '').trim(),
+    vehicleType: item.vehicleType === 'small' || item.vehicle === '小型' ? 'small' : 'large',
+    unloadDuration: String(item.unloadDuration ?? item.unloadDurationMinutes ?? item.unloadingTime ?? '30').trim(),
+    hasTest: Boolean(item.has_test ?? item.hasTest),
+    deliveryLat: item.delivery_lat ?? item.deliveryLat ?? '',
+    deliveryLng: item.delivery_lng ?? item.deliveryLng ?? '',
+    isLocationPending: Boolean(item.is_location_pending ?? item.isLocationPending),
+    deliveryArea,
+    siteAddressDetail,
+    siteAddress: String(item.siteAddress ?? row?.siteAddress ?? '').trim(),
+  };
+}
+
 function parseOptionalCoord(value) {
   if (value == null || value === '') return null;
   const n = Number(value);

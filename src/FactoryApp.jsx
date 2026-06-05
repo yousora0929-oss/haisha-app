@@ -29,9 +29,11 @@ import {
 import { registerOneSignalUser } from './utils/notification.js';
 import {
   primeNotificationAlarm,
+  playFactoryChatNotificationSound,
   startNotificationAlarm,
   stopNotificationAlarm,
 } from './utils/notificationAlarm.js';
+import { analyzeFactoryChatRealtimePayload } from './utils/factoryChatRealtime.js';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
@@ -2476,6 +2478,7 @@ function orderPartyInfo(order) {
       const [acceptSubmitting, setAcceptSubmitting] = useState(false);
       const [actionNotice, setActionNotice] = useState('');
       const [chatThreads, setChatThreads] = useState({});
+      const chatThreadsRef = useRef(chatThreads);
       const [readChatKeys, setReadChatKeys] = useState({});
       const [activeTab, setActiveTab] = useState('orders');
       const [factoryNewsUnread, setFactoryNewsUnread] = useState(0);
@@ -2519,6 +2522,10 @@ function orderPartyInfo(order) {
       useEffect(() => {
         rawOrdersRef.current = rawOrders;
       }, [rawOrders]);
+
+      useEffect(() => {
+        chatThreadsRef.current = chatThreads;
+      }, [chatThreads]);
 
       const refreshChatThreads = useCallback(async () => {
         const { chatThreads: th } = await db.fetchOrdersWithChat();
@@ -3175,9 +3182,13 @@ function orderPartyInfo(order) {
               /* ignore */
             }
           },
-          onChatSync: async () => {
+          onChatSync: async (payload) => {
             if (cancel) return;
             try {
+              if (payload) {
+                const chatHint = analyzeFactoryChatRealtimePayload(payload, chatThreadsRef.current || {});
+                if (chatHint.shouldPlayChatSound) playFactoryChatNotificationSound();
+              }
               const { chatThreads: th } = await db.fetchOrdersWithChat();
               if (!cancel) setChatThreads(th);
             } catch (e) {
@@ -3205,7 +3216,15 @@ function orderPartyInfo(order) {
                 dispatchRealtimePayloadByKind(payload, {
                   onOrder: (p) => realtimeSync.scheduleOrder(p),
                   onSchedule: (p) => realtimeSync.scheduleOrder(p),
-                  onChat: (p) => realtimeSync.scheduleChat(p),
+                  onChat: (p) => {
+                    try {
+                      const chatHint = analyzeFactoryChatRealtimePayload(p, chatThreadsRef.current || {});
+                      if (chatHint.shouldPlayChatSound) playFactoryChatNotificationSound();
+                    } catch (chatErr) {
+                      console.error('[FactoryApp] chat payload handling failed', chatErr);
+                    }
+                    realtimeSync.scheduleChat(p);
+                  },
                 });
               },
               { skipAuth: true },

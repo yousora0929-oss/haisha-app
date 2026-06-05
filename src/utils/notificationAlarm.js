@@ -295,6 +295,68 @@ export function primeChatNotificationSound() {
   primeNotificationAlarm();
 }
 
+const FACTORY_CHAT_NOTE1_HZ = 523;
+const FACTORY_CHAT_NOTE2_HZ = 698;
+const FACTORY_CHAT_PEAK_GAIN = 0.68;
+
+/** 工場向けチャット着信 — 中音2音（注文アラーム・カスタマー着信音と区別） */
+export function playFactoryChatNotificationSound() {
+  const ctx = ensureContext();
+  if (!ctx) return;
+
+  const play = () => {
+    const t0 = ctx.currentTime + 0.01;
+    scheduleChatNote(ctx, t0, t0 + 0.2, FACTORY_CHAT_NOTE1_HZ);
+    scheduleChatNote(ctx, t0 + 0.16, t0 + 0.42, FACTORY_CHAT_NOTE2_HZ);
+  };
+
+  if (ctx.state === 'suspended') {
+    void ctx.resume().then(play).catch(() => {});
+  } else {
+    play();
+  }
+}
+
+const CONFIRM_NOTE1_HZ = 587;
+const CONFIRM_NOTE2_HZ = 784;
+const CONFIRM_NOTE3_HZ = 988;
+
+function scheduleConfirmNote(ctx, startTime, endTime, frequencyHz) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(frequencyHz, startTime);
+  const attackEnd = startTime + 0.02;
+  const releaseStart = Math.max(attackEnd, endTime - 0.06);
+  gain.gain.setValueAtTime(0, startTime);
+  gain.gain.linearRampToValueAtTime(0.7, attackEnd);
+  if (releaseStart > attackEnd) gain.gain.setValueAtTime(0.7, releaseStart);
+  gain.gain.linearRampToValueAtTime(0, endTime);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(startTime);
+  osc.stop(endTime + 0.03);
+}
+
+/** 配車決定・工場受注 — 上品な3音チャイム（1回のみ） */
+export function playOrderConfirmedSound() {
+  const ctx = ensureContext();
+  if (!ctx) return;
+
+  const play = () => {
+    const t0 = ctx.currentTime + 0.01;
+    scheduleConfirmNote(ctx, t0, t0 + 0.22, CONFIRM_NOTE1_HZ);
+    scheduleConfirmNote(ctx, t0 + 0.14, t0 + 0.38, CONFIRM_NOTE2_HZ);
+    scheduleConfirmNote(ctx, t0 + 0.28, t0 + 0.55, CONFIRM_NOTE3_HZ);
+  };
+
+  if (ctx.state === 'suspended') {
+    void ctx.resume().then(play).catch(() => {});
+  } else {
+    play();
+  }
+}
+
 export function startNotificationAlarm() {
   stopNotificationAlarm();
   isPlaying = true;

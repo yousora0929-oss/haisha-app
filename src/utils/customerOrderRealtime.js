@@ -75,10 +75,10 @@ function buildPrevMap(prevOrders) {
 
 /**
  * 再フェッチ前後からカスタマー向け通知イベントを検出
- * @returns {{ factoryAccepted: boolean, factoryReassigned: boolean }}
+ * @returns {{ factoryAccepted: boolean, factoryReassigned: boolean, acceptedSiteLabels: string[] }}
  */
 export function detectCustomerOrderNotifications(prevOrders, nextOrders, isRelevantOrder) {
-  const result = { factoryAccepted: false, factoryReassigned: false };
+  const result = { factoryAccepted: false, factoryReassigned: false, acceptedSiteLabels: [] };
   const isRelevant = typeof isRelevantOrder === 'function' ? isRelevantOrder : () => true;
   const prevById = buildPrevMap(prevOrders);
   const nextList = (Array.isArray(nextOrders) ? nextOrders : []).filter(isRelevant);
@@ -88,6 +88,10 @@ export function detectCustomerOrderNotifications(prevOrders, nextOrders, isRelev
     if (!prev) continue;
     if (orderFactoryWasAccepted(prev, next)) {
       result.factoryAccepted = true;
+      const site =
+        String(next.siteName ?? next.projectName ?? next.site_name ?? next.project_name ?? '').trim() ||
+        String(next.id || '').trim();
+      if (site) result.acceptedSiteLabels.push(site);
     } else if (orderFactoryAssignmentChanged(prev, next)) {
       result.factoryReassigned = true;
     }
@@ -101,7 +105,7 @@ export function detectCustomerOrderNotifications(prevOrders, nextOrders, isRelev
  * @param {(row: object) => object|null} [normalizeRow]
  */
 export function analyzeCustomerOrderRealtimePayload(payload, isRelevantOrder, normalizeRow) {
-  const result = { factoryAccepted: false, factoryReassigned: false, refetch: true };
+  const result = { factoryAccepted: false, factoryReassigned: false, acceptedSiteLabels: [], refetch: true };
   const isRelevant = typeof isRelevantOrder === 'function' ? isRelevantOrder : () => true;
   const normalize = typeof normalizeRow === 'function' ? normalizeRow : (row) => row;
   if (!payload) return result;
@@ -119,6 +123,10 @@ export function analyzeCustomerOrderRealtimePayload(payload, isRelevantOrder, no
 
   if (orderFactoryWasAccepted(oldRow, newRow)) {
     result.factoryAccepted = true;
+    const site =
+      String(newRow.siteName ?? newRow.projectName ?? newRow.site_name ?? newRow.project_name ?? '').trim() ||
+      String(newRow.id || '').trim();
+    if (site) result.acceptedSiteLabels.push(site);
   } else if (orderFactoryAssignmentChanged(oldRow, newRow)) {
     result.factoryReassigned = true;
   }
