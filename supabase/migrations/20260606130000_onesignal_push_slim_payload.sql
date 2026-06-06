@@ -1,5 +1,5 @@
--- pg_net は 64KB 超の body で送信がハングする既知バグあり。
--- orders 行全体を POST せず、プッシュ判定済みの小さな JSON のみ送る。
+-- pg_net → Edge Function: POST body が届かない環境があるため URL params で渡す。
+-- Dashboard → SQL Editor でこのファイル全文を実行してください。
 
 create or replace function public._onesignal_effective_order_status(p_status text, p_order_data jsonb)
 returns text
@@ -24,7 +24,7 @@ declare
   webhook_url text;
   service_key text;
   push_event text := null;
-  payload jsonb;
+  params jsonb;
   old_status text;
   new_status text;
   old_len int;
@@ -83,10 +83,10 @@ begin
   where ds.name = 'service_role_key'
   limit 1;
 
-  payload := jsonb_build_object(
+  params := jsonb_build_object(
     'event', push_event,
-    'order_id', new.id,
-    'customer_id', new.customer_id,
+    'order_id', new.id::text,
+    'customer_id', coalesce(new.customer_id::text, ''),
     'factory_site_id', coalesce(new.factory_site_id::text, new.order_data->>'factory_site_id', new.order_data->>'factorySiteId', ''),
     'preferred_factory_id', coalesce(
       new.preferred_factory_id::text,
@@ -121,18 +121,17 @@ begin
       new.order_data->>'orderedBy',
       '担当者'
     ),
-    'status', new_status
+    'status', coalesce(new_status, '')
   );
 
   perform net.http_post(
     url := webhook_url,
+    params := params,
     headers := jsonb_build_object(
-      'Content-Type', 'application/json',
       'Authorization', 'Bearer ' || coalesce(service_key, ''),
-      'X-Onesignal-Event', push_event,
-      'X-Onesignal-Order-Id', new.id::text
+      'apikey', coalesce(service_key, '')
     ),
-    body := payload,
+    body := '{}'::jsonb,
     timeout_milliseconds := 8000
   );
 
@@ -145,4 +144,4 @@ end;
 $$;
 
 comment on function public.trigger_onesignal_order_push() is
-  'orders 変更時に onesignal-push へ slim payload を pg_net で POST（64KB 超回避）';
+  'orders 変更時に onesignal-push へ URL params で通知（pg_net body 欠損回避）';

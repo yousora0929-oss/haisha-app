@@ -1,6 +1,6 @@
-/** onesignal-push v10 — slim/legacy + pg_net 欠損 body レスキュー */
+/** onesignal-push v11 — pg_net は URL params 経由（body 欠損回避） */
 
-const FUNCTION_VERSION = 10;
+const FUNCTION_VERSION = 11;
 const LEGACY_MAX_BODY_BYTES = 64000;
 const FETCH_ORDER_TIMEOUT_MS = 5000;
 
@@ -284,7 +284,33 @@ async function rescueFromPartialBody(text: string): Promise<IncomingPayload | nu
   return { format: 'rescued', data: row, hint };
 }
 
+function readFromQueryParams(req: Request): SlimPayload | null {
+  const url = new URL(req.url);
+  const event = pickString(url.searchParams.get('event'));
+  const orderId = pickString(url.searchParams.get('order_id'));
+  if (!event || !orderId) return null;
+
+  return {
+    event,
+    order_id: orderId,
+    customer_id: pickString(url.searchParams.get('customer_id')) || null,
+    factory_site_id: pickString(url.searchParams.get('factory_site_id')) || null,
+    preferred_factory_id: pickString(url.searchParams.get('preferred_factory_id')) || null,
+    phone: pickString(url.searchParams.get('phone')) || null,
+    factory_name: pickString(url.searchParams.get('factory_name')) || null,
+    contractor_name: pickString(url.searchParams.get('contractor_name')) || null,
+    sender_name: pickString(url.searchParams.get('sender_name')) || null,
+    status: pickString(url.searchParams.get('status')) || null,
+  };
+}
+
 async function readWebhookPayload(req: Request): Promise<{ incoming: IncomingPayload | null; reason?: string }> {
+  const fromQuery = readFromQueryParams(req);
+  if (fromQuery) {
+    console.log('[onesignal-push] query params', { event: fromQuery.event, orderId: fromQuery.order_id });
+    return { incoming: { format: 'slim', data: fromQuery } };
+  }
+
   const contentLengthHeader = req.headers.get('content-length');
   const rawText = await req.text();
   const bodyLen = rawText.length;
@@ -434,7 +460,9 @@ function isAuthorized(req: Request): boolean {
   const expected = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
   if (!expected) return false;
   const auth = req.headers.get('Authorization') || '';
-  return auth.replace(/^Bearer\s+/i, '').trim() === expected;
+  const bearer = auth.replace(/^Bearer\s+/i, '').trim();
+  const apikey = (req.headers.get('apikey') || '').trim();
+  return bearer === expected || apikey === expected;
 }
 
 async function processSlimPayload(payload: SlimPayload): Promise<void> {
@@ -696,7 +724,7 @@ function scheduleBackground(job: Promise<unknown>): void {
 Deno.serve(async (req) => {
   const started = Date.now();
 
-  if (req.method !== 'POST') {
+  if (req.method !== 'POST' && req.method !== 'GET') {
     return new Response('Method Not Allowed', { status: 405 });
   }
   if (!isAuthorized(req)) {
