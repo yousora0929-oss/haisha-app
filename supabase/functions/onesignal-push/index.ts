@@ -1,4 +1,6 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1';
+/** onesignal-push v7 — 外部 import なし・202 即返却・DB 参照なし */
+
+const FUNCTION_VERSION = 7;
 
 type OrderRow = {
   id?: string;
@@ -17,9 +19,9 @@ type WebhookPayload = {
 };
 
 const ACCEPTED_STATUSES = new Set(['accepted', 'confirmed']);
-const ONESIGNAL_FETCH_TIMEOUT_MS = 5000;
-const DB_LOOKUP_TIMEOUT_MS = 2000;
-const JOB_MAX_MS = 28000;
+const ONESIGNAL_FETCH_TIMEOUT_MS = 4000;
+const BODY_READ_TIMEOUT_MS = 2000;
+const JOB_MAX_MS = 15000;
 const ONESIGNAL_API_URL = 'https://api.onesignal.com/notifications';
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -75,7 +77,6 @@ function orderCustomerPhone(row: OrderRow | null | undefined): string {
   return pickString(od.phone_number, od.customerPhone, od.sitePhone, od.phone);
 }
 
-/** カスタマー向け: UUID + order_data 内の電話番号（DB 参照なし・即時） */
 function resolveCustomerPushExternalIds(row: OrderRow): string[] {
   const ids = new Set<string>();
   const customerId = pickString(row.customer_id);
@@ -84,27 +85,19 @@ function resolveCustomerPushExternalIds(row: OrderRow): string[] {
   return [...ids];
 }
 
-function factoryNameFromOrder(row: OrderRow | null | undefined, factoryName = ''): string {
+function factoryNameFromOrder(row: OrderRow | null | undefined): string {
   const od = orderData(row);
-  return pickString(
-    factoryName,
-    od.acceptedFactoryLabel,
-    od.factorySiteName,
-    od.factory_name,
-    od.factoryName,
-    '工場',
-  );
+  return pickString(od.acceptedFactoryLabel, od.factorySiteName, od.factory_name, od.factoryName, '工場');
 }
 
 function customerAcceptedMessage(order: OrderRow, factoryName: string): string {
-  return `${factoryNameFromOrder(order, factoryName)}がご注文承りました。キャンセルのご連絡は前営業日の12時までに工場へご連絡ください。`;
+  return `${factoryNameFromOrder(order) || factoryName}がご注文承りました。キャンセルのご連絡は前営業日の12時までに工場へご連絡ください。`;
 }
 
 function latestChatMessage(messages: unknown[]): Record<string, unknown> | null {
   const list = messages.filter(Boolean);
   if (!list.length) return null;
-  const last = list[list.length - 1];
-  return asObject(last);
+  return asObject(list[list.length - 1]);
 }
 
 function chatMessageKey(message: Record<string, unknown> | null): string {
@@ -131,8 +124,6 @@ function payloadSendTarget(payload: Record<string, unknown>): string {
       return external.map((id) => String(id)).join(',');
     }
   }
-  const legacy = payload.include_external_user_ids;
-  if (Array.isArray(legacy) && legacy.length) return legacy.map((id) => String(id)).join(',');
   const filters = payload.filters;
   if (Array.isArray(filters) && filters.length) {
     const tag = filters.find((f) => f && typeof f === 'object' && (f as Record<string, unknown>).field === 'tag');
@@ -153,51 +144,24 @@ function tryParseJson(text: string): Record<string, unknown> | null {
   }
 }
 
-async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T | null> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => {
-          console.warn(`[onesignal-push] ${label} timed out after ${ms}ms`);
-          resolve(null);
-        }, ms);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T | null> {
+  return Promise.race([
+    promise,
+    new Promise<null>((resolve) => {
+      setTimeout(() => {
+        console.warn(`[onesignal-push] ${label} timed out after ${ms}ms`);
+        resolve(null);
+      }, ms);
+    }),
+  ]);
 }
 
-async function lookupFactoryName(
-  supabase: ReturnType<typeof createClient>,
-  row: OrderRow,
-): Promise<string> {
-  const fromOrder = factoryNameFromOrder(row);
-  if (fromOrder !== '工場') return fromOrder;
-
-  const od = orderData(row);
-  const factoryId = pickString(row.factory_site_id, od.factory_site_id, od.factorySiteId);
-  if (!factoryId) return '工場';
-
-  const result = await withTimeout(
-    supabase.from('factories').select('name').eq('id', factoryId).maybeSingle(),
-    DB_LOOKUP_TIMEOUT_MS,
-    'factory lookup',
-  );
-  if (!result) return '工場';
-  const { data, error } = result;
-  if (error) {
-    console.warn('[onesignal-push] factory lookup failed', error.message);
-    return '工場';
-  }
-  return pickString(data?.name, '工場');
-}
-
-async function postOneSignal(payload: Record<string, unknown>): Promise<boolean> {
-  const result = await withTimeout(postOneSignalRequest(payload), ONESIGNAL_FETCH_TIMEOUT_MS + 1000, 'OneSignal post');
-  return result === true;
+async function readWebhookPayload(req: Request): Promise<WebhookPayload | null> {
+  const text = await withTimeout(req.text(), BODY_READ_TIMEOUT_MS, 'read body');
+  if (!text) return null;
+  const parsed = tryParseJson(text);
+  if (!parsed) return null;
+  return parsed as WebhookPayload;
 }
 
 async function postOneSignalRequest(payload: Record<string, unknown>): Promise<boolean> {
@@ -220,14 +184,8 @@ async function postOneSignalRequest(payload: Record<string, unknown>): Promise<b
     web_badge: 1,
     ...payload,
   };
-  delete requestPayload.channel_for_external_user_ids;
-  delete requestPayload.include_external_user_ids;
 
   const target = payloadSendTarget(requestPayload);
-  if (isVerboseLog()) {
-    console.log('OneSignal 送信 payload:', JSON.stringify(requestPayload, null, 2));
-  }
-
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), ONESIGNAL_FETCH_TIMEOUT_MS);
 
@@ -242,43 +200,34 @@ async function postOneSignalRequest(payload: Record<string, unknown>): Promise<b
       signal: controller.signal,
     });
 
-    const responseText = await response.text().catch(() => '');
+    const responseText = await withTimeout(response.text(), 2000, 'read OneSignal body') ?? '';
     const parsed = tryParseJson(responseText);
     const notificationId = pickString(parsed?.id);
-    const errors = parsed?.errors;
 
     console.log(
       `[onesignal-push] status=${response.status} target=${target || '(unknown)'} notificationId=${notificationId || 'none'}`,
     );
 
-    if (errors) {
-      console.warn('[onesignal-push] OneSignal errors:', errors);
-    }
-    if (isVerboseLog()) {
-      console.log('[onesignal-push] OneSignal response body:', responseText);
-    }
+    if (parsed?.errors) console.warn('[onesignal-push] OneSignal errors:', parsed.errors);
+    if (isVerboseLog()) console.log('[onesignal-push] response:', responseText);
 
-    if (!response.ok) {
-      return false;
-    }
-    if (!notificationId) {
-      console.warn('[onesignal-push] no notification id — 購読端末が見つかりませんでした', { target });
-      return false;
-    }
-    return true;
+    return response.ok && Boolean(notificationId);
   } catch (error) {
     const isAbort = error instanceof DOMException && error.name === 'AbortError';
-    console.warn(
-      `[onesignal-push] OneSignal fetch ${isAbort ? 'timeout' : 'failed'} target=${target || '(unknown)'}`,
-    );
+    console.warn(`[onesignal-push] OneSignal fetch ${isAbort ? 'timeout' : 'failed'} target=${target}`);
     return false;
   } finally {
     clearTimeout(timeoutId);
   }
 }
 
+async function postOneSignal(payload: Record<string, unknown>): Promise<boolean> {
+  const result = await withTimeout(postOneSignalRequest(payload), ONESIGNAL_FETCH_TIMEOUT_MS + 1500, 'OneSignal post');
+  return result === true;
+}
+
 async function sendToExternalIds(externalIds: string[], message: string, data: Record<string, unknown> = {}) {
-  const ids = [...new Set(externalIds.flatMap((id) => String(id || '').trim()).filter(Boolean))];
+  const ids = [...new Set(externalIds.map((id) => String(id || '').trim()).filter(Boolean))];
   if (!ids.length || !message) return false;
   return postOneSignal({
     include_aliases: { external_id: ids },
@@ -301,48 +250,48 @@ function isAuthorized(req: Request): boolean {
   const expected = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
   if (!expected) return false;
   const auth = req.headers.get('Authorization') || '';
-  const token = auth.replace(/^Bearer\s+/i, '').trim();
-  return token === expected;
+  return auth.replace(/^Bearer\s+/i, '').trim() === expected;
 }
 
-type SendResult = { label: string; ok: boolean };
-
 async function processOrderWebhook(payload: WebhookPayload): Promise<void> {
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-  if (!supabaseUrl || !serviceRoleKey) {
-    console.warn('[onesignal-push] Supabase env missing');
-    return;
-  }
-
-  const supabase = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-
   const eventType = String(payload.type || '').toUpperCase();
   const record = payload.record || {};
   const oldRecord = payload.old_record || null;
   const orderId = pickString(record.id);
-  const sendTasks: Promise<SendResult>[] = [];
   const customerIds = resolveCustomerPushExternalIds(record);
+  const sent: string[] = [];
+
+  console.log('[onesignal-push] process start', { v: FUNCTION_VERSION, eventType, orderId });
 
   if (eventType === 'INSERT') {
     const status = effectiveStatus(record);
     if (status !== 'pending_association' && isPendingLike(status)) {
       const od = orderData(record);
       const contractorName = pickString(od.customerName, od.customer_name, od.contractorName, '新規注文');
-      sendTasks.push(
-        sendToRole('factory', `新規注文が入りました：${contractorName}`, {
-          type: 'new_order',
-          orderId,
-        }).then((ok) => ({ label: 'factory:new_order', ok })),
-      );
+      if (await sendToRole('factory', `新規注文が入りました：${contractorName}`, { type: 'new_order', orderId })) {
+        sent.push('factory:new_order');
+      }
     }
   }
 
   if (eventType === 'UPDATE' && oldRecord) {
     const oldStatus = effectiveStatus(oldRecord);
     const newStatus = effectiveStatus(record);
+    const factoryName = factoryNameFromOrder(record);
+
+    if (isPendingLike(oldStatus) && isAcceptedLike(newStatus) && customerIds.length) {
+      if (await sendToExternalIds(customerIds, customerAcceptedMessage(record, factoryName), {
+        type: 'order_status',
+        orderId,
+        status: newStatus,
+      })) sent.push('customer:accepted');
+    } else if (isPendingLike(oldStatus) && isRejectedLike(newStatus) && customerIds.length) {
+      if (await sendToExternalIds(customerIds, '大変込み合っております。別日をご指定ください。', {
+        type: 'order_status',
+        orderId,
+        status: newStatus,
+      })) sent.push('customer:rejected');
+    }
 
     const oldMessages = asArray(oldRecord.chat_messages);
     const newMessages = asArray(record.chat_messages);
@@ -351,60 +300,15 @@ async function processOrderWebhook(payload: WebhookPayload): Promise<void> {
     const chatAdded = newMessages.length > oldMessages.length &&
       latest != null &&
       chatMessageKey(previous) !== chatMessageKey(latest);
-    const chatFrom = chatAdded ? pickString(latest?.from) : '';
-
-    const needsFactoryName =
-      (isPendingLike(oldStatus) && isAcceptedLike(newStatus)) ||
-      (chatAdded && (chatFrom === 'factory' || chatFrom === 'admin'));
-
-    const factoryNamePromise = needsFactoryName ? lookupFactoryName(supabase, record) : Promise.resolve('工場');
-
-    if (isPendingLike(oldStatus) && isAcceptedLike(newStatus)) {
-      sendTasks.push(
-        factoryNamePromise.then((factoryName) => {
-          if (!customerIds.length) {
-            console.warn('[onesignal-push] customer:accepted skipped — external id なし', { orderId });
-            return { label: 'customer:accepted', ok: false };
-          }
-          return sendToExternalIds(customerIds, customerAcceptedMessage(record, factoryName), {
-            type: 'order_status',
-            orderId,
-            status: newStatus,
-          }).then((ok) => ({ label: 'customer:accepted', ok }));
-        }),
-      );
-    } else if (isPendingLike(oldStatus) && isRejectedLike(newStatus)) {
-      sendTasks.push(
-        (async () => {
-          if (!customerIds.length) {
-            console.warn('[onesignal-push] customer:rejected skipped — external id なし', { orderId });
-            return { label: 'customer:rejected', ok: false };
-          }
-          const ok = await sendToExternalIds(customerIds, '大変込み合っております。別日をご指定ください。', {
-            type: 'order_status',
-            orderId,
-            status: newStatus,
-          });
-          return { label: 'customer:rejected', ok };
-        })(),
-      );
-    }
 
     if (chatAdded) {
-      if (chatFrom === 'factory' || chatFrom === 'admin') {
-        sendTasks.push(
-          factoryNamePromise.then((factoryName) => {
-            if (!customerIds.length) {
-              console.warn('[onesignal-push] customer:chat skipped — external id なし', { orderId });
-              return { label: 'customer:chat', ok: false };
-            }
-            return sendToExternalIds(
-              customerIds,
-              `${factoryName}からメッセージが届いています。`,
-              { type: 'chat', orderId, targetApp: 'customer' },
-            ).then((ok) => ({ label: 'customer:chat', ok }));
-          }),
-        );
+      const chatFrom = pickString(latest?.from);
+      if ((chatFrom === 'factory' || chatFrom === 'admin') && customerIds.length) {
+        if (await sendToExternalIds(
+          customerIds,
+          `${factoryName}からメッセージが届いています。`,
+          { type: 'chat', orderId, targetApp: 'customer' },
+        )) sent.push('customer:chat');
       } else if (chatFrom === 'master' || chatFrom === 'customer') {
         const od = orderData(record);
         const factoryTarget = pickString(
@@ -417,66 +321,63 @@ async function processOrderWebhook(payload: WebhookPayload): Promise<void> {
         );
         const senderName = pickString(od.manager_name, od.contact_person, od.ordered_by, od.orderedBy, '担当者');
         if (factoryTarget) {
-          sendTasks.push(
-            sendToExternalIds(
-              [factoryTarget],
-              `${senderName}から新しいメッセージが届きました。`,
-              { type: 'chat', orderId, targetApp: 'factory' },
-            ).then((ok) => ({ label: 'factory:chat', ok })),
-          );
-        } else {
-          sendTasks.push(
-            sendToRole('factory', `${senderName}から新しいメッセージが届きました。`, {
-              type: 'chat',
-              orderId,
-              targetApp: 'factory',
-            }).then((ok) => ({ label: 'factory:chat_role', ok })),
-          );
-        }
+          if (await sendToExternalIds(
+            [factoryTarget],
+            `${senderName}から新しいメッセージが届きました。`,
+            { type: 'chat', orderId, targetApp: 'factory' },
+          )) sent.push('factory:chat');
+        } else if (await sendToRole('factory', `${senderName}から新しいメッセージが届きました。`, {
+          type: 'chat',
+          orderId,
+          targetApp: 'factory',
+        })) sent.push('factory:chat_role');
       }
     }
   }
 
-  const results = sendTasks.length ? await Promise.all(sendTasks) : [];
-  const sent = results.filter((r) => r.ok).map((r) => r.label);
-  console.log('[onesignal-push] done', { orderId, sent: sent.length ? sent : 'none' });
+  console.log('[onesignal-push] process done', { v: FUNCTION_VERSION, orderId, sent: sent.length ? sent : 'none' });
 }
 
 declare const EdgeRuntime: { waitUntil: (promise: Promise<unknown>) => void } | undefined;
 
+function scheduleBackground(job: Promise<unknown>): void {
+  if (typeof EdgeRuntime !== 'undefined' && typeof EdgeRuntime.waitUntil === 'function') {
+    EdgeRuntime.waitUntil(job);
+    return;
+  }
+  job.catch((error) => console.error('[onesignal-push] background failed', error));
+}
+
 Deno.serve(async (req) => {
+  const started = Date.now();
+
   if (req.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405 });
   }
   if (!isAuthorized(req)) {
-    return new Response(JSON.stringify({ ok: false, error: 'Unauthorized' }), {
+    return new Response(JSON.stringify({ ok: false, error: 'Unauthorized', v: FUNCTION_VERSION }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
   }
-  try {
-    const payload = (await req.json()) as WebhookPayload;
-    const orderId = pickString(payload.record?.id);
 
-    const job = withTimeout(processOrderWebhook(payload), JOB_MAX_MS, 'webhook job').catch((error) => {
-      console.error('[onesignal-push] background job failed', orderId, error);
-    });
-
-    if (typeof EdgeRuntime !== 'undefined' && typeof EdgeRuntime.waitUntil === 'function') {
-      EdgeRuntime.waitUntil(job);
-    } else {
-      await job;
-    }
-
-    return new Response(JSON.stringify({ ok: true, accepted: true, orderId }), {
-      status: 202,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  } catch (error) {
-    console.error('[onesignal-push] handler failed', error);
-    return new Response(JSON.stringify({ ok: false, error: String(error) }), {
-      status: 500,
+  const payload = await readWebhookPayload(req);
+  if (!payload) {
+    return new Response(JSON.stringify({ ok: false, error: 'Invalid payload', v: FUNCTION_VERSION }), {
+      status: 400,
       headers: { 'Content-Type': 'application/json' },
     });
   }
+
+  const orderId = pickString(payload.record?.id);
+  scheduleBackground(
+    withTimeout(processOrderWebhook(payload), JOB_MAX_MS, 'webhook job').catch((error) => {
+      console.error('[onesignal-push] job error', orderId, error);
+    }),
+  );
+
+  return new Response(
+    JSON.stringify({ ok: true, accepted: true, v: FUNCTION_VERSION, orderId, ms: Date.now() - started }),
+    { status: 202, headers: { 'Content-Type': 'application/json' } },
+  );
 });
