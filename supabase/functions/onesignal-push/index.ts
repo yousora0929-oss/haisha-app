@@ -1,6 +1,7 @@
-/** onesignal-push v8 — slim payload（pg_net 64KB 回避）・202 即返却 */
+/** onesignal-push v9 — slim + legacy 両対応・202 即返却 */
 
-const FUNCTION_VERSION = 8;
+const FUNCTION_VERSION = 9;
+const LEGACY_MAX_BODY_BYTES = 64000;
 
 type PushEvent =
   | 'new_order'
@@ -22,9 +23,38 @@ type SlimPayload = {
   status?: string | null;
 };
 
+type OrderRow = {
+  id?: string;
+  status?: string | null;
+  order_data?: Record<string, unknown> | null;
+  chat_messages?: unknown[] | null;
+  customer_id?: string | null;
+  factory_site_id?: string | null;
+  preferred_factory_id?: string | null;
+};
+
+type LegacyWebhookPayload = {
+  type?: string;
+  record?: OrderRow;
+  old_record?: OrderRow | null;
+};
+
+type IncomingPayload =
+  | { format: 'slim'; data: SlimPayload }
+  | { format: 'legacy'; data: LegacyWebhookPayload };
+
+const ACCEPTED_STATUSES = new Set(['accepted', 'confirmed']);
 const ONESIGNAL_FETCH_TIMEOUT_MS = 4000;
 const JOB_MAX_MS = 15000;
 const ONESIGNAL_API_URL = 'https://api.onesignal.com/notifications';
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
 
 function pickString(...values: unknown[]): string {
   for (const value of values) {
@@ -32,6 +62,29 @@ function pickString(...values: unknown[]): string {
     if (text) return text;
   }
   return '';
+}
+
+function orderData(row: OrderRow | null | undefined): Record<string, unknown> {
+  return asObject(row?.order_data);
+}
+
+function effectiveStatus(row: OrderRow | null | undefined): string {
+  const od = orderData(row);
+  const factoryResponse = pickString(od.factoryResponseStatus, od.factory_response_status);
+  if (factoryResponse) return factoryResponse;
+  return pickString(row?.status, od.status) || 'pending';
+}
+
+function isPendingLike(status: string): boolean {
+  return !status || status === 'pending' || status === 'pending_association';
+}
+
+function isAcceptedLike(status: string): boolean {
+  return ACCEPTED_STATUSES.has(status);
+}
+
+function isRejectedLike(status: string): boolean {
+  return status === 'rejected' || status === 'cancelled' || status === 'customer_cancelled';
 }
 
 function phoneExternalIdVariants(value: string): string[] {
@@ -43,12 +96,41 @@ function phoneExternalIdVariants(value: string): string[] {
   return [...ids];
 }
 
+function orderCustomerPhone(row: OrderRow | null | undefined): string {
+  const od = orderData(row);
+  return pickString(od.phone_number, od.customerPhone, od.sitePhone, od.phone);
+}
+
+function resolveCustomerExternalIdsFromRow(row: OrderRow): string[] {
+  const ids = new Set<string>();
+  const customerId = pickString(row.customer_id);
+  if (customerId) ids.add(customerId);
+  for (const variant of phoneExternalIdVariants(orderCustomerPhone(row))) ids.add(variant);
+  return [...ids];
+}
+
 function resolveCustomerExternalIds(payload: SlimPayload): string[] {
   const ids = new Set<string>();
   const customerId = pickString(payload.customer_id);
   if (customerId) ids.add(customerId);
   for (const variant of phoneExternalIdVariants(pickString(payload.phone))) ids.add(variant);
   return [...ids];
+}
+
+function factoryNameFromOrder(row: OrderRow | null | undefined): string {
+  const od = orderData(row);
+  return pickString(od.acceptedFactoryLabel, od.factorySiteName, od.factory_name, od.factoryName, '工場');
+}
+
+function latestChatMessage(messages: unknown[]): Record<string, unknown> | null {
+  const list = messages.filter(Boolean);
+  if (!list.length) return null;
+  return asObject(list[list.length - 1]);
+}
+
+function chatMessageKey(message: Record<string, unknown> | null): string {
+  if (!message) return '';
+  return [message.id, message.createdAt, message.from].map((part) => (part == null ? '' : String(part))).join('|');
 }
 
 function isVerboseLog(): boolean {
@@ -102,28 +184,41 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   ]);
 }
 
-async function readWebhookPayload(req: Request): Promise<SlimPayload | null> {
-  const contentLength = req.headers.get('content-length') ?? 'unknown';
+async function readWebhookPayload(req: Request): Promise<IncomingPayload | null> {
+  const contentLengthHeader = req.headers.get('content-length');
+  const contentLength = contentLengthHeader ? Number(contentLengthHeader) : 0;
   let parsed: unknown;
   try {
     parsed = await req.json();
   } catch (error) {
-    console.warn('[onesignal-push] req.json failed', { contentLength, error: String(error) });
+    console.warn('[onesignal-push] req.json failed', { contentLength: contentLengthHeader, error: String(error) });
     return null;
   }
 
   if (!parsed || typeof parsed !== 'object') {
-    console.warn('[onesignal-push] empty or invalid payload', { contentLength });
+    console.warn('[onesignal-push] empty or invalid payload', { contentLength: contentLengthHeader });
     return null;
   }
 
   const body = parsed as Record<string, unknown>;
-  if (!pickString(body.event)) {
-    console.warn('[onesignal-push] legacy payload rejected — apply slim_payload migration', { contentLength });
-    return null;
+
+  if (pickString(body.event)) {
+    return { format: 'slim', data: body as SlimPayload };
   }
 
-  return body as SlimPayload;
+  if (pickString(body.type) && body.record && typeof body.record === 'object') {
+    if (contentLength > LEGACY_MAX_BODY_BYTES) {
+      console.warn('[onesignal-push] legacy payload too large — apply slim_payload migration', {
+        contentLength,
+      });
+      return null;
+    }
+    console.log('[onesignal-push] legacy payload', { contentLength: contentLengthHeader });
+    return { format: 'legacy', data: body as LegacyWebhookPayload };
+  }
+
+  console.warn('[onesignal-push] unrecognized payload shape', { contentLength: contentLengthHeader });
+  return null;
 }
 
 async function postOneSignalRequest(payload: Record<string, unknown>): Promise<boolean> {
@@ -222,7 +317,7 @@ async function processSlimPayload(payload: SlimPayload): Promise<void> {
   const customerIds = resolveCustomerExternalIds(payload);
   const sent: string[] = [];
 
-  console.log('[onesignal-push] process start', { v: FUNCTION_VERSION, event, orderId });
+  console.log('[onesignal-push] process start', { v: FUNCTION_VERSION, format: 'slim', event, orderId });
 
   switch (event) {
     case 'new_order': {
@@ -287,6 +382,101 @@ async function processSlimPayload(payload: SlimPayload): Promise<void> {
   console.log('[onesignal-push] process done', { v: FUNCTION_VERSION, orderId, sent: sent.length ? sent : 'none' });
 }
 
+async function processLegacyWebhook(payload: LegacyWebhookPayload): Promise<void> {
+  const eventType = String(payload.type || '').toUpperCase();
+  const record = payload.record || {};
+  const oldRecord = payload.old_record || null;
+  const orderId = pickString(record.id);
+  const customerIds = resolveCustomerExternalIdsFromRow(record);
+  const sent: string[] = [];
+
+  console.log('[onesignal-push] process start', { v: FUNCTION_VERSION, format: 'legacy', eventType, orderId });
+
+  if (eventType === 'INSERT') {
+    const status = effectiveStatus(record);
+    if (status !== 'pending_association' && isPendingLike(status)) {
+      const od = orderData(record);
+      const contractorName = pickString(od.customerName, od.customer_name, od.contractorName, '新規注文');
+      if (await sendToRole('factory', `新規注文が入りました：${contractorName}`, { type: 'new_order', orderId })) {
+        sent.push('factory:new_order');
+      }
+    }
+  }
+
+  if (eventType === 'UPDATE' && oldRecord) {
+    const oldStatus = effectiveStatus(oldRecord);
+    const newStatus = effectiveStatus(record);
+    const factoryName = factoryNameFromOrder(record);
+
+    if (isPendingLike(oldStatus) && isAcceptedLike(newStatus) && customerIds.length) {
+      const message =
+        `${factoryName}がご注文承りました。キャンセルのご連絡は前営業日の12時までに工場へご連絡ください。`;
+      if (await sendToExternalIds(customerIds, message, {
+        type: 'order_status',
+        orderId,
+        status: newStatus,
+      })) sent.push('customer:accepted');
+    } else if (isPendingLike(oldStatus) && isRejectedLike(newStatus) && customerIds.length) {
+      if (await sendToExternalIds(customerIds, '大変込み合っております。別日をご指定ください。', {
+        type: 'order_status',
+        orderId,
+        status: newStatus,
+      })) sent.push('customer:rejected');
+    }
+
+    const oldMessages = asArray(oldRecord.chat_messages);
+    const newMessages = asArray(record.chat_messages);
+    const previous = latestChatMessage(oldMessages);
+    const latest = latestChatMessage(newMessages);
+    const chatAdded = newMessages.length > oldMessages.length &&
+      latest != null &&
+      chatMessageKey(previous) !== chatMessageKey(latest);
+
+    if (chatAdded) {
+      const chatFrom = pickString(latest?.from);
+      if ((chatFrom === 'factory' || chatFrom === 'admin') && customerIds.length) {
+        if (await sendToExternalIds(
+          customerIds,
+          `${factoryName}からメッセージが届いています。`,
+          { type: 'chat', orderId, targetApp: 'customer' },
+        )) sent.push('customer:chat');
+      } else if (chatFrom === 'master' || chatFrom === 'customer') {
+        const od = orderData(record);
+        const factoryTarget = pickString(
+          record.factory_site_id,
+          od.factory_site_id,
+          od.factorySiteId,
+          record.preferred_factory_id,
+          od.preferred_factory_id,
+          od.preferredFactoryId,
+        );
+        const senderName = pickString(od.manager_name, od.contact_person, od.ordered_by, od.orderedBy, '担当者');
+        if (factoryTarget) {
+          if (await sendToExternalIds(
+            [factoryTarget],
+            `${senderName}から新しいメッセージが届きました。`,
+            { type: 'chat', orderId, targetApp: 'factory' },
+          )) sent.push('factory:chat');
+        } else if (await sendToRole('factory', `${senderName}から新しいメッセージが届きました。`, {
+          type: 'chat',
+          orderId,
+          targetApp: 'factory',
+        })) sent.push('factory:chat_role');
+      }
+    }
+  }
+
+  console.log('[onesignal-push] process done', { v: FUNCTION_VERSION, orderId, sent: sent.length ? sent : 'none' });
+}
+
+async function processIncoming(incoming: IncomingPayload): Promise<void> {
+  if (incoming.format === 'slim') {
+    await processSlimPayload(incoming.data);
+    return;
+  }
+  await processLegacyWebhook(incoming.data);
+}
+
 declare const EdgeRuntime: { waitUntil: (promise: Promise<unknown>) => void } | undefined;
 
 function scheduleBackground(job: Promise<unknown>): void {
@@ -310,23 +500,37 @@ Deno.serve(async (req) => {
     });
   }
 
-  const payload = await readWebhookPayload(req);
-  if (!payload) {
+  const incoming = await readWebhookPayload(req);
+  if (!incoming) {
     return new Response(JSON.stringify({ ok: false, error: 'Invalid payload', v: FUNCTION_VERSION }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     });
   }
 
-  const orderId = pickString(payload.order_id);
+  const orderId = incoming.format === 'slim'
+    ? pickString(incoming.data.order_id)
+    : pickString(incoming.data.record?.id);
+  const eventLabel = incoming.format === 'slim'
+    ? pickString(incoming.data.event)
+    : pickString(incoming.data.type);
+
   scheduleBackground(
-    withTimeout(processSlimPayload(payload), JOB_MAX_MS, 'webhook job').catch((error) => {
+    withTimeout(processIncoming(incoming), JOB_MAX_MS, 'webhook job').catch((error) => {
       console.error('[onesignal-push] job error', orderId, error);
     }),
   );
 
   return new Response(
-    JSON.stringify({ ok: true, accepted: true, v: FUNCTION_VERSION, orderId, event: payload.event, ms: Date.now() - started }),
+    JSON.stringify({
+      ok: true,
+      accepted: true,
+      v: FUNCTION_VERSION,
+      format: incoming.format,
+      orderId,
+      event: eventLabel,
+      ms: Date.now() - started,
+    }),
     { status: 202, headers: { 'Content-Type': 'application/json' } },
   );
 });
