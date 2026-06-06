@@ -2801,7 +2801,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </aside>
             ) : null}
 
-            <main id="dispatch-dashboard" className="flex-1 min-w-0 flex flex-col p-4 md:p-6 lg:p-8 pb-[max(7rem,calc(env(safe-area-inset-bottom,0px)+6rem))] lg:pb-8">
+            <main id="dispatch-dashboard" className="flex-1 min-w-0 flex flex-col p-4 md:p-6 lg:p-8 pb-24 lg:pb-8">
               <header className="mb-6 flex flex-col gap-4 border-b border-gray-200 pb-4">
                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
                   <div className="min-w-0">
@@ -3857,8 +3857,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             </main>
 
             {!isGuestSiteOrder ? (
-              <nav className="block lg:hidden fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white" aria-label="カスタマー画面ナビゲーション">
-                <div className="px-2 pt-2 pb-[max(3.5rem,calc(env(safe-area-inset-bottom,0px)+3rem))]">
+              <nav className="block lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200" aria-label="カスタマー画面ナビゲーション">
+                <div className="px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2">
                   <div className="mx-auto grid max-w-lg grid-cols-4 gap-1">
                     {CUSTOMER_ORDER_TABS.map(([id, label, icon]) => {
                       const active = customerOrderTab === id;

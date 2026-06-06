@@ -30,16 +30,6 @@ export function MapEditorToolbar({
       <button
         type="button"
         disabled={disabled}
-        className={TOOL_BTN + ' ' + toolActive(MAP_EDITOR_TOOLS.PAN)}
-        onClick={() => onToolChange(MAP_EDITOR_TOOLS.PAN)}
-        title="地図を移動"
-      >
-        <span className="text-lg">✋</span>
-        <span className="hidden sm:inline">移動</span>
-      </button>
-      <button
-        type="button"
-        disabled={disabled}
         className={TOOL_BTN + ' ' + toolActive(MAP_EDITOR_TOOLS.UNLOAD)}
         onClick={() => onToolChange(MAP_EDITOR_TOOLS.UNLOAD)}
         title="荷下ろし地点（赤〇）"
