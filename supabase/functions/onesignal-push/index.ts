@@ -1,6 +1,6 @@
-/** onesignal-push v11 — pg_net は URL params 経由（body 欠損回避） */
+/** onesignal-push v12 — slim / legacy / chat_message（本番DB形式）対応 */
 
-const FUNCTION_VERSION = 11;
+const FUNCTION_VERSION = 12;
 const LEGACY_MAX_BODY_BYTES = 64000;
 const FETCH_ORDER_TIMEOUT_MS = 5000;
 
@@ -40,10 +40,19 @@ type LegacyWebhookPayload = {
   old_record?: OrderRow | null;
 };
 
+/** 本番 DB トリガーが送る形式（receiver_id = 工場ID または customers.id UUID） */
+type ChatMessagePayload = {
+  type?: string;
+  message?: string;
+  order_id?: string;
+  receiver_id?: string;
+};
+
 type IncomingPayload =
   | { format: 'slim'; data: SlimPayload }
   | { format: 'legacy'; data: LegacyWebhookPayload }
-  | { format: 'rescued'; data: OrderRow; hint: 'chat' | 'status' | 'insert' };
+  | { format: 'rescued'; data: OrderRow; hint: 'chat' | 'status' | 'insert' }
+  | { format: 'chat_message'; data: ChatMessagePayload };
 
 const ACCEPTED_STATUSES = new Set(['accepted', 'confirmed']);
 const ONESIGNAL_FETCH_TIMEOUT_MS = 4000;
@@ -326,6 +335,14 @@ async function readWebhookPayload(req: Request): Promise<{ incoming: IncomingPay
     if (parsed) {
       if (pickString(parsed.event)) {
         return { incoming: { format: 'slim', data: parsed as SlimPayload } };
+      }
+
+      if (pickString(parsed.type) === 'chat_message') {
+        console.log('[onesignal-push] chat_message payload', {
+          receiverId: pickString(parsed.receiver_id),
+          orderId: pickString(parsed.order_id),
+        });
+        return { incoming: { format: 'chat_message', data: parsed as ChatMessagePayload } };
       }
 
       const record = parsed.record;
@@ -699,6 +716,40 @@ async function processRescued(record: OrderRow, hint: 'chat' | 'status' | 'inser
   console.log('[onesignal-push] process done', { v: FUNCTION_VERSION, orderId, sent: sent.length ? sent : 'none' });
 }
 
+function isFactoryReceiverId(receiverId: string): boolean {
+  return /^FACTORY_/i.test(receiverId);
+}
+
+async function processChatMessagePayload(payload: ChatMessagePayload): Promise<void> {
+  const receiverId = pickString(payload.receiver_id);
+  const message = pickString(payload.message, '新しいメッセージが届きました');
+  const orderId = pickString(payload.order_id);
+  const sent: string[] = [];
+
+  console.log('[onesignal-push] process start', {
+    v: FUNCTION_VERSION,
+    format: 'chat_message',
+    receiverId,
+    orderId,
+    targetApp: isFactoryReceiverId(receiverId) ? 'factory' : 'customer',
+  });
+
+  if (!receiverId) {
+    console.warn('[onesignal-push] chat_message missing receiver_id');
+    return;
+  }
+
+  if (await sendToExternalIds([receiverId], message, {
+    type: 'chat',
+    orderId,
+    targetApp: isFactoryReceiverId(receiverId) ? 'factory' : 'customer',
+  })) {
+    sent.push(isFactoryReceiverId(receiverId) ? 'factory:chat' : 'customer:chat');
+  }
+
+  console.log('[onesignal-push] process done', { v: FUNCTION_VERSION, orderId, sent: sent.length ? sent : 'none' });
+}
+
 async function processIncoming(incoming: IncomingPayload): Promise<void> {
   if (incoming.format === 'slim') {
     await processSlimPayload(incoming.data);
@@ -706,6 +757,10 @@ async function processIncoming(incoming: IncomingPayload): Promise<void> {
   }
   if (incoming.format === 'legacy') {
     await processLegacyWebhook(incoming.data);
+    return;
+  }
+  if (incoming.format === 'chat_message') {
+    await processChatMessagePayload(incoming.data);
     return;
   }
   await processRescued(incoming.data, incoming.hint);
@@ -746,11 +801,15 @@ Deno.serve(async (req) => {
     ? pickString(incoming.data.order_id)
     : incoming.format === 'rescued'
     ? pickString(incoming.data.id)
+    : incoming.format === 'chat_message'
+    ? pickString(incoming.data.order_id)
     : pickString(incoming.data.record?.id);
   const eventLabel = incoming.format === 'slim'
     ? pickString(incoming.data.event)
     : incoming.format === 'legacy'
     ? pickString(incoming.data.type)
+    : incoming.format === 'chat_message'
+    ? 'chat_message'
     : incoming.hint;
 
   scheduleBackground(
