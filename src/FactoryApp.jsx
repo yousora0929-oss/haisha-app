@@ -2648,8 +2648,11 @@ function orderPartyInfo(order) {
         let cancelled = false;
         const factoryId = String(activeFactoryId);
         (async () => {
-          if (cancelled) return;
-          await registerOneSignalUser(factoryId, { role: 'factory', factory_id: factoryId });
+          if (cancelled || !factoryId) return;
+          await registerOneSignalUser(String(factoryId), {
+            role: 'factory',
+            factory_id: String(factoryId),
+          });
         })();
         return () => {
           cancelled = true;

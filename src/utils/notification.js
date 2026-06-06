@@ -8,8 +8,27 @@ function appId() {
   return String(import.meta.env.VITE_ONESIGNAL_APP_ID || ONESIGNAL_APP_ID || '').trim();
 }
 
+/** OneSignal External ID 用（UUID / factory_id など。電話番号は使わない） */
+export function normalizeOneSignalExternalId(value) {
+  return String(value ?? '').trim();
+}
+
 function normalizeExternalId(value) {
-  return String(value || '').replace(/\s+/g, '').trim();
+  return normalizeOneSignalExternalId(value);
+}
+
+async function readBoundOneSignalExternalId() {
+  try {
+    const direct = OneSignal.User?.externalId;
+    if (direct != null && String(direct).trim()) return String(direct).trim();
+    if (typeof OneSignal.getExternalId === 'function') {
+      const fetched = await OneSignal.getExternalId();
+      if (fetched != null && String(fetched).trim()) return String(fetched).trim();
+    }
+  } catch {
+    /* ignore */
+  }
+  return '';
 }
 
 function readOneSignalDebugValue(label, getter) {
@@ -32,7 +51,7 @@ function logOneSignalDebug() {
   readOneSignalDebugValue('OneSignal Player ID:', () =>
     OneSignal.getUserId?.() ?? OneSignal.User?.PushSubscription?.id ?? OneSignal.User?.onesignalId,
   );
-  readOneSignalDebugValue('OneSignal External ID (Phone):', () =>
+  readOneSignalDebugValue('OneSignal External ID:', () =>
     OneSignal.getExternalId?.() ?? OneSignal.User?.externalId,
   );
 }
@@ -149,15 +168,24 @@ export async function setupNotificationClickRedirect() {
 export async function registerOneSignalUser(externalId, tags = {}) {
   const normalizedId = normalizeExternalId(externalId);
   if (!normalizedId) {
-    console.warn('[OneSignal] External ID が空のため login をスキップしました', { externalId });
+    console.warn('[OneSignal] External ID が空のため login をスキップしました', {
+      externalId: String(externalId ?? ''),
+      role: String(tags?.role ?? ''),
+    });
     return false;
   }
   try {
     await initOneSignal();
-    console.log('OneSignalにIDを登録します:', normalizedId);
-    await OneSignal.login(normalizedId);
-    console.log('OneSignalにIDを登録しました:', normalizedId);
+    await OneSignal.login(String(normalizedId));
     await setOneSignalUserLanguageJa();
+    const boundId = await readBoundOneSignalExternalId();
+    console.log('OneSignalに登録したID:', String(boundId || normalizedId));
+    if (boundId && boundId !== normalizedId) {
+      console.warn('[OneSignal] 登録IDと紐付けIDが一致しません', {
+        expected: String(normalizedId),
+        bound: boundId,
+      });
+    }
     logOneSignalDebug();
     if (tags && Object.keys(tags).length > 0) {
       OneSignal.User.addTags(
@@ -171,7 +199,7 @@ export async function registerOneSignalUser(externalId, tags = {}) {
     }
     return true;
   } catch (error) {
-    console.warn('[OneSignal] ユーザー登録に失敗しました', normalizedId, error);
+    console.warn('[OneSignal] ユーザー登録に失敗しました', String(normalizedId), error);
     return false;
   }
 }

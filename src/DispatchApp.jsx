@@ -1748,21 +1748,18 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         let cancelled = false;
         (async () => {
           if (isGuestSiteOrder) {
-            const guestPhone = String(
-              guestSiteOrderCtx?.customer?.phone_number ?? sitePhone ?? '',
-            ).trim();
             const guestCustomerId = String(guestSiteOrderCtx?.customer?.id ?? currentCustomerId ?? '').trim();
-            if (!guestPhone || cancelled) return;
-            await registerOneSignalUser(guestPhone, {
+            if (!guestCustomerId || cancelled) return;
+            await registerOneSignalUser(String(guestCustomerId), {
               role: 'customer',
-              customer_id: guestCustomerId,
+              customer_id: String(guestCustomerId),
             });
             return;
           }
-          if (!isLoggedIn || !currentCustomerPhone || cancelled) return;
-          await registerOneSignalUser(currentCustomerPhone, {
+          if (!isLoggedIn || !currentCustomerId || cancelled) return;
+          await registerOneSignalUser(String(currentCustomerId), {
             role: 'customer',
-            customer_id: String(currentCustomerId || ''),
+            customer_id: String(currentCustomerId),
           });
         })();
         return () => {
@@ -1771,10 +1768,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [
         isGuestSiteOrder,
         isLoggedIn,
-        currentCustomerPhone,
         currentCustomerId,
         guestSiteOrderCtx,
-        sitePhone,
       ]);
 
       useEffect(() => {
@@ -2097,7 +2092,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               logDispatchError('[DispatchApp] 通知アラーム初期化に失敗（続行）', alarmErr);
             }
 
-            await registerOneSignalUser(String(customer.phone_number || ''), {
+            await registerOneSignalUser(String(customer.id || ''), {
               role: 'customer',
               customer_id: String(customer.id || ''),
             });

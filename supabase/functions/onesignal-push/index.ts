@@ -58,17 +58,12 @@ function isRejectedLike(status: string): boolean {
 }
 
 function externalIdCandidates(value: string): string[] {
-  const base = value.replace(/\s+/g, '').trim();
-  if (!base) return [];
-  const ids = new Set([base]);
-  const compactPhone = base.replace(/[‐-‒–—―ーｰ−\s]/g, '');
-  if (compactPhone && compactPhone !== base) ids.add(compactPhone);
-  return [...ids];
+  const base = String(value || '').trim();
+  return base ? [base] : [];
 }
 
-function orderCustomerPhone(row: OrderRow | null | undefined, customerPhone = ''): string {
-  const od = orderData(row);
-  return pickString(od.phone_number, od.customerPhone, od.sitePhone, od.phone, customerPhone);
+function resolveCustomerExternalId(row: OrderRow | null | undefined): string {
+  return pickString(row?.customer_id);
 }
 
 function factoryNameFromOrder(row: OrderRow | null | undefined, factoryName = ''): string {
@@ -97,26 +92,6 @@ function latestChatMessage(messages: unknown[]): Record<string, unknown> | null 
 function chatMessageKey(message: Record<string, unknown> | null): string {
   if (!message) return '';
   return [message.id, message.createdAt, message.from].map((part) => (part == null ? '' : String(part))).join('|');
-}
-
-async function resolveCustomerPhone(
-  supabase: ReturnType<typeof createClient>,
-  row: OrderRow,
-): Promise<string> {
-  const fromOrder = orderCustomerPhone(row);
-  if (fromOrder) return fromOrder;
-  const customerId = pickString(row.customer_id);
-  if (!customerId) return '';
-  const { data, error } = await supabase
-    .from('customers')
-    .select('phone_number')
-    .eq('id', customerId)
-    .maybeSingle();
-  if (error) {
-    console.warn('[onesignal-push] customer lookup failed', error.message);
-    return '';
-  }
-  return pickString(data?.phone_number);
 }
 
 async function lookupFactoryName(
@@ -232,10 +207,10 @@ async function handleOrderWebhook(payload: WebhookPayload): Promise<Response> {
     const newStatus = effectiveStatus(record);
 
     if (isPendingLike(oldStatus) && isAcceptedLike(newStatus)) {
-      const phone = await resolveCustomerPhone(supabase, record);
+      const customerExternalId = resolveCustomerExternalId(record);
       const factoryName = await lookupFactoryName(supabase, record);
-      if (phone) {
-        const ok = await sendToExternalIds([phone], customerAcceptedMessage(record, factoryName), {
+      if (customerExternalId) {
+        const ok = await sendToExternalIds([customerExternalId], customerAcceptedMessage(record, factoryName), {
           type: 'order_status',
           orderId: pickString(record.id),
           status: newStatus,
@@ -246,9 +221,9 @@ async function handleOrderWebhook(payload: WebhookPayload): Promise<Response> {
       isPendingLike(oldStatus) &&
       isRejectedLike(newStatus)
     ) {
-      const phone = await resolveCustomerPhone(supabase, record);
-      if (phone) {
-        const ok = await sendToExternalIds([phone], '大変込み合っております。別日をご指定ください。', {
+      const customerExternalId = resolveCustomerExternalId(record);
+      if (customerExternalId) {
+        const ok = await sendToExternalIds([customerExternalId], '大変込み合っております。別日をご指定ください。', {
           type: 'order_status',
           orderId: pickString(record.id),
           status: newStatus,
@@ -266,11 +241,11 @@ async function handleOrderWebhook(payload: WebhookPayload): Promise<Response> {
         const from = pickString(latest.from);
         const orderId = pickString(record.id);
         if (from === 'factory' || from === 'admin') {
-          const phone = await resolveCustomerPhone(supabase, record);
+          const customerExternalId = resolveCustomerExternalId(record);
           const factoryName = await lookupFactoryName(supabase, record);
-          if (phone) {
+          if (customerExternalId) {
             const ok = await sendToExternalIds(
-              [phone],
+              [customerExternalId],
               `${factoryName}からメッセージが届いています。`,
               { type: 'chat', orderId, targetApp: 'customer' },
             );
