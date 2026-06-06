@@ -115,17 +115,44 @@ function isUsableMapEditorReturnUrl(raw) {
   }
 }
 
-function tryCloseMapEditorPopupTab() {
+function consumeMapEditorPopupFlag() {
   if (typeof localStorage === 'undefined') return false;
   try {
-    const opened = localStorage.getItem(MAP_EDITOR_OPENED_AS_POPUP_KEY);
-    if (opened !== '1') return false;
-    localStorage.removeItem(MAP_EDITOR_OPENED_AS_POPUP_KEY);
-    window.close();
-    return true;
+    const opened = localStorage.getItem(MAP_EDITOR_OPENED_AS_POPUP_KEY) === '1';
+    if (opened) localStorage.removeItem(MAP_EDITOR_OPENED_AS_POPUP_KEY);
+    return opened;
   } catch {
     return false;
   }
+}
+
+/** 別窓起動を記録（?return= 付き URL 直開きにも対応） */
+export function markMapEditorOpenedAsPopup() {
+  if (typeof window === 'undefined') return;
+  try {
+    const hasReturn = Boolean(new URLSearchParams(window.location.search).get('return'));
+    if (hasReturn || localStorage.getItem(MAP_EDITOR_OPENED_AS_POPUP_KEY) === '1') {
+      localStorage.setItem(MAP_EDITOR_OPENED_AS_POPUP_KEY, '1');
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function closeMapEditorPopupWindow() {
+  const hrefBefore = window.location.href;
+  window.close();
+  // iOS 等で close が無視された場合のみ、戻り先へフォールバック
+  window.setTimeout(() => {
+    try {
+      if (window.location.href !== hrefBefore) return;
+      if (!/\/map-editor\//i.test(window.location.pathname)) return;
+      const target = resolveMapEditorReturnTarget();
+      if (target) window.location.assign(target);
+    } catch {
+      /* ignore */
+    }
+  }, 350);
 }
 
 function resolveMapEditorReturnTarget() {
@@ -149,14 +176,15 @@ function resolveMapEditorReturnTarget() {
 }
 
 /**
- * 保存せず閉じる・戻る用: 遷移元へ必ず戻す（ログイン画面・トップ `/` へは飛ばさない）
+ * 保存せず閉じる・戻る用。
+ * 別窓で開いた場合は window.close() のみ（親タブのダッシュボードはそのまま）。
  */
 export function navigateBackFromMapEditor() {
   if (typeof window === 'undefined') return false;
 
   stageMapEditorPanelAuthForReturn();
 
-  const target = resolveMapEditorReturnTarget();
+  const openedAsPopup = consumeMapEditorPopupFlag();
 
   try {
     sessionStorage.removeItem(MAP_EDITOR_RETURN_SESSION_KEY);
@@ -164,13 +192,14 @@ export function navigateBackFromMapEditor() {
     /* ignore */
   }
 
-  if (target) {
-    tryCloseMapEditorPopupTab();
-    window.location.assign(target);
+  if (openedAsPopup) {
+    closeMapEditorPopupWindow();
     return true;
   }
 
-  if (tryCloseMapEditorPopupTab()) {
+  const target = resolveMapEditorReturnTarget();
+  if (target) {
+    window.location.assign(target);
     return true;
   }
 

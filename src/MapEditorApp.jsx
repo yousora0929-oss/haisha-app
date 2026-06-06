@@ -10,6 +10,7 @@ import { ensureMapEditorPanelAuth, hasAnyPanelSession, parseMapEditorGuestTokenF
 import {
   DEFAULT_MAP_STAMP_TYPE,
   MAP_EDITOR_TOOLS,
+  markMapEditorOpenedAsPopup,
   navigateBackFromMapEditor,
   parseMapEditorOrderId,
 } from './mapEditorConstants.js';
@@ -67,6 +68,10 @@ export function MapEditorApp() {
   const [selection, setSelection] = useState(null);
   const [editorOrder, setEditorOrder] = useState(null);
   const [editorProject, setEditorProject] = useState(null);
+
+  useEffect(() => {
+    markMapEditorOpenedAsPopup();
+  }, []);
   const [flyTarget, setFlyTarget] = useState(null);
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [printSession, setPrintSession] = useState(null);
