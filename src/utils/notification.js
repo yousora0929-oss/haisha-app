@@ -148,15 +148,20 @@ export async function setupNotificationClickRedirect() {
 
 export async function registerOneSignalUser(externalId, tags = {}) {
   const normalizedId = normalizeExternalId(externalId);
-  if (!normalizedId) return false;
+  if (!normalizedId) {
+    console.warn('[OneSignal] External ID が空のため login をスキップしました', { externalId });
+    return false;
+  }
   try {
     await initOneSignal();
+    console.log('OneSignalにIDを登録します:', normalizedId);
     await OneSignal.login(normalizedId);
+    console.log('OneSignalにIDを登録しました:', normalizedId);
     await setOneSignalUserLanguageJa();
     logOneSignalDebug();
     if (tags && Object.keys(tags).length > 0) {
       OneSignal.User.addTags(
-        Object.fromEntries(Object.entries(tags).map(([key, value]) => [key, String(value)])),
+        Object.fromEntries(Object.entries(tags).map(([key, value]) => [key, String(value ?? '')])),
       );
     }
     try {
@@ -166,7 +171,20 @@ export async function registerOneSignalUser(externalId, tags = {}) {
     }
     return true;
   } catch (error) {
-    console.warn('[OneSignal] ユーザー登録に失敗しました', error);
+    console.warn('[OneSignal] ユーザー登録に失敗しました', normalizedId, error);
+    return false;
+  }
+}
+
+export async function logoutOneSignalUser() {
+  try {
+    await initOneSignal();
+    console.log('OneSignalからID紐付けを解除します');
+    await OneSignal.logout();
+    console.log('OneSignalからID紐付けを解除しました');
+    return true;
+  } catch (error) {
+    console.warn('[OneSignal] logout に失敗しました', error);
     return false;
   }
 }

@@ -22,6 +22,7 @@ import {
   PUSH_CHAT_REDIRECT_SESSION_KEY,
   clearAppBadge,
   registerOneSignalUser,
+  logoutOneSignalUser,
   setupNotificationClickRedirect,
 } from './utils/notification.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
@@ -1744,20 +1745,29 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [orderKind, selectedProjectId, applyProjectSelection]);
 
       useEffect(() => {
-        if (isGuestSiteOrder) {
-          const guestPhone = String(
-            guestSiteOrderCtx?.customer?.phone_number ?? sitePhone ?? '',
-          ).trim();
-          const guestCustomerId = String(guestSiteOrderCtx?.customer?.id ?? currentCustomerId ?? '').trim();
-          if (!guestPhone) return;
-          void registerOneSignalUser(guestPhone, {
+        let cancelled = false;
+        (async () => {
+          if (isGuestSiteOrder) {
+            const guestPhone = String(
+              guestSiteOrderCtx?.customer?.phone_number ?? sitePhone ?? '',
+            ).trim();
+            const guestCustomerId = String(guestSiteOrderCtx?.customer?.id ?? currentCustomerId ?? '').trim();
+            if (!guestPhone || cancelled) return;
+            await registerOneSignalUser(guestPhone, {
+              role: 'customer',
+              customer_id: guestCustomerId,
+            });
+            return;
+          }
+          if (!isLoggedIn || !currentCustomerPhone || cancelled) return;
+          await registerOneSignalUser(currentCustomerPhone, {
             role: 'customer',
-            customer_id: guestCustomerId,
+            customer_id: String(currentCustomerId || ''),
           });
-          return;
-        }
-        if (!isLoggedIn || !currentCustomerPhone) return;
-        void registerOneSignalUser(currentCustomerPhone, { role: 'customer', customer_id: currentCustomerId || '' });
+        })();
+        return () => {
+          cancelled = true;
+        };
       }, [
         isGuestSiteOrder,
         isLoggedIn,
@@ -2087,9 +2097,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               logDispatchError('[DispatchApp] 通知アラーム初期化に失敗（続行）', alarmErr);
             }
 
-            void registerOneSignalUser(customer.phone_number, {
+            await registerOneSignalUser(String(customer.phone_number || ''), {
               role: 'customer',
-              customer_id: customer.id,
+              customer_id: String(customer.id || ''),
             });
           } catch (postLoginErr) {
             logDispatchError('[DispatchApp] ログイン後の画面初期化に失敗', postLoginErr, {
@@ -2104,6 +2114,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
 
       const handleCustomerLogout = useCallback(() => {
+        void logoutOneSignalUser();
         setIsLoggedIn(false);
         setCurrentCustomerId('');
         setCustomers([]);

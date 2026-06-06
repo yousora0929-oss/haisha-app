@@ -26,7 +26,7 @@ import {
   getOrderMinutesForScheduleScan,
   computeScheduleAutoRejectReason,
 } from './haishaConstants.js';
-import { registerOneSignalUser } from './utils/notification.js';
+import { registerOneSignalUser, logoutOneSignalUser } from './utils/notification.js';
 import {
   primeNotificationAlarm,
   playFactoryChatNotificationSound,
@@ -2598,7 +2598,7 @@ function orderPartyInfo(order) {
             setActiveFactoryName(displayName);
             setIsFactoryAuthenticated(true);
             primeNotificationAlarm();
-            void registerOneSignalUser(fid, { role: 'factory', factory_id: fid });
+            await registerOneSignalUser(String(fid), { role: 'factory', factory_id: String(fid) });
             setLoginPassword('');
             setHiddenOrderIds(new Set());
             setToastOrder(null);
@@ -2643,7 +2643,21 @@ function orderPartyInfo(order) {
         return () => window.removeEventListener('pointerdown', onGesture);
       }, [isFactoryAuthenticated]);
 
+      useEffect(() => {
+        if (!isFactoryAuthenticated || !activeFactoryId) return undefined;
+        let cancelled = false;
+        const factoryId = String(activeFactoryId);
+        (async () => {
+          if (cancelled) return;
+          await registerOneSignalUser(factoryId, { role: 'factory', factory_id: factoryId });
+        })();
+        return () => {
+          cancelled = true;
+        };
+      }, [isFactoryAuthenticated, activeFactoryId]);
+
       const handleFactoryLogout = useCallback(() => {
+        void logoutOneSignalUser();
         stopNotificationAlarm();
         setToastOrder(null);
         setToastIsReassignment(false);
@@ -3129,7 +3143,6 @@ function orderPartyInfo(order) {
               setActiveFactoryId(stored);
               setActiveFactoryName(displayName);
               setIsFactoryAuthenticated(true);
-              void registerOneSignalUser(stored, { role: 'factory', factory_id: stored });
               try {
                 const storedPassword = String(sessionStorage.getItem(FACTORY_PANEL_PASSWORD_KEY) || '').trim();
                 if (storedPassword) {
