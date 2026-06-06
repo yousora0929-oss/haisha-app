@@ -1,4 +1,16 @@
--- チャット送信: orders.chat_messages のみを安全に追記（フル行 PATCH による 400 / RLS 事故を回避）
+-- =============================================================================
+-- Supabase SQL Editor 用: append_order_chat_message RPC
+-- =============================================================================
+-- フロント (haishaDb.js appendChatMessage) からの呼び出し:
+--   supabase.rpc('append_order_chat_message', {
+--     p_order_id: string,   -- orders.id
+--     p_from:     string,   -- 'factory' | 'system' | 'admin' | 'customer' | 'master'
+--     p_body:     string,   -- メッセージ本文
+--   })
+-- 戻り値: jsonb — 更新後の orders.chat_messages 配列
+--
+-- カラム名は chat_messages（chat_logs / messages ではない）
+-- =============================================================================
 
 create or replace function public.can_panel_append_order_chat(p_order public.orders)
 returns boolean
@@ -67,8 +79,9 @@ begin
     raise exception 'chat_append_access_denied' using errcode = '42501';
   end if;
 
+  -- NULL / 非配列は空配列にフォールバック
   v_list := coalesce(v_order.chat_messages, '[]'::jsonb);
-  if jsonb_typeof(v_list) <> 'array' then
+  if jsonb_typeof(v_list) is distinct from 'array' then
     v_list := '[]'::jsonb;
   end if;
 
@@ -81,8 +94,10 @@ begin
     'createdAt', to_char(timezone('utc', clock_timestamp()), 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
   );
 
+  -- JSONB 配列に安全に追記
   v_next := v_list || jsonb_build_array(v_msg);
 
+  -- 最大100件（古いものから削除）
   if jsonb_array_length(v_next) > 100 then
     v_next := (
       select coalesce(jsonb_agg(value order by ord), '[]'::jsonb)
@@ -102,10 +117,16 @@ begin
 end;
 $$;
 
+comment on function public.can_panel_append_order_chat(public.orders) is
+  'チャット追記 RPC 用: パネル認証済みユーザーが当該注文に書き込めるか';
+
 comment on function public.append_order_chat_message(text, text, text) is
-  'orders.chat_messages に1件追記（パネル認証済みのみ・chat_messages 列のみ更新）';
+  'orders.chat_messages (JSONB) に1件追記し、更新後の配列を返す';
 
 revoke all on function public.can_panel_append_order_chat(public.orders) from public;
 revoke all on function public.append_order_chat_message(text, text, text) from public;
 grant execute on function public.can_panel_append_order_chat(public.orders) to authenticated, anon;
 grant execute on function public.append_order_chat_message(text, text, text) to authenticated, anon;
+
+-- 動作確認（任意・本番では注文IDを差し替え）
+-- select public.append_order_chat_message('YOUR_ORDER_ID', 'system', 'RPCテスト');

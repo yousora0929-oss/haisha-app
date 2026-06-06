@@ -862,6 +862,9 @@ export async function appendChatMessage(orderId, from, body) {
 
   const rpcMissing =
     rpcErr.code === 'PGRST202' ||
+    rpcErr.code === '42883' ||
+    Number(rpcErr.status) === 404 ||
+    String(rpcErr.message || '').toLowerCase().includes('not found') ||
     String(rpcErr.message || '').includes('append_order_chat_message') ||
     String(rpcErr.details || '').includes('append_order_chat_message');
 
