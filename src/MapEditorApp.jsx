@@ -439,7 +439,7 @@ export function MapEditorApp() {
     : '';
 
   const actionBtn =
-    'min-h-[44px] rounded-xl px-3 text-xs font-black shadow-md active:scale-[0.98] disabled:opacity-50 sm:text-sm';
+    'inline-flex min-h-[44px] items-center justify-center gap-1 rounded-xl px-3 text-xs font-black shadow-md active:scale-[0.98] disabled:opacity-50 sm:text-sm';
   const mobileBarBtn =
     'flex min-h-[44px] w-full items-center justify-center rounded-xl px-2 text-xs font-black shadow-md active:scale-[0.98] disabled:opacity-50';
 
@@ -550,7 +550,7 @@ export function MapEditorApp() {
 
         {/* PC: 従来の2段レイアウト */}
         <div className="hidden flex-col gap-2 md:flex">
-        <div className="flex w-full flex-wrap gap-2 md:justify-end">
+        <div className="flex w-full flex-wrap items-center gap-2 md:justify-end">
           <button
             type="button"
             disabled={saving}
@@ -586,7 +586,7 @@ export function MapEditorApp() {
             🖨️ 印刷
           </button>
         </div>
-        <div className="flex w-auto gap-2">
+        <div className="flex w-auto items-center gap-2">
           <button
             type="button"
             onClick={handleCloseEditor}
