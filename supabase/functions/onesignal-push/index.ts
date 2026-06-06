@@ -1,6 +1,6 @@
-/** onesignal-push v12 — slim / legacy / chat_message（本番DB形式）対応 */
+/** onesignal-push v13 — OneSignal API タイムアウト緩和 */
 
-const FUNCTION_VERSION = 12;
+const FUNCTION_VERSION = 13;
 const LEGACY_MAX_BODY_BYTES = 64000;
 const FETCH_ORDER_TIMEOUT_MS = 5000;
 
@@ -55,8 +55,8 @@ type IncomingPayload =
   | { format: 'chat_message'; data: ChatMessagePayload };
 
 const ACCEPTED_STATUSES = new Set(['accepted', 'confirmed']);
-const ONESIGNAL_FETCH_TIMEOUT_MS = 4000;
-const JOB_MAX_MS = 15000;
+const ONESIGNAL_FETCH_TIMEOUT_MS = 12000;
+const JOB_MAX_MS = 20000;
 const ONESIGNAL_API_URL = 'https://api.onesignal.com/notifications';
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -392,6 +392,7 @@ async function readWebhookPayload(req: Request): Promise<{ incoming: IncomingPay
 }
 
 async function postOneSignalRequest(payload: Record<string, unknown>): Promise<boolean> {
+  const started = Date.now();
   const appId =
     Deno.env.get('ONESIGNAL_APP_ID') ||
     Deno.env.get('VITE_ONESIGNAL_APP_ID') ||
@@ -417,6 +418,8 @@ async function postOneSignalRequest(payload: Record<string, unknown>): Promise<b
   const timeoutId = setTimeout(() => controller.abort(), ONESIGNAL_FETCH_TIMEOUT_MS);
 
   try {
+    console.log('[onesignal-push] OneSignal request start', { target: target || '(unknown)' });
+
     const response = await fetch(ONESIGNAL_API_URL, {
       method: 'POST',
       headers: {
@@ -427,21 +430,28 @@ async function postOneSignalRequest(payload: Record<string, unknown>): Promise<b
       signal: controller.signal,
     });
 
-    const responseText = await withTimeout(response.text(), 2000, 'read OneSignal body') ?? '';
+    const responseText = await response.text();
     const parsed = tryParseJson(responseText);
     const notificationId = pickString(parsed?.id);
+    const elapsed = Date.now() - started;
 
     console.log(
-      `[onesignal-push] status=${response.status} target=${target || '(unknown)'} notificationId=${notificationId || 'none'}`,
+      `[onesignal-push] status=${response.status} target=${target || '(unknown)'} notificationId=${notificationId || 'none'} ms=${elapsed}`,
     );
 
     if (parsed?.errors) console.warn('[onesignal-push] OneSignal errors:', parsed.errors);
     if (isVerboseLog()) console.log('[onesignal-push] response:', responseText);
 
-    return response.ok && Boolean(notificationId);
+    if (response.ok && notificationId) return true;
+    if (response.ok && !notificationId) {
+      console.warn('[onesignal-push] OneSignal 200 but no notification id', { target, elapsed });
+    }
+    return false;
   } catch (error) {
     const isAbort = error instanceof DOMException && error.name === 'AbortError';
-    console.warn(`[onesignal-push] OneSignal fetch ${isAbort ? 'timeout' : 'failed'} target=${target}`);
+    console.warn(
+      `[onesignal-push] OneSignal ${isAbort ? 'timeout' : 'failed'} target=${target} ms=${Date.now() - started}`,
+    );
     return false;
   } finally {
     clearTimeout(timeoutId);
@@ -449,8 +459,7 @@ async function postOneSignalRequest(payload: Record<string, unknown>): Promise<b
 }
 
 async function postOneSignal(payload: Record<string, unknown>): Promise<boolean> {
-  const result = await withTimeout(postOneSignalRequest(payload), ONESIGNAL_FETCH_TIMEOUT_MS + 1500, 'OneSignal post');
-  return result === true;
+  return postOneSignalRequest(payload);
 }
 
 async function sendToExternalIds(externalIds: string[], message: string, data: Record<string, unknown> = {}) {
