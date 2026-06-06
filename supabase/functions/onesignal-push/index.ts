@@ -19,6 +19,7 @@ type WebhookPayload = {
 const ACCEPTED_STATUSES = new Set(['accepted', 'confirmed']);
 const ONESIGNAL_FETCH_TIMEOUT_MS = 5000;
 const DB_LOOKUP_TIMEOUT_MS = 3000;
+const ONESIGNAL_API_URL = 'https://api.onesignal.com/notifications';
 
 function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -59,14 +60,40 @@ function isRejectedLike(status: string): boolean {
   return status === 'rejected' || status === 'cancelled' || status === 'customer_cancelled';
 }
 
-function externalIdCandidates(value: string): string[] {
-  const base = String(value || '').trim();
-  return base ? [base] : [];
+function phoneExternalIdVariants(value: string): string[] {
+  const base = String(value || '').replace(/\s+/g, '').trim();
+  if (!base) return [];
+  const compact = base.replace(/[‐-‒–—―ーｰ−\s]/g, '');
+  const ids = new Set([base]);
+  if (compact) ids.add(compact);
+  return [...ids];
 }
 
-/** orders.customer_id（UUID）— DB ルックアップ不要（orders.customer_id_idx でインデックス済み） */
-function resolveCustomerExternalId(row: OrderRow | null | undefined): string {
-  return pickString(row?.customer_id);
+function orderCustomerPhone(row: OrderRow | null | undefined): string {
+  const od = orderData(row);
+  return pickString(od.phone_number, od.customerPhone, od.sitePhone, od.phone);
+}
+
+/** カスタマー向け: UUID + 旧電話番号 External ID（移行期の両対応） */
+async function resolveCustomerPushExternalIds(
+  supabase: ReturnType<typeof createClient>,
+  row: OrderRow,
+): Promise<string[]> {
+  const ids = new Set<string>();
+  const customerId = pickString(row.customer_id);
+  if (customerId) ids.add(customerId);
+
+  let phone = orderCustomerPhone(row);
+  if (!phone && customerId) {
+    const result = await withTimeout(
+      supabase.from('customers').select('phone_number').eq('id', customerId).maybeSingle(),
+      DB_LOOKUP_TIMEOUT_MS,
+      'customer phone lookup',
+    );
+    if (result?.data) phone = pickString(result.data.phone_number);
+  }
+  for (const variant of phoneExternalIdVariants(phone)) ids.add(variant);
+  return [...ids];
 }
 
 function factoryNameFromOrder(row: OrderRow | null | undefined, factoryName = ''): string {
@@ -102,13 +129,22 @@ function isVerboseLog(): boolean {
   return v === '1' || v === 'true' || v === 'yes';
 }
 
-function logSendTarget(kind: string, target: string) {
-  console.log(`[onesignal-push] send ${kind} → ${target || '(none)'}`);
+function buildOneSignalAuthHeader(apiKey: string): string {
+  const key = String(apiKey || '').trim();
+  if (/^(Key|key|Basic)\s+/i.test(key)) return key;
+  return `Key ${key}`;
 }
 
 function payloadSendTarget(payload: Record<string, unknown>): string {
-  const ids = payload.include_external_user_ids;
-  if (Array.isArray(ids) && ids.length) return ids.map((id) => String(id)).join(',');
+  const aliases = payload.include_aliases;
+  if (aliases && typeof aliases === 'object' && !Array.isArray(aliases)) {
+    const external = (aliases as Record<string, unknown>).external_id;
+    if (Array.isArray(external) && external.length) {
+      return external.map((id) => String(id)).join(',');
+    }
+  }
+  const legacy = payload.include_external_user_ids;
+  if (Array.isArray(legacy) && legacy.length) return legacy.map((id) => String(id)).join(',');
   const filters = payload.filters;
   if (Array.isArray(filters) && filters.length) {
     const tag = filters.find((f) => f && typeof f === 'object' && (f as Record<string, unknown>).field === 'tag');
@@ -118,6 +154,15 @@ function payloadSendTarget(payload: Record<string, unknown>): string {
     }
   }
   return '';
+}
+
+function tryParseJson(text: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T | null> {
@@ -137,7 +182,6 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
   }
 }
 
-/** factories.id は PK — .eq('id', factoryId) でインデックス利用。order_data に名前があれば DB 省略 */
 async function lookupFactoryName(
   supabase: ReturnType<typeof createClient>,
   row: OrderRow,
@@ -174,14 +218,17 @@ async function postOneSignal(payload: Record<string, unknown>): Promise<boolean>
     return false;
   }
 
-  const requestPayload = {
+  const requestPayload: Record<string, unknown> = {
     app_id: appId,
+    target_channel: 'push',
     headings: { ja: '生コン発注システム', en: 'Ready-mix Ordering System' },
     ios_badgeType: 'SetTo',
     ios_badgeCount: 1,
     web_badge: 1,
     ...payload,
   };
+  delete requestPayload.channel_for_external_user_ids;
+  delete requestPayload.include_external_user_ids;
 
   const target = payloadSendTarget(requestPayload);
   if (isVerboseLog()) {
@@ -192,25 +239,37 @@ async function postOneSignal(payload: Record<string, unknown>): Promise<boolean>
   const timeoutId = setTimeout(() => controller.abort(), ONESIGNAL_FETCH_TIMEOUT_MS);
 
   try {
-    const response = await fetch('https://onesignal.com/api/v1/notifications', {
+    const response = await fetch(ONESIGNAL_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Basic ${apiKey}`,
+        Authorization: buildOneSignalAuthHeader(apiKey),
       },
       body: JSON.stringify(requestPayload),
       signal: controller.signal,
     });
 
     const responseText = await response.text().catch(() => '');
-    console.log(`[onesignal-push] OneSignal status=${response.status} target=${target || '(unknown)'}`);
+    const parsed = tryParseJson(responseText);
+    const notificationId = pickString(parsed?.id);
+    const errors = parsed?.errors;
 
+    console.log(
+      `[onesignal-push] status=${response.status} target=${target || '(unknown)'} notificationId=${notificationId || 'none'}`,
+    );
+
+    if (errors) {
+      console.warn('[onesignal-push] OneSignal errors:', errors);
+    }
     if (isVerboseLog()) {
       console.log('[onesignal-push] OneSignal response body:', responseText);
     }
 
     if (!response.ok) {
-      console.warn('[onesignal-push] OneSignal API error', response.status, isVerboseLog() ? responseText : '');
+      return false;
+    }
+    if (!notificationId) {
+      console.warn('[onesignal-push] no notification id — 購読端末が見つかりませんでした', { target });
       return false;
     }
     return true;
@@ -218,7 +277,6 @@ async function postOneSignal(payload: Record<string, unknown>): Promise<boolean>
     const isAbort = error instanceof DOMException && error.name === 'AbortError';
     console.warn(
       `[onesignal-push] OneSignal fetch ${isAbort ? 'timeout' : 'failed'} target=${target || '(unknown)'}`,
-      isVerboseLog() ? error : '',
     );
     return false;
   } finally {
@@ -227,12 +285,10 @@ async function postOneSignal(payload: Record<string, unknown>): Promise<boolean>
 }
 
 async function sendToExternalIds(externalIds: string[], message: string, data: Record<string, unknown> = {}) {
-  const ids = [...new Set(externalIds.flatMap((id) => externalIdCandidates(id)).filter(Boolean))];
+  const ids = [...new Set(externalIds.flatMap((id) => String(id || '').trim()).filter(Boolean))];
   if (!ids.length || !message) return false;
-  logSendTarget('external', ids.join(','));
   return postOneSignal({
-    include_external_user_ids: ids,
-    channel_for_external_user_ids: 'push',
+    include_aliases: { external_id: ids },
     contents: { ja: message, en: message },
     ...(Object.keys(data).length ? { data } : {}),
   });
@@ -241,7 +297,6 @@ async function sendToExternalIds(externalIds: string[], message: string, data: R
 async function sendToRole(role: string, message: string, data: Record<string, unknown> = {}) {
   const normalizedRole = String(role || '').trim();
   if (!normalizedRole || !message) return false;
-  logSendTarget('role', normalizedRole);
   return postOneSignal({
     filters: [{ field: 'tag', key: 'role', relation: '=', value: normalizedRole }],
     contents: { ja: message, en: message },
@@ -276,6 +331,8 @@ async function handleOrderWebhook(payload: WebhookPayload): Promise<Response> {
   const orderId = pickString(record.id);
   const sendTasks: Promise<SendResult>[] = [];
 
+  const customerTargetsPromise = resolveCustomerPushExternalIds(supabase, record);
+
   if (eventType === 'INSERT') {
     const status = effectiveStatus(record);
     if (status !== 'pending_association' && isPendingLike(status)) {
@@ -293,7 +350,6 @@ async function handleOrderWebhook(payload: WebhookPayload): Promise<Response> {
   if (eventType === 'UPDATE' && oldRecord) {
     const oldStatus = effectiveStatus(oldRecord);
     const newStatus = effectiveStatus(record);
-    const customerExternalId = resolveCustomerExternalId(record);
 
     const oldMessages = asArray(oldRecord.chat_messages);
     const newMessages = asArray(record.chat_messages);
@@ -311,48 +367,56 @@ async function handleOrderWebhook(payload: WebhookPayload): Promise<Response> {
     const factoryNamePromise = needsFactoryName ? lookupFactoryName(supabase, record) : Promise.resolve('工場');
 
     if (isPendingLike(oldStatus) && isAcceptedLike(newStatus)) {
-      if (customerExternalId) {
-        sendTasks.push(
-          factoryNamePromise.then((factoryName) =>
-            sendToExternalIds([customerExternalId], customerAcceptedMessage(record, factoryName), {
-              type: 'order_status',
-              orderId,
-              status: newStatus,
-            })
-          ).then((ok) => ({ label: 'customer:accepted', ok })),
-        );
-      } else if (isVerboseLog()) {
-        console.warn('[onesignal-push] customer:accepted skipped — customer_id empty', { orderId });
-      }
-    } else if (isPendingLike(oldStatus) && isRejectedLike(newStatus)) {
-      if (customerExternalId) {
-        sendTasks.push(
-          sendToExternalIds([customerExternalId], '大変込み合っております。別日をご指定ください。', {
+      sendTasks.push(
+        Promise.all([customerTargetsPromise, factoryNamePromise]).then(([customerIds, factoryName]) => {
+          if (!customerIds.length) {
+            if (isVerboseLog()) {
+              console.warn('[onesignal-push] customer:accepted skipped — external id なし', { orderId });
+            }
+            return { label: 'customer:accepted', ok: false };
+          }
+          return sendToExternalIds(customerIds, customerAcceptedMessage(record, factoryName), {
             type: 'order_status',
             orderId,
             status: newStatus,
-          }).then((ok) => ({ label: 'customer:rejected', ok })),
-        );
-      } else if (isVerboseLog()) {
-        console.warn('[onesignal-push] customer:rejected skipped — customer_id empty', { orderId });
-      }
+          }).then((ok) => ({ label: 'customer:accepted', ok }));
+        }),
+      );
+    } else if (isPendingLike(oldStatus) && isRejectedLike(newStatus)) {
+      sendTasks.push(
+        customerTargetsPromise.then((customerIds) => {
+          if (!customerIds.length) {
+            if (isVerboseLog()) {
+              console.warn('[onesignal-push] customer:rejected skipped — external id なし', { orderId });
+            }
+            return { label: 'customer:rejected', ok: false };
+          }
+          return sendToExternalIds(customerIds, '大変込み合っております。別日をご指定ください。', {
+            type: 'order_status',
+            orderId,
+            status: newStatus,
+          }).then((ok) => ({ label: 'customer:rejected', ok }));
+        }),
+      );
     }
 
     if (chatAdded) {
       if (chatFrom === 'factory' || chatFrom === 'admin') {
-        if (customerExternalId) {
-          sendTasks.push(
-            factoryNamePromise.then((factoryName) =>
-              sendToExternalIds(
-                [customerExternalId],
-                `${factoryName}からメッセージが届いています。`,
-                { type: 'chat', orderId, targetApp: 'customer' },
-              )
-            ).then((ok) => ({ label: 'customer:chat', ok })),
-          );
-        } else if (isVerboseLog()) {
-          console.warn('[onesignal-push] customer:chat skipped — customer_id empty', { orderId });
-        }
+        sendTasks.push(
+          Promise.all([customerTargetsPromise, factoryNamePromise]).then(([customerIds, factoryName]) => {
+            if (!customerIds.length) {
+              if (isVerboseLog()) {
+                console.warn('[onesignal-push] customer:chat skipped — external id なし', { orderId });
+              }
+              return { label: 'customer:chat', ok: false };
+            }
+            return sendToExternalIds(
+              customerIds,
+              `${factoryName}からメッセージが届いています。`,
+              { type: 'chat', orderId, targetApp: 'customer' },
+            ).then((ok) => ({ label: 'customer:chat', ok }));
+          }),
+        );
       } else if (chatFrom === 'master' || chatFrom === 'customer') {
         const od = orderData(record);
         const factoryTarget = pickString(
@@ -388,9 +452,7 @@ async function handleOrderWebhook(payload: WebhookPayload): Promise<Response> {
   const results = sendTasks.length ? await Promise.all(sendTasks) : [];
   const sent = results.filter((r) => r.ok).map((r) => r.label);
 
-  if (isVerboseLog()) {
-    console.log('[onesignal-push] done', { orderId, sent, attempted: results.length });
-  }
+  console.log('[onesignal-push] done', { orderId, sent: sent.length ? sent : 'none' });
 
   return new Response(JSON.stringify({ ok: true, sent }), {
     headers: { 'Content-Type': 'application/json' },

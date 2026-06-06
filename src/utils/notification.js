@@ -177,27 +177,49 @@ export async function registerOneSignalUser(externalId, tags = {}) {
   try {
     await initOneSignal();
     await OneSignal.login(String(normalizedId));
+    if (tags && Object.keys(tags).length > 0) {
+      await OneSignal.User.addTags(
+        Object.fromEntries(Object.entries(tags).map(([key, value]) => [key, String(value ?? '')])),
+      );
+    }
     await setOneSignalUserLanguageJa();
+
+    try {
+      await OneSignal.Slidedown.promptPush({ force: true, forceSlidedownOverNative: true });
+    } catch {
+      await OneSignal.Notifications.requestPermission();
+    }
+
+    try {
+      if (OneSignal.User?.PushSubscription?.optIn) {
+        await OneSignal.User.PushSubscription.optIn();
+      }
+    } catch (optInErr) {
+      console.warn('[OneSignal] PushSubscription.optIn に失敗', optInErr);
+    }
+
     const boundId = await readBoundOneSignalExternalId();
+    const optedIn = OneSignal.User?.PushSubscription?.optedIn;
+    const pushSubId = OneSignal.User?.PushSubscription?.id;
+    const permission = OneSignal.Notifications?.permission;
     console.log('OneSignalに登録したID:', String(boundId || normalizedId));
+    console.log('[OneSignal] push状態:', {
+      permission,
+      optedIn,
+      pushSubId: pushSubId != null ? String(pushSubId) : '',
+      role: String(tags?.role ?? ''),
+    });
     if (boundId && boundId !== normalizedId) {
       console.warn('[OneSignal] 登録IDと紐付けIDが一致しません', {
         expected: String(normalizedId),
         bound: boundId,
       });
     }
+    if (!optedIn && permission !== true && permission !== 'granted') {
+      console.warn('[OneSignal] プッシュ未購読 — ブラウザの通知許可を確認してください');
+    }
     logOneSignalDebug();
-    if (tags && Object.keys(tags).length > 0) {
-      OneSignal.User.addTags(
-        Object.fromEntries(Object.entries(tags).map(([key, value]) => [key, String(value ?? '')])),
-      );
-    }
-    try {
-      await OneSignal.Slidedown.promptPush({ force: true, forceSlidedownOverNative: true });
-    } catch {
-      await OneSignal.Notifications.requestPermission();
-    }
-    return true;
+    return Boolean(optedIn || permission === true || permission === 'granted');
   } catch (error) {
     console.warn('[OneSignal] ユーザー登録に失敗しました', String(normalizedId), error);
     return false;
