@@ -1,6 +1,6 @@
-/** onesignal-push v13 — OneSignal API タイムアウト緩和 */
+/** onesignal-push v14 — chat_message は注文の最新送信者から通知先を判定 */
 
-const FUNCTION_VERSION = 13;
+const FUNCTION_VERSION = 14;
 const LEGACY_MAX_BODY_BYTES = 64000;
 const FETCH_ORDER_TIMEOUT_MS = 5000;
 
@@ -440,7 +440,11 @@ async function postOneSignalRequest(payload: Record<string, unknown>): Promise<b
     );
 
     if (parsed?.errors) console.warn('[onesignal-push] OneSignal errors:', parsed.errors);
-    if (isVerboseLog()) console.log('[onesignal-push] response:', responseText);
+    if (!response.ok || !notificationId) {
+      console.warn('[onesignal-push] OneSignal response body:', responseText.slice(0, 600));
+    } else if (isVerboseLog()) {
+      console.log('[onesignal-push] response:', responseText);
+    }
 
     if (response.ok && notificationId) return true;
     if (response.ok && !notificationId) {
@@ -729,6 +733,58 @@ function isFactoryReceiverId(receiverId: string): boolean {
   return /^FACTORY_/i.test(receiverId);
 }
 
+async function sendFactoryChatPush(record: OrderRow, message: string, orderId: string): Promise<boolean> {
+  const od = orderData(record);
+  const factoryTarget = pickString(
+    record.factory_site_id,
+    od.factory_site_id,
+    od.factorySiteId,
+    record.preferred_factory_id,
+    od.preferred_factory_id,
+    od.preferredFactoryId,
+  );
+  const senderName = pickString(od.manager_name, od.contact_person, od.ordered_by, od.orderedBy, '担当者');
+  const text = pickString(message, `${senderName}から新しいメッセージが届きました。`);
+  const data = { type: 'chat', orderId, targetApp: 'factory' };
+
+  if (factoryTarget) {
+    return sendToExternalIds([factoryTarget], text, data);
+  }
+  return sendToRole('factory', text, data);
+}
+
+async function sendCustomerChatPush(record: OrderRow, message: string, orderId: string): Promise<boolean> {
+  const customerIds = resolveCustomerExternalIdsFromRow(record);
+  if (!customerIds.length) {
+    console.warn('[onesignal-push] no customer external ids', { orderId, customer_id: record.customer_id });
+    return false;
+  }
+  const factoryName = factoryNameFromOrder(record);
+  const text = pickString(message, `${factoryName}からメッセージが届いています。`);
+  return sendToExternalIds(customerIds, text, { type: 'chat', orderId, targetApp: 'customer' });
+}
+
+async function routeChatFromOrder(row: OrderRow, message: string, orderId: string): Promise<string | null> {
+  const latest = latestChatMessage(asArray(row.chat_messages));
+  if (!latest) {
+    console.warn('[onesignal-push] chat_message order has no messages', { orderId });
+    return null;
+  }
+
+  const chatFrom = pickString(latest.from);
+  console.log('[onesignal-push] chat route from order', { orderId, chatFrom, customer_id: row.customer_id });
+
+  if (chatFrom === 'factory' || chatFrom === 'admin') {
+    return (await sendCustomerChatPush(row, message, orderId)) ? 'customer:chat' : null;
+  }
+  if (chatFrom === 'master' || chatFrom === 'customer') {
+    return (await sendFactoryChatPush(row, message, orderId)) ? 'factory:chat' : null;
+  }
+
+  console.warn('[onesignal-push] chat_message unknown sender', { orderId, chatFrom });
+  return null;
+}
+
 async function processChatMessagePayload(payload: ChatMessagePayload): Promise<void> {
   const receiverId = pickString(payload.receiver_id);
   const message = pickString(payload.message, '新しいメッセージが届きました');
@@ -740,11 +796,27 @@ async function processChatMessagePayload(payload: ChatMessagePayload): Promise<v
     format: 'chat_message',
     receiverId,
     orderId,
-    targetApp: isFactoryReceiverId(receiverId) ? 'factory' : 'customer',
   });
 
+  if (orderId) {
+    const row = await fetchOrderRow(orderId);
+    if (row) {
+      const result = await routeChatFromOrder(row, message, orderId);
+      if (result) sent.push(result);
+      console.log('[onesignal-push] process done', {
+        v: FUNCTION_VERSION,
+        orderId,
+        sent: sent.length ? sent : 'none',
+        via: 'order_route',
+      });
+      return;
+    }
+    console.warn('[onesignal-push] chat_message order fetch failed, fallback receiver_id', { orderId });
+  }
+
   if (!receiverId) {
-    console.warn('[onesignal-push] chat_message missing receiver_id');
+    console.warn('[onesignal-push] chat_message missing receiver_id and order');
+    console.log('[onesignal-push] process done', { v: FUNCTION_VERSION, orderId, sent: 'none' });
     return;
   }
 
@@ -756,7 +828,12 @@ async function processChatMessagePayload(payload: ChatMessagePayload): Promise<v
     sent.push(isFactoryReceiverId(receiverId) ? 'factory:chat' : 'customer:chat');
   }
 
-  console.log('[onesignal-push] process done', { v: FUNCTION_VERSION, orderId, sent: sent.length ? sent : 'none' });
+  console.log('[onesignal-push] process done', {
+    v: FUNCTION_VERSION,
+    orderId,
+    sent: sent.length ? sent : 'none',
+    via: 'receiver_id_fallback',
+  });
 }
 
 async function processIncoming(incoming: IncomingPayload): Promise<void> {
