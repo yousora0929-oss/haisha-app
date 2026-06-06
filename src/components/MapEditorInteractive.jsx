@@ -282,10 +282,7 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
       if (activeTool === MAP_EDITOR_TOOLS.UNLOAD) {
         const id = createAnnotationId('unload');
         patchAnnotations({
-          unloadPoints: [
-            ...(annotations.unloadPoints || []),
-            { id, lat, lng, radiusM: defaultUnloadRadius },
-          ],
+          unloadPoints: [{ id, lat, lng, radiusM: defaultUnloadRadius }],
         });
         setSelection({ kind: 'unload', id });
         return;
