@@ -5,8 +5,10 @@ import { ThemeProvider } from './components/ThemeProvider.jsx';
 import './theme.css';
 import { initTheme } from './utils/theme.js';
 import { initOneSignal, setupNotificationClickRedirect } from './utils/notification.js';
+import { restoreMapEditorPanelAuthFromStorage } from './supabaseClient.js';
 
 initTheme();
+restoreMapEditorPanelAuthFromStorage({ overwrite: true });
 void initOneSignal().then(() => setupNotificationClickRedirect());
 
 const rootEl = document.getElementById('root');

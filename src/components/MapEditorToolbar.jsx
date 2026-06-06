@@ -1,5 +1,5 @@
 import React from 'react';
-import { MAP_EDITOR_TOOLS, MAP_STAMP_DEFS } from '../mapEditorConstants.js';
+import { MAP_EDITOR_TOOLS, MAP_STAMP_PICKER_DEFS } from '../mapEditorConstants.js';
 import { DEFAULT_UNLOAD_RADIUS_M } from '../utils/mapAnnotations.js';
 
 const TOOL_BTN =
@@ -121,7 +121,7 @@ export function MapEditorToolbar({
       {activeTool === MAP_EDITOR_TOOLS.STAMP ? (
         <div className="mt-1 flex flex-1 flex-col gap-1 overflow-y-auto sm:max-h-[40vh]">
           <p className="hidden text-[10px] font-bold text-slate-500 sm:block">種類を選択</p>
-          {MAP_STAMP_DEFS.map((def) => (
+          {MAP_STAMP_PICKER_DEFS.map((def) => (
             <button
               key={def.type}
               type="button"
@@ -135,7 +135,7 @@ export function MapEditorToolbar({
                   : 'border-slate-200 bg-white hover:bg-slate-50')
               }
             >
-              {def.hideEmojiInPicker ? null : <span className="text-xl">{def.emoji}</span>}
+              <span className="text-xl">{def.emoji}</span>
               <span className="text-[11px] font-bold leading-tight text-slate-800">{def.label}</span>
             </button>
           ))}

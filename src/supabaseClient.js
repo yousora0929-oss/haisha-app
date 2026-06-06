@@ -43,6 +43,14 @@ export const PANEL_REALTIME_TOKEN_KEY = 'concrete_link_panel_realtime_token_v1';
 /** 別タブ地図エディタ向け: sessionStorage → localStorage 一時退避 */
 export const MAP_EDITOR_PANEL_AUTH_STAGING_KEY = 'haisha_map_editor_panel_auth_staging_v1';
 export const MAP_EDITOR_RETURN_LOCAL_KEY = 'haisha_map_editor_return_url_local_v1';
+export const MAP_EDITOR_OPENED_AS_POPUP_KEY = 'haisha_map_editor_opened_as_popup_v1';
+
+/** 各パネルアプリ固有の sessionStorage キー（別タブ地図エディタ往復用） */
+export const DISPATCH_AUTH_SESSION_KEY = 'haisha_dispatch_auth_customer_id_v1';
+export const DISPATCH_CUSTOMER_SESSION_KEY = 'haisha_dispatch_customer_id_v1';
+export const ADMIN_AUTH_SESSION_KEY = 'concrete_link_admin_auth_v1';
+export const FACTORY_SESSION_STORAGE_KEY = 'haisha_factory_site_id_v1';
+export const FACTORY_AUTH_STORAGE_KEY = 'haisha_factory_auth_id_v1';
 
 const MAP_EDITOR_PANEL_AUTH_KEYS = [
   ADMIN_PANEL_PHONE_KEY,
@@ -53,6 +61,11 @@ const MAP_EDITOR_PANEL_AUTH_KEYS = [
   FACTORY_PANEL_PASSWORD_KEY,
   GUEST_SITE_ORDER_TOKEN_KEY,
   PANEL_REALTIME_TOKEN_KEY,
+  DISPATCH_AUTH_SESSION_KEY,
+  DISPATCH_CUSTOMER_SESSION_KEY,
+  ADMIN_AUTH_SESSION_KEY,
+  FACTORY_SESSION_STORAGE_KEY,
+  FACTORY_AUTH_STORAGE_KEY,
 ];
 
 const MAP_EDITOR_AUTH_STAGING_TTL_MS = 10 * 60 * 1000;
@@ -132,8 +145,8 @@ export function resolveGuestSiteOrderToken() {
  * 地図エディタを別タブで開く直前に呼ぶ。
  * sessionStorage が新タブに引き継がれない環境向けに localStorage へ一時コピーする。
  */
-export function stageMapEditorPanelAuth() {
-  if (typeof localStorage === 'undefined' || typeof sessionStorage === 'undefined') return;
+function capturePanelAuthToLocalStorage() {
+  if (typeof localStorage === 'undefined' || typeof sessionStorage === 'undefined') return false;
   const keys = {};
   for (const key of MAP_EDITOR_PANEL_AUTH_KEYS) {
     try {
@@ -145,19 +158,30 @@ export function stageMapEditorPanelAuth() {
       /* ignore */
     }
   }
-  if (Object.keys(keys).length === 0) return;
+  if (Object.keys(keys).length === 0) return false;
   try {
     localStorage.setItem(
       MAP_EDITOR_PANEL_AUTH_STAGING_KEY,
       JSON.stringify({ at: Date.now(), keys }),
     );
+    return true;
   } catch {
-    /* ignore */
+    return false;
   }
 }
 
-/** 地図エディタ起動時: localStorage 退避から sessionStorage へ認証を復元 */
-export function restoreMapEditorPanelAuthFromStorage() {
+export function stageMapEditorPanelAuth() {
+  return capturePanelAuthToLocalStorage();
+}
+
+/** 地図エディタを閉じて元画面へ戻る直前: 現在タブの認証を再退避 */
+export function stageMapEditorPanelAuthForReturn() {
+  return capturePanelAuthToLocalStorage();
+}
+
+/** 地図エディタ起動時 / パネル画面復帰時: localStorage 退避から sessionStorage へ認証を復元 */
+export function restoreMapEditorPanelAuthFromStorage(options = {}) {
+  const { overwrite = false, consume = true } = options;
   if (typeof sessionStorage === 'undefined') return false;
   const payload = readStagedPanelAuthPayload();
   if (!payload?.keys) return false;
@@ -167,7 +191,7 @@ export function restoreMapEditorPanelAuthFromStorage() {
     const value = payload.keys[key];
     if (value == null || !String(value).trim()) continue;
     try {
-      if (!sessionStorage.getItem(key)) {
+      if (overwrite || !sessionStorage.getItem(key)) {
         sessionStorage.setItem(key, String(value));
         restored = true;
       }
@@ -176,10 +200,12 @@ export function restoreMapEditorPanelAuthFromStorage() {
     }
   }
 
-  try {
-    localStorage.removeItem(MAP_EDITOR_PANEL_AUTH_STAGING_KEY);
-  } catch {
-    /* ignore */
+  if (consume) {
+    try {
+      localStorage.removeItem(MAP_EDITOR_PANEL_AUTH_STAGING_KEY);
+    } catch {
+      /* ignore */
+    }
   }
 
   return restored;
@@ -375,6 +401,29 @@ function detectPanelCredentials() {
     return null;
   }
   return null;
+}
+
+/** 地図エディタから戻る際のフォールバック先（ログイン画面には飛ばさない） */
+export function resolveMapEditorHomeUrl() {
+  if (typeof window === 'undefined') return '';
+  const creds = detectPanelCredentials();
+  if (!creds) return '';
+  const origin = window.location.origin || '';
+  switch (creds.panelType) {
+    case 'customer':
+      return `${origin}/DispatchOrderPrototype.html`;
+    case 'factory':
+      return `${origin}/FactoryTabletPrototype.html`;
+    case 'admin':
+      return `${origin}/AdminPrototype.html`;
+    case 'guest': {
+      const token = String(creds.credentialA || '').trim();
+      if (!token) return '';
+      return `${origin}/order/${encodeURIComponent(token)}`;
+    }
+    default:
+      return '';
+  }
 }
 
 /** Realtime 用 JWT を supabase.realtime に適用 */

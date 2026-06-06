@@ -4,8 +4,10 @@ import { AdminApp } from './AdminApp.jsx';
 import { ThemeProvider } from './components/ThemeProvider.jsx';
 import './theme.css';
 import { initTheme } from './utils/theme.js';
+import { restoreMapEditorPanelAuthFromStorage } from './supabaseClient.js';
 
 initTheme();
+restoreMapEditorPanelAuthFromStorage({ overwrite: true });
 
 const rootEl = document.getElementById('root');
 if (!rootEl) {

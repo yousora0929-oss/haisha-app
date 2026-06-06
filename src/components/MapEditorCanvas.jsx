@@ -6,7 +6,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { MAP_STAMP_DEFS, MAP_STAMP_EMOJI } from '../mapEditorConstants.js';
+import { MAP_STAMP_EMOJI, MAP_STAMP_PICKER_DEFS } from '../mapEditorConstants.js';
 
 const BLANK_CANVAS_W = 800;
 const BLANK_CANVAS_H = 600;
@@ -330,7 +330,7 @@ export function MapStampPalette({ selectedType, onSelectType, disabled }) {
     <div className="border-t border-slate-200 bg-white px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2">
       <p className="mb-2 text-[11px] font-bold text-slate-500">スタンプを選んでから、地図をタップして配置</p>
       <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {MAP_STAMP_DEFS.map((def) => (
+        {MAP_STAMP_PICKER_DEFS.map((def) => (
           <button
             key={def.type}
             type="button"

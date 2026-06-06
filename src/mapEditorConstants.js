@@ -1,8 +1,11 @@
 import {
   resolveGuestSiteOrderToken,
   stageMapEditorPanelAuth,
+  stageMapEditorPanelAuthForReturn,
   stageMapEditorReturnUrl,
   consumeStagedMapEditorReturnUrl,
+  resolveMapEditorHomeUrl,
+  MAP_EDITOR_OPENED_AS_POPUP_KEY,
 } from './supabaseClient.js';
 
 /** 地図エディタで使うスタンプ種別 */
@@ -20,17 +23,22 @@ export const MAP_STAMP_TYPES = [
 ];
 
 export const MAP_STAMP_DEFS = [
-  { type: 'PUMP', emoji: '🏗️', label: 'ポンプ車', hideEmojiInPicker: true },
-  { type: 'MIXER', emoji: '🚛', label: 'ミキサー車', hideEmojiInPicker: true },
-  { type: 'EXCAVATOR', emoji: '🚜', label: '重機', hideEmojiInPicker: true },
+  { type: 'PUMP', emoji: '🏗️', label: 'ポンプ車', hideFromPicker: true },
+  { type: 'MIXER', emoji: '🚛', label: 'ミキサー車', hideFromPicker: true },
+  { type: 'EXCAVATOR', emoji: '🚜', label: '重機', hideFromPicker: true },
   { type: 'ARROW_UP', emoji: '⬆️', label: '進入・上' },
   { type: 'ARROW_DOWN', emoji: '⬇️', label: '進入・下' },
   { type: 'ARROW_LEFT', emoji: '⬅️', label: '進入・左' },
   { type: 'ARROW_RIGHT', emoji: '➡️', label: '進入・右' },
   { type: 'PARKING', emoji: '🅿️', label: '待機場所' },
-  { type: 'WASH', emoji: '🚰', label: '洗い場', hideEmojiInPicker: true },
+  { type: 'WASH', emoji: '🚰', label: '洗い場', hideFromPicker: true },
   { type: 'FORBIDDEN', emoji: '⛔', label: '進入禁止' },
 ];
+
+/** スタンプ選択メニューに表示する種別（既存データの描画用定義は MAP_STAMP_DEFS に残す） */
+export const MAP_STAMP_PICKER_DEFS = MAP_STAMP_DEFS.filter((d) => !d.hideFromPicker);
+
+export const DEFAULT_MAP_STAMP_TYPE = MAP_STAMP_PICKER_DEFS[0]?.type ?? 'ARROW_UP';
 
 /** 地図エディタの操作モード */
 export const MAP_EDITOR_TOOLS = {
@@ -85,6 +93,11 @@ export function rememberMapEditorReturnUrl() {
   }
   stageMapEditorReturnUrl(href);
   stageMapEditorPanelAuth();
+  try {
+    localStorage.setItem(MAP_EDITOR_OPENED_AS_POPUP_KEY, '1');
+  } catch {
+    /* ignore */
+  }
 }
 
 function isUsableMapEditorReturnUrl(raw) {
@@ -94,6 +107,7 @@ function isUsableMapEditorReturnUrl(raw) {
     const path = (u.pathname || '/').toLowerCase();
     if (path === '/' || path === '/index.html') return false;
     if (/\/map-editor\//i.test(path)) return false;
+    if (/\/login\b/i.test(path) || path.endsWith('/login')) return false;
     if (typeof window !== 'undefined' && raw === window.location.href) return false;
     return true;
   } catch {
@@ -101,12 +115,20 @@ function isUsableMapEditorReturnUrl(raw) {
   }
 }
 
-/**
- * 保存せず閉じる・戻る用: 遷移元へ必ず戻す（トップ `/` へは飛ばさない）
- */
-export function navigateBackFromMapEditor() {
-  if (typeof window === 'undefined') return false;
+function tryCloseMapEditorPopupTab() {
+  if (typeof localStorage === 'undefined') return false;
+  try {
+    const opened = localStorage.getItem(MAP_EDITOR_OPENED_AS_POPUP_KEY);
+    if (opened !== '1') return false;
+    localStorage.removeItem(MAP_EDITOR_OPENED_AS_POPUP_KEY);
+    window.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
 
+function resolveMapEditorReturnTarget() {
   let target = '';
   try {
     const q = new URLSearchParams(window.location.search).get('return');
@@ -117,18 +139,38 @@ export function navigateBackFromMapEditor() {
     if (!isUsableMapEditorReturnUrl(target)) {
       target = consumeStagedMapEditorReturnUrl();
     }
+    if (!isUsableMapEditorReturnUrl(target)) {
+      target = resolveMapEditorHomeUrl();
+    }
+  } catch {
+    target = resolveMapEditorHomeUrl();
+  }
+  return isUsableMapEditorReturnUrl(target) ? target : '';
+}
+
+/**
+ * 保存せず閉じる・戻る用: 遷移元へ必ず戻す（ログイン画面・トップ `/` へは飛ばさない）
+ */
+export function navigateBackFromMapEditor() {
+  if (typeof window === 'undefined') return false;
+
+  stageMapEditorPanelAuthForReturn();
+
+  const target = resolveMapEditorReturnTarget();
+
+  try {
     sessionStorage.removeItem(MAP_EDITOR_RETURN_SESSION_KEY);
   } catch {
     /* ignore */
   }
 
-  if (isUsableMapEditorReturnUrl(target)) {
+  if (target) {
+    tryCloseMapEditorPopupTab();
     window.location.assign(target);
     return true;
   }
 
-  if (window.history.length > 1) {
-    window.history.back();
+  if (tryCloseMapEditorPopupTab()) {
     return true;
   }
 

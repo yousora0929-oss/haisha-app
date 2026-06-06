@@ -8,8 +8,8 @@ import {
 } from './haishaDb.js';
 import { ensureMapEditorPanelAuth, hasAnyPanelSession, parseMapEditorGuestTokenFromUrl } from './supabaseClient.js';
 import {
+  DEFAULT_MAP_STAMP_TYPE,
   MAP_EDITOR_TOOLS,
-  navigateAfterMapEditorSave,
   navigateBackFromMapEditor,
   parseMapEditorOrderId,
 } from './mapEditorConstants.js';
@@ -57,7 +57,7 @@ export function MapEditorApp() {
 
   const [annotations, setAnnotations] = useState(() => emptyMapAnnotations());
   const [activeTool, setActiveTool] = useState(MAP_EDITOR_TOOLS.PAN);
-  const [selectedStampType, setSelectedStampType] = useState('PUMP');
+  const [selectedStampType, setSelectedStampType] = useState(DEFAULT_MAP_STAMP_TYPE);
   const [unloadRadius, setUnloadRadius] = useState(12);
 
   const [saving, setSaving] = useState(false);
@@ -89,24 +89,20 @@ export function MapEditorApp() {
     return Number.isFinite(n) ? n : null;
   }, []);
 
-  const closeOrNavigateBack = useCallback(() => {
-    try {
-      if (window.opener || window.history.length <= 1) {
-        window.close();
-        return;
-      }
-    } catch {
-      /* ignore */
+  const handleCloseEditor = (e) => {
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+    if (saving) return;
+    const stampCount =
+      (annotations.stamps?.length || 0) +
+      (annotations.unloadPoints?.length || 0) +
+      (annotations.comments?.length || 0);
+    const dirty = stampCount > 0 || mapSource === 'upload';
+    if (dirty && !window.confirm('保存していません。地図エディタを閉じて前の画面に戻りますか？')) {
+      return;
     }
-
-    if (!navigateBackFromMapEditor()) {
-      try {
-        window.history.back();
-      } catch {
-        navigateAfterMapEditorSave();
-      }
-    }
-  }, []);
+    navigateBackFromMapEditor();
+  };
 
   const revokeLocalBlob = useCallback(() => {
     if (localBlobUrlRef.current) {
@@ -212,8 +208,8 @@ export function MapEditorApp() {
 
   const askReturnAfterSave = useCallback(() => {
     window.alert('地図を保存しました。');
-    closeOrNavigateBack();
-  }, [closeOrNavigateBack]);
+    navigateBackFromMapEditor();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -333,19 +329,6 @@ export function MapEditorApp() {
       unloadPoints: [],
       comments: [],
     }));
-  };
-
-  const handleCloseEditor = () => {
-    if (saving) return;
-    const stampCount =
-      (annotations.stamps?.length || 0) +
-      (annotations.unloadPoints?.length || 0) +
-      (annotations.comments?.length || 0);
-    const dirty = stampCount > 0 || mapSource === 'upload';
-    if (dirty && !window.confirm('保存していません。地図エディタを閉じて前の画面に戻りますか？')) {
-      return;
-    }
-    closeOrNavigateBack();
   };
 
   const runSave = async (mode) => {
