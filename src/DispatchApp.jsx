@@ -65,6 +65,11 @@ import {
   analyzeCustomerChatRealtimePayload,
 } from './utils/customerChatRealtime.js';
 import {
+  customerChatDisplayName,
+  isOutgoingSideForCustomerView,
+  isSystemChatSender,
+} from './utils/chatMessageSenders.js';
+import {
   getOrderDeliveryDateISO,
   isOrderInHistoryView,
   isOrderInProgressView,
@@ -538,7 +543,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               <li className="px-2 py-12 text-center text-sm font-bold text-slate-500">まだメッセージはありません</li>
             ) : (
               list.map((m) => {
-                if (m.from === 'system') {
+                if (isSystemChatSender(m.from)) {
                   return (
                     <li key={m.id} className="flex justify-center">
                       <div className="max-w-[95%] rounded-xl border border-slate-300/80 bg-slate-100/95 px-3 py-2 text-center text-xs font-bold text-slate-700 shadow-sm">
@@ -554,15 +559,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     </li>
                   );
                 }
-                const mine = m.from === 'master';
-                const displaySenderName = mine ? senderName || '担当者' : '工場';
+                const mine = isOutgoingSideForCustomerView(m.from);
+                const displaySenderName = customerChatDisplayName(m.from, senderName);
                 return (
                   <li key={m.id} className={'flex ' + (mine ? 'justify-end' : 'justify-start')}>
                     <div
                       className={
                         'max-w-[88%] rounded-2xl px-3 py-2 text-sm shadow-sm ' +
                         (mine
-                          ? 'rounded-br-md bg-[#dcf8c6] text-slate-900'
+                          ? 'rounded-br-md border border-sky-200 bg-sky-100 text-slate-900'
                           : 'rounded-bl-md bg-white text-slate-900')
                       }
                     >

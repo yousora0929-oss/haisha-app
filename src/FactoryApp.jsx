@@ -34,6 +34,11 @@ import {
   stopNotificationAlarm,
 } from './utils/notificationAlarm.js';
 import { analyzeFactoryChatRealtimePayload } from './utils/factoryChatRealtime.js';
+import {
+  factoryChatDisplayName,
+  isIncomingSideForFactoryView,
+  isSystemChatSender,
+} from './utils/chatMessageSenders.js';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
@@ -401,7 +406,7 @@ function orderPartyInfo(order) {
               <li className="px-2 text-center text-sm text-slate-500 sm:text-base">まだメッセージはありません</li>
             ) : (
               list.map((m) => {
-                if (m.from === 'system') {
+                if (isSystemChatSender(m.from)) {
                   return (
                     <li key={m.id} className="flex justify-center">
                       <div className="max-w-[95%] rounded-xl border border-slate-300/80 bg-slate-100/95 px-3 py-2.5 text-center text-sm font-bold text-slate-700 shadow-sm sm:text-base">
@@ -417,16 +422,16 @@ function orderPartyInfo(order) {
                     </li>
                   );
                 }
-                const isMaster = m.from === 'master';
-                const displaySenderName = isMaster ? customerSenderName : '工場（この端末）';
+                const isCustomerSide = isIncomingSideForFactoryView(m.from);
+                const displaySenderName = factoryChatDisplayName(m.from, customerSenderName);
                 return (
-                  <li key={m.id} className={'flex ' + (isMaster ? 'justify-start' : 'justify-end')}>
+                  <li key={m.id} className={'flex ' + (isCustomerSide ? 'justify-start' : 'justify-end')}>
                     <div
                       className={
                         'max-w-[90%] rounded-2xl px-3 py-2.5 text-base shadow-sm sm:text-lg ' +
-                        (isMaster
+                        (isCustomerSide
                           ? 'rounded-bl-md border border-slate-200 bg-white text-slate-900'
-                          : 'rounded-br-md border border-emerald-300 bg-[#dcf8c6] text-slate-900')
+                          : 'rounded-br-md border border-sky-200 bg-sky-100 text-slate-900')
                       }
                     >
                       <p className="whitespace-pre-wrap break-words leading-snug">{m.body}</p>
