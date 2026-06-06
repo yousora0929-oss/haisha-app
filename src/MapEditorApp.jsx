@@ -452,8 +452,8 @@ export function MapEditorApp() {
 
   const actionBtn =
     'min-h-[44px] rounded-xl px-3 text-xs font-black shadow-md active:scale-[0.98] disabled:opacity-50 sm:text-sm';
-  const closeBtn =
-    'min-h-[22px] shrink-0 rounded-lg border border-slate-300 bg-white px-2 py-1 text-[10px] font-bold text-slate-700 shadow-sm active:scale-[0.98] disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200';
+  const mobileBarBtn =
+    'flex min-h-[44px] w-full items-center justify-center rounded-xl px-2 text-xs font-black shadow-md active:scale-[0.98] disabled:opacity-50';
 
   return (
     <div className="map-editor-app relative h-[100dvh] w-screen overflow-hidden bg-gray-100 text-slate-900 dark:bg-gray-900 dark:text-gray-100">
@@ -529,13 +529,13 @@ export function MapEditorApp() {
       />
 
       <div className="map-editor-no-print fixed inset-x-0 bottom-0 z-20 border-t border-slate-200/80 bg-white/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.12)] backdrop-blur md:absolute md:inset-x-auto md:bottom-auto md:left-auto md:right-4 md:top-4 md:max-w-md md:border-0 md:bg-transparent md:p-0 md:shadow-none md:backdrop-blur-none dark:border-slate-700 dark:bg-slate-900/95 md:dark:bg-transparent">
-        {/* スマホ: 閉じる | 図面 | 保存 を1列 */}
-        <div className="flex w-full items-center gap-2 md:hidden">
+        {/* スマホ: 閉じる | 図面 | 保存 を 1:1:2 で1列 */}
+        <div className="grid w-full grid-cols-[1fr_1fr_2fr] gap-2 md:hidden">
           <button
             type="button"
             onClick={handleCloseEditor}
             disabled={saving}
-            className={closeBtn}
+            className={mobileBarBtn + ' border border-slate-300 bg-white text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200'}
             aria-label="閉じる"
           >
             閉じる
@@ -544,7 +544,7 @@ export function MapEditorApp() {
             type="button"
             disabled={saving}
             onClick={() => baseUploadRef.current?.click()}
-            className={actionBtn + ' flex flex-1 items-center justify-center border border-slate-300 bg-white text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100'}
+            className={mobileBarBtn + ' border border-slate-300 bg-white text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100'}
           >
             <span aria-hidden="true">📷</span>
             <span> 図面</span>
@@ -553,7 +553,7 @@ export function MapEditorApp() {
             type="button"
             onClick={() => setConfirmMode('order')}
             disabled={saving}
-            className={actionBtn + ' shrink-0 bg-emerald-600 text-white ring-2 ring-emerald-300/50'}
+            className={mobileBarBtn + ' bg-emerald-600 text-white ring-2 ring-emerald-300/50'}
           >
             <span aria-hidden="true">💾</span>
             <span> 保存</span>
