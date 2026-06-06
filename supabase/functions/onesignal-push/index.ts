@@ -1,6 +1,6 @@
-/** onesignal-push v15 — ジョブ全体タイムアウト撤廃・fetch を Abort 化 */
+/** onesignal-push v16 — OneSignal 認証（Rich Key / Legacy Basic 両対応） */
 
-const FUNCTION_VERSION = 15;
+const FUNCTION_VERSION = 16;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 
 type PushEvent =
@@ -148,10 +148,59 @@ function isVerboseLog(): boolean {
   return v === '1' || v === 'true' || v === 'yes';
 }
 
-function buildOneSignalAuthHeader(apiKey: string): string {
-  const key = String(apiKey || '').trim();
-  if (/^(Key|key|Basic)\s+/i.test(key)) return key;
-  return `Key ${key}`;
+function normalizeApiKey(raw: string): string {
+  return String(raw || '').trim().replace(/^["']|["']$/g, '');
+}
+
+function bareApiKey(apiKey: string): string {
+  return normalizeApiKey(apiKey).replace(/^(Key|key|Basic)\s+/i, '').trim();
+}
+
+function apiKeyKind(apiKey: string): string {
+  const bare = bareApiKey(apiKey);
+  if (!bare) return 'missing';
+  if (/^os_v2_/i.test(bare)) return 'rich_app_key';
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(bare)) return 'legacy_uuid';
+  return 'other';
+}
+
+function buildOneSignalAuthHeaders(apiKey: string): string[] {
+  const bare = bareApiKey(apiKey);
+  if (!bare) return [];
+
+  const headers: string[] = [];
+  if (/^os_v2_/i.test(bare)) {
+    headers.push(`Key ${bare}`);
+    return headers;
+  }
+  if (/^[0-9a-f-]{36}$/i.test(bare)) {
+    headers.push(`Basic ${btoa(`${bare}:`)}`);
+    headers.push(`Key ${bare}`);
+    return headers;
+  }
+  headers.push(`Key ${bare}`);
+  return headers;
+}
+
+function resolveOneSignalCredentials(): { appId: string; apiKey: string; keyKind: string } {
+  const appId = pickString(
+    Deno.env.get('ONESIGNAL_APP_ID'),
+    Deno.env.get('VITE_ONESIGNAL_APP_ID'),
+    '98ab8b43-0536-4805-bee0-2341648828b6',
+  );
+  const apiKey = normalizeApiKey(pickString(
+    Deno.env.get('ONESIGNAL_REST_API_KEY'),
+    Deno.env.get('ONESIGNAL_API_KEY'),
+    Deno.env.get('VITE_ONESIGNAL_REST_API_KEY'),
+  ));
+  return { appId, apiKey, keyKind: apiKeyKind(apiKey) };
+}
+
+function isOneSignalAuthError(status: number, parsed: Record<string, unknown> | null): boolean {
+  if (status === 401 || status === 403) return true;
+  const errors = parsed?.errors;
+  if (!Array.isArray(errors)) return false;
+  return errors.some((entry) => /access denied|authorization|api key/i.test(String(entry)));
 }
 
 function payloadSendTarget(payload: Record<string, unknown>): string {
@@ -405,13 +454,12 @@ async function readWebhookPayload(req: Request): Promise<{ incoming: IncomingPay
 
 async function postOneSignalRequest(payload: Record<string, unknown>): Promise<boolean> {
   const started = Date.now();
-  const appId =
-    Deno.env.get('ONESIGNAL_APP_ID') ||
-    Deno.env.get('VITE_ONESIGNAL_APP_ID') ||
-    '98ab8b43-0536-4805-bee0-2341648828b6';
-  const apiKey = Deno.env.get('ONESIGNAL_REST_API_KEY') || Deno.env.get('VITE_ONESIGNAL_REST_API_KEY') || '';
+  const { appId, apiKey, keyKind } = resolveOneSignalCredentials();
   if (!appId || !apiKey) {
-    console.warn('[onesignal-push] OneSignal env vars missing');
+    console.warn('[onesignal-push] OneSignal env vars missing', {
+      hasAppId: Boolean(appId),
+      hasApiKey: Boolean(apiKey),
+    });
     return false;
   }
 
@@ -426,52 +474,63 @@ async function postOneSignalRequest(payload: Record<string, unknown>): Promise<b
   };
 
   const target = payloadSendTarget(requestPayload);
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), ONESIGNAL_FETCH_TIMEOUT_MS);
+  const authHeaders = buildOneSignalAuthHeaders(apiKey);
+  console.log('[onesignal-push] OneSignal request start', {
+    target: target || '(unknown)',
+    keyKind,
+    authModes: authHeaders.map((header) => header.split(/\s+/)[0]),
+  });
 
-  try {
-    console.log('[onesignal-push] OneSignal request start', { target: target || '(unknown)' });
+  for (const authorization of authHeaders) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), ONESIGNAL_FETCH_TIMEOUT_MS);
+    const authMode = authorization.split(/\s+/)[0];
 
-    const response = await fetch(ONESIGNAL_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: buildOneSignalAuthHeader(apiKey),
-      },
-      body: JSON.stringify(requestPayload),
-      signal: controller.signal,
-    });
+    try {
+      const response = await fetch(ONESIGNAL_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: authorization,
+        },
+        body: JSON.stringify(requestPayload),
+        signal: controller.signal,
+      });
 
-    const responseText = await response.text();
-    const parsed = tryParseJson(responseText);
-    const notificationId = pickString(parsed?.id);
-    const elapsed = Date.now() - started;
+      const responseText = await response.text();
+      const parsed = tryParseJson(responseText);
+      const notificationId = pickString(parsed?.id);
+      const elapsed = Date.now() - started;
 
-    console.log(
-      `[onesignal-push] status=${response.status} target=${target || '(unknown)'} notificationId=${notificationId || 'none'} ms=${elapsed}`,
-    );
+      console.log(
+        `[onesignal-push] status=${response.status} auth=${authMode} target=${target || '(unknown)'} notificationId=${notificationId || 'none'} ms=${elapsed}`,
+      );
 
-    if (parsed?.errors) console.warn('[onesignal-push] OneSignal errors:', parsed.errors);
-    if (!response.ok || !notificationId) {
-      console.warn('[onesignal-push] OneSignal response body:', responseText.slice(0, 600));
-    } else if (isVerboseLog()) {
-      console.log('[onesignal-push] response:', responseText);
+      if (parsed?.errors) console.warn('[onesignal-push] OneSignal errors:', parsed.errors);
+      if (!response.ok || !notificationId) {
+        console.warn('[onesignal-push] OneSignal response body:', responseText.slice(0, 600));
+      }
+
+      if (response.ok && notificationId) return true;
+
+      if (isOneSignalAuthError(response.status, parsed) && authHeaders.length > 1) {
+        console.warn('[onesignal-push] retrying OneSignal with alternate auth', { authMode, keyKind });
+        continue;
+      }
+      return false;
+    } catch (error) {
+      const isAbort = error instanceof DOMException && error.name === 'AbortError';
+      console.warn(
+        `[onesignal-push] OneSignal ${isAbort ? 'timeout' : 'failed'} auth=${authMode} target=${target} ms=${Date.now() - started}`,
+      );
+      return false;
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    if (response.ok && notificationId) return true;
-    if (response.ok && !notificationId) {
-      console.warn('[onesignal-push] OneSignal 200 but no notification id', { target, elapsed });
-    }
-    return false;
-  } catch (error) {
-    const isAbort = error instanceof DOMException && error.name === 'AbortError';
-    console.warn(
-      `[onesignal-push] OneSignal ${isAbort ? 'timeout' : 'failed'} target=${target} ms=${Date.now() - started}`,
-    );
-    return false;
-  } finally {
-    clearTimeout(timeoutId);
   }
+
+  console.warn('[onesignal-push] OneSignal all auth modes failed', { keyKind, target });
+  return false;
 }
 
 async function postOneSignal(payload: Record<string, unknown>): Promise<boolean> {
