@@ -118,27 +118,39 @@ async function postOneSignal(payload: Record<string, unknown>): Promise<boolean>
     '98ab8b43-0536-4805-bee0-2341648828b6';
   const apiKey = Deno.env.get('ONESIGNAL_REST_API_KEY') || Deno.env.get('VITE_ONESIGNAL_REST_API_KEY') || '';
   if (!appId || !apiKey) {
-    console.warn('[onesignal-push] OneSignal env vars are missing');
+    console.warn('[onesignal-push] OneSignal env vars are missing', { hasAppId: Boolean(appId), hasApiKey: Boolean(apiKey) });
     return false;
   }
-  const res = await fetch('https://onesignal.com/api/v1/notifications', {
+
+  const requestPayload = {
+    app_id: appId,
+    headings: { ja: '生コン発注システム', en: 'Ready-mix Ordering System' },
+    ios_badgeType: 'SetTo',
+    ios_badgeCount: 1,
+    web_badge: 1,
+    ...payload,
+  };
+
+  console.log('OneSignal 送信 payload:', JSON.stringify(requestPayload, null, 2));
+
+  const response = await fetch('https://onesignal.com/api/v1/notifications', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Basic ${apiKey}`,
     },
-    body: JSON.stringify({
-      app_id: appId,
-      headings: { ja: '生コン発注システム', en: 'Ready-mix Ordering System' },
-      ios_badgeType: 'SetTo',
-      ios_badgeCount: 1,
-      web_badge: 1,
-      ...payload,
-    }),
+    body: JSON.stringify(requestPayload),
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    console.warn('[onesignal-push] OneSignal API error', res.status, text);
+
+  const responseText = await response.text().catch(() => '');
+  console.log('[onesignal-push] OneSignal API response:', {
+    status: response.status,
+    ok: response.ok,
+    body: responseText,
+  });
+
+  if (!response.ok) {
+    console.warn('[onesignal-push] OneSignal API error', response.status, responseText);
     return false;
   }
   return true;
@@ -146,7 +158,11 @@ async function postOneSignal(payload: Record<string, unknown>): Promise<boolean>
 
 async function sendToExternalIds(externalIds: string[], message: string, data: Record<string, unknown> = {}) {
   const ids = [...new Set(externalIds.flatMap((id) => externalIdCandidates(id)).filter(Boolean))];
-  if (!ids.length || !message) return false;
+  if (!ids.length || !message) {
+    console.warn('[onesignal-push] sendToExternalIds skipped', { ids, hasMessage: Boolean(message), data });
+    return false;
+  }
+  console.log('[onesignal-push] sendToExternalIds', { ids, message, data });
   return postOneSignal({
     include_external_user_ids: ids,
     channel_for_external_user_ids: 'push',
@@ -157,7 +173,11 @@ async function sendToExternalIds(externalIds: string[], message: string, data: R
 
 async function sendToRole(role: string, message: string, data: Record<string, unknown> = {}) {
   const normalizedRole = String(role || '').trim();
-  if (!normalizedRole || !message) return false;
+  if (!normalizedRole || !message) {
+    console.warn('[onesignal-push] sendToRole skipped', { role: normalizedRole, hasMessage: Boolean(message), data });
+    return false;
+  }
+  console.log('[onesignal-push] sendToRole', { role: normalizedRole, message, data });
   return postOneSignal({
     filters: [{ field: 'tag', key: 'role', relation: '=', value: normalizedRole }],
     contents: { ja: message, en: message },
@@ -189,6 +209,14 @@ async function handleOrderWebhook(payload: WebhookPayload): Promise<Response> {
   const oldRecord = payload.old_record || null;
   const sent: string[] = [];
 
+  console.log('[onesignal-push] webhook received', {
+    eventType,
+    orderId: pickString(record.id),
+    customerId: resolveCustomerExternalId(record),
+    factorySiteId: pickString(record.factory_site_id),
+    status: effectiveStatus(record),
+  });
+
   if (eventType === 'INSERT') {
     const status = effectiveStatus(record);
     if (status !== 'pending_association' && isPendingLike(status)) {
@@ -216,6 +244,10 @@ async function handleOrderWebhook(payload: WebhookPayload): Promise<Response> {
           status: newStatus,
         });
         if (ok) sent.push('customer:accepted');
+      } else {
+        console.warn('[onesignal-push] customer:accepted skipped — customer_id が空', {
+          orderId: pickString(record.id),
+        });
       }
     } else if (
       isPendingLike(oldStatus) &&
@@ -229,6 +261,10 @@ async function handleOrderWebhook(payload: WebhookPayload): Promise<Response> {
           status: newStatus,
         });
         if (ok) sent.push('customer:rejected');
+      } else {
+        console.warn('[onesignal-push] customer:rejected skipped — customer_id が空', {
+          orderId: pickString(record.id),
+        });
       }
     }
 
@@ -250,6 +286,8 @@ async function handleOrderWebhook(payload: WebhookPayload): Promise<Response> {
               { type: 'chat', orderId, targetApp: 'customer' },
             );
             if (ok) sent.push('customer:chat');
+          } else {
+            console.warn('[onesignal-push] customer:chat skipped — customer_id が空', { orderId });
           }
         } else if (from === 'master' || from === 'customer') {
           const od = orderData(record);
@@ -281,6 +319,8 @@ async function handleOrderWebhook(payload: WebhookPayload): Promise<Response> {
       }
     }
   }
+
+  console.log('[onesignal-push] webhook done', { orderId: pickString(record.id), sent });
 
   return new Response(JSON.stringify({ ok: true, sent }), {
     headers: { 'Content-Type': 'application/json' },
