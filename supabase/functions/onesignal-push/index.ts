@@ -1,7 +1,8 @@
-/** onesignal-push v9 — slim + legacy 両対応・202 即返却 */
+/** onesignal-push v10 — slim/legacy + pg_net 欠損 body レスキュー */
 
-const FUNCTION_VERSION = 9;
+const FUNCTION_VERSION = 10;
 const LEGACY_MAX_BODY_BYTES = 64000;
+const FETCH_ORDER_TIMEOUT_MS = 5000;
 
 type PushEvent =
   | 'new_order'
@@ -41,7 +42,8 @@ type LegacyWebhookPayload = {
 
 type IncomingPayload =
   | { format: 'slim'; data: SlimPayload }
-  | { format: 'legacy'; data: LegacyWebhookPayload };
+  | { format: 'legacy'; data: LegacyWebhookPayload }
+  | { format: 'rescued'; data: OrderRow; hint: 'chat' | 'status' | 'insert' };
 
 const ACCEPTED_STATUSES = new Set(['accepted', 'confirmed']);
 const ONESIGNAL_FETCH_TIMEOUT_MS = 4000;
@@ -184,41 +186,166 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   ]);
 }
 
-async function readWebhookPayload(req: Request): Promise<IncomingPayload | null> {
+function extractUuidFromText(text: string, ...keys: string[]): string {
+  for (const key of keys) {
+    const match = text.match(new RegExp(`"${key}"\\s*:\\s*"([0-9a-f-]{36})"`, 'i'));
+    if (match?.[1]) return match[1];
+  }
+  return '';
+}
+
+function slimPayloadFromRow(row: OrderRow, event: string): SlimPayload {
+  const od = orderData(row);
+  return {
+    event,
+    order_id: pickString(row.id),
+    customer_id: pickString(row.customer_id) || null,
+    factory_site_id: pickString(row.factory_site_id, od.factory_site_id, od.factorySiteId) || null,
+    preferred_factory_id: pickString(row.preferred_factory_id, od.preferred_factory_id, od.preferredFactoryId) || null,
+    phone: orderCustomerPhone(row) || null,
+    factory_name: factoryNameFromOrder(row),
+    contractor_name: pickString(od.customerName, od.customer_name, od.contractorName, '新規注文'),
+    sender_name: pickString(od.manager_name, od.contact_person, od.ordered_by, od.orderedBy, '担当者'),
+    status: effectiveStatus(row),
+  };
+}
+
+async function fetchOrderRow(orderId: string): Promise<OrderRow | null> {
+  const base = Deno.env.get('SUPABASE_URL')?.replace(/\/$/, '') || '';
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  if (!base || !key || !orderId) return null;
+
+  const response = await withTimeout(
+    fetch(`${base}/rest/v1/orders?id=eq.${encodeURIComponent(orderId)}&select=*`, {
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        Accept: 'application/json',
+      },
+    }),
+    FETCH_ORDER_TIMEOUT_MS,
+    'fetch order',
+  );
+  if (!response?.ok) {
+    console.warn('[onesignal-push] fetch order failed', { orderId, status: response?.status ?? 'timeout' });
+    return null;
+  }
+
+  const rows = await withTimeout(response.json(), 2000, 'parse order json');
+  if (!Array.isArray(rows) || !rows[0] || typeof rows[0] !== 'object') return null;
+  return rows[0] as OrderRow;
+}
+
+function inferRescueHint(text: string, row: OrderRow): 'chat' | 'status' | 'insert' {
+  if (/chat_messages/i.test(text)) return 'chat';
+  const status = effectiveStatus(row);
+  if (/"(status|factoryResponseStatus|factory_response_status)"/i.test(text)) return 'status';
+  if (isAcceptedLike(status) || isRejectedLike(status)) return 'status';
+  if (asArray(row.chat_messages).length > 0) return 'chat';
+  return 'insert';
+}
+
+async function rescueFromHeaders(req: Request): Promise<IncomingPayload | null> {
+  const event = pickString(req.headers.get('x-onesignal-event'));
+  const orderId = pickString(req.headers.get('x-onesignal-order-id'));
+  if (!event || !orderId) return null;
+
+  const row = await fetchOrderRow(orderId);
+  if (row) {
+    console.log('[onesignal-push] rescued from headers', { event, orderId });
+    return { format: 'slim', data: slimPayloadFromRow(row, event) };
+  }
+
+  console.log('[onesignal-push] rescued from headers (minimal)', { event, orderId });
+  return { format: 'slim', data: { event, order_id: orderId } };
+}
+
+async function rescueFromPartialBody(text: string): Promise<IncomingPayload | null> {
+  const orderId = extractUuidFromText(text, 'order_id', 'id');
+  if (!orderId) return null;
+
+  const row = await fetchOrderRow(orderId);
+  if (!row) return null;
+
+  const eventFromBody = pickString(text.match(/"event"\s*:\s*"([a-z_]+)"/i)?.[1]);
+  if (eventFromBody) {
+    console.log('[onesignal-push] rescued partial slim body', { orderId, event: eventFromBody, bodyLen: text.length });
+    return { format: 'slim', data: slimPayloadFromRow(row, eventFromBody) };
+  }
+
+  const op = pickString(text.match(/"type"\s*:\s*"(\w+)"/i)?.[1]).toUpperCase();
+  if (op === 'INSERT') {
+    console.log('[onesignal-push] rescued partial insert', { orderId, bodyLen: text.length });
+    return { format: 'rescued', data: row, hint: 'insert' };
+  }
+
+  const hint = inferRescueHint(text, row);
+  console.log('[onesignal-push] rescued partial body', { orderId, hint, bodyLen: text.length });
+  return { format: 'rescued', data: row, hint };
+}
+
+async function readWebhookPayload(req: Request): Promise<{ incoming: IncomingPayload | null; reason?: string }> {
   const contentLengthHeader = req.headers.get('content-length');
-  const contentLength = contentLengthHeader ? Number(contentLengthHeader) : 0;
-  let parsed: unknown;
-  try {
-    parsed = await req.json();
-  } catch (error) {
-    console.warn('[onesignal-push] req.json failed', { contentLength: contentLengthHeader, error: String(error) });
-    return null;
-  }
+  const rawText = await req.text();
+  const bodyLen = rawText.length;
 
-  if (!parsed || typeof parsed !== 'object') {
-    console.warn('[onesignal-push] empty or invalid payload', { contentLength: contentLengthHeader });
-    return null;
-  }
+  console.log('[onesignal-push] body received', {
+    bodyLen,
+    contentLength: contentLengthHeader,
+    preview: rawText.slice(0, 240),
+  });
 
-  const body = parsed as Record<string, unknown>;
+  if (rawText) {
+    const parsed = tryParseJson(rawText);
+    if (parsed) {
+      if (pickString(parsed.event)) {
+        return { incoming: { format: 'slim', data: parsed as SlimPayload } };
+      }
 
-  if (pickString(body.event)) {
-    return { format: 'slim', data: body as SlimPayload };
-  }
+      const record = parsed.record;
+      const recordObject = record && typeof record === 'object' && !Array.isArray(record)
+        ? record as OrderRow
+        : null;
 
-  if (pickString(body.type) && body.record && typeof body.record === 'object') {
-    if (contentLength > LEGACY_MAX_BODY_BYTES) {
-      console.warn('[onesignal-push] legacy payload too large — apply slim_payload migration', {
-        contentLength,
-      });
-      return null;
+      if (pickString(parsed.type) && recordObject) {
+        const contentLength = contentLengthHeader ? Number(contentLengthHeader) : bodyLen;
+        if (contentLength > LEGACY_MAX_BODY_BYTES) {
+          return { incoming: null, reason: 'legacy_payload_too_large' };
+        }
+        console.log('[onesignal-push] legacy payload');
+        return {
+          incoming: {
+            format: 'legacy',
+            data: {
+              type: pickString(parsed.type),
+              record: recordObject,
+              old_record: parsed.old_record && typeof parsed.old_record === 'object'
+                ? parsed.old_record as OrderRow
+                : null,
+            },
+          },
+        };
+      }
+
+      if (pickString(parsed.type) && !recordObject) {
+        const rescued = await rescueFromPartialBody(rawText);
+        if (rescued) return { incoming: rescued };
+      }
     }
-    console.log('[onesignal-push] legacy payload', { contentLength: contentLengthHeader });
-    return { format: 'legacy', data: body as LegacyWebhookPayload };
   }
 
-  console.warn('[onesignal-push] unrecognized payload shape', { contentLength: contentLengthHeader });
-  return null;
+  const fromHeaders = await rescueFromHeaders(req);
+  if (fromHeaders) return { incoming: fromHeaders };
+
+  if (rawText) {
+    const rescued = await rescueFromPartialBody(rawText);
+    if (rescued) return { incoming: rescued };
+  }
+
+  return {
+    incoming: null,
+    reason: bodyLen ? 'unrecognized_payload' : 'empty_body',
+  };
 }
 
 async function postOneSignalRequest(payload: Record<string, unknown>): Promise<boolean> {
@@ -469,12 +596,91 @@ async function processLegacyWebhook(payload: LegacyWebhookPayload): Promise<void
   console.log('[onesignal-push] process done', { v: FUNCTION_VERSION, orderId, sent: sent.length ? sent : 'none' });
 }
 
+async function processRescued(record: OrderRow, hint: 'chat' | 'status' | 'insert'): Promise<void> {
+  const orderId = pickString(record.id);
+  const customerIds = resolveCustomerExternalIdsFromRow(record);
+  const factoryName = factoryNameFromOrder(record);
+  const sent: string[] = [];
+
+  console.log('[onesignal-push] process start', { v: FUNCTION_VERSION, format: 'rescued', hint, orderId });
+
+  if (hint === 'insert') {
+    const status = effectiveStatus(record);
+    if (status !== 'pending_association' && isPendingLike(status)) {
+      const od = orderData(record);
+      const contractorName = pickString(od.customerName, od.customer_name, od.contractorName, '新規注文');
+      if (await sendToRole('factory', `新規注文が入りました：${contractorName}`, { type: 'new_order', orderId })) {
+        sent.push('factory:new_order');
+      }
+    }
+  } else if (hint === 'status') {
+    const newStatus = effectiveStatus(record);
+    if (isAcceptedLike(newStatus) && customerIds.length) {
+      const message =
+        `${factoryName}がご注文承りました。キャンセルのご連絡は前営業日の12時までに工場へご連絡ください。`;
+      if (await sendToExternalIds(customerIds, message, {
+        type: 'order_status',
+        orderId,
+        status: newStatus,
+      })) sent.push('customer:accepted');
+    } else if (isRejectedLike(newStatus) && customerIds.length) {
+      if (await sendToExternalIds(customerIds, '大変込み合っております。別日をご指定ください。', {
+        type: 'order_status',
+        orderId,
+        status: newStatus,
+      })) sent.push('customer:rejected');
+    }
+  } else {
+    const latest = latestChatMessage(asArray(record.chat_messages));
+    if (!latest) {
+      console.log('[onesignal-push] rescued chat with no messages', { orderId });
+      return;
+    }
+    const chatFrom = pickString(latest.from);
+    if ((chatFrom === 'factory' || chatFrom === 'admin') && customerIds.length) {
+      if (await sendToExternalIds(
+        customerIds,
+        `${factoryName}からメッセージが届いています。`,
+        { type: 'chat', orderId, targetApp: 'customer' },
+      )) sent.push('customer:chat');
+    } else if (chatFrom === 'master' || chatFrom === 'customer') {
+      const od = orderData(record);
+      const factoryTarget = pickString(
+        record.factory_site_id,
+        od.factory_site_id,
+        od.factorySiteId,
+        record.preferred_factory_id,
+        od.preferred_factory_id,
+        od.preferredFactoryId,
+      );
+      const senderName = pickString(od.manager_name, od.contact_person, od.ordered_by, od.orderedBy, '担当者');
+      if (factoryTarget) {
+        if (await sendToExternalIds(
+          [factoryTarget],
+          `${senderName}から新しいメッセージが届きました。`,
+          { type: 'chat', orderId, targetApp: 'factory' },
+        )) sent.push('factory:chat');
+      } else if (await sendToRole('factory', `${senderName}から新しいメッセージが届きました。`, {
+        type: 'chat',
+        orderId,
+        targetApp: 'factory',
+      })) sent.push('factory:chat_role');
+    }
+  }
+
+  console.log('[onesignal-push] process done', { v: FUNCTION_VERSION, orderId, sent: sent.length ? sent : 'none' });
+}
+
 async function processIncoming(incoming: IncomingPayload): Promise<void> {
   if (incoming.format === 'slim') {
     await processSlimPayload(incoming.data);
     return;
   }
-  await processLegacyWebhook(incoming.data);
+  if (incoming.format === 'legacy') {
+    await processLegacyWebhook(incoming.data);
+    return;
+  }
+  await processRescued(incoming.data, incoming.hint);
 }
 
 declare const EdgeRuntime: { waitUntil: (promise: Promise<unknown>) => void } | undefined;
@@ -500,9 +706,9 @@ Deno.serve(async (req) => {
     });
   }
 
-  const incoming = await readWebhookPayload(req);
+  const { incoming, reason } = await readWebhookPayload(req);
   if (!incoming) {
-    return new Response(JSON.stringify({ ok: false, error: 'Invalid payload', v: FUNCTION_VERSION }), {
+    return new Response(JSON.stringify({ ok: false, error: 'Invalid payload', reason, v: FUNCTION_VERSION }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -510,10 +716,14 @@ Deno.serve(async (req) => {
 
   const orderId = incoming.format === 'slim'
     ? pickString(incoming.data.order_id)
+    : incoming.format === 'rescued'
+    ? pickString(incoming.data.id)
     : pickString(incoming.data.record?.id);
   const eventLabel = incoming.format === 'slim'
     ? pickString(incoming.data.event)
-    : pickString(incoming.data.type);
+    : incoming.format === 'legacy'
+    ? pickString(incoming.data.type)
+    : incoming.hint;
 
   scheduleBackground(
     withTimeout(processIncoming(incoming), JOB_MAX_MS, 'webhook job').catch((error) => {

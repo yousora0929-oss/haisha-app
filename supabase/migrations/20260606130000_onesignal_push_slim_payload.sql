@@ -128,7 +128,9 @@ begin
     url := webhook_url,
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'Authorization', 'Bearer ' || coalesce(service_key, '')
+      'Authorization', 'Bearer ' || coalesce(service_key, ''),
+      'X-Onesignal-Event', push_event,
+      'X-Onesignal-Order-Id', new.id::text
     ),
     body := payload,
     timeout_milliseconds := 8000
