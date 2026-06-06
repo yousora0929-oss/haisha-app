@@ -1,8 +1,7 @@
-/** onesignal-push v14 — chat_message は注文の最新送信者から通知先を判定 */
+/** onesignal-push v15 — ジョブ全体タイムアウト撤廃・fetch を Abort 化 */
 
-const FUNCTION_VERSION = 14;
-const LEGACY_MAX_BODY_BYTES = 64000;
-const FETCH_ORDER_TIMEOUT_MS = 5000;
+const FUNCTION_VERSION = 15;
+const FETCH_ORDER_TIMEOUT_MS = 4000;
 
 type PushEvent =
   | 'new_order'
@@ -55,8 +54,8 @@ type IncomingPayload =
   | { format: 'chat_message'; data: ChatMessagePayload };
 
 const ACCEPTED_STATUSES = new Set(['accepted', 'confirmed']);
-const ONESIGNAL_FETCH_TIMEOUT_MS = 12000;
-const JOB_MAX_MS = 20000;
+const LEGACY_MAX_BODY_BYTES = 64000;
+const ONESIGNAL_FETCH_TIMEOUT_MS = 10000;
 const ONESIGNAL_API_URL = 'https://api.onesignal.com/notifications';
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -224,25 +223,38 @@ async function fetchOrderRow(orderId: string): Promise<OrderRow | null> {
   const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
   if (!base || !key || !orderId) return null;
 
-  const response = await withTimeout(
-    fetch(`${base}/rest/v1/orders?id=eq.${encodeURIComponent(orderId)}&select=*`, {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_ORDER_TIMEOUT_MS);
+  const started = Date.now();
+
+  try {
+    const response = await fetch(`${base}/rest/v1/orders?id=eq.${encodeURIComponent(orderId)}&select=*`, {
       headers: {
         apikey: key,
         Authorization: `Bearer ${key}`,
         Accept: 'application/json',
       },
-    }),
-    FETCH_ORDER_TIMEOUT_MS,
-    'fetch order',
-  );
-  if (!response?.ok) {
-    console.warn('[onesignal-push] fetch order failed', { orderId, status: response?.status ?? 'timeout' });
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      console.warn('[onesignal-push] fetch order failed', { orderId, status: response.status });
+      return null;
+    }
+    const rows = await response.json();
+    if (!Array.isArray(rows) || !rows[0] || typeof rows[0] !== 'object') return null;
+    console.log('[onesignal-push] fetch order ok', { orderId, ms: Date.now() - started });
+    return rows[0] as OrderRow;
+  } catch (error) {
+    const isAbort = error instanceof DOMException && error.name === 'AbortError';
+    console.warn('[onesignal-push] fetch order error', {
+      orderId,
+      ms: Date.now() - started,
+      reason: isAbort ? 'timeout' : String(error),
+    });
     return null;
+  } finally {
+    clearTimeout(timer);
   }
-
-  const rows = await withTimeout(response.json(), 2000, 'parse order json');
-  if (!Array.isArray(rows) || !rows[0] || typeof rows[0] !== 'object') return null;
-  return rows[0] as OrderRow;
 }
 
 function inferRescueHint(text: string, row: OrderRow): 'chat' | 'status' | 'insert' {
@@ -899,7 +911,7 @@ Deno.serve(async (req) => {
     : incoming.hint;
 
   scheduleBackground(
-    withTimeout(processIncoming(incoming), JOB_MAX_MS, 'webhook job').catch((error) => {
+    processIncoming(incoming).catch((error) => {
       console.error('[onesignal-push] job error', orderId, error);
     }),
   );
