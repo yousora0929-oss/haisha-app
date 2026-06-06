@@ -45,7 +45,7 @@ export function MapEditorToolbar({
         title="スタンプ配置"
       >
         <span className="text-lg">📌</span>
-        <span className="hidden sm:inline">スタンプ</span>
+        <span className="leading-tight">スタンプ</span>
       </button>
       <button
         type="button"
@@ -55,7 +55,7 @@ export function MapEditorToolbar({
         title="コメント"
       >
         <span className="text-lg">💬</span>
-        <span className="hidden sm:inline">コメント</span>
+        <span className="leading-tight">コメント</span>
       </button>
 
       {activeTool === MAP_EDITOR_TOOLS.UNLOAD ? (
@@ -135,8 +135,8 @@ export function MapEditorToolbar({
                   : 'border-slate-200 bg-white hover:bg-slate-50')
               }
             >
-              <span className="text-xl">{def.emoji}</span>
-              <span className="hidden text-[11px] font-bold leading-tight text-slate-800 sm:inline">{def.label}</span>
+              {def.hideEmojiInPicker ? null : <span className="text-xl">{def.emoji}</span>}
+              <span className="text-[11px] font-bold leading-tight text-slate-800">{def.label}</span>
             </button>
           ))}
         </div>

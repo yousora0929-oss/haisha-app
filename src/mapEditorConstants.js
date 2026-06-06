@@ -20,15 +20,15 @@ export const MAP_STAMP_TYPES = [
 ];
 
 export const MAP_STAMP_DEFS = [
-  { type: 'PUMP', emoji: '🏗️', label: 'ポンプ車' },
-  { type: 'MIXER', emoji: '🚛', label: 'ミキサー車' },
-  { type: 'EXCAVATOR', emoji: '🚜', label: '重機' },
+  { type: 'PUMP', emoji: '🏗️', label: 'ポンプ車', hideEmojiInPicker: true },
+  { type: 'MIXER', emoji: '🚛', label: 'ミキサー車', hideEmojiInPicker: true },
+  { type: 'EXCAVATOR', emoji: '🚜', label: '重機', hideEmojiInPicker: true },
   { type: 'ARROW_UP', emoji: '⬆️', label: '進入・上' },
   { type: 'ARROW_DOWN', emoji: '⬇️', label: '進入・下' },
   { type: 'ARROW_LEFT', emoji: '⬅️', label: '進入・左' },
   { type: 'ARROW_RIGHT', emoji: '➡️', label: '進入・右' },
   { type: 'PARKING', emoji: '🅿️', label: '待機場所' },
-  { type: 'WASH', emoji: '🚰', label: '洗い場' },
+  { type: 'WASH', emoji: '🚰', label: '洗い場', hideEmojiInPicker: true },
   { type: 'FORBIDDEN', emoji: '⛔', label: '進入禁止' },
 ];
 

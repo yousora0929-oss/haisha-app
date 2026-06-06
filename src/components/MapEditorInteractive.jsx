@@ -7,7 +7,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { Circle, ImageOverlay, MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
+import { Circle, ImageOverlay, MapContainer, Marker, TileLayer, ZoomControl, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { MAP_EDITOR_TOOLS, MAP_STAMP_EMOJI } from '../mapEditorConstants.js';
@@ -378,10 +378,12 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
       <MapContainer
         center={mapCenter}
         zoom={mapZoom}
-        className={'z-0 h-full w-full ' + cursorClass}
+        zoomControl={false}
+        className={'map-editor-leaflet z-0 h-full w-full ' + cursorClass}
         style={{ height: '100%', width: '100%', minHeight: '280px' }}
         scrollWheelZoom
       >
+        <ZoomControl position="bottomright" />
         <MapInstanceBinder mapRef={mapRef} />
         <MapResizeFix />
         <MapFlyTo target={flyTarget} />

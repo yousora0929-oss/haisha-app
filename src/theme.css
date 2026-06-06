@@ -319,6 +319,18 @@ html.dark .leaflet-control-attribution {
   color: var(--cl-text-muted) !important;
 }
 
+/* 地図エディタ: ズームボタンを右下（モバイルは下部アクションバー上） */
+.map-editor-app .leaflet-bottom.leaflet-right {
+  bottom: calc(4.25rem + env(safe-area-inset-bottom, 0px));
+  right: 0.75rem;
+}
+@media (min-width: 768px) {
+  .map-editor-app .leaflet-bottom.leaflet-right {
+    bottom: 1rem;
+    right: 1rem;
+  }
+}
+
 @media print {
   html.dark,
   html.dark body,

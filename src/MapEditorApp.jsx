@@ -452,6 +452,8 @@ export function MapEditorApp() {
 
   const actionBtn =
     'min-h-[44px] rounded-xl px-3 text-xs font-black shadow-md active:scale-[0.98] disabled:opacity-50 sm:text-sm';
+  const closeBtn =
+    'min-h-[22px] shrink-0 rounded-lg border border-slate-300 bg-white px-2 py-1 text-[10px] font-bold text-slate-700 shadow-sm active:scale-[0.98] disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200';
 
   return (
     <div className="map-editor-app relative h-[100dvh] w-screen overflow-hidden bg-gray-100 text-slate-900 dark:bg-gray-900 dark:text-gray-100">
@@ -526,7 +528,40 @@ export function MapEditorApp() {
         className="map-editor-no-print absolute left-4 top-[calc(env(safe-area-inset-top)+3.25rem)] z-10 max-h-[min(48vh,24rem)] overflow-y-auto rounded-2xl border border-slate-200 bg-white/95 shadow-lg backdrop-blur md:top-4 md:max-h-[calc(100dvh-6rem)] dark:border-slate-600 dark:bg-slate-900/95"
       />
 
-      <div className="map-editor-no-print fixed inset-x-0 bottom-0 z-20 flex flex-col gap-2 border-t border-slate-200/80 bg-white/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.12)] backdrop-blur md:absolute md:inset-x-auto md:bottom-auto md:left-auto md:right-4 md:top-4 md:max-w-md md:border-0 md:bg-transparent md:p-0 md:shadow-none md:backdrop-blur-none dark:border-slate-700 dark:bg-slate-900/95 md:dark:bg-transparent">
+      <div className="map-editor-no-print fixed inset-x-0 bottom-0 z-20 border-t border-slate-200/80 bg-white/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.12)] backdrop-blur md:absolute md:inset-x-auto md:bottom-auto md:left-auto md:right-4 md:top-4 md:max-w-md md:border-0 md:bg-transparent md:p-0 md:shadow-none md:backdrop-blur-none dark:border-slate-700 dark:bg-slate-900/95 md:dark:bg-transparent">
+        {/* スマホ: 閉じる | 図面 | 保存 を1列 */}
+        <div className="flex w-full items-center gap-2 md:hidden">
+          <button
+            type="button"
+            onClick={handleCloseEditor}
+            disabled={saving}
+            className={closeBtn}
+            aria-label="閉じる"
+          >
+            閉じる
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => baseUploadRef.current?.click()}
+            className={actionBtn + ' flex flex-1 items-center justify-center border border-slate-300 bg-white text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100'}
+          >
+            <span aria-hidden="true">📷</span>
+            <span> 図面</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmMode('order')}
+            disabled={saving}
+            className={actionBtn + ' shrink-0 bg-emerald-600 text-white ring-2 ring-emerald-300/50'}
+          >
+            <span aria-hidden="true">💾</span>
+            <span> 保存</span>
+          </button>
+        </div>
+
+        {/* PC: 従来の2段レイアウト */}
+        <div className="hidden flex-col gap-2 md:flex">
         <div className="flex w-full flex-wrap gap-2 md:justify-end">
           <button
             type="button"
@@ -563,27 +598,27 @@ export function MapEditorApp() {
             🖨️ 印刷
           </button>
         </div>
-        <div className="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:grid-cols-none">
+        <div className="flex w-auto gap-2">
           <button
             type="button"
             onClick={handleCloseEditor}
             disabled={saving}
-            className={actionBtn + ' col-span-1 border-2 border-slate-400 bg-white text-slate-800 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100'}
+            className={actionBtn + ' border-2 border-slate-400 bg-white text-slate-800 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100'}
             aria-label="閉じる"
           >
             <span aria-hidden="true">✕</span>
-            <span className="hidden md:inline"> 閉じる</span>
+            <span> 閉じる</span>
           </button>
           <button
             type="button"
             onClick={() => setConfirmMode('order')}
             disabled={saving}
-            className={actionBtn + ' col-span-1 bg-emerald-600 text-white ring-2 ring-emerald-300/50'}
+            className={actionBtn + ' bg-emerald-600 text-white ring-2 ring-emerald-300/50'}
           >
             <span aria-hidden="true">💾</span>
-            <span className="hidden sm:inline"> 保存する</span>
-            <span className="sm:hidden"> 保存</span>
+            <span> 保存する</span>
           </button>
+        </div>
         </div>
       </div>
 
@@ -649,7 +684,7 @@ export function MapEditorApp() {
       ) : null}
 
       {lastSavedUrl ? (
-        <div className="map-editor-no-print pointer-events-none fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] right-4 z-40 max-w-[min(90vw,280px)] rounded-lg bg-emerald-800 px-3 py-2 text-[11px] font-bold text-white shadow-lg md:bottom-4">
+        <div className="map-editor-no-print pointer-events-none fixed bottom-[calc(4rem+env(safe-area-inset-bottom))] right-4 z-40 max-w-[min(90vw,280px)] rounded-lg bg-emerald-800 px-3 py-2 text-[11px] font-bold text-white shadow-lg md:bottom-4">
           変更を保存しました
           {isValidExternalUrl(lastSavedUrl) ? (
             <a
@@ -665,7 +700,7 @@ export function MapEditorApp() {
       ) : null}
 
       {toast ? (
-        <div className="map-editor-no-print pointer-events-none fixed bottom-[calc(6.5rem+env(safe-area-inset-bottom))] left-1/2 z-40 max-w-[90vw] -translate-x-1/2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-bold text-white shadow-lg md:bottom-6">
+        <div className="map-editor-no-print pointer-events-none fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] left-1/2 z-40 max-w-[90vw] -translate-x-1/2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-bold text-white shadow-lg md:bottom-6">
           {toast}
         </div>
       ) : null}
