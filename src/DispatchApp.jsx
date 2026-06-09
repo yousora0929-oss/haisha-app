@@ -2300,7 +2300,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           setIsSubmittingOrder(true);
           setSubmitError('');
           try {
-            await db.insertOrdersBulk([repeatOrder]);
+            await db.insertOrdersBulk([repeatOrder], { factories, projects });
             await refreshDashboard();
             setCustomerOrderTab('active');
             setExpandedHistoryOrderId('');
@@ -2532,7 +2532,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           const count = orders.length;
           const mapCreateCount = cartItems.filter((it) => it?.mapEditorFlowMode === 'create').length;
           if (isGuestSiteOrder && guestOrderToken) {
-            const insertedGuestOrders = await db.submitGuestOrders(guestOrderToken, orders);
+            const insertedGuestOrders = await db.submitGuestOrders(guestOrderToken, orders, {
+              factories,
+              projects,
+            });
             if (mapCreateCount > 0 && Array.isArray(insertedGuestOrders) && insertedGuestOrders.length) {
               try {
                 rememberMapEditorReturnUrl();
@@ -2549,7 +2552,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               }
             }
           } else {
-            const insertedOrders = await db.insertOrdersBulk(orders);
+            const insertedOrders = await db.insertOrdersBulk(orders, { factories, projects });
             if (mapCreateCount > 0 && Array.isArray(insertedOrders) && insertedOrders.length) {
               // popup blocker を避けるため refresh より先に開く
               try {
@@ -2605,6 +2608,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         isGuestSiteOrder,
         guestOrderToken,
         adminSettings,
+        factories,
+        projects,
       ]);
 
       const btnBase =

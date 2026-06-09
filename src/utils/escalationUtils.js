@@ -366,9 +366,6 @@ export function isOrderVisibleToFactory(order, factoryId, ctx) {
   if (assigned && assigned === fid) return true;
   if (assigned && assigned !== fid) return false;
 
-  const created = orderCreatedAt(order);
-  if (!created) return false;
-
   const preferredId = orderPreferredFactoryId(order);
   const ranked = ctx.topNByOrderId.get(order.id) || { top3: [], top6: [] };
   const { top3, top6 } = ranked;
@@ -396,8 +393,7 @@ export function isOrderVisibleToFactory(order, factoryId, ctx) {
     if (effectiveMinutes >= 30) return set30.has(fid);
     if (effectiveMinutes >= 15) return set15.has(fid);
 
-    const tier0 = preferredId || mainId;
-    return Boolean(tier0) && fid === tier0;
+    return isRelatedProjectFactory(order, project, fid);
   }
 
   if (effectiveMinutes >= 30) {

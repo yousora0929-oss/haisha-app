@@ -13,6 +13,7 @@ import { isValidSiteOrderUrlToken, resolveUrlTokenForInsert } from './utils/urlV
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { normalizeAssociationFactorySelection } from './utils/associationFactoryAssignment.js';
 import { shouldResetOrderStatusOnFactoryReassign } from './utils/orderFactoryReassign.js';
+import { ensureOrderPreferredFactoryForInsert } from './utils/dispatchBulkOrder.js';
 import {
   DISPATCH_DEFAULT_FACTORY_SITE_ID,
   DISPATCH_DEFAULT_FACTORY_SITE_NAME,
@@ -222,8 +223,20 @@ export function normalizeOrderRow(row) {
     orderedBy: row.ordered_by != null ? String(row.ordered_by) : od.orderedBy != null ? String(od.orderedBy) : od.ordered_by != null ? String(od.ordered_by) : '',
     delivery_lat: Number.isFinite(deliveryLat) ? deliveryLat : null,
     delivery_lng: Number.isFinite(deliveryLng) ? deliveryLng : null,
-    preferred_factory_id: sanitizeRefId(row.preferred_factory_id ?? od.preferred_factory_id ?? od.preferredFactoryId),
-    preferredFactoryId: sanitizeRefId(row.preferred_factory_id ?? od.preferred_factory_id ?? od.preferredFactoryId),
+    preferred_factory_id: sanitizeRefId(
+      row.preferred_factory_id ??
+        od.preferred_factory_id ??
+        od.preferredFactoryId ??
+        od.main_factory_id ??
+        od.mainFactoryId,
+    ),
+    preferredFactoryId: sanitizeRefId(
+      row.preferred_factory_id ??
+        od.preferred_factory_id ??
+        od.preferredFactoryId ??
+        od.main_factory_id ??
+        od.mainFactoryId,
+    ),
     factory_site_id: sanitizeRefId(row.factory_site_id ?? od.factory_site_id ?? od.factorySiteId),
     factorySiteId: sanitizeRefId(row.factory_site_id ?? od.factory_site_id ?? od.factorySiteId),
     status:
@@ -512,11 +525,13 @@ export async function insertOrder(order) {
 }
 
 /** 複数注文を orders テーブルへ一括挿入 */
-export async function insertOrdersBulk(orders) {
+export async function insertOrdersBulk(orders, { factories = [], projects = [] } = {}) {
   const list = Array.isArray(orders) ? orders.filter((o) => o && typeof o === 'object') : [];
   if (list.length === 0) throw new Error('登録する注文がありません');
 
-  const rows = list.map((order) => buildOrderInsertRow(order));
+  const rows = list
+    .map((order) => ensureOrderPreferredFactoryForInsert(order, { factories, projects }))
+    .map((order) => buildOrderInsertRow(order));
   const { data, error } = await supabase.from('orders').insert(rows).select(ORDER_SELECT);
   if (error) {
     console.error('insertOrdersBulk failed', error);
@@ -1567,15 +1582,17 @@ export async function fetchGuestFactoriesForToken(urlToken) {
 }
 
 /** ゲスト専用発注の一括登録（RPC） */
-export async function submitGuestOrders(urlToken, orders) {
+export async function submitGuestOrders(urlToken, orders, { factories = [], projects = [] } = {}) {
   const token = String(urlToken || '').trim();
   if (!isValidSiteOrderUrlToken(token)) throw new Error('専用発注URLが無効です');
   const list = Array.isArray(orders) ? orders.filter((o) => o && typeof o === 'object') : [];
   if (list.length === 0) throw new Error('登録する注文がありません');
 
+  const prepared = list.map((order) => ensureOrderPreferredFactoryForInsert(order, { factories, projects }));
+
   const { data, error } = await supabase.rpc('submit_guest_orders', {
     p_token: token,
-    p_orders: list,
+    p_orders: prepared,
   });
   if (error) throw error;
   const inserted = Array.isArray(data) ? data : [];
