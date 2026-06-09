@@ -1,6 +1,7 @@
 import {
   buildEscalationContext,
   getEffectiveEscalationMinutes,
+  getOrderEscalationStepInfo,
   getOrderSiteCoords,
   getVisibleFactoryIdsForOrder,
 } from './escalationUtils.js';
@@ -66,16 +67,10 @@ export function getOrderVisibilityScope(order, ctx, factoryNameById = {}) {
       ? null
       : getEffectiveEscalationMinutes(order, ctx?.projectById, ctx?.settings, ctx?.holidays, ctx?.now);
 
-  const escalationTierLabel =
-    effectiveMinutes == null
-      ? '—'
-      : effectiveMinutes >= 45
-        ? '45分+: エリア全域'
-        : effectiveMinutes >= 30
-          ? '30分+: 近隣拡大'
-          : effectiveMinutes >= 15
-            ? '15分+: メイン/サブまたは近隣3社'
-            : '0〜14分: 優先工場のみ';
+  const stepInfo =
+    effectiveMinutes == null ? null : getOrderEscalationStepInfo(order, ctx);
+  const escalationTierLabel = stepInfo ? stepInfo.label : '—';
+  const activeFactoryCount = Math.max(1, Number(stepInfo?.active?.target_factory_count) || 1);
 
   const base = {
     escalationMinutes: effectiveMinutes,
@@ -218,7 +213,7 @@ export function getOrderVisibilityScope(order, ctx, factoryNameById = {}) {
     const visibleMain = [preferredId, mainId].filter((id) => id && visibleFactoryIds.includes(id));
     const uniqueMain = [...new Set(visibleMain)];
 
-    if (effectiveMinutes != null && effectiveMinutes < 15 && visibleFactoryIds.length === 1 && tier0) {
+    if (effectiveMinutes != null && activeFactoryCount === 1 && visibleFactoryIds.length === 1 && tier0) {
       const role = tier0 === preferredId ? '指定' : 'メイン';
       return {
         ...base,
@@ -299,8 +294,16 @@ export function getOrderVisibilityScope(order, ctx, factoryNameById = {}) {
   };
 }
 
-export function buildOrderVisibilityContext(orders, factories, projects, settings, holidays, now = new Date()) {
-  return buildEscalationContext(orders, factories, projects, settings, holidays, now);
+export function buildOrderVisibilityContext(
+  orders,
+  factories,
+  projects,
+  settings,
+  holidays,
+  now = new Date(),
+  escalationStepsByFactoryId = {},
+) {
+  return buildEscalationContext(orders, factories, projects, settings, holidays, now, escalationStepsByFactoryId);
 }
 
 export function chipRoleLabel(role) {

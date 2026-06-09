@@ -45,47 +45,25 @@ export function resolveTargetProject(context) {
   return null;
 }
 
-/** 発注ペイロード用の工場ID（フォーム値 → 物件メイン工場の順で解決） */
+/** 発注ペイロード用の工場ID（フォームで明示指定された場合のみ） */
 export function resolveOrderPreferredFactoryId(context) {
-  const fromForm = normalizeFactoryRefId(context?.preferredFactoryId);
-  if (fromForm) return fromForm;
-  if (context?.orderKind === 'spot') return '';
-  return resolveFactoryIdFromProject(resolveTargetProject(context));
+  return normalizeFactoryRefId(context?.preferredFactoryId) || '';
 }
 
 /**
- * INSERT 前に preferred_factory_id を補完（RLS・工場画面表示に必須）
- * スポットで未指定の場合は納入エリアから最寄り工場を第一希望にする
+ * INSERT 前に preferred_factory_id を補完（スポット注文の RLS 用）
+ * 物件注文は project_id 経由の RLS のため、未指定のままにする
  */
 export function ensureOrderPreferredFactoryForInsert(order, { factories = [], projects = [] } = {}) {
   if (!order || typeof order !== 'object') return order;
   const isSpot = Boolean(order.is_spot ?? order.isSpot);
-  const projectId = String(order.project_id ?? order.projectId ?? '').trim();
-  const project =
-    !isSpot && projectId
-      ? (Array.isArray(projects) ? projects : []).find((p) => p && String(p.id) === projectId) || null
-      : null;
 
-  const existing = normalizeFactoryRefId(
-    order.preferred_factory_id ??
-      order.preferredFactoryId ??
-      order.main_factory_id ??
-      order.mainFactoryId ??
-      resolveOrderPreferredFactoryId({
-        orderKind: isSpot ? 'spot' : 'project',
-        preferredFactoryId: order.preferred_factory_id ?? order.preferredFactoryId,
-        selectedProjectId: projectId,
-        selectedProject: project,
-        projects,
-      }),
-  );
+  const existing = normalizeFactoryRefId(order.preferred_factory_id ?? order.preferredFactoryId);
   if (existing) {
     return {
       ...order,
       preferred_factory_id: existing,
       preferredFactoryId: existing,
-      main_factory_id: order.main_factory_id ?? order.mainFactoryId ?? existing,
-      mainFactoryId: order.mainFactoryId ?? order.main_factory_id ?? existing,
     };
   }
 

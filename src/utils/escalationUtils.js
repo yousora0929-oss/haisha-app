@@ -7,6 +7,12 @@ import {
   rankFactoryIdsByDeliveryArea,
 } from './deliveryAreaEscalation.js';
 import { associationAssignedFactoryIds } from './associationFactoryAssignment.js';
+import {
+  formatEscalationStepLabel,
+  getActiveEscalationStep,
+  getEscalationStepsForAnchor,
+  getNextEscalationThreshold,
+} from './escalationSteps.js';
 
 function orderCreatedAt(order) {
   return order?.createdAt ?? order?.created_at ?? null;
@@ -108,6 +114,49 @@ function getProjectEscalationIds(order, project) {
     preferredId,
     mainId,
     firstTargetId: preferredId || mainId,
+  };
+}
+
+function resolveEscalationAnchorFactoryId(order, project, ranked) {
+  const preferredId = orderPreferredFactoryId(order);
+  if (preferredId) return preferredId;
+  const mainId = normalizeFactoryRefId(project?.main_factory_id);
+  if (mainId) return mainId;
+  return ranked?.[0] || '';
+}
+
+function isOrderVisibleByEscalationSteps(order, factoryId, ctx, project, ranked, effectiveMinutes) {
+  const anchorId = resolveEscalationAnchorFactoryId(order, project, ranked);
+  const steps = getEscalationStepsForAnchor(anchorId, ctx.escalationStepsByFactoryId);
+  const active = getActiveEscalationStep(steps, effectiveMinutes);
+  const count = Math.max(1, Number(active.target_factory_count) || 1);
+  const visibleIds = (Array.isArray(ranked) ? ranked : []).slice(0, count);
+  if (!visibleIds.length) return false;
+  return visibleIds.includes(String(factoryId || '').trim());
+}
+
+export function getOrderEscalationStepInfo(order, ctx) {
+  const pid = orderProjectId(order);
+  const project = pid ? ctx?.projectById?.[pid] : null;
+  const ranked = ctx?.areaFactoryIdsByOrder?.get(order?.id) || [];
+  const effectiveMinutes = getEffectiveEscalationMinutes(
+    order,
+    ctx?.projectById,
+    ctx?.settings,
+    ctx?.holidays,
+    ctx?.now,
+  );
+  const anchorId = resolveEscalationAnchorFactoryId(order, project, ranked);
+  const steps = getEscalationStepsForAnchor(anchorId, ctx?.escalationStepsByFactoryId);
+  const active = getActiveEscalationStep(steps, effectiveMinutes);
+  const nextThreshold = getNextEscalationThreshold(steps, effectiveMinutes);
+  return {
+    anchorId,
+    steps,
+    active,
+    nextThreshold,
+    effectiveMinutes,
+    label: formatEscalationStepLabel(active, nextThreshold, effectiveMinutes),
   };
 }
 
@@ -367,49 +416,11 @@ export function isOrderVisibleToFactory(order, factoryId, ctx) {
   if (assigned && assigned !== fid) return false;
 
   const preferredId = orderPreferredFactoryId(order);
-  const ranked = ctx.topNByOrderId.get(order.id) || { top3: [], top6: [] };
-  const { top3, top6 } = ranked;
-  const areaIds = ctx.areaFactoryIdsByOrder?.get(order.id) || ctx.allFactoryIds || [];
-  const allIds = areaIds;
-
+  const ranked = ctx.areaFactoryIdsByOrder?.get(order.id) || [];
+  const areaIds = ranked.length ? ranked : ctx.allFactoryIds || [];
   const effectiveMinutes = getEffectiveEscalationMinutes(order, ctx.projectById, ctx.settings, ctx.holidays, ctx.now);
 
-  if (effectiveMinutes >= 45) {
-    return allIds.length === 0 ? true : allIds.includes(fid);
-  }
-
-  if (project) {
-    const { mainId } = getProjectEscalationIds(order, project);
-    const subIds = Array.isArray(project.sub_factory_ids)
-      ? project.sub_factory_ids.map((x) => String(x)).filter(Boolean)
-      : [];
-
-    const set15 = new Set();
-    addIdsToSet(set15, [preferredId, mainId, ...subIds]);
-
-    const set30 = new Set(set15);
-    addIdsToSet(set30, top3);
-
-    if (effectiveMinutes >= 30) return set30.has(fid);
-    if (effectiveMinutes >= 15) return set15.has(fid);
-
-    const tier0 = preferredId || mainId;
-    return Boolean(tier0) && fid === tier0;
-  }
-
-  if (effectiveMinutes >= 30) {
-    if (preferredId && fid === preferredId) return true;
-    return top6.includes(fid);
-  }
-
-  if (effectiveMinutes >= 15) {
-    const set = new Set();
-    addIdsToSet(set, [preferredId, ...top3]);
-    return set.has(fid);
-  }
-
-  if (preferredId) return fid === preferredId;
-  return top3.includes(fid);
+  return isOrderVisibleByEscalationSteps(order, fid, ctx, project, areaIds, effectiveMinutes);
 }
 
 /**
@@ -420,7 +431,15 @@ export function isOrderVisibleToFactory(order, factoryId, ctx) {
  * @param {Array} holidays
  * @param {Date} [now]
  */
-export function buildEscalationContext(orders, factories, projects, settings, holidays, now = new Date()) {
+export function buildEscalationContext(
+  orders,
+  factories,
+  projects,
+  settings,
+  holidays,
+  now = new Date(),
+  escalationStepsByFactoryId = {},
+) {
   const projectById = Object.fromEntries(
     (projects || []).filter((p) => p && p.id).map((p) => [String(p.id), p]),
   );
@@ -446,6 +465,10 @@ export function buildEscalationContext(orders, factories, projects, settings, ho
     factories,
     allFactoryIds,
     globalAllowedAreas,
+    escalationStepsByFactoryId:
+      escalationStepsByFactoryId && typeof escalationStepsByFactoryId === 'object'
+        ? escalationStepsByFactoryId
+        : {},
   };
 }
 

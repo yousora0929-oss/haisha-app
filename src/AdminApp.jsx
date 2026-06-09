@@ -1688,20 +1688,23 @@ function OrdersMonitorSection({
   const [projects, setProjects] = useState([]);
   const [holidays, setHolidays] = useState([]);
   const [systemSettings, setSystemSettings] = useState({});
+  const [escalationStepsByFactoryId, setEscalationStepsByFactoryId] = useState({});
 
   const load = useCallback(async () => {
     setError('');
     try {
-      const [{ orders: rows }, projs, hols, settings] = await Promise.all([
+      const [{ orders: rows }, projs, hols, settings, escalationSteps] = await Promise.all([
         db.fetchOrdersWithChat(),
         db.fetchProjects(),
         db.fetchHolidays(),
         db.fetchSystemSettings(),
+        db.fetchEscalationSteps(),
       ]);
       setOrders(rows);
       setProjects(projs);
       setHolidays(hols);
       setSystemSettings(settings || {});
+      setEscalationStepsByFactoryId(escalationSteps || {});
     } catch (e) {
       console.error(e);
       setError('注文一覧の取得に失敗しました。');
@@ -1711,8 +1714,17 @@ function OrdersMonitorSection({
   }, []);
 
   const escalationCtx = useMemo(
-    () => buildOrderVisibilityContext(orders, factories, projects, systemSettings, holidays, new Date()),
-    [orders, factories, projects, systemSettings, holidays],
+    () =>
+      buildOrderVisibilityContext(
+        orders,
+        factories,
+        projects,
+        systemSettings,
+        holidays,
+        new Date(),
+        escalationStepsByFactoryId,
+      ),
+    [orders, factories, projects, systemSettings, holidays, escalationStepsByFactoryId],
   );
 
   useEffect(() => {

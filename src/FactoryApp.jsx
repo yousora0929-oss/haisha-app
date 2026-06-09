@@ -8,7 +8,7 @@ import {
   issuePanelRealtimeAuth,
   FACTORY_PANEL_PASSWORD_KEY,
 } from './supabaseClient.js';
-import { buildEscalationContext, filterOrdersForFactory, getEffectiveEscalationMinutes } from './utils/escalationUtils.js';
+import { buildEscalationContext, filterOrdersForFactory, getOrderEscalationStepInfo } from './utils/escalationUtils.js';
 import {
   FACTORY_SITE_ID,
   FACTORY_SITE_NAME,
@@ -285,18 +285,11 @@ function sortOrdersByCreatedDesc(list) {
 function filterAndSortFactoryOrders(list, activeFactoryId, escalationCtx) {
   if (!escalationCtx || !activeFactoryId) return [];
   const filtered = filterOrdersForFactory(list, activeFactoryId, escalationCtx).map((o) => {
-    const elapsed = getEffectiveEscalationMinutes(
-      o,
-      escalationCtx.projectById,
-      escalationCtx.settings,
-      escalationCtx.holidays,
-      escalationCtx.now,
-    );
-    const nextThreshold = Number.isFinite(elapsed) ? ([15, 30, 45].find((m) => elapsed < m) ?? null) : null;
+    const stepInfo = getOrderEscalationStepInfo(o, escalationCtx);
     return {
       ...o,
-      escalationElapsedMinutes: elapsed,
-      escalationNextThresholdMinutes: nextThreshold,
+      escalationElapsedMinutes: stepInfo.effectiveMinutes,
+      escalationNextThresholdMinutes: stepInfo.nextThreshold,
     };
   });
   return sortOrdersByCreatedDesc(filtered);
@@ -2470,6 +2463,7 @@ function orderPartyInfo(order) {
       const [holidays, setHolidays] = useState([]);
       const [systemSettings, setSystemSettings] = useState({ start_time: '08:00:00', end_time: '16:00:00' });
       const [operationalSettings, setOperationalSettings] = useState(null);
+      const [escalationStepsByFactoryId, setEscalationStepsByFactoryId] = useState({});
       const escalationSettings = useMemo(
         () => ({
           ...systemSettings,
@@ -2696,10 +2690,11 @@ function orderPartyInfo(order) {
             escalationSettings,
             holidays,
             new Date(),
+            escalationStepsByFactoryId,
           );
           return filterAndSortFactoryOrders(list, activeFactoryId, ctx).filter((o) => !hiddenOrderIds.has(String(o?.id || '')));
         },
-        [activeFactoryId, factories, projects, escalationSettings, holidays, hiddenOrderIds],
+        [activeFactoryId, factories, projects, escalationSettings, holidays, hiddenOrderIds, escalationStepsByFactoryId],
       );
 
       const applyIncomingOrders = useCallback(
@@ -2820,16 +2815,14 @@ function orderPartyInfo(order) {
         );
         return (Array.isArray(list) ? list : []).map((order) => {
           if (!order) return order;
-          const existing = normalizeFactoryRefId(order.preferred_factory_id ?? order.preferredFactoryId);
-          if (existing) return order;
           const pid = String(order.project_id ?? order.projectId ?? '').trim();
           if (!pid) return order;
           const mainId = resolveFactoryIdFromProject(projectById[pid]);
           if (!mainId) return order;
+          const existingMain = normalizeFactoryRefId(order.main_factory_id ?? order.mainFactoryId);
+          if (existingMain === mainId) return order;
           return {
             ...order,
-            preferred_factory_id: mainId,
-            preferredFactoryId: mainId,
             main_factory_id: mainId,
             mainFactoryId: mainId,
           };
@@ -2853,6 +2846,7 @@ function orderPartyInfo(order) {
               escalationSettings,
               holidays,
               new Date(),
+              escalationStepsByFactoryId,
             );
             const detected = detectFactoryNotifyOrderIds(prevOrders, list, activeFactoryId, ctx);
             for (const id of detected.notifyOrderIds) notifyOrderIds.add(id);
@@ -2904,7 +2898,7 @@ function orderPartyInfo(order) {
             applyIncomingOrders(r.orders, { playSound: false });
           }
         },
-        [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById, factories, projects, escalationSettings, holidays, enrichOrdersWithProjectFactory],
+        [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById, factories, projects, escalationSettings, holidays, enrichOrdersWithProjectFactory, escalationStepsByFactoryId],
       );
 
       const syncFromStorageRef = useRef(syncFromStorage);
@@ -2920,7 +2914,7 @@ function orderPartyInfo(order) {
         if (!activeFactoryId) return undefined;
         void syncFromStorage({ playSound: false });
         return undefined;
-      }, [activeFactoryId, factories, projects, holidays, escalationSettings, syncFromStorage]);
+      }, [activeFactoryId, factories, projects, holidays, escalationSettings, escalationStepsByFactoryId, syncFromStorage]);
 
       useEffect(() => {
         if (!activeFactoryId) return undefined;
@@ -3113,13 +3107,14 @@ function orderPartyInfo(order) {
         let cancelled = false;
         (async () => {
           try {
-            const [rows, projs, hols, settings, customerRows, opSettings] = await Promise.all([
+            const [rows, projs, hols, settings, customerRows, opSettings, escalationSteps] = await Promise.all([
               db.fetchFactories(),
               db.fetchProjects(),
               db.fetchHolidays(),
               db.fetchSystemSettings(),
               db.fetchCustomers(),
               db.fetchDispatchOperationalSettings(),
+              db.fetchEscalationSteps(),
             ]);
             if (cancelled) return;
             setFactories(rows);
@@ -3128,6 +3123,7 @@ function orderPartyInfo(order) {
             setHolidays(hols);
             setSystemSettings(settings);
             setOperationalSettings(opSettings);
+            setEscalationStepsByFactoryId(escalationSteps || {});
             const nameMap = Object.fromEntries((rows || []).map((r) => [r.id, r.name]));
             const urlId = getFactoryIdFromUrl();
             const stored = readStoredFactoryId();

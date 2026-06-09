@@ -224,18 +224,10 @@ export function normalizeOrderRow(row) {
     delivery_lat: Number.isFinite(deliveryLat) ? deliveryLat : null,
     delivery_lng: Number.isFinite(deliveryLng) ? deliveryLng : null,
     preferred_factory_id: sanitizeRefId(
-      row.preferred_factory_id ??
-        od.preferred_factory_id ??
-        od.preferredFactoryId ??
-        od.main_factory_id ??
-        od.mainFactoryId,
+      row.preferred_factory_id ?? od.preferred_factory_id ?? od.preferredFactoryId,
     ),
     preferredFactoryId: sanitizeRefId(
-      row.preferred_factory_id ??
-        od.preferred_factory_id ??
-        od.preferredFactoryId ??
-        od.main_factory_id ??
-        od.mainFactoryId,
+      row.preferred_factory_id ?? od.preferred_factory_id ?? od.preferredFactoryId,
     ),
     factory_site_id: sanitizeRefId(row.factory_site_id ?? od.factory_site_id ?? od.factorySiteId),
     factorySiteId: sanitizeRefId(row.factory_site_id ?? od.factory_site_id ?? od.factorySiteId),
@@ -464,9 +456,6 @@ function buildOrderInsertRow(order) {
   const safeOrder = sanitizeOrderRefs(order);
   let preferredFactoryId = sanitizeRefId(safeOrder.preferred_factory_id);
   const mainFactoryId = sanitizeRefId(safeOrder.main_factory_id ?? safeOrder.mainFactoryId);
-  if (!preferredFactoryId && mainFactoryId) {
-    preferredFactoryId = mainFactoryId;
-  }
   const statusRaw = String(order.status || 'pending').trim() || 'pending';
   const nextOrder = sanitizeOrderDataForDb({
     ...safeOrder,
