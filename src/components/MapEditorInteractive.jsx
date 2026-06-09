@@ -19,29 +19,20 @@ import {
   DEFAULT_UNLOAD_RADIUS_M,
 } from '../utils/mapAnnotations.js';
 import { renderAnnotationsSnapshot } from '../utils/mapEditorSnapshot.js';
+import {
+  createStampDivIcon,
+  LEAFLET_DIV_ICON_CLASS,
+} from '../utils/mapEditorStampIcon.js';
 
-/** Leaflet divIcon のデフォルト枠を消す（ズーム時のズレ防止のため iconAnchor を中心に合わせる） */
-const LEAFLET_DIV_ICON_CLASS = 'map-editor-leaflet-div-icon';
-
-function createStampDivIcon(emoji, scale, selected) {
-  const size = Math.max(24, Math.round(36 * (Number(scale) > 0 ? Number(scale) : 1)));
-  const ring = selected
-    ? 'box-shadow:0 0 0 3px rgba(99,102,241,0.55);border-radius:10px;'
-    : '';
-  return L.divIcon({
-    className: LEAFLET_DIV_ICON_CLASS,
-    html: `<div style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.88)}px;line-height:1;display:flex;align-items:center;justify-content:center;${ring}">${emoji}</div>`,
-    iconSize: [size, size],
-    iconAnchor: [size / 2, size / 2],
-  });
-}
-
-function createCommentDivIcon(text, selected) {
+function createCommentDivIcon(text, selected, mapZoom) {
   const label = String(text || '').slice(0, 80);
   const border = selected ? '#6366f1' : '#334155';
-  const html = `<div style="max-width:200px;padding:6px 8px;border:2px solid ${border};border-radius:8px;background:rgba(255,255,255,0.96);font-size:11px;font-weight:700;line-height:1.35;color:#0f172a;box-shadow:0 2px 6px rgba(0,0,0,0.15);white-space:pre-wrap;">${escapeHtml(label)}</div>`;
-  const iconW = Math.min(200, Math.max(80, label.length * 7));
-  const iconH = 36;
+  const z = Number.isFinite(Number(mapZoom)) ? Number(mapZoom) : 17;
+  const zoomFactor = 2 ** (z - 17);
+  const fontSize = Math.max(9, Math.min(14, Math.round(11 * zoomFactor)));
+  const iconW = Math.min(200, Math.max(64, Math.round(Math.min(200, Math.max(80, label.length * 7)) * zoomFactor)));
+  const iconH = Math.max(24, Math.min(44, Math.round(36 * zoomFactor)));
+  const html = `<div style="max-width:${iconW}px;padding:4px 6px;border:2px solid ${border};border-radius:8px;background:rgba(255,255,255,0.96);font-size:${fontSize}px;font-weight:700;line-height:1.35;color:#0f172a;box-shadow:0 2px 6px rgba(0,0,0,0.15);white-space:pre-wrap;">${escapeHtml(label)}</div>`;
   return L.divIcon({
     className: LEAFLET_DIV_ICON_CLASS,
     html,
@@ -91,6 +82,35 @@ function MapResizeFix() {
   return null;
 }
 
+function MapZoomSync({ onZoomChange }) {
+  const map = useMap();
+
+  useMapEvents({
+    zoom() {
+      onZoomChange?.(map.getZoom());
+    },
+    zoomend() {
+      onZoomChange?.(map.getZoom());
+    },
+  });
+
+  useEffect(() => {
+    onZoomChange?.(map.getZoom());
+  }, [map, onZoomChange]);
+
+  return null;
+}
+
+function MapZoomedAnnotations(props) {
+  const [mapZoom, setMapZoom] = useState(null);
+  return (
+    <>
+      <MapZoomSync onZoomChange={setMapZoom} />
+      <AnnotationMarkersLayer {...props} mapZoom={mapZoom} />
+    </>
+  );
+}
+
 function UnloadCircles({ points, selectedId, onSelect }) {
   return (
     <>
@@ -117,7 +137,30 @@ function UnloadCircles({ points, selectedId, onSelect }) {
   );
 }
 
-function StampMarkers({ stamps, selected, disabled, onSelect, onMove }) {
+function AnnotationMarkersLayer({ stamps, comments, selection, disabled, setSelection, updateStamp, updateComment, mapZoom }) {
+  return (
+    <>
+      <StampMarkers
+        stamps={stamps}
+        selected={selection}
+        disabled={disabled}
+        onSelect={setSelection}
+        onMove={updateStamp}
+        mapZoom={mapZoom}
+      />
+      <CommentMarkers
+        comments={comments}
+        selected={selection}
+        disabled={disabled}
+        onSelect={setSelection}
+        onMove={updateComment}
+        mapZoom={mapZoom}
+      />
+    </>
+  );
+}
+
+function StampMarkers({ stamps, selected, disabled, onSelect, onMove, mapZoom }) {
   return (stamps || []).map((s) => {
     const isSel = selected?.kind === 'stamp' && selected.id === s.id;
     const emoji = MAP_STAMP_EMOJI[s.type] || '❓';
@@ -126,7 +169,7 @@ function StampMarkers({ stamps, selected, disabled, onSelect, onMove }) {
         key={s.id}
         position={[s.lat, s.lng]}
         draggable={!disabled}
-        icon={createStampDivIcon(emoji, s.scale, isSel)}
+        icon={createStampDivIcon(emoji, s.scale, mapZoom, isSel)}
         zIndexOffset={isSel ? 1200 : 400}
         eventHandlers={{
           click: (e) => {
@@ -143,7 +186,7 @@ function StampMarkers({ stamps, selected, disabled, onSelect, onMove }) {
   });
 }
 
-function CommentMarkers({ comments, selected, disabled, onSelect, onMove }) {
+function CommentMarkers({ comments, selected, disabled, onSelect, onMove, mapZoom }) {
   return (comments || []).map((c) => {
     const isSel = selected?.kind === 'comment' && selected.id === c.id;
     return (
@@ -151,7 +194,7 @@ function CommentMarkers({ comments, selected, disabled, onSelect, onMove }) {
         key={c.id}
         position={[c.lat, c.lng]}
         draggable={!disabled}
-        icon={createCommentDivIcon(c.text, isSel)}
+        icon={createCommentDivIcon(c.text, isSel, mapZoom)}
         zIndexOffset={isSel ? 1100 : 300}
         eventHandlers={{
           click: (e) => {
@@ -396,19 +439,14 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
           selectedId={selection?.kind === 'unload' ? selection.id : null}
           onSelect={setSelection}
         />
-        <StampMarkers
+        <MapZoomedAnnotations
           stamps={annotations.stamps}
-          selected={selection}
-          disabled={disabled}
-          onSelect={setSelection}
-          onMove={updateStamp}
-        />
-        <CommentMarkers
           comments={annotations.comments}
-          selected={selection}
+          selection={selection}
           disabled={disabled}
-          onSelect={setSelection}
-          onMove={updateComment}
+          setSelection={setSelection}
+          updateStamp={updateStamp}
+          updateComment={updateComment}
         />
         <MapClickLayer />
       </MapContainer>

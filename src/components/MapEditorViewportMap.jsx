@@ -1,6 +1,5 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Circle, MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
-import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { MAP_STAMP_EMOJI } from '../mapEditorConstants.js';
 import {
@@ -8,17 +7,46 @@ import {
   DEFAULT_MAP_CENTER,
   DEFAULT_UNLOAD_RADIUS_M,
 } from '../utils/mapAnnotations.js';
+import { createStampDivIcon, LEAFLET_DIV_ICON_CLASS } from '../utils/mapEditorStampIcon.js';
 
-const LEAFLET_DIV_ICON_CLASS = 'map-editor-leaflet-div-icon';
+function MapZoomSync({ onZoomChange }) {
+  const map = useMap();
 
-function createStampDivIcon(emoji, scale) {
-  const size = Math.max(24, Math.round(36 * (Number(scale) > 0 ? Number(scale) : 1)));
-  return L.divIcon({
-    className: LEAFLET_DIV_ICON_CLASS,
-    html: `<div style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.88)}px;line-height:1;display:flex;align-items:center;justify-content:center;">${emoji}</div>`,
-    iconSize: [size, size],
-    iconAnchor: [size / 2, size / 2],
+  useMapEvents({
+    zoom() {
+      onZoomChange?.(map.getZoom());
+    },
+    zoomend() {
+      onZoomChange?.(map.getZoom());
+    },
   });
+
+  useEffect(() => {
+    onZoomChange?.(map.getZoom());
+  }, [map, onZoomChange]);
+
+  return null;
+}
+
+function ViewportStampMarkers({ annotations, mapZoom }) {
+  return (annotations?.stamps || []).map((s) => (
+    <Marker
+      key={s.id}
+      position={[s.lat, s.lng]}
+      icon={createStampDivIcon(MAP_STAMP_EMOJI[s.type] || '❓', s.scale, mapZoom)}
+      interactive={false}
+    />
+  ));
+}
+
+function ViewportStampLayer({ annotations }) {
+  const [mapZoom, setMapZoom] = useState(null);
+  return (
+    <>
+      <MapZoomSync onZoomChange={setMapZoom} />
+      <ViewportStampMarkers annotations={annotations} mapZoom={mapZoom} />
+    </>
+  );
 }
 
 function MapViewportSync({ viewport, onViewportChange, syncKey }) {
@@ -166,14 +194,7 @@ export function MapEditorViewportMap({
             }}
           />
         ))}
-        {(annotations?.stamps || []).map((s) => (
-          <Marker
-            key={s.id}
-            position={[s.lat, s.lng]}
-            icon={createStampDivIcon(MAP_STAMP_EMOJI[s.type] || '❓', s.scale)}
-            interactive={false}
-          />
-        ))}
+        <ViewportStampLayer annotations={annotations} />
       </MapContainer>
     </div>
   );

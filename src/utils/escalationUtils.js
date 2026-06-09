@@ -393,7 +393,8 @@ export function isOrderVisibleToFactory(order, factoryId, ctx) {
     if (effectiveMinutes >= 30) return set30.has(fid);
     if (effectiveMinutes >= 15) return set15.has(fid);
 
-    return isRelatedProjectFactory(order, project, fid);
+    const tier0 = preferredId || mainId;
+    return Boolean(tier0) && fid === tier0;
   }
 
   if (effectiveMinutes >= 30) {
