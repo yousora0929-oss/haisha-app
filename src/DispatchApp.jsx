@@ -1494,9 +1494,25 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               }
             }
 
+            const mergedReadKeys = { ...readChatKeysRef.current };
+            for (const order of displayOrders) {
+              if (!order?.id) continue;
+              const persisted = String(order.customer_chat_read_key ?? order.customerChatReadKey ?? '').trim();
+              if (persisted && !mergedReadKeys[order.id]) {
+                mergedReadKeys[order.id] = persisted;
+              }
+            }
+            if (Object.keys(mergedReadKeys).length !== Object.keys(readChatKeysRef.current).length ||
+              Object.entries(mergedReadKeys).some(([id, key]) => readChatKeysRef.current[id] !== key)) {
+              readChatKeysRef.current = mergedReadKeys;
+              setReadChatKeys(mergedReadKeys);
+            }
+
+            const viewingChatOrderId = String(activeChatOrderIdRef.current || '');
             const unreadMap = {};
             for (const order of displayOrders) {
               if (!order?.id || !isOrderInProgressView(order, today)) continue;
+              if (viewingChatOrderId && String(order.id) === viewingChatOrderId) continue;
               if (isUnreadForDispatch(newThreads[order.id], readChatKeysRef.current[order.id])) {
                 unreadMap[order.id] = true;
               }
@@ -1799,6 +1815,45 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         guestSiteOrderCtx,
       ]);
 
+      const markChatRead = useCallback((orderId, messages) => {
+        const id = String(orderId || '').trim();
+        if (!id) return;
+
+        clearAppBadge();
+        setUnreadChatsByOrder((prev) => {
+          if (!prev[id]) return prev;
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+
+        const latest = latestChatMessage(messages);
+        const from = String(latest?.from || '');
+        if (!latest || (from !== 'factory' && from !== 'admin')) return;
+
+        const key = chatMessageReadKey(latest);
+        if (!key) return;
+
+        const nextKeys = { ...(readChatKeysRef.current || {}), [id]: key };
+        readChatKeysRef.current = nextKeys;
+        setReadChatKeys(nextKeys);
+
+        void db.markCustomerChatRead(id, key).catch((err) => {
+          logDispatchError('[DispatchApp] チャット既読の保存に失敗', err, { orderId: id });
+        });
+      }, []);
+
+      const handleOpenChat = useCallback(
+        (orderId) => {
+          const id = String(orderId || '').trim();
+          if (!id) return;
+          activeChatOrderIdRef.current = id;
+          setActiveChatOrderId(id);
+          markChatRead(id, chatThreads[id]);
+        },
+        [chatThreads, markChatRead],
+      );
+
       useEffect(() => {
         if (!isLoggedIn || activeChatOrderId) return;
         let redirectOrderId = '';
@@ -1811,13 +1866,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         const targetOrder = (dashboardOrders || []).find((order) => String(order?.id || '') === redirectOrderId);
         if (!targetOrder) return;
         setCustomerOrderTab('active');
-        setActiveChatOrderId(redirectOrderId);
+        handleOpenChat(redirectOrderId);
         try {
           sessionStorage.removeItem(PUSH_CHAT_REDIRECT_SESSION_KEY);
         } catch {
           /* ignore */
         }
-      }, [activeChatOrderId, dashboardOrders, isLoggedIn]);
+      }, [activeChatOrderId, dashboardOrders, handleOpenChat, isLoggedIn]);
 
       const projectById = useMemo(
         () =>
@@ -2014,19 +2069,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         },
         [refreshChatThreadsOnly],
       );
-
-      const markChatRead = useCallback((orderId, messages) => {
-        const key = chatMessageReadKey(latestChatMessage(messages));
-        if (!orderId || !key) return;
-        clearAppBadge();
-        setReadChatKeys((prev) => (prev?.[orderId] === key ? prev : { ...prev, [orderId]: key }));
-        setUnreadChatsByOrder((prev) => {
-          if (!prev[orderId]) return prev;
-          const next = { ...prev };
-          delete next[orderId];
-          return next;
-        });
-      }, []);
 
       const handleAllowStatusReset = useCallback(
         async (orderId) => {
@@ -3679,7 +3721,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                 unreadChatsByOrder[ord.id] ||
                                   isUnreadForDispatch(chatThreads[ord.id], readChatKeys[ord.id]),
                               )}
-                              onOpenChat={setActiveChatOrderId}
+                              onOpenChat={handleOpenChat}
                               onAllowStatusReset={handleAllowStatusReset}
                               guestToken={isGuestSiteOrder ? guestOrderToken : ''}
                             />
@@ -3903,7 +3945,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             <CustomerChatScreen
               order={activeChatOrder}
               messages={chatThreads[activeChatOrder.id]}
-              onBack={() => setActiveChatOrderId('')}
+              onBack={() => {
+                activeChatOrderIdRef.current = '';
+                setActiveChatOrderId('');
+              }}
               onSendMessage={handleSendMasterChat}
               onMarkChatRead={markChatRead}
             />

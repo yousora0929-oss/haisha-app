@@ -269,7 +269,45 @@ export function normalizeOrderRow(row) {
     site_name: sanitizeSiteNameValue(od.siteName ?? od.site_name),
     projectName: sanitizeSiteNameValue(od.projectName ?? od.project_name),
     project_name: sanitizeSiteNameValue(od.projectName ?? od.project_name),
+    customer_chat_read_key:
+      od.customer_chat_read_key != null
+        ? String(od.customer_chat_read_key).trim()
+        : od.customerChatReadKey != null
+          ? String(od.customerChatReadKey).trim()
+          : '',
+    customerChatReadKey:
+      od.customerChatReadKey != null
+        ? String(od.customerChatReadKey).trim()
+        : od.customer_chat_read_key != null
+          ? String(od.customer_chat_read_key).trim()
+          : '',
+    customer_chat_read_at:
+      od.customer_chat_read_at != null
+        ? String(od.customer_chat_read_at)
+        : od.customerChatReadAt != null
+          ? String(od.customerChatReadAt)
+          : '',
+    customerChatReadAt:
+      od.customerChatReadAt != null
+        ? String(od.customerChatReadAt)
+        : od.customer_chat_read_at != null
+          ? String(od.customer_chat_read_at)
+          : '',
   };
+}
+
+/** カスタマーがチャットを開いた際の既読キー（order_data に保存） */
+export async function markCustomerChatRead(orderId, readKey) {
+  const id = String(orderId || '').trim();
+  const key = String(readKey || '').trim();
+  if (!id || !key) return null;
+  const readAt = new Date().toISOString();
+  return updateOrderDetails(id, {
+    customer_chat_read_key: key,
+    customerChatReadKey: key,
+    customer_chat_read_at: readAt,
+    customerChatReadAt: readAt,
+  });
 }
 
 export async function fetchOrdersWithChat() {
