@@ -295,6 +295,16 @@ function filterAndSortFactoryOrders(list, activeFactoryId, escalationCtx) {
   return sortOrdersByCreatedDesc(filtered);
 }
 
+function collectScheduleFactoryIds(orders, activeFactoryId) {
+  const ids = new Set();
+  for (const o of Array.isArray(orders) ? orders : []) {
+    const fid = db.resolveScheduleCheckFactoryId(o);
+    if (fid) ids.add(fid);
+  }
+  if (activeFactoryId) ids.add(String(activeFactoryId));
+  return [...ids];
+}
+
 function isRejectedByFactory(order, factoryId) {
   const fid = String(factoryId || '').trim();
   if (!fid || !order) return false;
@@ -2776,13 +2786,7 @@ function orderPartyInfo(order) {
       const runScheduleAutoPipeline = useCallback(
         async (scheduleArg) => {
           let { orders: list, chatThreads: th } = await db.fetchOrdersWithChat();
-          const ids = new Set(
-            list
-              .map((o) => (o && o.factory_site_id ? String(o.factory_site_id).trim() : ''))
-              .filter(Boolean),
-          );
-          if (activeFactoryId) ids.add(String(activeFactoryId));
-          const idArr = [...ids];
+          const idArr = collectScheduleFactoryIds(list, activeFactoryId);
           const byF = idArr.length ? await db.fetchSchedulesForFactories(idArr) : {};
           if (activeFactoryId) {
             const local =
@@ -2877,13 +2881,7 @@ function orderPartyInfo(order) {
             ...(reassignNotifyOrderIds.size > 0 ? { reassignNotifyOrderIds } : {}),
           };
           applyIncomingOrders(list, incomingOptions);
-          const ids = new Set(
-            list
-              .map((o) => (o && o.factory_site_id ? String(o.factory_site_id).trim() : ''))
-              .filter(Boolean),
-          );
-          if (activeFactoryId) ids.add(String(activeFactoryId));
-          const idArr = [...ids];
+          const idArr = collectScheduleFactoryIds(list, activeFactoryId);
           const byF = idArr.length ? await db.fetchSchedulesForFactories(idArr) : {};
           const r = await db.persistScheduleAutoRejections({
             schedulesByFactoryId: byF,

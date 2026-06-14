@@ -46,3 +46,19 @@ export function sumOrderVolumesM3(orders) {
 export function orderStatusBlocksFactoryDispatch(status) {
   return String(status || '').trim() === 'pending_association';
 }
+
+/** 顧客画面のステータス表示用（status 列と factoryResponseStatus の整合） */
+export function resolveOrderDisplayStatus(order) {
+  if (!order || typeof order !== 'object') return 'pending';
+  const status = String(order.status || '').trim();
+  const factoryResponse = String(order.factoryResponseStatus || '').trim();
+
+  if (status === 'customer_cancelled' || factoryResponse === 'customer_cancelled') return 'customer_cancelled';
+  if (status === 'deleted') return 'deleted';
+  if (['completed', 'complete', 'done', 'delivered'].includes(status)) return status;
+  if (status === 'accepted' || factoryResponse === 'accepted') return 'accepted';
+  if (factoryResponse === 'rejected') return 'rejected';
+  if (factoryResponse === 'pending') return 'pending';
+  if (status === 'pending_association') return 'pending_association';
+  return status || factoryResponse || 'pending';
+}

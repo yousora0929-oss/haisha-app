@@ -47,7 +47,7 @@ import {
   resolveDeliveryPrefecture,
   townNamesFromLocationList,
 } from './utils/heartrailsGeo.js';
-import { isLocationPendingOrder, resolveInitialOrderStatus, sumOrderVolumesM3 } from './utils/orderWorkflow.js';
+import { isLocationPendingOrder, resolveInitialOrderStatus, resolveOrderDisplayStatus, sumOrderVolumesM3 } from './utils/orderWorkflow.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
@@ -313,15 +313,18 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
     }
 
     function historyStatusMeta(order) {
-      const st = String(order?.status || order?.factoryResponseStatus || '').trim();
+      const st = resolveOrderDisplayStatus(order);
       if (['customer_cancelled', 'cancelled', 'deleted'].includes(st)) {
         return { key: 'cancelled', label: 'キャンセル', className: 'bg-red-600 text-white border-red-700' };
       }
       if (['completed', 'complete', 'done', 'delivered'].includes(st)) {
         return { key: 'completed', label: '完了', className: 'bg-emerald-600 text-white border-emerald-700' };
       }
-      if (st === 'accepted' || order?.factoryResponseStatus === 'accepted') {
+      if (st === 'accepted') {
         return { key: 'active', label: '受注', className: 'bg-blue-600 text-white border-blue-700' };
+      }
+      if (st === 'rejected') {
+        return { key: 'cancelled', label: '拒否', className: 'bg-red-600 text-white border-red-700' };
       }
       if (st === 'pending_association') {
         return { key: 'active', label: '組合承認待ち', className: 'cl-alert-association bg-violet-600 text-white border-violet-700' };
@@ -354,7 +357,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
     }
 
     function OrderStatusBadges({ order }) {
-      const st = order.status === 'customer_cancelled' ? 'customer_cancelled' : order.status || order.factoryResponseStatus;
+      const st = resolveOrderDisplayStatus(order);
       const displayName = getDefaultFactoryDisplayName(order);
       if (st === 'customer_cancelled') {
         return (
@@ -1408,18 +1411,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             let fetched = await db.fetchOrdersWithChat();
             let newOrders = Array.isArray(fetched?.orders) ? fetched.orders : [];
             let newThreads = fetched?.chatThreads && typeof fetched.chatThreads === 'object' ? fetched.chatThreads : {};
-            const idSet = new Set(
-              newOrders
-                .map((o) => (o && o.factory_site_id ? String(o.factory_site_id).trim() : ''))
-                .filter(Boolean),
-            );
+            const idSet = new Set();
             for (const o of newOrders || []) {
-              const pf = o?.preferred_factory_id ?? o?.preferredFactoryId;
-              if (pf) idSet.add(String(pf).trim());
+              const fid = db.resolveScheduleCheckFactoryId(o);
+              if (fid) idSet.add(fid);
             }
-            if (preferredFactoryId) idSet.add(String(preferredFactoryId));
-            if (idSet.size === 0) idSet.add(DISPATCH_DEFAULT_FACTORY_SITE_ID);
-            const schedulesByFactoryId = await db.fetchSchedulesForFactories([...idSet]);
+            const schedulesByFactoryId = idSet.size
+              ? await db.fetchSchedulesForFactories([...idSet])
+              : {};
             await db.persistScheduleAutoRejections({
               schedulesByFactoryId,
               orders: newOrders,

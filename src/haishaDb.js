@@ -120,12 +120,11 @@ function sanitizeRefId(value) {
 
 function sanitizeOrderRefs(order) {
   const o = order && typeof order === 'object' && !Array.isArray(order) ? { ...order } : {};
-  const factorySiteId = sanitizeRefId(o.factory_site_id);
-  const legacyFactorySiteId = sanitizeRefId(o.factorySiteId);
+  const factorySiteId = sanitizeRefId(o.factory_site_id ?? o.factorySiteId);
   const preferredFactoryId = sanitizeRefId(o.preferred_factory_id ?? o.preferredFactoryId);
   const mainFactoryId = sanitizeRefId(o.main_factory_id ?? o.mainFactoryId);
   o.factory_site_id = factorySiteId;
-  o.factorySiteId = legacyFactorySiteId;
+  o.factorySiteId = factorySiteId;
   o.preferred_factory_id = preferredFactoryId;
   o.preferredFactoryId = preferredFactoryId;
   o.main_factory_id = mainFactoryId;
@@ -1056,6 +1055,17 @@ export async function upsertScheduleDay(factorySiteId, dateStr, blocks) {
   if (error) throw error;
 }
 
+/** 満車自動拒否の判定に使う工場 ID（閲覧中工場へのフォールバックはしない） */
+export function resolveScheduleCheckFactoryId(order) {
+  if (!order || typeof order !== 'object') return null;
+  return (
+    sanitizeRefId(order.factory_site_id ?? order.factorySiteId) ||
+    sanitizeRefId(order.preferred_factory_id ?? order.preferredFactoryId) ||
+    sanitizeRefId(order.main_factory_id ?? order.mainFactoryId) ||
+    null
+  );
+}
+
 /**
  * 満車スケジュールに基づく自動拒否を orders に反映（マスター・工場どちらからでも呼べる）
  * @param {Record<string, ReturnType<typeof normalizeFullSchedule>>} schedulesByFactoryId - 工場 id → 日付別スケジュール
@@ -1080,7 +1090,11 @@ export async function persistScheduleAutoRejections({
       changed = true;
       return { ...o, scheduleAutoChecked: true };
     }
-    const fid = sanitizeRefId(o.factory_site_id) || sanitizeRefId(defaultFactorySiteId) || '';
+    const fid = resolveScheduleCheckFactoryId(o);
+    if (!fid) {
+      changed = true;
+      return { ...o, scheduleAutoChecked: true };
+    }
     const scheduleMap = normalizeFullSchedule(byF[fid] || {});
     const dayBlocks = normalizeDayBlockSchedule(scheduleMap[date]);
     const reason = computeScheduleAutoRejectReason(o, dayBlocks);

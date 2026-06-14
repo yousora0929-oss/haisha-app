@@ -490,28 +490,27 @@ export async function ensurePanelRealtimeAuth(preferredToken) {
 
 function readPanelRequestHeaders() {
   try {
+    const creds = detectPanelCredentials();
+    if (!creds) return {};
     const headers = {};
-    const adminPhone = readPanelAuthValue(ADMIN_PANEL_PHONE_KEY);
-    const adminPassword = readPanelAuthValue(ADMIN_PANEL_PASSWORD_KEY);
-    if (adminPhone && adminPassword) {
-      headers['x-admin-phone'] = adminPhone;
-      headers['x-admin-password'] = adminPassword;
-    }
-    const customerPhone = readPanelAuthValue(CUSTOMER_PANEL_PHONE_KEY);
-    const customerPassword = readPanelAuthValue(CUSTOMER_PANEL_PASSWORD_KEY);
-    if (customerPhone && customerPassword) {
-      headers['x-customer-phone'] = customerPhone;
-      headers['x-customer-password'] = customerPassword;
-    }
-    const factoryId = readPanelAuthValue(FACTORY_PANEL_ID_KEY);
-    const factoryPassword = readPanelAuthValue(FACTORY_PANEL_PASSWORD_KEY);
-    if (factoryId && factoryPassword) {
-      headers['x-factory-id'] = factoryId;
-      headers['x-factory-password'] = factoryPassword;
-    }
-    const guestToken = readPanelAuthValue(GUEST_SITE_ORDER_TOKEN_KEY);
-    if (guestToken) {
-      headers['x-site-order-token'] = guestToken;
+    switch (creds.panelType) {
+      case 'admin':
+        headers['x-admin-phone'] = creds.credentialA;
+        headers['x-admin-password'] = creds.credentialB;
+        break;
+      case 'customer':
+        headers['x-customer-phone'] = creds.credentialA;
+        headers['x-customer-password'] = creds.credentialB;
+        break;
+      case 'factory':
+        headers['x-factory-id'] = creds.credentialA;
+        headers['x-factory-password'] = creds.credentialB;
+        break;
+      case 'guest':
+        headers['x-site-order-token'] = creds.credentialA;
+        break;
+      default:
+        break;
     }
     return headers;
   } catch {
