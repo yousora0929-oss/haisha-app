@@ -1,6 +1,6 @@
-/** onesignal-push v17 — 送信者本人への自爆通知を防止 */
+/** onesignal-push v18 — 地図送付時の工場向けプッシュ通知 */
 
-const FUNCTION_VERSION = 17;
+const FUNCTION_VERSION = 18;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 
 type PushEvent =
@@ -8,7 +8,8 @@ type PushEvent =
   | 'customer_accepted'
   | 'customer_rejected'
   | 'customer_chat'
-  | 'factory_chat';
+  | 'factory_chat'
+  | 'customer_map_shared';
 
 type SlimPayload = {
   event?: PushEvent | string;
@@ -32,6 +33,11 @@ type OrderRow = {
   customer_id?: string | null;
   factory_site_id?: string | null;
   preferred_factory_id?: string | null;
+  override_map_image_url?: string | null;
+  map_annotations?: unknown;
+  is_location_pending?: boolean | null;
+  delivery_lat?: number | string | null;
+  delivery_lng?: number | string | null;
 };
 
 type LegacyWebhookPayload = {
@@ -165,6 +171,69 @@ function latestChatMessage(messages: unknown[]): Record<string, unknown> | null 
 function chatMessageKey(message: Record<string, unknown> | null): string {
   if (!message) return '';
   return [message.id, message.createdAt, message.from].map((part) => (part == null ? '' : String(part))).join('|');
+}
+
+function stableJson(value: unknown): string {
+  try {
+    return JSON.stringify(value ?? null);
+  } catch {
+    return '';
+  }
+}
+
+function mapAnnotationsFingerprint(row: OrderRow | null | undefined): string {
+  const od = orderData(row);
+  const rowAnn = row?.map_annotations;
+  const ann = rowAnn ?? od.map_annotations ?? od.mapAnnotations;
+  return stableJson(ann);
+}
+
+function legacyMapStampsFingerprint(row: OrderRow | null | undefined): string {
+  const od = orderData(row);
+  const stamps = od.map_stamps ?? od.mapStamps;
+  return stableJson(stamps);
+}
+
+/** 地図・現場位置の送付状態を比較用フィンガープリントにまとめる */
+function orderMapFingerprint(row: OrderRow | null | undefined): string {
+  if (!row) return '';
+  const od = orderData(row);
+  const parts = [
+    pickString(
+      row.override_map_image_url,
+      od.override_map_image_url,
+      od.overrideMapImageUrl,
+      od.map_image_url,
+      od.mapImageUrl,
+    ),
+    pickString(od.map_submitted_at, od.mapSubmittedAt),
+    mapAnnotationsFingerprint(row),
+    legacyMapStampsFingerprint(row),
+    pickString(row.delivery_lat, od.delivery_lat, od.deliveryLat, od.representative_lat, od.representativeLat),
+    pickString(row.delivery_lng, od.delivery_lng, od.deliveryLng, od.representative_lng, od.representativeLng),
+  ].filter(Boolean);
+  return parts.join('|');
+}
+
+/** UPDATE で地図情報が新規追加または変更されたか */
+function wasMapSharedOrUpdated(oldRecord: OrderRow | null | undefined, record: OrderRow | null | undefined): boolean {
+  const oldFp = orderMapFingerprint(oldRecord);
+  const newFp = orderMapFingerprint(record);
+  if (!newFp) return false;
+  return oldFp !== newFp;
+}
+
+function customerSenderNameFromOrder(row: OrderRow | null | undefined): string {
+  const od = orderData(row);
+  return pickString(
+    od.customerName,
+    od.customer_name,
+    od.contractorName,
+    od.contractor_name,
+    od.ordered_by,
+    od.orderedBy,
+    'カスタマー',
+  );
 }
 
 function isVerboseLog(): boolean {
@@ -704,6 +773,31 @@ async function sendFactoryChatNotifications(
   return sent;
 }
 
+async function sendCustomerMapSharedNotifications(
+  row: OrderRow | null | undefined,
+  payload: SlimPayload | null | undefined,
+  orderId: string,
+): Promise<string[]> {
+  const senderName = pickString(
+    payload?.contractor_name,
+    customerSenderNameFromOrder(row),
+    payload?.sender_name,
+    'カスタマー',
+  );
+  const message = `${senderName}から新しい地図（現場情報）が共有されました。`;
+  const sent: string[] = [];
+  const customerId = resolveOrderCustomerId(row, payload);
+  console.log('[onesignal-push] customer_map_shared', { orderId, customerId, senderName });
+  if (await sendToFactoryAudience(row, payload, message, {
+    type: 'customer_map_shared',
+    orderId,
+    targetApp: 'factory',
+  })) {
+    sent.push('factory:customer_map_shared');
+  }
+  return sent;
+}
+
 function isAuthorized(req: Request): boolean {
   const expected = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
   if (!expected) return false;
@@ -767,6 +861,11 @@ async function processSlimPayload(payload: SlimPayload): Promise<void> {
       sent.push(...await sendFactoryChatNotifications(row, payload, orderId, chatFrom));
       break;
     }
+    case 'customer_map_shared': {
+      const row = orderId ? await fetchOrderRow(orderId) : null;
+      sent.push(...await sendCustomerMapSharedNotifications(row, payload, orderId));
+      break;
+    }
     default:
       console.warn('[onesignal-push] unknown event', event);
   }
@@ -828,6 +927,10 @@ async function processLegacyWebhook(payload: LegacyWebhookPayload): Promise<void
       } else {
         console.warn('[onesignal-push] legacy chat unknown sender', { orderId, chatFrom });
       }
+    }
+
+    if (wasMapSharedOrUpdated(oldRecord, record)) {
+      sent.push(...await sendCustomerMapSharedNotifications(record, null, orderId));
     }
   }
 
