@@ -176,6 +176,13 @@ export async function registerOneSignalUser(externalId, tags = {}) {
   }
   try {
     await initOneSignal();
+    const boundBeforeLogin = await readBoundOneSignalExternalId();
+    const optedInBefore = OneSignal.User?.PushSubscription?.optedIn;
+    const permissionBefore = OneSignal.Notifications?.permission;
+    const alreadySubscribed =
+      boundBeforeLogin === normalizedId &&
+      (optedInBefore === true || permissionBefore === true || permissionBefore === 'granted');
+
     await OneSignal.login(String(normalizedId));
     if (tags && Object.keys(tags).length > 0) {
       await OneSignal.User.addTags(
@@ -184,18 +191,22 @@ export async function registerOneSignalUser(externalId, tags = {}) {
     }
     await setOneSignalUserLanguageJa();
 
-    try {
-      await OneSignal.Slidedown.promptPush({ force: true, forceSlidedownOverNative: true });
-    } catch {
-      await OneSignal.Notifications.requestPermission();
-    }
-
-    try {
-      if (OneSignal.User?.PushSubscription?.optIn) {
-        await OneSignal.User.PushSubscription.optIn();
+    if (!alreadySubscribed) {
+      try {
+        await OneSignal.Slidedown.promptPush({ force: true, forceSlidedownOverNative: true });
+      } catch {
+        await OneSignal.Notifications.requestPermission();
       }
-    } catch (optInErr) {
-      console.warn('[OneSignal] PushSubscription.optIn に失敗', optInErr);
+
+      try {
+        if (OneSignal.User?.PushSubscription?.optIn) {
+          await OneSignal.User.PushSubscription.optIn();
+        }
+      } catch (optInErr) {
+        console.warn('[OneSignal] PushSubscription.optIn に失敗', optInErr);
+      }
+    } else {
+      console.log('[OneSignal] 既存購読のため optIn / プロンプトをスキップ', { externalId: normalizedId });
     }
 
     const boundId = await readBoundOneSignalExternalId();

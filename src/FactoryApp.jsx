@@ -67,6 +67,10 @@ import {
 import { resolveFactoryIdFromProject } from './utils/dispatchBulkOrder.js';
 import { dispatchRealtimePayloadByKind } from './utils/realtimePayloadRouting.js';
 import { createSplitRealtimeSyncScheduler } from './utils/realtimeSyncScheduler.js';
+import {
+  chatSoundKeyFromRealtimePayload,
+  shouldPlayChatSoundOnce,
+} from './utils/chatNotificationDedup.js';
 import { normalizeFactoryRefId } from './utils/escalationUtils.js';
 
 const FACTORY_SESSION_STORAGE_KEY = 'haisha_factory_site_id_v1';
@@ -3206,7 +3210,12 @@ function orderPartyInfo(order) {
             try {
               if (payload) {
                 const chatHint = analyzeFactoryChatRealtimePayload(payload, chatThreadsRef.current || {});
-                if (chatHint.shouldPlayChatSound) playFactoryChatNotificationSound();
+                if (chatHint.shouldPlayChatSound) {
+                  const soundKey = chatSoundKeyFromRealtimePayload(payload);
+                  if (shouldPlayChatSoundOnce(soundKey)) {
+                    playFactoryChatNotificationSound();
+                  }
+                }
               }
               const { chatThreads: th } = await db.fetchOrdersWithChat();
               if (!cancel) setChatThreads(th);
@@ -3236,12 +3245,6 @@ function orderPartyInfo(order) {
                   onOrder: (p) => realtimeSync.scheduleOrder(p),
                   onSchedule: (p) => realtimeSync.scheduleOrder(p),
                   onChat: (p) => {
-                    try {
-                      const chatHint = analyzeFactoryChatRealtimePayload(p, chatThreadsRef.current || {});
-                      if (chatHint.shouldPlayChatSound) playFactoryChatNotificationSound();
-                    } catch (chatErr) {
-                      console.error('[FactoryApp] chat payload handling failed', chatErr);
-                    }
                     realtimeSync.scheduleChat(p);
                   },
                 });

@@ -1,6 +1,6 @@
-/** onesignal-push v18 — 地図送付時の工場向けプッシュ通知 */
+/** onesignal-push v19 — チャット通知の重複送信防止 */
 
-const FUNCTION_VERSION = 18;
+const FUNCTION_VERSION = 19;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 
 type PushEvent =
@@ -22,6 +22,7 @@ type SlimPayload = {
   contractor_name?: string | null;
   sender_name?: string | null;
   chat_from?: string | null;
+  chat_message_id?: string | null;
   status?: string | null;
 };
 
@@ -139,18 +140,87 @@ function resolveCustomerPushIds(row?: OrderRow | null, payload?: SlimPayload | n
   return customerId ? [customerId] : [];
 }
 
-function resolveFactoryPushTargetIds(row?: OrderRow | null, payload?: SlimPayload | null): string[] {
+/** 工場向けプッシュは受注工場 → 第一希望の1件のみ（複数 alias による重複を防ぐ） */
+function resolvePrimaryFactoryPushId(row?: OrderRow | null, payload?: SlimPayload | null): string {
   const od = orderData(row);
-  return withoutExternalIds(
-    [
-      pickString(row?.factory_site_id, payload?.factory_site_id),
-      pickString(row?.preferred_factory_id, payload?.preferred_factory_id),
-      pickString(od.factory_site_id, od.factorySiteId),
-      pickString(od.preferred_factory_id, od.preferredFactoryId),
-    ],
-    row?.customer_id,
-    payload?.customer_id,
+  return pickString(
+    row?.factory_site_id,
+    payload?.factory_site_id,
+    od.factory_site_id,
+    od.factorySiteId,
+    row?.preferred_factory_id,
+    payload?.preferred_factory_id,
+    od.preferred_factory_id,
+    od.preferredFactoryId,
   );
+}
+
+function resolveFactoryPushTargetIds(row?: OrderRow | null, payload?: SlimPayload | null): string[] {
+  const primary = resolvePrimaryFactoryPushId(row, payload);
+  if (!primary) return [];
+  return withoutExternalIds([primary], row?.customer_id, payload?.customer_id);
+}
+
+function resolveChatMessageId(row?: OrderRow | null, payload?: SlimPayload | null): string {
+  const fromPayload = pickString(payload?.chat_message_id);
+  if (fromPayload) return fromPayload;
+  const latest = latestChatMessage(asArray(row?.chat_messages));
+  return pickString(latest?.id);
+}
+
+function buildPushDedupeKey(
+  event: string,
+  orderId: string,
+  extras: { chatMessageId?: string; status?: string } = {},
+): string {
+  const ev = pickString(event);
+  const oid = pickString(orderId);
+  if (!ev || !oid) return '';
+  const chatId = pickString(extras.chatMessageId);
+  if (chatId && (ev === 'customer_chat' || ev === 'factory_chat')) {
+    return `${ev}:${oid}:${chatId}`;
+  }
+  const st = pickString(extras.status);
+  if (st && (ev === 'customer_accepted' || ev === 'customer_rejected')) {
+    return `${ev}:${oid}:${st}`;
+  }
+  if (ev === 'customer_map_shared') {
+    return `${ev}:${oid}:${pickString(extras.chatMessageId) || 'map'}`;
+  }
+  return `${ev}:${oid}`;
+}
+
+async function claimPushDedupe(dedupeKey: string): Promise<boolean> {
+  const key = pickString(dedupeKey);
+  if (!key) return true;
+
+  const base = Deno.env.get('SUPABASE_URL')?.replace(/\/$/, '') || '';
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  if (!base || !serviceKey) return true;
+
+  try {
+    const response = await fetch(`${base}/rest/v1/push_notification_dedup`, {
+      method: 'POST',
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify({ dedupe_key: key }),
+    });
+    if (response.status === 201) return true;
+    if (response.status === 409) {
+      console.log('[onesignal-push] dedupe skip (already sent)', { dedupeKey: key });
+      return false;
+    }
+    const body = await response.text();
+    console.warn('[onesignal-push] dedupe insert unexpected', { status: response.status, body: body.slice(0, 200) });
+    return true;
+  } catch (error) {
+    console.warn('[onesignal-push] dedupe check failed — proceed', error);
+    return true;
+  }
 }
 
 function resolveOrderCustomerId(row?: OrderRow | null, payload?: SlimPayload | null): string {
@@ -463,6 +533,8 @@ function readFromQueryParams(req: Request): SlimPayload | null {
     factory_name: pickString(url.searchParams.get('factory_name')) || null,
     contractor_name: pickString(url.searchParams.get('contractor_name')) || null,
     sender_name: pickString(url.searchParams.get('sender_name')) || null,
+    chat_from: pickString(url.searchParams.get('chat_from')) || null,
+    chat_message_id: pickString(url.searchParams.get('chat_message_id')) || null,
     status: pickString(url.searchParams.get('status')) || null,
   };
 }
@@ -630,12 +702,42 @@ async function postOneSignal(payload: Record<string, unknown>): Promise<boolean>
   return postOneSignalRequest(payload);
 }
 
-async function sendToExternalIds(externalIds: string[], message: string, data: Record<string, unknown> = {}) {
+async function sendToExternalIds(
+  externalIds: string[],
+  message: string,
+  data: Record<string, unknown> = {},
+  options: { dedupeKey?: string } = {},
+) {
   const ids = [...new Set(externalIds.map((id) => String(id || '').trim()).filter(Boolean))];
   if (!ids.length || !message) return false;
+
+  const dedupeKey = pickString(options.dedupeKey);
+  if (dedupeKey && !(await claimPushDedupe(dedupeKey))) return false;
+
   return postOneSignal({
     include_aliases: { external_id: ids },
     contents: { ja: message, en: message },
+    ...(dedupeKey ? { collapse_id: dedupeKey, web_push_topic: dedupeKey } : {}),
+    ...(Object.keys(data).length ? { data } : {}),
+  });
+}
+
+async function sendToRole(
+  role: string,
+  message: string,
+  data: Record<string, unknown> = {},
+  options: { dedupeKey?: string } = {},
+) {
+  const normalizedRole = String(role || '').trim();
+  if (!normalizedRole || !message) return false;
+
+  const dedupeKey = pickString(options.dedupeKey);
+  if (dedupeKey && !(await claimPushDedupe(`${dedupeKey}:role:${normalizedRole}`))) return false;
+
+  return postOneSignal({
+    filters: [{ field: 'tag', key: 'role', relation: '=', value: normalizedRole }],
+    contents: { ja: message, en: message },
+    ...(dedupeKey ? { collapse_id: dedupeKey, web_push_topic: dedupeKey } : {}),
     ...(Object.keys(data).length ? { data } : {}),
   });
 }
@@ -645,6 +747,7 @@ async function sendToCustomerAudience(
   payload: SlimPayload | null | undefined,
   message: string,
   data: Record<string, unknown> = {},
+  options: { dedupeKey?: string } = {},
 ): Promise<boolean> {
   const customerIds = withoutExternalIds(
     resolveCustomerPushIds(row, payload),
@@ -656,7 +759,7 @@ async function sendToCustomerAudience(
     });
     return false;
   }
-  return sendToExternalIds(customerIds, message, data);
+  return sendToExternalIds(customerIds, message, data, options);
 }
 
 async function sendToFactoryAudience(
@@ -664,17 +767,21 @@ async function sendToFactoryAudience(
   payload: SlimPayload | null | undefined,
   message: string,
   data: Record<string, unknown> = {},
+  options: { dedupeKey?: string } = {},
 ): Promise<boolean> {
   const customerId = resolveOrderCustomerId(row, payload);
   const factoryIds = withoutExternalIds(resolveFactoryPushTargetIds(row, payload), customerId);
   let sent = false;
 
   if (factoryIds.length) {
-    sent = await sendToExternalIds(factoryIds, message, data);
+    sent = await sendToExternalIds(factoryIds, message, data, options);
   } else {
-    sent = await sendToRole('factory', message, data);
-    const adminSent = await sendToRole('admin', message, data);
-    sent = sent || adminSent;
+    const dedupeKey = pickString(options.dedupeKey);
+    sent = await sendToRole('factory', message, data, { dedupeKey });
+    if (!sent) {
+      const adminSent = await sendToRole('admin', message, data, { dedupeKey });
+      sent = adminSent;
+    }
   }
 
   if (customerId) {
@@ -704,20 +811,12 @@ async function sendNewOrderNotifications(
     console.log('[onesignal-push] new_order skips customer recipient', { customerId, orderId });
   }
 
-  if (await sendToFactoryAudience(row, payload, message, data)) {
+  if (await sendToFactoryAudience(row, payload, message, data, {
+    dedupeKey: buildPushDedupeKey('new_order', orderId),
+  })) {
     sent.push('factory:new_order');
   }
   return sent;
-}
-
-async function sendToRole(role: string, message: string, data: Record<string, unknown> = {}) {
-  const normalizedRole = String(role || '').trim();
-  if (!normalizedRole || !message) return false;
-  return postOneSignal({
-    filters: [{ field: 'tag', key: 'role', relation: '=', value: normalizedRole }],
-    contents: { ja: message, en: message },
-    ...(Object.keys(data).length ? { data } : {}),
-  });
 }
 
 async function sendCustomerChatNotifications(
@@ -732,12 +831,15 @@ async function sendCustomerChatNotifications(
   }
   const factoryName = pickString(payload?.factory_name, factoryNameFromOrder(row));
   const message = `${factoryName}からメッセージが届いています。`;
+  const chatMessageId = resolveChatMessageId(row, payload);
+  const dedupeKey = buildPushDedupeKey('customer_chat', orderId, { chatMessageId });
   const sent: string[] = [];
   if (await sendToCustomerAudience(row, payload, message, {
     type: 'chat',
     orderId,
     targetApp: 'customer',
-  })) {
+    chatMessageId,
+  }, { dedupeKey })) {
     sent.push('customer:chat');
   }
   return sent;
@@ -762,12 +864,15 @@ async function sendFactoryChatNotifications(
     '担当者',
   );
   const message = `${senderName}から新しいメッセージが届きました。`;
+  const chatMessageId = resolveChatMessageId(row, payload);
+  const dedupeKey = buildPushDedupeKey('factory_chat', orderId, { chatMessageId });
   const sent: string[] = [];
   if (await sendToFactoryAudience(row, payload, message, {
     type: 'chat',
     orderId,
     targetApp: 'factory',
-  })) {
+    chatMessageId,
+  }, { dedupeKey })) {
     sent.push('factory:chat');
   }
   return sent;
@@ -787,12 +892,16 @@ async function sendCustomerMapSharedNotifications(
   const message = `${senderName}から新しい地図（現場情報）が共有されました。`;
   const sent: string[] = [];
   const customerId = resolveOrderCustomerId(row, payload);
+  const mapFp = orderMapFingerprint(row);
+  const dedupeKey = mapFp
+    ? `customer_map_shared:${pickString(orderId)}:${mapFp}`
+    : buildPushDedupeKey('customer_map_shared', orderId);
   console.log('[onesignal-push] customer_map_shared', { orderId, customerId, senderName });
   if (await sendToFactoryAudience(row, payload, message, {
     type: 'customer_map_shared',
     orderId,
     targetApp: 'factory',
-  })) {
+  }, { dedupeKey })) {
     sent.push('factory:customer_map_shared');
   }
   return sent;

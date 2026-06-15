@@ -84,6 +84,11 @@ import {
   stopNotificationAlarm,
 } from './utils/notificationAlarm.js';
 import { dispatchRealtimePayloadByKind } from './utils/realtimePayloadRouting.js';
+import {
+  chatSoundKeyFromOrderMessages,
+  chatSoundKeyFromRealtimePayload,
+  shouldPlayChatSoundOnce,
+} from './utils/chatNotificationDedup.js';
 import { createSplitRealtimeSyncScheduler } from './utils/realtimeSyncScheduler.js';
 import {
   resolveOrderScheduleMatchDate,
@@ -1477,7 +1482,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             }
 
             const prevThreads = prevChatThreadsRef.current;
-            if (prevThreads && !realtimePayload) {
+            if (prevThreads && !realtimePayload && !options?.skipChatSound) {
               const chatDetected = detectCustomerChatNotifications(
                 prevThreads,
                 newThreads,
@@ -1488,7 +1493,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 const viewingId = String(activeChatOrderIdRef.current || '');
                 const audibleIds = chatDetected.notifyOrderIds.filter((id) => String(id) !== viewingId);
                 if (audibleIds.length > 0) {
-                  playChatNotificationSound();
+                  const soundKey = chatSoundKeyFromOrderMessages(audibleIds[0], newThreads[audibleIds[0]]);
+                  if (shouldPlayChatSoundOnce(soundKey)) {
+                    playChatNotificationSound();
+                  }
                 }
               }
             }
@@ -1966,7 +1974,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             if (chatHint.shouldPlayChatSound) {
               const viewingId = String(activeChatOrderIdRef.current || '');
               const audible = chatHint.notifyOrderIds.some((id) => String(id) !== viewingId);
-              if (audible) playChatNotificationSound();
+              if (audible) {
+                const soundKey = chatSoundKeyFromRealtimePayload(payload);
+                if (shouldPlayChatSoundOnce(soundKey)) {
+                  playChatNotificationSound();
+                }
+              }
             }
           } catch (chatErr) {
             logDispatchError('[DispatchApp] チャット Realtime 処理に失敗（続行）', chatErr);
@@ -1980,7 +1993,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           },
           onChatSync: async () => {
             if (disposed) return;
-            await refreshDashboardRef.current({ playSound: false }, null);
+            await refreshDashboardRef.current({ playSound: false, skipChatSound: true }, null);
           },
         });
         void refreshDashboardRef.current({ playSound: false }).catch((loadErr) => {
