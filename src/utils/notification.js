@@ -1,5 +1,8 @@
 import OneSignal from 'react-onesignal';
 import { ONESIGNAL_APP_ID, ONESIGNAL_SERVICE_WORKER_PATH } from '../constants/onesignal.js';
+import { handleNotificationClickData, PUSH_CHAT_REDIRECT_SESSION_KEY } from './pushRedirect.js';
+
+export { PUSH_CHAT_REDIRECT_SESSION_KEY };
 
 let oneSignalInitPromise = null;
 let notificationClickListenerRegistered = false;
@@ -55,8 +58,6 @@ function logOneSignalDebug() {
     OneSignal.getExternalId?.() ?? OneSignal.User?.externalId,
   );
 }
-
-export const PUSH_CHAT_REDIRECT_SESSION_KEY = 'redirect_to_chat';
 
 /** OneSignal 許可プロンプト（slidedown）の日本語文言 */
 const ONESIGNAL_SLIDEDOWN_TEXT = {
@@ -149,13 +150,7 @@ export async function setupNotificationClickRedirect() {
     if (notificationClickListenerRegistered) return true;
     OneSignal.Notifications?.addEventListener?.('click', (event) => {
       const data = event?.notification?.additionalData || event?.notification?.data || {};
-      if (data && data.type === 'chat' && data.orderId) {
-        try {
-          sessionStorage.setItem(PUSH_CHAT_REDIRECT_SESSION_KEY, String(data.orderId));
-        } catch {
-          /* ignore */
-        }
-      }
+      handleNotificationClickData(data && typeof data === 'object' ? data : {});
     });
     notificationClickListenerRegistered = true;
     return true;

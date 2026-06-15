@@ -19,12 +19,16 @@ import {
   CUSTOMER_PANEL_PHONE_KEY,
 } from './supabaseClient.js';
 import {
-  PUSH_CHAT_REDIRECT_SESSION_KEY,
   clearAppBadge,
   registerOneSignalUser,
   logoutOneSignalUser,
   setupNotificationClickRedirect,
 } from './utils/notification.js';
+import {
+  clearPushRedirect,
+  consumePushRedirectForApp,
+  setupPushRedirectListener,
+} from './utils/pushRedirect.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
@@ -1621,18 +1625,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [currentCustomerId, projects]);
 
       useEffect(() => {
-        const params = new URLSearchParams(window.location.search || '');
-        const action = params.get('action');
-        const orderId = params.get('orderId');
-        if (action === 'chat' && orderId) {
-          try {
-            sessionStorage.setItem(PUSH_CHAT_REDIRECT_SESSION_KEY, orderId);
-          } catch {
-            /* ignore */
-          }
-          const cleanUrl = `${window.location.pathname}${window.location.hash || ''}`;
-          window.history.replaceState({}, '', cleanUrl);
-        }
+        consumePushRedirectForApp('customer');
         void setupNotificationClickRedirect();
         clearAppBadge();
       }, []);
@@ -1861,25 +1854,37 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         [chatThreads, markChatRead],
       );
 
+      const applyCustomerPushRedirect = useCallback(
+        (payload) => {
+          const redirectOrderId = String(payload?.orderId || '').trim();
+          if (!redirectOrderId) return;
+          const targetOrder = (dashboardOrders || []).find(
+            (order) => String(order?.id || '') === redirectOrderId,
+          );
+          if (!targetOrder) return;
+          const inActive = isOrderInProgressView(targetOrder, today);
+          setCustomerOrderTab(inActive ? 'active' : 'history');
+          if (payload.view === 'chat') {
+            handleOpenChat(redirectOrderId);
+          }
+          clearPushRedirect();
+        },
+        [dashboardOrders, handleOpenChat, today],
+      );
+
       useEffect(() => {
-        if (!isLoggedIn || activeChatOrderId) return;
-        let redirectOrderId = '';
-        try {
-          redirectOrderId = String(sessionStorage.getItem(PUSH_CHAT_REDIRECT_SESSION_KEY) || '').trim();
-        } catch {
-          redirectOrderId = '';
-        }
-        if (!redirectOrderId) return;
-        const targetOrder = (dashboardOrders || []).find((order) => String(order?.id || '') === redirectOrderId);
-        if (!targetOrder) return;
-        setCustomerOrderTab('active');
-        handleOpenChat(redirectOrderId);
-        try {
-          sessionStorage.removeItem(PUSH_CHAT_REDIRECT_SESSION_KEY);
-        } catch {
-          /* ignore */
-        }
-      }, [activeChatOrderId, dashboardOrders, handleOpenChat, isLoggedIn]);
+        return setupPushRedirectListener('customer', (payload) => {
+          if (!isLoggedIn) return;
+          applyCustomerPushRedirect(payload);
+        });
+      }, [applyCustomerPushRedirect, isLoggedIn]);
+
+      useEffect(() => {
+        if (!isLoggedIn) return;
+        const payload = consumePushRedirectForApp('customer');
+        if (!payload) return;
+        applyCustomerPushRedirect(payload);
+      }, [applyCustomerPushRedirect, dashboardOrders, isLoggedIn]);
 
       const projectById = useMemo(
         () =>

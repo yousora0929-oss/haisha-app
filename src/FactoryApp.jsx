@@ -28,6 +28,12 @@ import {
 } from './haishaConstants.js';
 import { registerOneSignalUser, logoutOneSignalUser } from './utils/notification.js';
 import {
+  clearPushRedirect,
+  consumePushRedirectForApp,
+  readPushRedirectFromSession,
+  setupPushRedirectListener,
+} from './utils/pushRedirect.js';
+import {
   primeNotificationAlarm,
   playFactoryChatNotificationSound,
   startNotificationAlarm,
@@ -2500,6 +2506,43 @@ function orderPartyInfo(order) {
       const [activeTab, setActiveTab] = useState('orders');
       const [factoryNewsUnread, setFactoryNewsUnread] = useState(0);
       const [focusedOrderId, setFocusedOrderId] = useState('');
+      const applyFactoryPushRedirect = useCallback((payload) => {
+        const id = String(payload?.orderId || '').trim();
+        if (!id) return;
+        setActiveTab('orders');
+        setFocusedOrderId(id);
+        clearPushRedirect();
+      }, []);
+
+      useEffect(() => {
+        consumePushRedirectForApp('factory');
+      }, []);
+
+      useEffect(() => {
+        return setupPushRedirectListener('factory', (payload) => {
+          if (!isFactoryAuthenticated) return;
+          applyFactoryPushRedirect(payload);
+        });
+      }, [applyFactoryPushRedirect, isFactoryAuthenticated]);
+
+      useEffect(() => {
+        if (!isFactoryAuthenticated || !activeFactoryId) return;
+        const payload = readPushRedirectFromSession();
+        if (!payload || payload.targetApp !== 'factory') return;
+        const orderId = String(payload.orderId || '');
+        const hasOrder =
+          (orders || []).some((o) => String(o?.id || '') === orderId) ||
+          (rawOrders || []).some((o) => String(o?.id || '') === orderId);
+        if (!hasOrder && (rawOrders || []).length === 0) return;
+        applyFactoryPushRedirect(payload);
+      }, [
+        activeFactoryId,
+        applyFactoryPushRedirect,
+        isFactoryAuthenticated,
+        orders,
+        rawOrders,
+      ]);
+
       const [scheduleMonth, setScheduleMonth] = useState(() => {
         const now = new Date();
         return new Date(now.getFullYear(), now.getMonth(), 1);

@@ -41,5 +41,27 @@
       import { initTheme } from '/src/utils/theme.js';
       initTheme();
     </script>
+    <script>
+      (function () {
+        var params = new URLSearchParams(location.search || '');
+        var orderId = String(params.get('orderId') || '').trim();
+        if (!orderId) return;
+        var app = String(params.get('app') || params.get('targetApp') || '').trim();
+        var type = String(params.get('type') || '').trim();
+        if (!app) {
+          if (type === 'order_status') app = 'customer';
+          else if (type === 'new_order' || type === 'customer_map_shared') app = 'factory';
+          else if (type === 'chat') app = 'customer';
+        }
+        var path =
+          app === 'factory'
+            ? '/FactoryTabletPrototype.html'
+            : app === 'customer'
+              ? '/DispatchOrderPrototype.html'
+              : '';
+        if (!path) return;
+        location.replace(path + location.search);
+      })();
+    </script>
   </body>
 </html>

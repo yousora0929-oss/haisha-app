@@ -1,6 +1,6 @@
-/** onesignal-push v19 — チャット通知の重複送信防止 */
+/** onesignal-push v20 — 通知タップ時の Deep Link URL */
 
-const FUNCTION_VERSION = 19;
+const FUNCTION_VERSION = 20;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 
 type PushEvent =
@@ -698,6 +698,43 @@ async function postOneSignalRequest(payload: Record<string, unknown>): Promise<b
   return false;
 }
 
+const CUSTOMER_APP_PATH = '/DispatchOrderPrototype.html';
+const FACTORY_APP_PATH = '/FactoryTabletPrototype.html';
+
+function inferTargetAppFromPushData(data: Record<string, unknown>): string {
+  const explicit = pickString(data.targetApp);
+  if (explicit === 'customer' || explicit === 'factory') return explicit;
+  const type = pickString(data.type);
+  if (type === 'order_status') return 'customer';
+  if (type === 'new_order' || type === 'customer_map_shared') return 'factory';
+  return '';
+}
+
+function buildPushLaunchUrl(data: Record<string, unknown>): string {
+  const base = pickString(Deno.env.get('APP_BASE_URL'), Deno.env.get('VITE_PUBLIC_APP_ORIGIN')).replace(/\/$/, '');
+  const orderId = pickString(data.orderId);
+  const targetApp = inferTargetAppFromPushData(data);
+  if (!base || !orderId || !targetApp) return '';
+  const path = targetApp === 'customer' ? CUSTOMER_APP_PATH : FACTORY_APP_PATH;
+  const type = pickString(data.type);
+  const view = type === 'chat' ? 'chat' : 'order';
+  const params = new URLSearchParams({
+    orderId,
+    view,
+    type: type || 'order',
+    app: targetApp,
+  });
+  return `${base}${path}?${params.toString()}`;
+}
+
+function oneSignalPayloadExtras(data: Record<string, unknown>): Record<string, unknown> {
+  const extras: Record<string, unknown> = {};
+  if (Object.keys(data).length) extras.data = data;
+  const url = buildPushLaunchUrl(data);
+  if (url) extras.url = url;
+  return extras;
+}
+
 async function postOneSignal(payload: Record<string, unknown>): Promise<boolean> {
   return postOneSignalRequest(payload);
 }
@@ -718,7 +755,7 @@ async function sendToExternalIds(
     include_aliases: { external_id: ids },
     contents: { ja: message, en: message },
     ...(dedupeKey ? { collapse_id: dedupeKey, web_push_topic: dedupeKey } : {}),
-    ...(Object.keys(data).length ? { data } : {}),
+    ...oneSignalPayloadExtras(data),
   });
 }
 
@@ -738,7 +775,7 @@ async function sendToRole(
     filters: [{ field: 'tag', key: 'role', relation: '=', value: normalizedRole }],
     contents: { ja: message, en: message },
     ...(dedupeKey ? { collapse_id: dedupeKey, web_push_topic: dedupeKey } : {}),
-    ...(Object.keys(data).length ? { data } : {}),
+    ...oneSignalPayloadExtras(data),
   });
 }
 
@@ -804,7 +841,7 @@ async function sendNewOrderNotifications(
     '新規注文',
   );
   const message = `新規注文が入りました：${contractorName}`;
-  const data = { type: 'new_order', orderId };
+  const data = { type: 'new_order', orderId, targetApp: 'factory' };
   const sent: string[] = [];
 
   if (customerId) {
@@ -948,6 +985,7 @@ async function processSlimPayload(payload: SlimPayload): Promise<void> {
       if (await sendToCustomerAudience(null, payload, message, {
         type: 'order_status',
         orderId,
+        targetApp: 'customer',
         status: pickString(payload.status, 'accepted'),
       })) sent.push('customer:accepted');
       break;
@@ -956,6 +994,7 @@ async function processSlimPayload(payload: SlimPayload): Promise<void> {
       if (await sendToCustomerAudience(null, payload, '大変込み合っております。別日をご指定ください。', {
         type: 'order_status',
         orderId,
+        targetApp: 'customer',
         status: pickString(payload.status, 'rejected'),
       })) sent.push('customer:rejected');
       break;
@@ -1009,12 +1048,14 @@ async function processLegacyWebhook(payload: LegacyWebhookPayload): Promise<void
       if (await sendToCustomerAudience(record, null, message, {
         type: 'order_status',
         orderId,
+        targetApp: 'customer',
         status: newStatus,
       })) sent.push('customer:accepted');
     } else if (isPendingLike(oldStatus) && isRejectedLike(newStatus)) {
       if (await sendToCustomerAudience(record, null, '大変込み合っております。別日をご指定ください。', {
         type: 'order_status',
         orderId,
+        targetApp: 'customer',
         status: newStatus,
       })) sent.push('customer:rejected');
     }
@@ -1066,12 +1107,14 @@ async function processRescued(record: OrderRow, hint: 'chat' | 'status' | 'inser
       if (await sendToCustomerAudience(record, null, message, {
         type: 'order_status',
         orderId,
+        targetApp: 'customer',
         status: newStatus,
       })) sent.push('customer:accepted');
     } else if (isRejectedLike(newStatus)) {
       if (await sendToCustomerAudience(record, null, '大変込み合っております。別日をご指定ください。', {
         type: 'order_status',
         orderId,
+        targetApp: 'customer',
         status: newStatus,
       })) sent.push('customer:rejected');
     }

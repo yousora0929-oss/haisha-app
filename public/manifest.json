@@ -1,0 +1,20 @@
+{
+  "name": "CONCRETELINK — カスタマー注文",
+  "short_name": "CONCRETELINK",
+  "description": "現場から片手でコンクリート発注・出荷状況の確認",
+  "start_url": "/DispatchOrderPrototype.html",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f1f5f9",
+  "theme_color": "#4f46e5",
+  "lang": "ja",
+  "icons": [
+    {
+      "src": "/src/assets/concrete-link-logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
