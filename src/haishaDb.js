@@ -1301,6 +1301,7 @@ function mapCustomerRow(row) {
     id: row.id != null ? String(row.id) : '',
     company_name: companyName,
     name: companyName,
+    furigana: row.furigana != null ? String(row.furigana) : '',
     manager_name: row.manager_name != null ? String(row.manager_name) : '',
     phone_number: row.phone_number != null ? String(row.phone_number) : '',
     login_password: row.login_password != null ? String(row.login_password) : '',
@@ -1333,6 +1334,7 @@ export async function bulkInsertCustomers(customerRows) {
     if (!phoneNumber) throw new Error('電話番号が空の行があります');
     return {
       company_name: companyName,
+      furigana: String(customerData?.furigana || '').trim() || null,
       manager_name: String(customerData?.manager_name || '').trim() || null,
       phone_number: phoneNumber,
       login_password: loginPassword,
@@ -1358,6 +1360,7 @@ export async function addCustomer(customerData) {
   if (!phoneNumber) throw new Error('電話番号を入力してください');
   const row = {
     company_name: companyName,
+    furigana: String(customerData?.furigana || '').trim() || null,
     manager_name: String(customerData?.manager_name || '').trim() || null,
     phone_number: phoneNumber,
     login_password: loginPassword,
@@ -1378,6 +1381,7 @@ export async function updateCustomer(id, customerData) {
   if (!phoneNumber) throw new Error('電話番号を入力してください');
   const row = {
     company_name: companyName,
+    furigana: String(customerData?.furigana || '').trim() || null,
     manager_name: String(customerData?.manager_name || '').trim() || null,
     phone_number: phoneNumber,
     login_password: loginPassword,

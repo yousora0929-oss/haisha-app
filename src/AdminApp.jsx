@@ -837,6 +837,7 @@ function CustomersSection() {
   const [customers, setCustomers] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [companyName, setCompanyName] = useState('');
+  const [furigana, setFurigana] = useState('');
   const [managerName, setManagerName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -873,6 +874,7 @@ function CustomersSection() {
 
   const resetForm = () => {
     setCompanyName('');
+    setFurigana('');
     setManagerName('');
     setPhoneNumber('');
     setLoginPassword('');
@@ -882,6 +884,7 @@ function CustomersSection() {
   const startEdit = (customer) => {
     setEditingCustomer(customer);
     setCompanyName(customer?.company_name || customer?.name || '');
+    setFurigana(customer?.furigana || '');
     setManagerName(customer?.manager_name || '');
     setPhoneNumber(customer?.phone_number || '');
     setLoginPassword(customer?.login_password || '');
@@ -910,6 +913,7 @@ function CustomersSection() {
     try {
       const payload = {
         company_name: name,
+        furigana: furigana.trim(),
         manager_name: managerName.trim(),
         phone_number: phoneNumber.trim(),
         login_password: loginPassword.trim(),
@@ -951,7 +955,7 @@ function CustomersSection() {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return customers;
     return customers.filter((c) => {
-      const text = [c.company_name, c.name, c.manager_name, c.phone_number].map((v) => String(v || '')).join(' ').toLowerCase();
+      const text = [c.company_name, c.name, c.furigana, c.manager_name, c.phone_number].map((v) => String(v || '')).join(' ').toLowerCase();
       return text.includes(q);
     });
   }, [customers, searchQuery]);
@@ -970,6 +974,7 @@ function CustomersSection() {
             parseFile={parseCustomersCsvFile}
             previewColumns={[
               { key: 'company_name', label: '業者名' },
+              { key: 'furigana', label: 'フリガナ' },
               { key: 'manager_name', label: '担当者' },
               { key: 'phone_number', label: '電話番号' },
               { key: 'login_password', label: 'PW' },
@@ -1001,8 +1006,8 @@ function CustomersSection() {
       {error ? <p className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-bold text-red-800" role="alert">{error}</p> : null}
       {notice ? <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800" role="status">{notice}</p> : null}
 
-      <form onSubmit={handleSave} className="mt-4 grid gap-3 rounded-xl border-2 border-indigo-100 bg-indigo-50/40 p-4 sm:grid-cols-4">
-        <div className="sm:col-span-4">
+      <form onSubmit={handleSave} className="mt-4 grid gap-3 rounded-xl border-2 border-indigo-100 bg-indigo-50/40 p-4 sm:grid-cols-5">
+        <div className="sm:col-span-5">
           <h3 className="text-sm font-black text-slate-900">{editingCustomer ? '業者を編集' : '業者を新規登録'}</h3>
         </div>
         <div>
@@ -1017,6 +1022,17 @@ function CustomersSection() {
             className={fieldClass}
             placeholder="例: 〇〇建設"
             required
+          />
+        </div>
+        <div>
+          <label className="text-xs font-bold text-slate-600" htmlFor="customer-furigana">フリガナ（任意）</label>
+          <input
+            id="customer-furigana"
+            type="text"
+            value={furigana}
+            onChange={(e) => setFurigana(e.target.value)}
+            className={fieldClass}
+            placeholder="例: マルマルケンセツ"
           />
         </div>
         <div>
@@ -1058,7 +1074,7 @@ function CustomersSection() {
             required
           />
         </div>
-        <div className="flex flex-wrap gap-2 sm:col-span-4">
+        <div className="flex flex-wrap gap-2 sm:col-span-5">
           <button type="submit" disabled={saving} className="min-h-[44px] rounded-lg bg-indigo-600 px-4 text-sm font-black text-white shadow hover:bg-indigo-700 disabled:opacity-50">
             {saving ? '保存中…' : editingCustomer ? '業者情報を更新' : '＋ 業者を登録'}
           </button>
@@ -1080,17 +1096,18 @@ function CustomersSection() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-bold text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
-            placeholder="業者名・担当者名・電話番号で検索"
+            placeholder="業者名・フリガナ・担当者名・電話番号で検索"
           />
         </div>
       ) : null}
       {!loading && customers.length === 0 ? <p className="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-600">登録された業者はありません。</p> : null}
       {!loading && customers.length > 0 ? (
         <div className="mt-4 overflow-x-auto">
-          <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[800px] border-collapse text-left text-sm">
             <thead>
               <tr className="border-b-2 border-slate-200 bg-slate-50">
                 <th className="px-3 py-2 font-black text-slate-700">業者名（会社名）</th>
+                <th className="px-3 py-2 font-black text-slate-700">フリガナ</th>
                 <th className="px-3 py-2 font-black text-slate-700">代表担当者名</th>
                 <th className="px-3 py-2 font-black text-slate-700">電話番号</th>
                 <th className="px-3 py-2 font-black text-slate-700">ログインPW</th>
@@ -1101,6 +1118,7 @@ function CustomersSection() {
               {filteredCustomers.map((c) => (
                 <tr key={c.id} className="border-b border-slate-100 hover:bg-slate-50/80">
                   <td className="px-3 py-2.5 font-bold text-slate-900">{c.company_name || c.name || '—'}</td>
+                  <td className="px-3 py-2.5 text-slate-700">{c.furigana?.trim() || '—'}</td>
                   <td className="px-3 py-2.5 text-slate-700">{c.manager_name?.trim() || '—'}</td>
                   <td className="px-3 py-2.5 text-slate-700">{c.phone_number?.trim() || '—'}</td>
                   <td className="px-3 py-2.5 font-mono text-xs text-slate-600">{c.login_password?.trim() || '—'}</td>

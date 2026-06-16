@@ -13,6 +13,7 @@ const JP_HEADER_HINTS = [
   '担当',
   'パスワード',
   '会社',
+  'フリガナ',
 ];
 
 function scoreJapaneseCsvText(text) {
@@ -159,7 +160,7 @@ export function rowsToObjects(rows, headerIndex) {
     const obj = { __line: lineIndex + 2 };
     for (const [field, idx] of Object.entries(headerIndex)) {
       if (idx == null || idx < 0) obj[field] = '';
-      else obj[field] = cells[idx] ?? '';
+      else obj[field] = normalizeCsvImportedText(cells[idx] ?? '');
     }
     return obj;
   });
@@ -175,6 +176,7 @@ export const PROJECT_CSV_ALIASES = {
 
 export const CUSTOMER_CSV_ALIASES = {
   company_name: ['業者名', '会社名', 'company_name', 'name', '業者名（会社名）', '元請業者'],
+  furigana: ['フリガナ', 'ふりがな', 'furigana', 'カナ', '業者名フリガナ'],
   manager_name: ['担当者名', '代表担当者名', 'manager_name', '担当者', '担当'],
   phone_number: ['電話番号', 'phone_number', '電話', '連絡先', 'ログインid', 'ログインID'],
   login_password: ['ログインパスワード', 'login_password', 'パスワード', 'PW', 'pw'],
@@ -182,7 +184,60 @@ export const CUSTOMER_CSV_ALIASES = {
 
 /** CSV取込フォーマットと一致するエクスポート用ヘッダー */
 export const PROJECT_EXPORT_HEADERS = ['物件名', '元請業者', '商社名', '現場住所', 'エリア'];
-export const CUSTOMER_EXPORT_HEADERS = ['業者名', '担当者名', '電話番号', 'ログインパスワード'];
+export const CUSTOMER_EXPORT_HEADERS = ['業者名', 'フリガナ', '担当者名', '電話番号', 'ログインパスワード'];
+
+/**
+ * CSV / Excel 由来のセル値を文字列として正規化（数値化・式の解除）
+ * @param {unknown} value
+ */
+export function normalizeCsvImportedText(value) {
+  let s = String(value ?? '')
+    .replace(/\r\n/g, ' ')
+    .replace(/\n/g, ' ')
+    .trim();
+  if (s.startsWith('\t')) s = s.slice(1).trim();
+  if (s.startsWith("'")) s = s.slice(1).trim();
+  const excelFormula = /^="(.*)"$/s.exec(s);
+  if (excelFormula) {
+    s = excelFormula[1].replace(/""/g, '"').trim();
+  }
+  return s;
+}
+
+/**
+ * 電話番号フィールド用（先頭0落ちの復元を含む）
+ * @param {unknown} value
+ */
+export function normalizeCsvPhoneNumber(value) {
+  const s = normalizeCsvImportedText(value);
+  if (!s) return '';
+  const digitsOnly = s.replace(/\D/g, '');
+  if (!digitsOnly) return s;
+  // Excel が数値化して先頭0が消えた携帯・市外局番（10桁）を補正
+  if (/^[789]\d{9}$/.test(digitsOnly)) {
+    return `0${digitsOnly}`;
+  }
+  if (digitsOnly.length === 10 && /^\d+$/.test(s)) {
+    return `0${digitsOnly}`;
+  }
+  if (s.includes('-') || s.includes('(')) {
+    return s;
+  }
+  return digitsOnly.length >= 10 ? digitsOnly : s;
+}
+
+/**
+ * Excel で数値化されないようテキストとして出力（先頭タブ）
+ * @param {unknown} value
+ */
+export function formatCsvExcelTextField(value) {
+  const s = normalizeCsvImportedText(value);
+  if (!s) return '';
+  if (/^[\d\-+()]+$/.test(s)) {
+    return `\t${s}`;
+  }
+  return s;
+}
 
 /** RFC4180 風セルエスケープ */
 export function escapeCsvCell(value) {

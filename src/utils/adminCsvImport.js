@@ -4,7 +4,10 @@ import {
   CUSTOMER_CSV_ALIASES,
   CUSTOMER_EXPORT_HEADERS,
   downloadCsvWithUtf8Bom,
+  formatCsvExcelTextField,
   mapCsvHeaders,
+  normalizeCsvImportedText,
+  normalizeCsvPhoneNumber,
   parseCsvText,
   PROJECT_CSV_ALIASES,
   PROJECT_EXPORT_HEADERS,
@@ -15,10 +18,7 @@ import {
 const DEFAULT_CUSTOMER_PASSWORD = '1234';
 
 function cleanCell(value) {
-  return String(value ?? '')
-    .replace(/\r\n/g, ' ')
-    .replace(/\n/g, ' ')
-    .trim();
+  return normalizeCsvImportedText(value);
 }
 
 function findCustomerIdByName(customers, name) {
@@ -141,7 +141,7 @@ export async function parseCustomersCsvFile(file) {
       continue;
     }
 
-    const phone_number = cleanCell(raw.phone_number);
+    const phone_number = normalizeCsvPhoneNumber(raw.phone_number);
     if (!phone_number) {
       skipped.push({ line, reason: '電話番号が空のためスキップ' });
       continue;
@@ -155,6 +155,7 @@ export async function parseCustomersCsvFile(file) {
 
     rows.push({
       company_name,
+      furigana: cleanCell(raw.furigana) || null,
       manager_name: cleanCell(raw.manager_name) || null,
       phone_number,
       login_password,
@@ -206,9 +207,10 @@ export function buildProjectsExportRows(projects, customers = []) {
 export function buildCustomersExportRows(customers) {
   const dataRows = (customers || []).map((c) => [
     cleanCell(c.company_name || c.name),
+    cleanCell(c.furigana),
     cleanCell(c.manager_name),
-    cleanCell(c.phone_number),
-    cleanCell(c.login_password),
+    formatCsvExcelTextField(c.phone_number),
+    formatCsvExcelTextField(c.login_password),
   ]);
   return [CUSTOMER_EXPORT_HEADERS, ...dataRows];
 }
