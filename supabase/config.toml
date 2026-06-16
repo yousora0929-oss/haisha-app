@@ -1,3 +1,6 @@
 # Supabase local / deploy config (minimal)
 [functions.onesignal-push]
 verify_jwt = false
+
+[functions.dispatch-timeout-check]
+verify_jwt = false

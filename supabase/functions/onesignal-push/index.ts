@@ -1,13 +1,29 @@
-/** onesignal-push v23 — push_notified_at のみで重複防止（dedup テーブル廃止） */
+/** onesignal-push v24 — 拒否通知は「全社拒否（エスカレーション最終段階到達）」時のみ送信 */
 
-const FUNCTION_VERSION = 23;
+const FUNCTION_VERSION = 24;
 const PUSH_NOTIFY_COOLDOWN_MS = 60_000;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
+
+/** factory_escalation_steps 未設定時のデフォルト（src/utils/escalationSteps.js と同一） */
+const DEFAULT_ESCALATION_STEPS = [
+  { step_number: 1, trigger_minutes: 0, target_factory_count: 3 },
+  { step_number: 2, trigger_minutes: 15, target_factory_count: 5 },
+  { step_number: 3, trigger_minutes: 30, target_factory_count: 8 },
+];
+
+type EscalationStep = {
+  step_number: number;
+  trigger_minutes: number;
+  target_factory_count: number;
+};
 
 type PushEvent =
   | 'new_order'
   | 'customer_accepted'
   | 'customer_rejected'
+  | 'order_accepted'
+  | 'order_rejected'
+  | 'order_timeout'
   | 'customer_chat'
   | 'factory_chat'
   | 'customer_map_shared';
@@ -41,6 +57,7 @@ type OrderRow = {
   delivery_lat?: number | string | null;
   delivery_lng?: number | string | null;
   push_notified_at?: string | null;
+  rejected_factory_ids?: unknown;
 };
 
 type LegacyWebhookPayload = {
@@ -261,6 +278,126 @@ async function markPushNotified(orderId: string): Promise<void> {
   } catch (error) {
     console.warn('[onesignal-push] push_notified_at update error', { orderId: oid, error });
   }
+}
+
+function normalizeEscalationSteps(rows: unknown): EscalationStep[] {
+  const list = asArray(rows)
+    .map((row) => {
+      const o = asObject(row);
+      return {
+        step_number: Number(o.step_number) || 0,
+        trigger_minutes: Math.max(0, Number(o.trigger_minutes) || 0),
+        target_factory_count: Math.max(1, Number(o.target_factory_count) || 1),
+      };
+    })
+    .filter((s) => s.step_number >= 1)
+    .sort((a, b) => a.trigger_minutes - b.trigger_minutes || a.step_number - b.step_number);
+  return list.length ? list : DEFAULT_ESCALATION_STEPS;
+}
+
+async function fetchEscalationSteps(factoryId: string): Promise<EscalationStep[]> {
+  const fid = pickString(factoryId);
+  if (!fid) return DEFAULT_ESCALATION_STEPS;
+
+  const base = Deno.env.get('SUPABASE_URL')?.replace(/\/$/, '') || '';
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  if (!base || !serviceKey) return DEFAULT_ESCALATION_STEPS;
+
+  try {
+    const response = await fetch(
+      `${base}/rest/v1/factory_escalation_steps?factory_id=eq.${encodeURIComponent(fid)}` +
+        `&select=step_number,trigger_minutes,target_factory_count&order=trigger_minutes.asc`,
+      {
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          Accept: 'application/json',
+        },
+      },
+    );
+    if (!response.ok) {
+      console.warn('[onesignal-push] escalation steps fetch failed', { factoryId: fid, status: response.status });
+      return DEFAULT_ESCALATION_STEPS;
+    }
+    return normalizeEscalationSteps(await response.json());
+  } catch (error) {
+    console.warn('[onesignal-push] escalation steps fetch error — use default', { factoryId: fid, error });
+    return DEFAULT_ESCALATION_STEPS;
+  }
+}
+
+/** エスカレーション最終段階の対象工場数（= 全社拒否とみなす閾値） */
+function finalEscalationTargetCount(steps: EscalationStep[]): number {
+  const list = steps.length ? steps : DEFAULT_ESCALATION_STEPS;
+  const last = list[list.length - 1];
+  return Math.max(1, Number(last?.target_factory_count) || 1);
+}
+
+function resolveAnchorFactoryId(row?: OrderRow | null, payload?: SlimPayload | null): string {
+  const od = orderData(row);
+  return pickString(
+    row?.preferred_factory_id,
+    payload?.preferred_factory_id,
+    od.preferred_factory_id,
+    od.preferredFactoryId,
+    od.main_factory_id,
+    od.mainFactoryId,
+  );
+}
+
+function rejectedFactoryCount(row?: OrderRow | null): number {
+  if (!row) return 0;
+  const direct = asArray(row.rejected_factory_ids);
+  if (direct.length) {
+    return new Set(direct.map((x) => pickString(x)).filter(Boolean)).size;
+  }
+  const od = orderData(row);
+  const fromData = asArray(od.rejected_factory_ids ?? od.rejectedFactoryIds);
+  return new Set(fromData.map((x) => pickString(x)).filter(Boolean)).size;
+}
+
+/**
+ * 拒否通知を顧客へ送ってよいか（= 全候補工場が拒否済みか）を判定。
+ * - customer_cancelled は顧客本人がキャンセル済みのため通知しない。
+ * - rejected_factory_ids.length >= 最終段階 target_factory_count のときのみ true。
+ */
+async function shouldNotifyFullCompanyRejection(
+  inputRow: OrderRow | null | undefined,
+  payload: SlimPayload | null | undefined,
+  orderId: string,
+): Promise<boolean> {
+  const status = pickString(payload?.status, effectiveStatus(inputRow));
+  if (status === 'customer_cancelled') {
+    console.log('[onesignal-push] reject skip: customer_cancelled', { orderId });
+    return false;
+  }
+
+  let row = inputRow ?? null;
+  if (!row && orderId) row = await fetchOrderRow(orderId);
+  if (!row) {
+    console.log('[onesignal-push] reject skip: order row unavailable', { orderId });
+    return false;
+  }
+
+  if (effectiveStatus(row) === 'customer_cancelled') {
+    console.log('[onesignal-push] reject skip: customer_cancelled (row)', { orderId });
+    return false;
+  }
+
+  const anchorId = resolveAnchorFactoryId(row, payload);
+  const steps = await fetchEscalationSteps(anchorId);
+  const threshold = finalEscalationTargetCount(steps);
+  const rejectedCount = rejectedFactoryCount(row);
+  const isFull = rejectedCount >= threshold;
+
+  console.log('[onesignal-push] full-company rejection check', {
+    orderId,
+    anchorId: anchorId || '(none)',
+    rejectedCount,
+    threshold,
+    isFull,
+  });
+  return isFull;
 }
 
 function resolveIncomingOrderId(incoming: IncomingPayload): string {
@@ -752,7 +889,7 @@ function inferTargetAppFromPushData(data: Record<string, unknown>): string {
   const explicit = pickString(data.targetApp);
   if (explicit === 'customer' || explicit === 'factory') return explicit;
   const type = pickString(data.type);
-  if (type === 'order_status') return 'customer';
+  if (type === 'order_status' || type === 'order_accepted' || type === 'order_rejected') return 'customer';
   if (type === 'new_order' || type === 'customer_map_shared') return 'factory';
   return '';
 }
@@ -790,7 +927,7 @@ async function sendToExternalIds(
   externalIds: string[],
   message: string,
   data: Record<string, unknown> = {},
-  options: { orderId?: string } = {},
+  options: { orderId?: string; title?: string } = {},
 ) {
   const ids = [...new Set(externalIds.map((id) => String(id || '').trim()).filter(Boolean))];
   if (!ids.length || !message) return false;
@@ -802,6 +939,7 @@ async function sendToExternalIds(
 
   const ok = await postOneSignal({
     include_aliases: { external_id: ids },
+    ...(options.title ? { headings: { ja: options.title, en: options.title } } : {}),
     contents: { ja: message, en: message },
     ...(collapseId ? { collapse_id: collapseId, web_push_topic: collapseId } : {}),
     ...oneSignalPayloadExtras(data),
@@ -814,7 +952,7 @@ async function sendToRole(
   role: string,
   message: string,
   data: Record<string, unknown> = {},
-  options: { orderId?: string } = {},
+  options: { orderId?: string; title?: string } = {},
 ) {
   const normalizedRole = String(role || '').trim();
   if (!normalizedRole || !message) return false;
@@ -826,6 +964,7 @@ async function sendToRole(
 
   const ok = await postOneSignal({
     filters: [{ field: 'tag', key: 'role', relation: '=', value: normalizedRole }],
+    ...(options.title ? { headings: { ja: options.title, en: options.title } } : {}),
     contents: { ja: message, en: message },
     ...(collapseId ? { collapse_id: collapseId, web_push_topic: collapseId } : {}),
     ...oneSignalPayloadExtras(data),
@@ -839,7 +978,7 @@ async function sendToCustomerAudience(
   payload: SlimPayload | null | undefined,
   message: string,
   data: Record<string, unknown> = {},
-  options: { orderId?: string } = {},
+  options: { orderId?: string; title?: string } = {},
 ): Promise<boolean> {
   const customerIds = withoutExternalIds(
     resolveCustomerPushIds(row, payload),
@@ -859,19 +998,22 @@ async function sendToFactoryAudience(
   payload: SlimPayload | null | undefined,
   message: string,
   data: Record<string, unknown> = {},
-  options: { orderId?: string } = {},
+  options: { orderId?: string; title?: string } = {},
 ): Promise<boolean> {
   const customerId = resolveOrderCustomerId(row, payload);
   const factoryIds = withoutExternalIds(resolveFactoryPushTargetIds(row, payload), customerId);
   let sent = false;
 
   if (factoryIds.length) {
-    sent = await sendToExternalIds(factoryIds, message, data, { orderId: pickString(data.orderId) });
+    sent = await sendToExternalIds(factoryIds, message, data, {
+      orderId: pickString(data.orderId),
+      title: options.title,
+    });
   } else {
     const orderId = pickString(data.orderId);
-    sent = await sendToRole('factory', message, data, { orderId });
+    sent = await sendToRole('factory', message, data, { orderId, title: options.title });
     if (!sent) {
-      const adminSent = await sendToRole('admin', message, data, { orderId });
+      const adminSent = await sendToRole('admin', message, data, { orderId, title: options.title });
       sent = adminSent;
     }
   }
@@ -991,6 +1133,49 @@ async function sendCustomerMapSharedNotifications(
   return sent;
 }
 
+async function sendOrderAcceptedNotifications(
+  row: OrderRow | null | undefined,
+  payload: SlimPayload | null | undefined,
+  orderId: string,
+): Promise<string[]> {
+  const factoryName = pickString(payload?.factory_name, factoryNameFromOrder(row), '工場');
+  const message =
+    `${factoryName}がご注文承りました。キャンセルのご連絡は前営業日の12時までに工場へご連絡ください。`;
+  const sent: string[] = [];
+  if (await sendToCustomerAudience(row, payload, message, {
+    type: 'order_accepted',
+    orderId,
+    targetApp: 'customer',
+    status: pickString(payload?.status, effectiveStatus(row), 'accepted'),
+  })) {
+    sent.push('customer:order_accepted');
+  }
+  return sent;
+}
+
+async function sendOrderRejectedNotifications(
+  row: OrderRow | null | undefined,
+  payload: SlimPayload | null | undefined,
+  orderId: string,
+  options: { force?: boolean } = {},
+): Promise<string[]> {
+  // 全社拒否（最終段階到達）でない限り送らない。timeout 経路のみ force=true。
+  if (!options.force) {
+    const allowed = await shouldNotifyFullCompanyRejection(row, payload, orderId);
+    if (!allowed) return [];
+  }
+  const sent: string[] = [];
+  if (await sendToCustomerAudience(row, payload, '大変込み合っております。別日をご指定ください。', {
+    type: 'order_rejected',
+    orderId,
+    targetApp: 'customer',
+    status: pickString(payload?.status, effectiveStatus(row), 'rejected'),
+  })) {
+    sent.push(options.force ? 'customer:order_timeout' : 'customer:order_rejected');
+  }
+  return sent;
+}
+
 function isAuthorized(req: Request): boolean {
   const expected = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
   if (!expected) return false;
@@ -1017,7 +1202,6 @@ async function resolveChatFromForSlimPayload(
 async function processSlimPayload(payload: SlimPayload): Promise<string[]> {
   const event = pickString(payload.event) as PushEvent;
   const orderId = pickString(payload.order_id);
-  const factoryName = pickString(payload.factory_name, '工場');
   const sent: string[] = [];
 
   console.log('[onesignal-push] process start', { v: FUNCTION_VERSION, format: 'slim', event, orderId });
@@ -1027,23 +1211,24 @@ async function processSlimPayload(payload: SlimPayload): Promise<string[]> {
       sent.push(...await sendNewOrderNotifications(null, payload, orderId));
       break;
     case 'customer_accepted': {
-      const message =
-        `${factoryName}がご注文承りました。キャンセルのご連絡は前営業日の12時までに工場へご連絡ください。`;
-      if (await sendToCustomerAudience(null, payload, message, {
-        type: 'order_status',
-        orderId,
-        targetApp: 'customer',
-        status: pickString(payload.status, 'accepted'),
-      })) sent.push('customer:accepted');
+      sent.push(...await sendOrderAcceptedNotifications(null, payload, orderId));
+      break;
+    }
+    case 'order_accepted': {
+      sent.push(...await sendOrderAcceptedNotifications(null, payload, orderId));
       break;
     }
     case 'customer_rejected': {
-      if (await sendToCustomerAudience(null, payload, '大変込み合っております。別日をご指定ください。', {
-        type: 'order_status',
-        orderId,
-        targetApp: 'customer',
-        status: pickString(payload.status, 'rejected'),
-      })) sent.push('customer:rejected');
+      sent.push(...await sendOrderRejectedNotifications(null, payload, orderId));
+      break;
+    }
+    case 'order_rejected': {
+      sent.push(...await sendOrderRejectedNotifications(null, payload, orderId));
+      break;
+    }
+    case 'order_timeout': {
+      // エスカレーション完了後も未受注 → タイムアウト拒否（全社拒否ゲートをバイパス）
+      sent.push(...await sendOrderRejectedNotifications(null, payload, orderId, { force: true }));
       break;
     }
     case 'customer_chat': {
@@ -1088,24 +1273,10 @@ async function processLegacyWebhook(payload: LegacyWebhookPayload): Promise<stri
   if (eventType === 'UPDATE' && oldRecord) {
     const oldStatus = effectiveStatus(oldRecord);
     const newStatus = effectiveStatus(record);
-    const factoryName = factoryNameFromOrder(record);
-
     if (isPendingLike(oldStatus) && isAcceptedLike(newStatus)) {
-      const message =
-        `${factoryName}がご注文承りました。キャンセルのご連絡は前営業日の12時までに工場へご連絡ください。`;
-      if (await sendToCustomerAudience(record, null, message, {
-        type: 'order_status',
-        orderId,
-        targetApp: 'customer',
-        status: newStatus,
-      })) sent.push('customer:accepted');
+      sent.push(...await sendOrderAcceptedNotifications(record, null, orderId));
     } else if (isPendingLike(oldStatus) && isRejectedLike(newStatus)) {
-      if (await sendToCustomerAudience(record, null, '大変込み合っております。別日をご指定ください。', {
-        type: 'order_status',
-        orderId,
-        targetApp: 'customer',
-        status: newStatus,
-      })) sent.push('customer:rejected');
+      sent.push(...await sendOrderRejectedNotifications(record, null, orderId));
     }
 
     const oldMessages = asArray(oldRecord.chat_messages);
@@ -1149,23 +1320,10 @@ async function processRescued(record: OrderRow, hint: 'chat' | 'status' | 'inser
     }
   } else if (hint === 'status') {
     const newStatus = effectiveStatus(record);
-    const factoryName = factoryNameFromOrder(record);
     if (isAcceptedLike(newStatus)) {
-      const message =
-        `${factoryName}がご注文承りました。キャンセルのご連絡は前営業日の12時までに工場へご連絡ください。`;
-      if (await sendToCustomerAudience(record, null, message, {
-        type: 'order_status',
-        orderId,
-        targetApp: 'customer',
-        status: newStatus,
-      })) sent.push('customer:accepted');
+      sent.push(...await sendOrderAcceptedNotifications(record, null, orderId));
     } else if (isRejectedLike(newStatus)) {
-      if (await sendToCustomerAudience(record, null, '大変込み合っております。別日をご指定ください。', {
-        type: 'order_status',
-        orderId,
-        targetApp: 'customer',
-        status: newStatus,
-      })) sent.push('customer:rejected');
+      sent.push(...await sendOrderRejectedNotifications(record, null, orderId));
     }
   } else {
     const latest = latestChatMessage(asArray(record.chat_messages));
