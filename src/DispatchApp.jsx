@@ -1428,7 +1428,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             const schedulesByFactoryId = idSet.size
               ? await db.fetchSchedulesForFactories([...idSet])
               : {};
-            await db.persistScheduleAutoRejections({
+            const persisted = await db.persistScheduleAutoRejections({
               schedulesByFactoryId,
               orders: newOrders,
               chatThreads: newThreads,
@@ -1436,16 +1436,18 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               defaultFactorySiteName: DISPATCH_DEFAULT_FACTORY_SITE_NAME,
               defaultFactorySiteId: DISPATCH_DEFAULT_FACTORY_SITE_ID,
             });
-            const final = await db.fetchOrdersWithChat();
-            newOrders = (Array.isArray(final?.orders) ? final.orders : []).filter(
-              (o) => o && o.status !== 'deleted',
-            );
+            if (persisted.changed) {
+              newOrders = Array.isArray(persisted.orders) ? persisted.orders : newOrders;
+              newThreads =
+                persisted.chatThreads && typeof persisted.chatThreads === 'object'
+                  ? persisted.chatThreads
+                  : newThreads;
+            }
+            newOrders = newOrders.filter((o) => o && o.status !== 'deleted');
             const displayOrders =
               isGuestSiteOrder || String(currentCustomerId || '').trim()
                 ? newOrders.filter((o) => o && isRelevantDashboardOrder(o))
                 : newOrders;
-            newThreads =
-              final?.chatThreads && typeof final.chatThreads === 'object' ? final.chatThreads : {};
 
             const prevOrders = prevOrdersRef.current;
             if (prevOrders) {
@@ -1793,17 +1795,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           if (isGuestSiteOrder) {
             const guestCustomerId = String(guestSiteOrderCtx?.customer?.id ?? currentCustomerId ?? '').trim();
             if (!guestCustomerId || cancelled) return;
-            await registerOneSignalUser(String(guestCustomerId), {
+            void registerOneSignalUser(String(guestCustomerId), {
               role: 'customer',
               customer_id: String(guestCustomerId),
-            });
+            }).catch(() => {});
             return;
           }
           if (!isLoggedIn || !currentCustomerId || cancelled) return;
-          await registerOneSignalUser(String(currentCustomerId), {
+          void registerOneSignalUser(String(currentCustomerId), {
             role: 'customer',
             customer_id: String(currentCustomerId),
-          });
+          }).catch(() => {});
         })();
         return () => {
           cancelled = true;
@@ -2180,10 +2182,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               logDispatchError('[DispatchApp] 通知アラーム初期化に失敗（続行）', alarmErr);
             }
 
-            await registerOneSignalUser(String(customer.id || ''), {
+            void registerOneSignalUser(String(customer.id || ''), {
               role: 'customer',
               customer_id: String(customer.id || ''),
-            });
+            }).catch(() => {});
           } catch (postLoginErr) {
             logDispatchError('[DispatchApp] ログイン後の画面初期化に失敗', postLoginErr, {
               customerId: customer.id,
