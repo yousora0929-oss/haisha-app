@@ -1,6 +1,7 @@
-/** onesignal-push v21 — collapse_id を OneSignal 上限（64バイト）以内に収める */
+/** onesignal-push v22 — collapse_id ハッシュ化 + 60秒クールダウン */
 
-const FUNCTION_VERSION = 21;
+const FUNCTION_VERSION = 22;
+const PUSH_NOTIFY_COOLDOWN_MS = 60_000;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 
 type PushEvent =
@@ -39,6 +40,7 @@ type OrderRow = {
   is_location_pending?: boolean | null;
   delivery_lat?: number | string | null;
   delivery_lng?: number | string | null;
+  push_notified_at?: string | null;
 };
 
 type LegacyWebhookPayload = {
@@ -168,25 +170,20 @@ function resolveChatMessageId(row?: OrderRow | null, payload?: SlimPayload | nul
   return pickString(latest?.id);
 }
 
-const ONESIGNAL_COLLAPSE_ID_MAX_BYTES = 64;
+const collapseIdCache = new Map<string, string>();
 
-/** OneSignal collapse_id / web_push_topic は64バイト上限（UTF-8） */
-function truncateOneSignalCollapseId(value: string): string {
-  const raw = pickString(value);
-  if (!raw) return '';
-  const encoder = new TextEncoder();
-  if (encoder.encode(raw).length <= ONESIGNAL_COLLAPSE_ID_MAX_BYTES) return raw;
-  let end = raw.length;
-  while (end > 0 && encoder.encode(raw.slice(0, end)).length > ONESIGNAL_COLLAPSE_ID_MAX_BYTES) {
-    end -= 1;
-  }
-  const truncated = raw.slice(0, end);
-  console.warn('[onesignal-push] collapse_id truncated', {
-    originalBytes: encoder.encode(raw).length,
-    truncatedBytes: encoder.encode(truncated).length,
-    truncated,
-  });
-  return truncated;
+/** orderId から一意かつ64バイト以内の collapse_id / web_push_topic を生成 */
+async function makeCollapseId(orderId: string): Promise<string> {
+  const oid = pickString(orderId);
+  if (!oid) return '';
+  const cached = collapseIdCache.get(oid);
+  if (cached) return cached;
+  const msgBuffer = new TextEncoder().encode(oid);
+  const hashBuffer = await crypto.subtle.digest('SHA-1', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const collapseId = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
+  collapseIdCache.set(oid, collapseId);
+  return collapseId;
 }
 
 function buildPushDedupeKey(
@@ -209,6 +206,90 @@ function buildPushDedupeKey(
     return `${ev}:${oid}:${pickString(extras.chatMessageId) || 'map'}`;
   }
   return `${ev}:${oid}`;
+}
+
+async function shouldSkipRecentPush(orderId: string): Promise<boolean> {
+  const oid = pickString(orderId);
+  if (!oid) return false;
+
+  const base = Deno.env.get('SUPABASE_URL')?.replace(/\/$/, '') || '';
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  if (!base || !serviceKey) return false;
+
+  try {
+    const response = await fetch(
+      `${base}/rest/v1/orders?id=eq.${encodeURIComponent(oid)}&select=push_notified_at`,
+      {
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          Accept: 'application/json',
+        },
+      },
+    );
+    if (!response.ok) {
+      console.warn('[onesignal-push] push_notified_at fetch failed', { orderId: oid, status: response.status });
+      return false;
+    }
+    const rows = await response.json();
+    const notifiedAt = pickString(rows?.[0]?.push_notified_at);
+    if (!notifiedAt) return false;
+    const ts = Date.parse(notifiedAt);
+    if (Number.isNaN(ts)) return false;
+    if (Date.now() - ts < PUSH_NOTIFY_COOLDOWN_MS) {
+      console.log('[onesignal-push] skip recent push within 60s', {
+        orderId: oid,
+        push_notified_at: notifiedAt,
+      });
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.warn('[onesignal-push] push_notified_at check failed — proceed', error);
+    return false;
+  }
+}
+
+async function markPushNotified(orderId: string): Promise<void> {
+  const oid = pickString(orderId);
+  if (!oid) return;
+
+  const base = Deno.env.get('SUPABASE_URL')?.replace(/\/$/, '') || '';
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  if (!base || !serviceKey) return;
+
+  const now = new Date().toISOString();
+  try {
+    const response = await fetch(`${base}/rest/v1/orders?id=eq.${encodeURIComponent(oid)}`, {
+      method: 'PATCH',
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify({ push_notified_at: now }),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      console.warn('[onesignal-push] push_notified_at update failed', {
+        orderId: oid,
+        status: response.status,
+        body: body.slice(0, 200),
+      });
+      return;
+    }
+    console.log('[onesignal-push] push_notified_at updated', { orderId: oid, push_notified_at: now });
+  } catch (error) {
+    console.warn('[onesignal-push] push_notified_at update error', { orderId: oid, error });
+  }
+}
+
+function resolveIncomingOrderId(incoming: IncomingPayload): string {
+  if (incoming.format === 'slim') return pickString(incoming.data.order_id);
+  if (incoming.format === 'rescued') return pickString(incoming.data.id);
+  if (incoming.format === 'chat_message') return pickString(incoming.data.order_id);
+  return pickString(incoming.data.record?.id);
 }
 
 async function claimPushDedupe(dedupeKey: string): Promise<boolean> {
@@ -764,7 +845,7 @@ async function sendToExternalIds(
   externalIds: string[],
   message: string,
   data: Record<string, unknown> = {},
-  options: { dedupeKey?: string } = {},
+  options: { dedupeKey?: string; orderId?: string } = {},
 ) {
   const ids = [...new Set(externalIds.map((id) => String(id || '').trim()).filter(Boolean))];
   if (!ids.length || !message) return false;
@@ -772,7 +853,8 @@ async function sendToExternalIds(
   const dedupeKey = pickString(options.dedupeKey);
   if (dedupeKey && !(await claimPushDedupe(dedupeKey))) return false;
 
-  const collapseId = truncateOneSignalCollapseId(dedupeKey);
+  const orderId = pickString(options.orderId, data.orderId);
+  const collapseId = orderId ? await makeCollapseId(orderId) : '';
 
   return postOneSignal({
     include_aliases: { external_id: ids },
@@ -786,7 +868,7 @@ async function sendToRole(
   role: string,
   message: string,
   data: Record<string, unknown> = {},
-  options: { dedupeKey?: string } = {},
+  options: { dedupeKey?: string; orderId?: string } = {},
 ) {
   const normalizedRole = String(role || '').trim();
   if (!normalizedRole || !message) return false;
@@ -794,7 +876,8 @@ async function sendToRole(
   const dedupeKey = pickString(options.dedupeKey);
   if (dedupeKey && !(await claimPushDedupe(`${dedupeKey}:role:${normalizedRole}`))) return false;
 
-  const collapseId = truncateOneSignalCollapseId(dedupeKey);
+  const orderId = pickString(options.orderId, data.orderId);
+  const collapseId = orderId ? await makeCollapseId(orderId) : '';
 
   return postOneSignal({
     filters: [{ field: 'tag', key: 'role', relation: '=', value: normalizedRole }],
@@ -992,7 +1075,7 @@ async function resolveChatFromForSlimPayload(
   return { row, chatFrom: pickString(latest?.from) };
 }
 
-async function processSlimPayload(payload: SlimPayload): Promise<void> {
+async function processSlimPayload(payload: SlimPayload): Promise<string[]> {
   const event = pickString(payload.event) as PushEvent;
   const orderId = pickString(payload.order_id);
   const factoryName = pickString(payload.factory_name, '工場');
@@ -1044,9 +1127,10 @@ async function processSlimPayload(payload: SlimPayload): Promise<void> {
   }
 
   console.log('[onesignal-push] process done', { v: FUNCTION_VERSION, orderId, sent: sent.length ? sent : 'none' });
+  return sent;
 }
 
-async function processLegacyWebhook(payload: LegacyWebhookPayload): Promise<void> {
+async function processLegacyWebhook(payload: LegacyWebhookPayload): Promise<string[]> {
   const eventType = String(payload.type || '').toUpperCase();
   const record = payload.record || {};
   const oldRecord = payload.old_record || null;
@@ -1110,9 +1194,10 @@ async function processLegacyWebhook(payload: LegacyWebhookPayload): Promise<void
   }
 
   console.log('[onesignal-push] process done', { v: FUNCTION_VERSION, orderId, sent: sent.length ? sent : 'none' });
+  return sent;
 }
 
-async function processRescued(record: OrderRow, hint: 'chat' | 'status' | 'insert'): Promise<void> {
+async function processRescued(record: OrderRow, hint: 'chat' | 'status' | 'insert'): Promise<string[]> {
   const orderId = pickString(record.id);
   const sent: string[] = [];
 
@@ -1147,7 +1232,7 @@ async function processRescued(record: OrderRow, hint: 'chat' | 'status' | 'inser
     const latest = latestChatMessage(asArray(record.chat_messages));
     if (!latest) {
       console.log('[onesignal-push] rescued chat with no messages', { orderId });
-      return;
+      return sent;
     }
     const chatFrom = pickString(latest.from);
     if (isFactorySideChatSender(chatFrom)) {
@@ -1160,6 +1245,7 @@ async function processRescued(record: OrderRow, hint: 'chat' | 'status' | 'inser
   }
 
   console.log('[onesignal-push] process done', { v: FUNCTION_VERSION, orderId, sent: sent.length ? sent : 'none' });
+  return sent;
 }
 
 async function routeChatFromOrder(row: OrderRow, message: string, orderId: string): Promise<string | null> {
@@ -1185,7 +1271,7 @@ async function routeChatFromOrder(row: OrderRow, message: string, orderId: strin
   return null;
 }
 
-async function processChatMessagePayload(payload: ChatMessagePayload): Promise<void> {
+async function processChatMessagePayload(payload: ChatMessagePayload): Promise<string[]> {
   const message = pickString(payload.message, '新しいメッセージが届きました');
   const orderId = pickString(payload.order_id);
   const sent: string[] = [];
@@ -1199,14 +1285,14 @@ async function processChatMessagePayload(payload: ChatMessagePayload): Promise<v
   if (!orderId) {
     console.warn('[onesignal-push] chat_message missing order_id — skip (sender routing required)');
     console.log('[onesignal-push] process done', { v: FUNCTION_VERSION, orderId, sent: 'none' });
-    return;
+    return sent;
   }
 
   const row = await fetchOrderRow(orderId);
   if (!row) {
     console.warn('[onesignal-push] chat_message order fetch failed — skip blind receiver_id routing', { orderId });
     console.log('[onesignal-push] process done', { v: FUNCTION_VERSION, orderId, sent: 'none' });
-    return;
+    return sent;
   }
 
   const result = await routeChatFromOrder(row, message, orderId);
@@ -1218,22 +1304,25 @@ async function processChatMessagePayload(payload: ChatMessagePayload): Promise<v
     sent: sent.length ? sent : 'none',
     via: 'order_route',
   });
+  return sent;
 }
 
 async function processIncoming(incoming: IncomingPayload): Promise<void> {
+  let sent: string[] = [];
   if (incoming.format === 'slim') {
-    await processSlimPayload(incoming.data);
-    return;
+    sent = await processSlimPayload(incoming.data);
+  } else if (incoming.format === 'legacy') {
+    sent = await processLegacyWebhook(incoming.data);
+  } else if (incoming.format === 'chat_message') {
+    sent = await processChatMessagePayload(incoming.data);
+  } else {
+    sent = await processRescued(incoming.data, incoming.hint);
   }
-  if (incoming.format === 'legacy') {
-    await processLegacyWebhook(incoming.data);
-    return;
+
+  const orderId = resolveIncomingOrderId(incoming);
+  if (orderId && sent.length > 0) {
+    await markPushNotified(orderId);
   }
-  if (incoming.format === 'chat_message') {
-    await processChatMessagePayload(incoming.data);
-    return;
-  }
-  await processRescued(incoming.data, incoming.hint);
 }
 
 declare const EdgeRuntime: { waitUntil: (promise: Promise<unknown>) => void } | undefined;
@@ -1267,13 +1356,7 @@ Deno.serve(async (req) => {
     });
   }
 
-  const orderId = incoming.format === 'slim'
-    ? pickString(incoming.data.order_id)
-    : incoming.format === 'rescued'
-    ? pickString(incoming.data.id)
-    : incoming.format === 'chat_message'
-    ? pickString(incoming.data.order_id)
-    : pickString(incoming.data.record?.id);
+  const orderId = resolveIncomingOrderId(incoming);
   const eventLabel = incoming.format === 'slim'
     ? pickString(incoming.data.event)
     : incoming.format === 'legacy'
@@ -1281,6 +1364,23 @@ Deno.serve(async (req) => {
     : incoming.format === 'chat_message'
     ? 'chat_message'
     : incoming.hint;
+
+  if (orderId && await shouldSkipRecentPush(orderId)) {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        accepted: false,
+        skipped: true,
+        reason: 'recent_push',
+        v: FUNCTION_VERSION,
+        format: incoming.format,
+        orderId,
+        event: eventLabel,
+        ms: Date.now() - started,
+      }),
+      { status: 202, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
 
   scheduleBackground(
     processIncoming(incoming).catch((error) => {
