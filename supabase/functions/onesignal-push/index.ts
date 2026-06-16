@@ -1,6 +1,6 @@
-/** onesignal-push v20 — 通知タップ時の Deep Link URL */
+/** onesignal-push v21 — collapse_id を OneSignal 上限（64バイト）以内に収める */
 
-const FUNCTION_VERSION = 20;
+const FUNCTION_VERSION = 21;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 
 type PushEvent =
@@ -166,6 +166,27 @@ function resolveChatMessageId(row?: OrderRow | null, payload?: SlimPayload | nul
   if (fromPayload) return fromPayload;
   const latest = latestChatMessage(asArray(row?.chat_messages));
   return pickString(latest?.id);
+}
+
+const ONESIGNAL_COLLAPSE_ID_MAX_BYTES = 64;
+
+/** OneSignal collapse_id / web_push_topic は64バイト上限（UTF-8） */
+function truncateOneSignalCollapseId(value: string): string {
+  const raw = pickString(value);
+  if (!raw) return '';
+  const encoder = new TextEncoder();
+  if (encoder.encode(raw).length <= ONESIGNAL_COLLAPSE_ID_MAX_BYTES) return raw;
+  let end = raw.length;
+  while (end > 0 && encoder.encode(raw.slice(0, end)).length > ONESIGNAL_COLLAPSE_ID_MAX_BYTES) {
+    end -= 1;
+  }
+  const truncated = raw.slice(0, end);
+  console.warn('[onesignal-push] collapse_id truncated', {
+    originalBytes: encoder.encode(raw).length,
+    truncatedBytes: encoder.encode(truncated).length,
+    truncated,
+  });
+  return truncated;
 }
 
 function buildPushDedupeKey(
@@ -751,10 +772,12 @@ async function sendToExternalIds(
   const dedupeKey = pickString(options.dedupeKey);
   if (dedupeKey && !(await claimPushDedupe(dedupeKey))) return false;
 
+  const collapseId = truncateOneSignalCollapseId(dedupeKey);
+
   return postOneSignal({
     include_aliases: { external_id: ids },
     contents: { ja: message, en: message },
-    ...(dedupeKey ? { collapse_id: dedupeKey, web_push_topic: dedupeKey } : {}),
+    ...(collapseId ? { collapse_id: collapseId, web_push_topic: collapseId } : {}),
     ...oneSignalPayloadExtras(data),
   });
 }
@@ -771,10 +794,12 @@ async function sendToRole(
   const dedupeKey = pickString(options.dedupeKey);
   if (dedupeKey && !(await claimPushDedupe(`${dedupeKey}:role:${normalizedRole}`))) return false;
 
+  const collapseId = truncateOneSignalCollapseId(dedupeKey);
+
   return postOneSignal({
     filters: [{ field: 'tag', key: 'role', relation: '=', value: normalizedRole }],
     contents: { ja: message, en: message },
-    ...(dedupeKey ? { collapse_id: dedupeKey, web_push_topic: dedupeKey } : {}),
+    ...(collapseId ? { collapse_id: collapseId, web_push_topic: collapseId } : {}),
     ...oneSignalPayloadExtras(data),
   });
 }
