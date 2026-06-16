@@ -921,7 +921,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             <MasterPendingBanner order={order} />
           </div>
 
-          {String(order.factory_consult_status || '').trim() === 'consulting' ? (
+          {String(order.factory_consult_status || '').trim() === 'consulting' &&
+          !['accepted', 'rejected', 'customer_cancelled', 'cancelled', 'completed'].includes(
+            resolveOrderDisplayStatus(order),
+          ) ? (
             <div className="border-t-2 border-blue-300 bg-blue-50 px-4 py-3">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">

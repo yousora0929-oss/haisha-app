@@ -239,30 +239,15 @@ export function normalizeOrderRow(row) {
             ? String(od.factoryResponseStatus)
             : null,
     is_admin_modified: row.is_admin_modified === true || od.is_admin_modified === true,
+    // 相談ステータスは専用カラムを唯一の正とする（order_data へはフォールバックしない）
     factory_consult_status:
-      row.factory_consult_status != null
-        ? String(row.factory_consult_status).trim()
-        : od.factory_consult_status != null
-          ? String(od.factory_consult_status).trim()
-          : '',
+      row.factory_consult_status != null ? String(row.factory_consult_status).trim() : '',
     factoryConsultStatus:
-      row.factory_consult_status != null
-        ? String(row.factory_consult_status).trim()
-        : od.factory_consult_status != null
-          ? String(od.factory_consult_status).trim()
-          : '',
+      row.factory_consult_status != null ? String(row.factory_consult_status).trim() : '',
     factory_consult_started_at:
-      row.factory_consult_started_at != null
-        ? String(row.factory_consult_started_at)
-        : od.factory_consult_started_at != null
-          ? String(od.factory_consult_started_at)
-          : '',
-    factory_consult_by_factory_id: sanitizeRefId(
-      row.factory_consult_by_factory_id ?? od.factory_consult_by_factory_id,
-    ),
-    factoryConsultByFactoryId: sanitizeRefId(
-      row.factory_consult_by_factory_id ?? od.factory_consult_by_factory_id,
-    ),
+      row.factory_consult_started_at != null ? String(row.factory_consult_started_at) : '',
+    factory_consult_by_factory_id: sanitizeRefId(row.factory_consult_by_factory_id),
+    factoryConsultByFactoryId: sanitizeRefId(row.factory_consult_by_factory_id),
     factoryConsultByName:
       od.factoryConsultByName != null
         ? String(od.factoryConsultByName).trim()
@@ -806,6 +791,11 @@ export async function acceptOrderForFactory(order, factorySiteId, factorySiteNam
     confirmedQuantityM3:
       qRaw !== undefined && qRaw !== null && String(qRaw).trim() !== '' ? qRaw : null,
     confirmedMixText: order.mixText?.trim() || '',
+    factory_consult_status: '',
+    factoryConsultStatus: '',
+    factory_consult_started_at: '',
+    factory_consult_by_factory_id: '',
+    factoryConsultByFactoryId: '',
   };
   const { error } = await supabase
     .from('orders')
