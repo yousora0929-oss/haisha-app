@@ -50,6 +50,29 @@ function field(value) {
   return s || '—';
 }
 
+function formatMixLabel(order) {
+  return field(
+    order.confirmedMixText ??
+      order.confirmed_mix_text ??
+      order.mixText ??
+      order.mix_text,
+  );
+}
+
+function formatPouringTimeLabel(order) {
+  const explicit = field(
+    order.timePointLabel ??
+      order.time_point_label ??
+      order.timeSlotLabel ??
+      order.time_slot_label,
+  );
+  if (explicit !== '—') return explicit;
+  const slotLabel = formatTimeSlotLabel(
+    order.timeSlot ?? order.time_slot ?? order.preferredTimeSlot,
+  );
+  return slotLabel || '—';
+}
+
 /**
  * 運行指示書（A4上半分）用グリッドデータ
  */
@@ -109,6 +132,13 @@ export function buildOperationInstructionPrintGrid(order, project, siteTitle) {
         leftValue: dateLabel,
         rightLabel: '配達時間',
         rightValue: timeLabel || '—',
+      },
+      {
+        section: '打設内容',
+        leftLabel: '配合',
+        leftValue: formatMixLabel(order),
+        rightLabel: '打設時間',
+        rightValue: formatPouringTimeLabel(order),
       },
       {
         section: '出荷数量',
