@@ -24,6 +24,7 @@ type PushEvent =
   | 'order_accepted'
   | 'order_rejected'
   | 'order_timeout'
+  | 'consult_start'
   | 'customer_chat'
   | 'factory_chat'
   | 'customer_map_shared';
@@ -1176,6 +1177,24 @@ async function sendOrderRejectedNotifications(
   return sent;
 }
 
+async function sendConsultStartNotifications(
+  row: OrderRow | null | undefined,
+  payload: SlimPayload | null | undefined,
+  orderId: string,
+): Promise<string[]> {
+  const message = '工場から相談があります。アプリをご確認ください';
+  const sent: string[] = [];
+  if (await sendToCustomerAudience(row, payload, message, {
+    type: 'order_status',
+    orderId,
+    targetApp: 'customer',
+    status: 'consulting',
+  })) {
+    sent.push('customer:consult_start');
+  }
+  return sent;
+}
+
 function isAuthorized(req: Request): boolean {
   const expected = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
   if (!expected) return false;
@@ -1229,6 +1248,10 @@ async function processSlimPayload(payload: SlimPayload): Promise<string[]> {
     case 'order_timeout': {
       // エスカレーション完了後も未受注 → タイムアウト拒否（全社拒否ゲートをバイパス）
       sent.push(...await sendOrderRejectedNotifications(null, payload, orderId, { force: true }));
+      break;
+    }
+    case 'consult_start': {
+      sent.push(...await sendConsultStartNotifications(null, payload, orderId));
       break;
     }
     case 'customer_chat': {

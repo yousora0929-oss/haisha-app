@@ -30,6 +30,7 @@ type OrderRow = {
   factory_site_id?: string | null;
   created_at?: string | null;
   push_timeout_notified_at?: string | null;
+  factory_consult_status?: string | null;
 };
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -153,7 +154,7 @@ async function fetchPendingOrders(): Promise<OrderRow[]> {
     const response = await fetch(
       `${base}/rest/v1/orders?status=in.(pending,pending_association)` +
         `&push_timeout_notified_at=is.null` +
-        `&select=id,status,order_data,customer_id,preferred_factory_id,factory_site_id,created_at,push_timeout_notified_at`,
+        `&select=id,status,order_data,customer_id,preferred_factory_id,factory_site_id,created_at,push_timeout_notified_at,factory_consult_status`,
       {
         headers: {
           apikey: serviceKey,
@@ -254,6 +255,8 @@ async function processTimeouts(): Promise<{ checked: number; timedOut: number; n
     const orderId = pickString(row.id);
     if (!orderId) continue;
     if (effectiveStatus(row) === 'customer_cancelled') continue;
+    // 相談中はエスカレーション停止中のためタイムアウト判定から除外
+    if (pickString(row.factory_consult_status) === 'consulting') continue;
 
     const created = pickString(row.created_at);
     const createdMs = created ? Date.parse(created) : NaN;

@@ -24,7 +24,7 @@ import {
 } from './haishaConstants.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations';
+  'id, order_data, chat_messages, created_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -239,6 +239,36 @@ export function normalizeOrderRow(row) {
             ? String(od.factoryResponseStatus)
             : null,
     is_admin_modified: row.is_admin_modified === true || od.is_admin_modified === true,
+    factory_consult_status:
+      row.factory_consult_status != null
+        ? String(row.factory_consult_status).trim()
+        : od.factory_consult_status != null
+          ? String(od.factory_consult_status).trim()
+          : '',
+    factoryConsultStatus:
+      row.factory_consult_status != null
+        ? String(row.factory_consult_status).trim()
+        : od.factory_consult_status != null
+          ? String(od.factory_consult_status).trim()
+          : '',
+    factory_consult_started_at:
+      row.factory_consult_started_at != null
+        ? String(row.factory_consult_started_at)
+        : od.factory_consult_started_at != null
+          ? String(od.factory_consult_started_at)
+          : '',
+    factory_consult_by_factory_id: sanitizeRefId(
+      row.factory_consult_by_factory_id ?? od.factory_consult_by_factory_id,
+    ),
+    factoryConsultByFactoryId: sanitizeRefId(
+      row.factory_consult_by_factory_id ?? od.factory_consult_by_factory_id,
+    ),
+    factoryConsultByName:
+      od.factoryConsultByName != null
+        ? String(od.factoryConsultByName).trim()
+        : od.factory_consult_by_name != null
+          ? String(od.factory_consult_by_name).trim()
+          : '',
     rejected_factory_ids: Array.isArray(row.rejected_factory_ids)
       ? row.rejected_factory_ids.map((x) => String(x)).filter(Boolean)
       : Array.isArray(od.rejected_factory_ids)
@@ -628,6 +658,18 @@ export async function updateOrderDetails(orderId, updatedData) {
   ) {
     updateRow.is_location_pending = Boolean(patch.is_location_pending ?? patch.isLocationPending);
   }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'factory_consult_status') ||
+    Object.prototype.hasOwnProperty.call(patch, 'factoryConsultStatus')
+  ) {
+    const consultStatus = String(patch.factory_consult_status ?? patch.factoryConsultStatus ?? '').trim();
+    updateRow.factory_consult_status = consultStatus || null;
+    updateRow.factory_consult_started_at =
+      patch.factory_consult_started_at ?? patch.factoryConsultStartedAt ?? (consultStatus ? new Date().toISOString() : null);
+    updateRow.factory_consult_by_factory_id = sanitizeRefId(
+      patch.factory_consult_by_factory_id ?? patch.factoryConsultByFactoryId,
+    ) || null;
+  }
   const { data: updated, error: upErr } = await supabase
     .from('orders')
     .update(updateRow)
@@ -735,6 +777,7 @@ export async function markOrderCustomerCancelled(orderId) {
     factoryResponseLocked: true,
     factoryPendingStartedAt: undefined,
     factoryPendingByName: undefined,
+    factory_consult_status: '',
   });
 }
 
@@ -771,6 +814,9 @@ export async function acceptOrderForFactory(order, factorySiteId, factorySiteNam
       status: 'accepted',
       has_test: hasTest,
       order_data: nextOrder,
+      factory_consult_status: null,
+      factory_consult_started_at: null,
+      factory_consult_by_factory_id: null,
     })
     .eq('id', id)
     .eq('status', 'pending');
@@ -829,6 +875,9 @@ export async function rejectOrderForFactory(orderId, factoryId) {
     .update({
       rejected_factory_ids: nextIds,
       order_data: nextOrderData,
+      factory_consult_status: null,
+      factory_consult_started_at: null,
+      factory_consult_by_factory_id: null,
     })
     .eq('id', id);
   if (upErr) {
@@ -836,6 +885,75 @@ export async function rejectOrderForFactory(orderId, factoryId) {
     throw upErr;
   }
   return nextIds;
+}
+
+/** 工場「相談」開始: 時間制限なしの交渉中ステートにする（相談中の工場のみ操作可能） */
+export async function startFactoryConsult(order, factorySiteId, factorySiteName) {
+  if (!order?.id) throw new Error('order.id が必要です');
+  const id = String(order.id);
+  const fid = sanitizeRefId(factorySiteId);
+  if (!fid) throw new Error('factorySiteId が必要です');
+  const fname = String(factorySiteName || '').trim();
+
+  const { data: row, error: selErr } = await supabase
+    .from('orders')
+    .select('order_data')
+    .eq('id', id)
+    .maybeSingle();
+  if (selErr) {
+    console.error('startFactoryConsult select failed', selErr);
+    throw selErr;
+  }
+  if (!row) throw new Error('注文が見つかりません');
+
+  const od =
+    row.order_data && typeof row.order_data === 'object' && !Array.isArray(row.order_data)
+      ? row.order_data
+      : {};
+  const startedAt = new Date().toISOString();
+  const nextOrderData = {
+    ...od,
+    factoryConsultByName: fname || od.factoryConsultByName || '',
+  };
+
+  const { data: updated, error: upErr } = await supabase
+    .from('orders')
+    .update({
+      factory_consult_status: 'consulting',
+      factory_consult_started_at: startedAt,
+      factory_consult_by_factory_id: fid,
+      order_data: nextOrderData,
+    })
+    .eq('id', id)
+    .eq('status', 'pending')
+    .select(ORDER_SELECT)
+    .single();
+  if (upErr) {
+    console.error('startFactoryConsult update failed', upErr);
+    throw upErr;
+  }
+  return normalizeOrderRow(updated);
+}
+
+/** 工場「相談」を強制解除（マスター/管理者用）。エスカレーション再開。 */
+export async function clearFactoryConsult(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id) throw new Error('orderId が必要です');
+  const { data: updated, error: upErr } = await supabase
+    .from('orders')
+    .update({
+      factory_consult_status: null,
+      factory_consult_started_at: null,
+      factory_consult_by_factory_id: null,
+    })
+    .eq('id', id)
+    .select(ORDER_SELECT)
+    .single();
+  if (upErr) {
+    console.error('clearFactoryConsult update failed', upErr);
+    throw upErr;
+  }
+  return normalizeOrderRow(updated);
 }
 
 function normalizeChatMessageSender(from) {

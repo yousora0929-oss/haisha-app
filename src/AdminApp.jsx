@@ -1892,6 +1892,24 @@ function OrdersMonitorSection({
     }
   };
 
+  const handleForceClearConsult = async (order) => {
+    if (!order?.id) return;
+    if (!window.confirm('この注文の「相談中」を強制解除しますか？\n解除するとエスカレーションが再開し、他工場に表示が戻ります。')) {
+      return;
+    }
+    setError('');
+    try {
+      const updated = await db.clearFactoryConsult(order.id);
+      if (updated) {
+        setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === order.id ? updated : o)) : prev));
+      }
+      await db.appendChatMessage(order.id, 'system', '【相談解除】管理者により相談中を解除しました。エスカレーションを再開します。');
+    } catch (e) {
+      console.error(e);
+      setError('相談の強制解除に失敗しました。');
+    }
+  };
+
   const handleChangeOrderStatus = async (order, status) => {
     if (!order?.id) return;
     setError('');
@@ -2076,6 +2094,9 @@ function OrdersMonitorSection({
                       <td className="px-3 py-2.5">
                         <div className="flex flex-wrap gap-1">
                           <span className={'inline-flex rounded-full border px-2 py-0.5 text-xs font-black ' + statusBadgeClass(st)}>{orderStatusLabel(st)}</span>
+                          {String(o.factory_consult_status || '').trim() === 'consulting' ? (
+                            <span className="inline-flex rounded-full border border-blue-400 bg-blue-50 px-2 py-0.5 text-xs font-black text-blue-900">相談中</span>
+                          ) : null}
                           {o.is_admin_modified ? (
                             <span className="inline-flex rounded-full border border-violet-300 bg-violet-50 px-2 py-0.5 text-xs font-black text-violet-800">管理者変更</span>
                           ) : null}
@@ -2111,6 +2132,15 @@ function OrdersMonitorSection({
                               {label}
                             </button>
                           ))}
+                          {String(o.factory_consult_status || '').trim() === 'consulting' ? (
+                            <button
+                              type="button"
+                              onClick={() => handleForceClearConsult(o)}
+                              className="rounded border border-blue-400 bg-blue-50 px-2 py-1 text-xs font-black text-blue-900 hover:bg-blue-100"
+                            >
+                              相談を強制解除
+                            </button>
+                          ) : null}
                           <button type="button" onClick={() => setDetailOrder(o)} className="rounded border border-indigo-300 bg-indigo-50 px-2 py-1 text-xs font-black text-indigo-800 hover:bg-indigo-100">詳細</button>
                           <button type="button" onClick={() => handleDeleteOrder(o)} className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-black text-red-700 hover:bg-red-100">削除</button>
                         </div>

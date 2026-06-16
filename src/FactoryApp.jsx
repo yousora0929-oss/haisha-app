@@ -1032,6 +1032,7 @@ function orderPartyInfo(order) {
       onMarkRead,
       onAcceptOrder,
       onRejectOrder,
+      onConsultOrder,
       onCustomerCancelOrder,
       onHideOrder,
       onResponseStatusChange,
@@ -1050,6 +1051,7 @@ function orderPartyInfo(order) {
       const isToast = variant === 'toast';
       const canAcceptOrder = !isToast && typeof onAcceptOrder === 'function' && Boolean(order.id);
       const canRejectOrder = !isToast && typeof onRejectOrder === 'function' && Boolean(order.id);
+      const canConsultOrder = !isToast && typeof onConsultOrder === 'function' && Boolean(order.id);
       const canCustomerCancelOrder = !isToast && typeof onCustomerCancelOrder === 'function' && Boolean(order.id);
       const canHideOrder = !isToast && typeof onHideOrder === 'function' && Boolean(order.id);
       const canSetStatus = !isToast && typeof onResponseStatusChange === 'function' && Boolean(order.id);
@@ -1070,6 +1072,9 @@ function orderPartyInfo(order) {
         String(order.acceptedFactoryLabel || '').replace(/^受注工場：/, '').trim() ||
         assignedFactoryId;
       const isRejectedByMe = currentFid && rejectedFactoryIds.includes(currentFid);
+      const isConsulting = String(order.factory_consult_status || '').trim() === 'consulting';
+      const consultByFid = normalizeFactoryIdForCompare(order.factory_consult_by_factory_id);
+      const isConsultingByMe = isConsulting && currentFid && consultByFid === currentFid;
       const terminalLocked =
         responseLocked &&
         (responseStatus === FACTORY_RESPONSE.ACCEPTED || responseStatus === FACTORY_RESPONSE.REJECTED);
@@ -1699,25 +1704,50 @@ function orderPartyInfo(order) {
               <div className={pad}>{renderDetail()}</div>
             </div>
           </div>
-          {isActionable && (canAcceptOrder || canRejectOrder) ? (
-            <div className="grid gap-2 border-t border-slate-100 bg-slate-50 px-3 py-2 sm:grid-cols-2">
-              {canAcceptOrder ? (
-                <button
-                  type="button"
-                  onClick={() => onAcceptOrder(order)}
-                  className="min-h-[46px] rounded-xl border-2 border-blue-700 bg-blue-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-blue-700 active:scale-[0.99] sm:text-base"
+          {isActionable && (canAcceptOrder || canRejectOrder || canConsultOrder) ? (
+            <div className="border-t border-slate-100 bg-slate-50 px-3 py-2">
+              {isConsultingByMe ? (
+                <div
+                  className="mb-2 rounded-xl border-2 border-blue-400 bg-blue-50 px-3 py-2 text-center text-sm font-black text-blue-900"
+                  role="status"
                 >
-                  受注する
-                </button>
+                  🔵 相談中 — あなたの工場が対応中です。受注／拒否で相談を終了します。
+                </div>
               ) : null}
-              {canRejectOrder ? (
-                <button
-                  type="button"
-                  onClick={() => onRejectOrder(order)}
-                  className="min-h-[46px] rounded-xl border-2 border-slate-400 bg-slate-100 px-4 text-sm font-black text-slate-700 shadow-sm transition hover:bg-slate-200 active:scale-[0.99] sm:text-base"
-                >
-                  見送る
-                </button>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {canAcceptOrder ? (
+                  <button
+                    type="button"
+                    onClick={() => onAcceptOrder(order)}
+                    className="min-h-[46px] rounded-xl border-2 border-emerald-700 bg-emerald-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700 active:scale-[0.99] sm:text-base"
+                  >
+                    受注する
+                  </button>
+                ) : null}
+                {canRejectOrder ? (
+                  <button
+                    type="button"
+                    onClick={() => onRejectOrder(order)}
+                    className="min-h-[46px] rounded-xl border-2 border-slate-400 bg-slate-100 px-4 text-sm font-black text-slate-700 shadow-sm transition hover:bg-slate-200 active:scale-[0.99] sm:text-base"
+                  >
+                    拒否する
+                  </button>
+                ) : null}
+              </div>
+              {/* 相談ボタンは押し間違い防止のため受注/拒否と間隔を空ける */}
+              {canConsultOrder && !isConsultingByMe ? (
+                <div className="mt-4 border-t border-dashed border-slate-200 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => onConsultOrder(order)}
+                    className="min-h-[46px] w-full rounded-xl border-2 border-blue-400 bg-blue-50 px-4 text-sm font-black text-blue-900 shadow-sm transition hover:bg-blue-100 active:scale-[0.99] sm:text-base"
+                  >
+                    相談する
+                  </button>
+                  <p className="mt-1.5 text-center text-[11px] font-bold text-slate-500">
+                    時間制限なし。顧客と対応時間・数量を調整します（相談中は他工場に表示されません）
+                  </p>
+                </div>
               ) : null}
             </div>
           ) : stateBanner ? (
@@ -1753,6 +1783,7 @@ function orderPartyInfo(order) {
       onMarkRead,
       onAcceptOrder,
       onRejectOrder,
+      onConsultOrder,
       onCustomerCancelOrder,
       onHideOrder,
       onResponseStatusChange,
@@ -1820,6 +1851,7 @@ function orderPartyInfo(order) {
                     onOrderFullPatch={onOrderFullPatch}
                     onAcceptOrder={onAcceptOrder}
                     onRejectOrder={onRejectOrder}
+                    onConsultOrder={onConsultOrder}
                     onCustomerCancelOrder={onCustomerCancelOrder}
                     onHideOrder={onHideOrder}
                     onResponseStatusChange={onResponseStatusChange}
@@ -3430,6 +3462,34 @@ function orderPartyInfo(order) {
         [activeFactoryId, markOrderRead, syncFromStorage],
       );
 
+      const handleConsultOrder = useCallback(
+        async (order) => {
+          if (!order?.id || !activeFactoryId) return;
+          if (!window.confirm('この注文を「相談中」にしますか？\n相談中は他工場に表示されず、あなたの工場のみが対応できます。')) {
+            return;
+          }
+          markOrderRead(order.id);
+          try {
+            const consulted = await db.startFactoryConsult(order, activeFactoryId, activeFactoryName);
+            const applyConsult = (o) => (o?.id === order.id ? { ...o, ...consulted } : o);
+            setRawOrders((prev) => (Array.isArray(prev) ? prev.map(applyConsult) : prev));
+            setOrders((prev) => (Array.isArray(prev) ? prev.map(applyConsult) : prev));
+            setActionNotice('相談中にしました');
+            window.setTimeout(() => setActionNotice(''), 3500);
+            await appendOrderChatMessage(
+              order.id,
+              'system',
+              `【相談】${activeFactoryName}より:\n対応できる時間帯・数量についてご相談させてください`,
+            );
+            await syncFromStorage({ playSound: false });
+          } catch (e) {
+            console.error(e);
+            window.alert('相談ステータスの設定に失敗しました。すでに受注済みの可能性があります。');
+          }
+        },
+        [activeFactoryId, activeFactoryName, markOrderRead, syncFromStorage],
+      );
+
       const handleCustomerCancelOrder = useCallback(
         async (order) => {
           if (!order?.id || !activeFactoryId) return;
@@ -3851,6 +3911,7 @@ function orderPartyInfo(order) {
                     onMarkRead={markOrderRead}
                     onAcceptOrder={handleAcceptOrder}
                     onRejectOrder={handleRejectOrder}
+                    onConsultOrder={handleConsultOrder}
                     onCustomerCancelOrder={handleCustomerCancelOrder}
                     onHideOrder={hideOrder}
                     onResponseStatusChange={handleResponseStatusChange}

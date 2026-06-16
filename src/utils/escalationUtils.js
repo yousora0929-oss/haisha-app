@@ -398,6 +398,15 @@ export function isOrderVisibleToFactory(order, factoryId, ctx) {
   if (status === 'deleted') return false;
   if (status === 'pending_association') return false;
 
+  // 相談中はエスカレーションを停止し、相談している工場のみに表示する
+  const consultStatus = String(order?.factory_consult_status ?? order?.factoryConsultStatus ?? '').trim();
+  if (consultStatus === 'consulting' && status !== 'accepted') {
+    const consultBy = normalizeFactoryRefId(
+      order?.factory_consult_by_factory_id ?? order?.factoryConsultByFactoryId,
+    );
+    return Boolean(consultBy) && fid === consultBy;
+  }
+
   const associationPool = associationAssignedFactoryIds(order);
   if (associationPool.length > 0 && status === 'pending') {
     return associationPool.includes(fid);

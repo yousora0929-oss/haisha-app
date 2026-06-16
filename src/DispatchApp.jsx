@@ -921,6 +921,30 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             <MasterPendingBanner order={order} />
           </div>
 
+          {String(order.factory_consult_status || '').trim() === 'consulting' ? (
+            <div className="border-t-2 border-blue-300 bg-blue-50 px-4 py-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-sm font-black text-blue-900">
+                    🔵 {order.factoryConsultByName ? `${order.factoryConsultByName}が相談中です` : '工場が相談中です'}
+                  </p>
+                  <p className="mt-0.5 text-xs font-bold text-blue-800/90">
+                    対応できる時間帯・数量について工場が相談しています。チャットでご確認ください。
+                  </p>
+                </div>
+                {typeof onOpenChat === 'function' ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenChat(order.id)}
+                    className="shrink-0 rounded-lg border-2 border-blue-700 bg-blue-600 px-4 py-2 text-sm font-black text-white shadow-sm transition hover:bg-blue-700 active:scale-[0.99]"
+                  >
+                    チャットを開く
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
           {order.factoryUnlockRequested ? (
             <div className="border-t border-indigo-100 bg-indigo-50 px-4 py-3">
               <p className="text-xs font-black text-indigo-950">工場からステータス変更のロック解除が依頼されています。</p>
