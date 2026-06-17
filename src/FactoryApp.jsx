@@ -64,7 +64,10 @@ import {
   analyzeFactoryOrderRealtimePayload,
 } from './utils/factoryOrderRealtime.js';
 import {
+  formatAcceptedAtDateTimeJp,
+  formatAcceptedAtTimeJp,
   getOrderDeliveryDateISO,
+  isOrderAcceptedByOtherFactory,
   isOrderInHistoryView,
   isOrderInProgressView,
   isOrderManuallyCompleted,
@@ -1390,7 +1393,25 @@ function orderPartyInfo(order) {
         );
       };
 
-      const renderCompactRequestSummary = () => (
+      const renderCompactRequestSummary = () => {
+        if (isAcceptedByOther) {
+          const acceptedTimeLabel = formatAcceptedAtTimeJp(order);
+          const deliveryLine = `${dateStr} ${slotStr}`;
+          const qtyLabel = q.valid ? q.text : '—';
+          return (
+            <div className="space-y-1.5 rounded-xl border-2 border-slate-300 bg-slate-100 px-3 py-2.5">
+              <p className="text-sm font-black text-slate-800">
+                ✓ {acceptedFactoryLabel}が受注しました（{acceptedTimeLabel}）
+              </p>
+              <p className="text-xs font-bold text-slate-600">納入：{deliveryLine}</p>
+              <p className="text-xs font-bold text-slate-600">現場：{party.site || siteHeroLine}</p>
+              <p className="text-xs font-bold text-slate-600">
+                {qtyLabel} / {vehicle}
+              </p>
+            </div>
+          );
+        }
+        return (
         <div className="grid min-w-0 gap-2">
           <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50/70 p-2 shadow-inner">
             {renderPrimarySummary({ borderless: true })}
@@ -1412,7 +1433,8 @@ function orderPartyInfo(order) {
             <LocationPendingBadge order={order} />
           </div>
         </div>
-      );
+        );
+      };
 
       const renderDetailBody = () => (
         <>
@@ -3117,14 +3139,14 @@ function orderPartyInfo(order) {
       const todaySchedule = useMemo(() => todayLocalISODate(), [escalationTick]);
 
       const factoryInProgressOrders = useMemo(
-        () => (orders || []).filter((o) => isOrderInProgressView(o, todaySchedule)),
-        [orders, todaySchedule],
+        () => (orders || []).filter((o) => isOrderInProgressView(o, todaySchedule, activeFactoryId)),
+        [orders, todaySchedule, activeFactoryId],
       );
 
       const factoryHistoryOrders = useMemo(
         () =>
-          sortOrdersForHistory((orders || []).filter((o) => isOrderInHistoryView(o, todaySchedule))),
-        [orders, todaySchedule],
+          sortOrdersForHistory((orders || []).filter((o) => isOrderInHistoryView(o, todaySchedule, activeFactoryId))),
+        [orders, todaySchedule, activeFactoryId],
       );
 
       const newOrdersCount = useMemo(
@@ -3150,11 +3172,11 @@ function orderPartyInfo(order) {
           if (!id) return;
           const target = (orders || []).find((o) => String(o?.id) === id);
           setFocusedOrderId(id);
-          setActiveTab(target && isOrderInHistoryView(target, todaySchedule) ? 'history' : 'orders');
+          setActiveTab(target && isOrderInHistoryView(target, todaySchedule, activeFactoryId) ? 'history' : 'orders');
           setActionNotice('注文詳細を開きました');
           window.setTimeout(() => setActionNotice(''), 2500);
         },
-        [orders, todaySchedule],
+        [orders, todaySchedule, activeFactoryId],
       );
 
       const refreshFactoryNewsUnread = useCallback(async () => {
@@ -3544,6 +3566,8 @@ function orderPartyInfo(order) {
             }
             if (nextStatus === FACTORY_RESPONSE.ACCEPTED) {
               patch.status = 'accepted';
+              patch.accepted_at = new Date().toISOString();
+              patch.acceptedAt = patch.accepted_at;
               patch.acceptedFactoryLabel = o.acceptedFactoryLabel || `受注工場：${activeFactoryName}`;
               patch.factorySiteName = activeFactoryName;
               patch.factorySiteId = activeFactoryId;
@@ -3945,7 +3969,7 @@ function orderPartyInfo(order) {
                   <header>
                     <h2 className="text-xl font-black text-slate-900 dark:text-slate-100">注文履歴</h2>
                     <p className="mt-1 text-sm font-medium text-slate-600 dark:text-slate-400">
-                      手動完了した注文と、予定日が過去（昨日以前）の注文を表示します（予定日の新しい順）。
+                      手動完了・予定日経過・他工場受注（受注日の翌日0時以降）の注文を表示します（予定日の新しい順）。
                     </p>
                   </header>
                   {factoryHistoryOrders.length === 0 ? (
@@ -3960,6 +3984,18 @@ function orderPartyInfo(order) {
                         const autoPast =
                           !isOrderManuallyCompleted(order) &&
                           !['customer_cancelled', 'cancelled', 'deleted'].includes(String(order?.status || ''));
+                        const isOtherAccepted = isOrderAcceptedByOtherFactory(order, activeFactoryId);
+                        const otherFactoryLabel =
+                          String(order.factorySiteName || '').trim() ||
+                          String(order.acceptedFactoryLabel || '').replace(/^受注工場：/, '').trim() ||
+                          '他工場';
+                        const qtyRaw = order.confirmedQuantityM3 ?? order.quantityM3 ?? order.quantityCube;
+                        const qtyText =
+                          qtyRaw !== undefined && qtyRaw !== null && String(qtyRaw).trim() !== ''
+                            ? `${String(qtyRaw).trim()} m³`
+                            : '—';
+                        const vehicleLabel =
+                          order.vehicleLabel || (order.vehicleType === 'small' ? '小型車' : '大型車');
                         return (
                           <li
                             key={order.id}
@@ -3969,17 +4005,29 @@ function orderPartyInfo(order) {
                               <p className="text-sm font-black tabular-nums text-slate-700 dark:text-slate-300">
                                 予定日 {delivery.replace(/-/g, '/')}
                               </p>
-                              <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black text-slate-700 dark:bg-slate-700 dark:text-slate-200">
-                                {autoPast ? '自動履歴' : '完了'}
-                              </span>
+                              <div className="flex flex-wrap gap-1">
+                                {isOtherAccepted ? (
+                                  <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                                    {otherFactoryLabel}が受注（{formatAcceptedAtDateTimeJp(order)}）
+                                  </span>
+                                ) : (
+                                  <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                                    {autoPast ? '自動履歴' : '完了'}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                             <p className="mt-1 text-base font-black text-slate-900 dark:text-gray-100">
                               {party.site || '現場未設定'}
                             </p>
                             <p className="mt-1 text-sm font-bold text-slate-600 dark:text-gray-300">
-                              {party.contractor || '—'} · {getOrderTimeDisplay(order)} ·{' '}
-                              {factoryOrderQuantity(order)}㎡
+                              納入 {formatPreferredDateJp(delivery)} {getOrderTimeDisplay(order)} · {qtyText} / {vehicleLabel}
                             </p>
+                            {!isOtherAccepted ? (
+                              <p className="mt-1 text-sm font-bold text-slate-600 dark:text-gray-300">
+                                {party.contractor || '—'} · {getOrderTimeDisplay(order)} · {factoryOrderQuantity(order)}㎡
+                              </p>
+                            ) : null}
                           </li>
                         );
                       })}

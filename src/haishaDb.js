@@ -24,7 +24,7 @@ import {
 } from './haishaConstants.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id';
+  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -162,7 +162,7 @@ function sanitizeOrderDataForDb(order) {
 }
 
 function buildOrderDbPatch(row) {
-  return {
+  const patch = {
     has_test: Boolean(row.has_test),
     order_data: sanitizeOrderDataForDb(row.order_data),
     chat_messages: row.chat_messages,
@@ -172,6 +172,10 @@ function buildOrderDbPatch(row) {
     status: row.status || 'pending',
     rejected_factory_ids: Array.isArray(row.rejected_factory_ids) ? row.rejected_factory_ids : [],
   };
+  if (row.accepted_at != null && String(row.accepted_at).trim()) {
+    patch.accepted_at = String(row.accepted_at).trim();
+  }
+  return patch;
 }
 
 export function normalizeOrderRow(row) {
@@ -183,6 +187,10 @@ export function normalizeOrderRow(row) {
       : { id: row.id, has_test: colHasTest };
   const createdAt =
     od.createdAt != null ? String(od.createdAt) : row.created_at != null ? String(row.created_at) : '';
+  const updatedAt =
+    row.updated_at != null ? String(row.updated_at) : od.updatedAt != null ? String(od.updatedAt) : '';
+  const acceptedAt =
+    row.accepted_at != null ? String(row.accepted_at) : od.accepted_at != null ? String(od.accepted_at) : '';
   const deliveryLat =
     row.delivery_lat != null && row.delivery_lat !== ''
       ? Number(row.delivery_lat)
@@ -198,6 +206,10 @@ export function normalizeOrderRow(row) {
   return {
     ...od,
     createdAt,
+    updatedAt,
+    updated_at: updatedAt,
+    accepted_at: acceptedAt,
+    acceptedAt,
     project_id: row.project_id != null ? String(row.project_id) : od.project_id ?? null,
     is_spot: row.is_spot === true || od.is_spot === true,
     customer_id: row.customer_id != null ? String(row.customer_id) : od.customer_id != null ? String(od.customer_id) : null,
@@ -441,6 +453,7 @@ export async function upsertOrdersBatch(orders, chatThreads) {
     const rejectedFactoryIds = Array.isArray(o.rejected_factory_ids)
       ? [...new Set(o.rejected_factory_ids.map((x) => String(x).trim()).filter(Boolean))]
       : [];
+    const acceptedAt = String(o.accepted_at ?? o.acceptedAt ?? '').trim();
     return {
       id: String(id),
       has_test: hasTest,
@@ -468,6 +481,7 @@ export async function upsertOrdersBatch(orders, chatThreads) {
       factory_site_id: factorySiteId,
       status: status || 'pending',
       rejected_factory_ids: rejectedFactoryIds,
+      ...(acceptedAt ? { accepted_at: acceptedAt } : {}),
     };
   }).filter(Boolean);
 
@@ -655,6 +669,13 @@ export async function updateOrderDetails(orderId, updatedData) {
       patch.factory_consult_by_factory_id ?? patch.factoryConsultByFactoryId,
     ) || null;
   }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'accepted_at') ||
+    Object.prototype.hasOwnProperty.call(patch, 'acceptedAt')
+  ) {
+    const at = String(patch.accepted_at ?? patch.acceptedAt ?? '').trim();
+    updateRow.accepted_at = at || null;
+  }
   const { data: updated, error: upErr } = await supabase
     .from('orders')
     .update(updateRow)
@@ -773,12 +794,15 @@ export async function acceptOrderForFactory(order, factorySiteId, factorySiteNam
   if (!fid) throw new Error('factorySiteId が必要です');
   const fname = String(factorySiteName || '').trim();
   const hasTest = Boolean(order.has_test);
+  const acceptedAt = new Date().toISOString();
   const qRaw = order.quantityM3 ?? order.quantityCube;
   const nextOrder = {
     ...order,
     id,
     has_test: hasTest,
     status: 'accepted',
+    accepted_at: acceptedAt,
+    acceptedAt,
     factoryResponseStatus: 'accepted',
     acceptedFactoryLabel: order.acceptedFactoryLabel || `受注工場：${fname || fid}`,
     factorySiteName: fname || order.factorySiteName || fid,
@@ -807,6 +831,7 @@ export async function acceptOrderForFactory(order, factorySiteId, factorySiteNam
       factory_consult_status: null,
       factory_consult_started_at: null,
       factory_consult_by_factory_id: null,
+      accepted_at: acceptedAt,
     })
     .eq('id', id)
     .eq('status', 'pending');

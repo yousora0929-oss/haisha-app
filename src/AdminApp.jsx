@@ -1920,6 +1920,7 @@ function OrdersMonitorSection({
         factoryResponseLocked: status === 'accepted' || status === 'completed' || status === 'customer_cancelled',
         factoryPendingStartedAt: undefined,
         factoryPendingByName: undefined,
+        ...(status === 'accepted' ? { accepted_at: new Date().toISOString(), acceptedAt: new Date().toISOString() } : {}),
       };
       const updated = await db.adminUpdateOrder(order.id, patch);
       if (updated) setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === order.id ? updated : o)) : prev));
