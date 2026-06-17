@@ -8,6 +8,7 @@ import {
 } from './supabaseClient.js';
 import { MapPicker } from './MapPicker.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
+import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { OrderVisibilityScopePanel } from './components/OrderVisibilityScopePanel.jsx';
 import { OrderVisibilityScopeBadge } from './components/OrderVisibilityScopeBadge.jsx';
@@ -34,6 +35,7 @@ import {
   parseSpotThresholdVolume,
 } from './utils/deliveryAreas.js';
 import { swapMainFactorySubIds } from './utils/projectFactory.js';
+import { fetchTownLocationsForMunicipality, resolveDeliveryPrefecture } from './utils/heartrailsGeo.js';
 import { SCHEDULE_BLOCK_IDS, normalizeDayBlockSchedule, todayLocalISODate } from './haishaConstants.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
@@ -46,8 +48,10 @@ import { AdminFactoryNewsSection } from './components/AdminFactoryNewsSection.js
 import {
   downloadCustomersExportCsv,
   downloadProjectsExportCsv,
+  downloadTradingCompaniesExportCsv,
   parseCustomersCsvFile,
   parseProjectsCsvFile,
+  parseTradingCompaniesCsvFile,
   stripImportMeta,
 } from './utils/adminCsvImport.js';
 
@@ -358,9 +362,21 @@ function FactoryAvailabilitySection({ factories, schedulesByFactoryId, scheduleD
   );
 }
 
-function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial, onSave, onCancel, saving }) {
+function ProjectForm({
+  factories,
+  customers,
+  tradingCompanies = [],
+  allowedDeliveryAreas = [],
+  deliveryPrefecture = '',
+  onTradingCompanyAdded,
+  initial,
+  onSave,
+  onCancel,
+  saving,
+}) {
   const [name, setName] = useState(initial?.name ?? '');
   const [customerId, setCustomerId] = useState(initial?.customer_id ?? '');
+  const [contractorDisplayName, setContractorDisplayName] = useState(initial?.contractor_display_name ?? '');
   const [tradingCompany, setTradingCompany] = useState(initial?.trading_company_name ?? initial?.trading_company ?? '');
   const [subContractor, setSubContractor] = useState(
     initial?.sub_contractor_name ?? initial?.contractor ?? '',
@@ -370,6 +386,9 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
   const [mainFactorySwapNotice, setMainFactorySwapNotice] = useState('');
   const [deliveryArea, setDeliveryArea] = useState(initial?.delivery_area ?? '');
   const [siteAddressDetail, setSiteAddressDetail] = useState(initial?.site_address ?? '');
+  const [townList, setTownList] = useState([]);
+  const [townOptionsLoading, setTownOptionsLoading] = useState(false);
+  const [townOptionsError, setTownOptionsError] = useState('');
   const [lat, setLat] = useState(initial?.lat != null && Number.isFinite(initial.lat) ? String(initial.lat) : '');
   const [lng, setLng] = useState(initial?.lng != null && Number.isFinite(initial.lng) ? String(initial.lng) : '');
   const [folderUrl, setFolderUrl] = useState(initial?.folder_url ?? '');
@@ -379,10 +398,21 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
     () => (customers || []).find((c) => c && String(c.id) === String(customerId || '')),
     [customers, customerId],
   );
+  const townSuggestions = useMemo(
+    () =>
+      (Array.isArray(townList) ? townList : [])
+        .map((row) => ({
+          town: String(row?.town ?? row?.name ?? '').trim(),
+          town_kana: String(row?.town_kana ?? row?.kana ?? '').trim(),
+        }))
+        .filter((row) => row.town),
+    [townList],
+  );
 
   useEffect(() => {
     setName(initial?.name ?? '');
     setCustomerId(initial?.customer_id ?? '');
+    setContractorDisplayName(initial?.contractor_display_name ?? '');
     setTradingCompany(initial?.trading_company_name ?? initial?.trading_company ?? '');
     setSubContractor(initial?.sub_contractor_name ?? initial?.contractor ?? '');
     setMainFactoryId(initial?.main_factory_id ?? '');
@@ -396,6 +426,64 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
     setSheetUrl(initial?.sheet_url ?? '');
     setAddressError('');
   }, [initial]);
+
+  useEffect(() => {
+    const municipality = String(deliveryArea || '').trim();
+    if (!municipality) {
+      setTownList([]);
+      setTownOptionsLoading(false);
+      setTownOptionsError('');
+      return undefined;
+    }
+
+    let cancelled = false;
+    setTownOptionsLoading(true);
+    setTownOptionsError('');
+
+    fetchTownLocationsForMunicipality(municipality, deliveryPrefecture)
+      .then((rows) => {
+        if (cancelled) return;
+        setTownList(Array.isArray(rows) ? rows : []);
+        if (!rows?.length) {
+          setTownOptionsError('この市町村の町名候補は取得できませんでした');
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setTownList([]);
+        setTownOptionsError(String(err?.message || '町名候補の取得に失敗しました'));
+      })
+      .finally(() => {
+        if (!cancelled) setTownOptionsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deliveryArea, deliveryPrefecture]);
+
+  const handleTradingCompanyBlur = useCallback(async () => {
+    const trimmed = String(tradingCompany || '').trim();
+    if (!trimmed) return;
+    const exists = (tradingCompanies || []).some(
+      (t) => t && String(t.name || '').trim().toLowerCase() === trimmed.toLowerCase(),
+    );
+    if (exists) return;
+    if (
+      !window.confirm(
+        `「${trimmed}」は商社マスタに未登録です。\n商社マスタに追加しますか？`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const created = await db.insertTradingCompany({ name: trimmed });
+      onTradingCompanyAdded?.(created);
+    } catch (e) {
+      console.error('商社マスタ追加エラー', e);
+      window.alert(formatSupabaseError(e, '商社マスタへの追加に失敗しました'));
+    }
+  }, [tradingCompany, tradingCompanies, onTradingCompanyAdded]);
 
   const resolveFactoryName = (factoryId) => {
     const id = String(factoryId || '').trim();
@@ -450,6 +538,7 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
     onSave({
       name: name.trim(),
       customer_id: customerId,
+      contractor_display_name: contractorDisplayName.trim(),
       trading_company_name: tradingCompany.trim(),
       trading_company: tradingCompany.trim(),
       contractor: subContractor.trim(),
@@ -482,14 +571,42 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
         <select id="proj-customer" value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={fieldClass}>
           <option value="">未設定</option>
           {(customers || []).map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
+            <option key={c.id} value={c.id}>{c.company_name || c.name}</option>
           ))}
         </select>
       </div>
+      <div>
+        <label className="text-xs font-bold text-slate-600" htmlFor="proj-contractor-display">
+          業者名（表記用・自由入力）
+        </label>
+        <p className="mt-0.5 text-[11px] font-medium text-slate-500">
+          印刷物・専用URL表示などに使う業者名（任意）
+        </p>
+        <input
+          id="proj-contractor-display"
+          type="text"
+          value={contractorDisplayName}
+          onChange={(e) => setContractorDisplayName(e.target.value)}
+          className={fieldClass}
+          placeholder="例: 〇〇建設（表記用）"
+        />
+      </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div>
-          <label className="text-xs font-bold text-slate-600" htmlFor="proj-trading-company">商社名（任意）</label>
-          <input id="proj-trading-company" type="text" value={tradingCompany} onChange={(e) => setTradingCompany(e.target.value)} className={fieldClass} placeholder="例: ○○商事" />
+        <div onBlur={handleTradingCompanyBlur}>
+          <MasterSuggestInput
+            label="商社名（任意）"
+            htmlFor="proj-trading-company"
+            name="proj_trading_company"
+            value={tradingCompany}
+            onValueChange={setTradingCompany}
+            items={tradingCompanies}
+            getItemKey={(t) => String(t.id)}
+            getItemLabel={(t) => t.name}
+            getSearchTexts={(t) => [t.name]}
+            onSelect={(t) => setTradingCompany(String(t?.name || '').trim())}
+            placeholder="商社名を入力（候補から選択可）"
+            inputClassName="min-h-[44px] rounded-lg border-2 border-slate-200 px-3 py-2 text-sm"
+          />
         </div>
         <div>
           <label className="text-xs font-bold text-slate-600" htmlFor="proj-contractor">業者（下請）</label>
@@ -546,6 +663,10 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
         onDeliveryAreaChange={setDeliveryArea}
         addressDetail={siteAddressDetail}
         onAddressDetailChange={setSiteAddressDetail}
+        showTownSuggestions
+        townSuggestions={townSuggestions}
+        townSuggestionsLoading={townOptionsLoading}
+        townSuggestionsError={townOptionsError}
       />
       {addressError ? (
         <p className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-bold text-red-800" role="alert">
@@ -641,7 +762,9 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
 function ProjectsSection({ factories, factoryNameById }) {
   const [projects, setProjects] = useState([]);
   const [customers, setCustomers] = useState([]);
+  const [tradingCompanies, setTradingCompanies] = useState([]);
   const [allowedDeliveryAreas, setAllowedDeliveryAreas] = useState([]);
+  const [deliveryPrefecture, setDeliveryPrefecture] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [formMode, setFormMode] = useState(null);
@@ -655,14 +778,17 @@ function ProjectsSection({ factories, factoryNameById }) {
     setLoading(true);
     setError('');
     try {
-      const [rows, customerRows, settings] = await Promise.all([
+      const [rows, customerRows, tradingRows, settings] = await Promise.all([
         db.fetchProjects(),
         db.fetchCustomers(),
+        db.fetchTradingCompanies(),
         db.fetchAdminSettings(),
       ]);
       setProjects(rows);
       setCustomers(customerRows);
+      setTradingCompanies(tradingRows);
       setAllowedDeliveryAreas(normalizeAllowedDeliveryAreas(settings?.allowed_delivery_areas));
+      setDeliveryPrefecture(resolveDeliveryPrefecture(settings));
     } catch (e) {
       console.error('物件取得エラー', e);
       setError(formatSupabaseError(e, '物件一覧の取得に失敗しました'));
@@ -691,6 +817,15 @@ function ProjectsSection({ factories, factoryNameById }) {
       unsub();
     };
   }, [load]);
+
+  const handleTradingCompanyAdded = useCallback((created) => {
+    if (!created?.id) return;
+    setTradingCompanies((prev) => {
+      const next = [...(prev || []).filter((t) => t && t.id !== created.id), created];
+      next.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'));
+      return next;
+    });
+  }, []);
 
   const handleSave = async (payload) => {
     setSaving(true);
@@ -752,6 +887,7 @@ function ProjectsSection({ factories, factoryNameById }) {
                 label: '元請業者',
                 render: (r) => r.__contractorLabel || customers.find((c) => c.id === r.customer_id)?.company_name || '—',
               },
+              { key: 'contractor_display_name', label: '業者名（表記用）' },
               { key: 'trading_company_name', label: '商社名' },
               { key: 'delivery_area', label: 'エリア' },
               { key: 'site_address', label: '現場住所' },
@@ -793,7 +929,10 @@ function ProjectsSection({ factories, factoryNameById }) {
           <ProjectForm
             factories={factories}
             customers={customers}
+            tradingCompanies={tradingCompanies}
             allowedDeliveryAreas={allowedDeliveryAreas}
+            deliveryPrefecture={deliveryPrefecture}
+            onTradingCompanyAdded={handleTradingCompanyAdded}
             initial={editing}
             onSave={handleSave}
             onCancel={() => { setFormMode(null); setEditing(null); }}
@@ -823,7 +962,12 @@ function ProjectsSection({ factories, factoryNameById }) {
               {projects.map((p) => (
                 <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50/80">
                   <td className="px-3 py-2.5 font-bold text-slate-900">{p.name}</td>
-                  <td className="px-3 py-2.5 text-slate-700">{customers.find((c) => c.id === p.customer_id)?.name || '—'}</td>
+                  <td className="px-3 py-2.5 text-slate-700">
+                    <div>{customers.find((c) => c.id === p.customer_id)?.company_name || customers.find((c) => c.id === p.customer_id)?.name || '—'}</div>
+                    {p.contractor_display_name?.trim() ? (
+                      <div className="mt-0.5 text-xs font-medium text-slate-500">{p.contractor_display_name.trim()}</div>
+                    ) : null}
+                  </td>
                   <td className="px-3 py-2.5 text-slate-700">{(p.trading_company_name || p.trading_company)?.trim() || '—'}</td>
                   <td className="px-3 py-2.5 text-slate-700">{(p.sub_contractor_name || p.contractor)?.trim() || '—'}</td>
                   <td className="px-3 py-2.5">{factoryNameById[p.main_factory_id] || '—'}</td>
@@ -847,6 +991,241 @@ function ProjectsSection({ factories, factoryNameById }) {
                     <div className="flex flex-wrap gap-1">
                       <button type="button" onClick={() => { setEditing(p); setFormMode('edit'); }} className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-bold hover:bg-slate-50">編集</button>
                       <button type="button" onClick={() => handleDelete(p)} className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-bold text-red-800 hover:bg-red-100">削除</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function TradingCompaniesSection() {
+  const [tradingCompanies, setTradingCompanies] = useState([]);
+  const [projects, setProjects] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [editingCompany, setEditingCompany] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const [rows, projectRows] = await Promise.all([db.fetchTradingCompanies(), db.fetchProjects()]);
+      setTradingCompanies(rows);
+      setProjects(projectRows);
+    } catch (e) {
+      console.error('商社一覧取得エラー', e);
+      setError(formatSupabaseError(e, '商社一覧の取得に失敗しました'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    let unsub = () => {};
+    void (async () => {
+      unsub = await db.subscribeHaishaRealtime((payload) => {
+        if (payload?.table === 'trading_companies') void load();
+      });
+    })();
+    return () => unsub();
+  }, [load]);
+
+  const resetForm = () => {
+    setCompanyName('');
+    setEditingCompany(null);
+  };
+
+  const startEdit = (company) => {
+    setEditingCompany(company);
+    setCompanyName(company?.name || '');
+    setError('');
+    setNotice('');
+  };
+
+  const countProjectRefs = useCallback(
+    (name) => {
+      const q = String(name || '').trim();
+      if (!q) return 0;
+      return (projects || []).filter(
+        (p) => String(p.trading_company_name || p.trading_company || '').trim() === q,
+      ).length;
+    },
+    [projects],
+  );
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    const name = companyName.trim();
+    if (!name) {
+      setError('商社名を入力してください。');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      if (editingCompany?.id) await db.updateTradingCompany(editingCompany.id, { name });
+      else await db.insertTradingCompany({ name });
+      resetForm();
+      setNotice(editingCompany?.id ? '商社情報を更新しました。' : '商社を登録しました。');
+      await load();
+      window.setTimeout(() => setNotice(''), 3000);
+    } catch (e2) {
+      console.error('商社保存エラー', e2);
+      setError(formatSupabaseError(e2, '商社の保存に失敗しました'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (company) => {
+    if (!company?.id) return;
+    const name = company.name || 'この商社';
+    const refCount = countProjectRefs(name);
+    const warn =
+      refCount > 0
+        ? `\n※ ${refCount}件の物件で商社名「${name}」が参照されています（文字列参照のため削除は可能です）。`
+        : '';
+    if (!window.confirm(`「${name}」を削除しますか？${warn}`)) return;
+    setError('');
+    setNotice('');
+    try {
+      await db.deleteTradingCompany(company.id);
+      if (editingCompany?.id === company.id) resetForm();
+      setNotice('商社を削除しました。');
+      await load();
+      window.setTimeout(() => setNotice(''), 3000);
+    } catch (e) {
+      console.error('商社削除エラー', e);
+      setError(formatSupabaseError(e, '商社の削除に失敗しました'));
+    }
+  };
+
+  const fieldClass =
+    'mt-1 min-h-[44px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200';
+
+  const filteredCompanies = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return tradingCompanies;
+    return tradingCompanies.filter((t) => String(t.name || '').toLowerCase().includes(q));
+  }, [tradingCompanies, searchQuery]);
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-md sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-black text-slate-900">商社管理</h2>
+          <p className="mt-1 text-xs text-slate-500">trading_companies テーブル · 物件フォームの商社名サジェストに反映されます</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <AdminCsvImportButton
+            label="CSV一括取込"
+            entityLabel="件の商社"
+            parseFile={parseTradingCompaniesCsvFile}
+            previewColumns={[{ key: 'name', label: '商社名' }]}
+            onImport={async (preview) => {
+              const payload = preview.rows.map(stripImportMeta);
+              await db.bulkInsertTradingCompanies(payload);
+              const skipped = preview.skipped?.length ?? 0;
+              setNotice(
+                `${payload.length}件の商社を取り込みました。${skipped > 0 ? `（${skipped}行スキップ）` : ''}`,
+              );
+            }}
+            onComplete={() => {
+              void load();
+              window.setTimeout(() => setNotice(''), 5000);
+            }}
+          />
+          <AdminCsvDownloadButton
+            disabled={loading}
+            onDownload={() => {
+              downloadTradingCompaniesExportCsv(tradingCompanies);
+              setNotice(`${tradingCompanies.length}件の商社をCSVでダウンロードしました。`);
+              window.setTimeout(() => setNotice(''), 4000);
+            }}
+          />
+        </div>
+      </div>
+
+      {error ? <p className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-bold text-red-800" role="alert">{error}</p> : null}
+      {notice ? <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800" role="status">{notice}</p> : null}
+
+      <form onSubmit={handleSave} className="mt-4 grid gap-3 rounded-xl border-2 border-indigo-100 bg-indigo-50/40 p-4 sm:grid-cols-3">
+        <div className="sm:col-span-3">
+          <h3 className="text-sm font-black text-slate-900">{editingCompany ? '商社を編集' : '商社を新規登録'}</h3>
+        </div>
+        <div className="sm:col-span-2">
+          <label className="text-xs font-bold text-slate-600" htmlFor="trading-company-name">
+            商社名 <span className="text-red-600">*</span>
+          </label>
+          <input
+            id="trading-company-name"
+            type="text"
+            value={companyName}
+            onChange={(e) => setCompanyName(e.target.value)}
+            className={fieldClass}
+            placeholder="例: ○○商事"
+            required
+          />
+        </div>
+        <div className="flex flex-wrap items-end gap-2 sm:col-span-3">
+          <button type="submit" disabled={saving} className="min-h-[44px] rounded-lg bg-indigo-600 px-4 text-sm font-black text-white shadow hover:bg-indigo-700 disabled:opacity-50">
+            {saving ? '保存中…' : editingCompany ? '商社情報を更新' : '＋ 商社を登録'}
+          </button>
+          {editingCompany ? (
+            <button type="button" onClick={resetForm} disabled={saving} className="min-h-[44px] rounded-lg border-2 border-slate-300 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50">
+              編集をキャンセル
+            </button>
+          ) : null}
+        </div>
+      </form>
+
+      {loading ? <p className="mt-4 text-sm text-slate-500">読み込み中…</p> : null}
+      {!loading && tradingCompanies.length > 0 ? (
+        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <label className="text-xs font-black text-slate-600" htmlFor="trading-company-search">商社検索</label>
+          <input
+            id="trading-company-search"
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-bold text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+            placeholder="商社名で検索"
+          />
+        </div>
+      ) : null}
+      {!loading && tradingCompanies.length === 0 ? (
+        <p className="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-600">登録された商社はありません。</p>
+      ) : null}
+      {!loading && tradingCompanies.length > 0 ? (
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full min-w-[480px] border-collapse text-left text-sm">
+            <thead>
+              <tr className="border-b-2 border-slate-200 bg-slate-50">
+                <th className="px-3 py-2 font-black text-slate-700">商社名</th>
+                <th className="px-3 py-2 font-black text-slate-700">物件参照数</th>
+                <th className="px-3 py-2 font-black text-slate-700">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredCompanies.map((t) => (
+                <tr key={t.id} className="border-b border-slate-100 hover:bg-slate-50/80">
+                  <td className="px-3 py-2.5 font-bold text-slate-900">{t.name}</td>
+                  <td className="px-3 py-2.5 text-slate-600">{countProjectRefs(t.name)}</td>
+                  <td className="px-3 py-2.5">
+                    <div className="flex flex-wrap gap-1">
+                      <button type="button" onClick={() => startEdit(t)} className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-bold hover:bg-slate-50">編集</button>
+                      <button type="button" onClick={() => handleDelete(t)} className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-bold text-red-800 hover:bg-red-100">削除</button>
                     </div>
                   </td>
                 </tr>
@@ -2513,6 +2892,7 @@ export function AdminApp() {
             {tabBtn('factoryNews', 'ニュース配信')}
             {tabBtn('adminSettings', '管理者情報設定')}
             {tabBtn('projects', '物件管理')}
+            {tabBtn('tradingCompanies', '商社管理')}
             {tabBtn('customers', '業者管理')}
             {tabBtn('inquiries', '問い合わせ対応')}
             {tabBtn('settings', '休日・稼働時間')}
@@ -2541,6 +2921,7 @@ export function AdminApp() {
         {tab === 'factoryNews' ? <AdminFactoryNewsSection factories={factories} /> : null}
         {tab === 'adminSettings' ? <AdminSettingsSection /> : null}
         {tab === 'projects' ? <ProjectsSection factories={factories} factoryNameById={factoryNameById} /> : null}
+        {tab === 'tradingCompanies' ? <TradingCompaniesSection /> : null}
         {tab === 'customers' ? <CustomersSection /> : null}
         {tab === 'inquiries' ? <CustomerInquirySection /> : null}
         {tab === 'settings' ? <HolidaysAndSettingsSection /> : null}

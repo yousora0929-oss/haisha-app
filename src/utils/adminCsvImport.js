@@ -3,6 +3,8 @@ import { resolveUrlTokenForInsert } from './urlValidation.js';
 import {
   CUSTOMER_CSV_ALIASES,
   CUSTOMER_EXPORT_HEADERS,
+  TRADING_COMPANY_CSV_ALIASES,
+  TRADING_COMPANY_EXPORT_HEADERS,
   downloadCsvWithUtf8Bom,
   formatCsvExcelTextField,
   mapCsvHeaders,
@@ -69,6 +71,7 @@ export async function parseProjectsCsvFile(file, { customers = [], mainFactoryId
     const delivery_area = cleanCell(raw.delivery_area);
     const site_address = cleanCell(raw.site_address);
     const trading_company_name = cleanCell(raw.trading_company_name);
+    const contractorDisplayName = cleanCell(raw.contractor_display_name);
     const contractorName = cleanCell(raw.contractor);
 
     if (delivery_area && site_address) {
@@ -92,6 +95,7 @@ export async function parseProjectsCsvFile(file, { customers = [], mainFactoryId
       sub_factory_ids: [],
       trading_company_name: trading_company_name || null,
       trading_company: trading_company_name || null,
+      contractor_display_name: contractorDisplayName || null,
       contractor: null,
       sub_contractor_name: null,
       delivery_area: delivery_area || null,
@@ -111,6 +115,42 @@ export async function parseProjectsCsvFile(file, { customers = [], mainFactoryId
   }
 
   return { rows, skipped, warnings };
+}
+
+/**
+ * @param {File} file
+ */
+export async function parseTradingCompaniesCsvFile(file) {
+  const text = await readCsvFileAsText(file);
+  const matrix = parseCsvText(text);
+  if (matrix.length < 2) {
+    throw new Error('データ行がありません（ヘッダー＋1行以上必要です）。');
+  }
+
+  const headerIndex = mapCsvHeaders(matrix[0], TRADING_COMPANY_CSV_ALIASES);
+  if (headerIndex.name == null) {
+    throw new Error('ヘッダーに「商社名」列が見つかりません。1行目を確認してください。');
+  }
+
+  const rawRows = rowsToObjects(matrix, headerIndex);
+  const rows = [];
+  const skipped = [];
+
+  for (const raw of rawRows) {
+    const line = raw.__line;
+    const name = cleanCell(raw.name);
+    if (!name) {
+      skipped.push({ line, reason: '商社名が空のためスキップ' });
+      continue;
+    }
+    rows.push({ name, __line: line });
+  }
+
+  if (rows.length === 0) {
+    throw new Error('取り込み可能な商社がありません。');
+  }
+
+  return { rows, skipped, warnings: [] };
 }
 
 /**
@@ -194,11 +234,20 @@ export function buildProjectsExportRows(projects, customers = []) {
   const dataRows = (projects || []).map((p) => [
     cleanCell(p.name),
     customerNameById.get(String(p.customer_id || '')) || '',
+    cleanCell(p.contractor_display_name),
     cleanCell(p.trading_company_name || p.trading_company),
     cleanCell(p.site_address),
     cleanCell(p.delivery_area),
   ]);
   return [PROJECT_EXPORT_HEADERS, ...dataRows];
+}
+
+/**
+ * 商社一覧 → 取込互換 CSV 行（ヘッダー含む）
+ */
+export function buildTradingCompaniesExportRows(tradingCompanies) {
+  const dataRows = (tradingCompanies || []).map((t) => [cleanCell(t.name)]);
+  return [TRADING_COMPANY_EXPORT_HEADERS, ...dataRows];
 }
 
 /**
@@ -223,4 +272,9 @@ export function downloadProjectsExportCsv(projects, customers) {
 export function downloadCustomersExportCsv(customers) {
   const rows = buildCustomersExportRows(customers);
   downloadCsvWithUtf8Bom(`customers_export_${exportDateSuffix()}.csv`, rows);
+}
+
+export function downloadTradingCompaniesExportCsv(tradingCompanies) {
+  const rows = buildTradingCompaniesExportRows(tradingCompanies);
+  downloadCsvWithUtf8Bom(`trading_companies_export_${exportDateSuffix()}.csv`, rows);
 }

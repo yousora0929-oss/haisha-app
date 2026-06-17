@@ -1337,6 +1337,9 @@ export async function subscribeHaishaRealtime(onEvent) {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, (payload) => route(payload, 'schedules'))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'factories' }, (payload) => route(payload, 'factories'))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, (payload) => route(payload, 'customers'))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'trading_companies' }, (payload) =>
+      route(payload, 'trading_companies'),
+    )
     .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_settings' }, (payload) => route(payload, 'admin_settings'))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news' }, (payload) => route(payload, 'factory_news'))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news_reads' }, (payload) =>
@@ -1414,6 +1417,8 @@ function mapProjectRow(row) {
         : row.contractor != null
           ? String(row.contractor)
           : '',
+    contractor_display_name:
+      row.contractor_display_name != null ? String(row.contractor_display_name) : '',
     delivery_area: row.delivery_area != null ? String(row.delivery_area) : '',
     site_address: row.site_address != null ? String(row.site_address) : '',
     url_token:
@@ -1453,6 +1458,77 @@ export async function fetchCustomers() {
 }
 
 const BULK_INSERT_CHUNK = 100;
+
+function mapTradingCompanyRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const name = String(row.name ?? '').trim();
+  if (!name) return null;
+  return {
+    id: row.id != null ? String(row.id) : '',
+    name,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export async function fetchTradingCompanies() {
+  const { data, error } = await supabase.from('trading_companies').select('*').order('name', { ascending: true });
+  if (error) throw error;
+  return (data || []).map(mapTradingCompanyRow).filter(Boolean);
+}
+
+export async function insertTradingCompany({ name }) {
+  const trimmed = String(name ?? '').trim();
+  if (!trimmed) throw new Error('商社名を入力してください');
+  const { data, error } = await supabase.from('trading_companies').insert({ name: trimmed }).select('*').single();
+  if (error) throw error;
+  return mapTradingCompanyRow(data);
+}
+
+export async function updateTradingCompany(id, { name }) {
+  const companyId = sanitizeRefId(id);
+  if (!companyId) throw new Error('商社IDが必要です');
+  const trimmed = String(name ?? '').trim();
+  if (!trimmed) throw new Error('商社名を入力してください');
+  const { data, error } = await supabase
+    .from('trading_companies')
+    .update({ name: trimmed, updated_at: new Date().toISOString() })
+    .eq('id', companyId)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return mapTradingCompanyRow(data);
+}
+
+export async function deleteTradingCompany(id) {
+  const companyId = sanitizeRefId(id);
+  if (!companyId) throw new Error('商社IDが必要です');
+  const { error } = await supabase.from('trading_companies').delete().eq('id', companyId);
+  if (error) throw error;
+}
+
+export async function bulkInsertTradingCompanies(rows) {
+  const list = Array.isArray(rows) ? rows.filter((r) => r && typeof r === 'object') : [];
+  if (list.length === 0) return [];
+
+  const prepared = list.map((row) => {
+    const name = String(row.name ?? '').trim();
+    if (!name) throw new Error('商社名が空の行があります');
+    return { name };
+  });
+
+  const inserted = [];
+  for (let i = 0; i < prepared.length; i += BULK_INSERT_CHUNK) {
+    const chunk = prepared.slice(i, i + BULK_INSERT_CHUNK);
+    const { data, error } = await supabase
+      .from('trading_companies')
+      .upsert(chunk, { onConflict: 'name', ignoreDuplicates: true })
+      .select('*');
+    if (error) throw error;
+    inserted.push(...(data || []));
+  }
+  return inserted.map(mapTradingCompanyRow).filter(Boolean);
+}
 
 export async function bulkInsertCustomers(customerRows) {
   const list = Array.isArray(customerRows) ? customerRows.filter((r) => r && typeof r === 'object') : [];
@@ -1812,6 +1888,7 @@ export async function bulkInsertProjects(projectRows) {
       trading_company: String(payload.trading_company || payload.trading_company_name || '').trim() || null,
       contractor: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
       sub_contractor_name: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
+      contractor_display_name: String(payload.contractor_display_name || '').trim() || null,
       delivery_area: String(payload.delivery_area || '').trim() || null,
       site_address: String(payload.site_address || '').trim() || null,
       folder_url: normalizeExternalUrl(payload.folder_url) || null,
@@ -1848,6 +1925,7 @@ export async function insertProject(payload) {
     trading_company: String(payload.trading_company || payload.trading_company_name || '').trim() || null,
     contractor: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
     sub_contractor_name: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
+    contractor_display_name: String(payload.contractor_display_name || '').trim() || null,
     delivery_area: String(payload.delivery_area || '').trim() || null,
     site_address: String(payload.site_address || '').trim() || null,
     folder_url: normalizeExternalUrl(payload.folder_url) || null,
@@ -1878,6 +1956,7 @@ export async function updateProject(projectId, payload) {
     trading_company: String(payload.trading_company || payload.trading_company_name || '').trim() || null,
     contractor: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
     sub_contractor_name: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
+    contractor_display_name: String(payload.contractor_display_name || '').trim() || null,
     delivery_area: String(payload.delivery_area || '').trim() || null,
     site_address: String(payload.site_address || '').trim() || null,
     folder_url: normalizeExternalUrl(payload.folder_url) || null,

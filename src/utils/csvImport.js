@@ -169,9 +169,20 @@ export function rowsToObjects(rows, headerIndex) {
 export const PROJECT_CSV_ALIASES = {
   name: ['物件名', 'name', '現場名', 'プロジェクト名', 'サイト名'],
   contractor: ['元請業者', '元請', 'contractor', '業者元請', '業者（元請）', '業者'],
+  contractor_display_name: [
+    '業者名（表記用）',
+    '業者名（自由入力）',
+    'contractor_display_name',
+    '表記用業者名',
+    '業者表記',
+  ],
   trading_company_name: ['商社名', '商社', 'trading_company_name', 'trading_company', '担当商社'],
   site_address: ['現場住所', '住所', 'site_address', '町名', '町名・地名', '現場住所詳細'],
   delivery_area: ['エリア', '納入エリア', 'delivery_area', '市町村', '配送エリア'],
+};
+
+export const TRADING_COMPANY_CSV_ALIASES = {
+  name: ['商社名', 'name', '商社', 'trading_company_name', '会社名'],
 };
 
 export const CUSTOMER_CSV_ALIASES = {
@@ -183,8 +194,9 @@ export const CUSTOMER_CSV_ALIASES = {
 };
 
 /** CSV取込フォーマットと一致するエクスポート用ヘッダー */
-export const PROJECT_EXPORT_HEADERS = ['物件名', '元請業者', '商社名', '現場住所', 'エリア'];
+export const PROJECT_EXPORT_HEADERS = ['物件名', '元請業者', '業者名（表記用）', '商社名', '現場住所', 'エリア'];
 export const CUSTOMER_EXPORT_HEADERS = ['業者名', 'フリガナ', '担当者名', '電話番号', 'ログインパスワード'];
+export const TRADING_COMPANY_EXPORT_HEADERS = ['商社名'];
 
 /**
  * CSV / Excel 由来のセル値を文字列として正規化（数値化・式の解除）
