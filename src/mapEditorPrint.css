@@ -19,6 +19,46 @@
   margin: 0;
 }
 
+/* 物件詳細 + 現場地図を A4 1枚に収める */
+.map-editor-print-sheet.print-include-both {
+  height: 281mm;
+  max-height: 281mm;
+  overflow: hidden;
+}
+
+.map-editor-print-sheet.print-include-both .map-editor-a4-instruction-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.map-editor-print-sheet.print-include-both .map-editor-print-details-block {
+  flex: 0 0 auto;
+  margin-bottom: 2mm;
+}
+
+.map-editor-print-sheet.print-include-both .map-editor-print-map-slot {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-top: 0;
+}
+
+.map-editor-print-sheet.print-include-both .map-editor-print-map-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+
+.map-editor-print-sheet.print-include-both .map-editor-print-map-frame .leaflet-container {
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: none !important;
+}
+
 .map-editor-print-map-caption {
   display: none;
 }
@@ -85,13 +125,58 @@
   .map-editor-a4-instruction-page {
     display: flex !important;
     flex-direction: column !important;
-    max-height: 100vh !important;
-    max-height: 1123px !important;
     overflow: hidden !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
     padding: 0 !important;
     margin: 0 !important;
+  }
+
+  .map-editor-print-sheet.print-include-both {
+    height: 281mm !important;
+    max-height: 281mm !important;
+    overflow: hidden !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  .map-editor-print-sheet.print-include-both .map-editor-a4-instruction-page {
+    height: 281mm !important;
+    max-height: 281mm !important;
+  }
+
+  .map-editor-print-sheet.print-include-both .map-editor-print-details-block {
+    margin-bottom: 2mm !important;
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+  }
+
+  .map-editor-print-sheet.print-include-both .map-editor-print-map-slot {
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    margin-top: 0 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .map-editor-print-sheet.print-include-both .map-editor-print-map-frame {
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  .map-editor-print-sheet.print-include-both .map-editor-print-map-frame,
+  .map-editor-print-sheet.print-include-both .map-editor-print-map-frame > div,
+  .map-editor-print-sheet.print-include-both .map-editor-print-map-frame .leaflet-container {
+    flex: 1 1 auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+  }
+
+  .map-editor-print-sheet.print-include-map:not(.print-include-both) .map-editor-a4-instruction-page {
+    max-height: 281mm !important;
   }
 
   .map-editor-print-details-block {
@@ -159,9 +244,6 @@
   .map-editor-print-map-frame {
     display: block !important;
     width: 100% !important;
-    height: 195mm !important;
-    min-height: 195mm !important;
-    max-height: 195mm !important;
     overflow: hidden !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
@@ -169,8 +251,14 @@
     border-radius: 0 !important;
   }
 
-  .map-editor-print-map-frame > div,
-  .map-editor-print-map-frame .leaflet-container {
+  .map-editor-print-sheet.print-include-map:not(.print-include-both) .map-editor-print-map-frame {
+    height: 195mm !important;
+    min-height: 195mm !important;
+    max-height: 195mm !important;
+  }
+
+  .map-editor-print-sheet.print-include-map:not(.print-include-both) .map-editor-print-map-frame > div,
+  .map-editor-print-sheet.print-include-map:not(.print-include-both) .map-editor-print-map-frame .leaflet-container {
     width: 100% !important;
     height: 195mm !important;
     min-height: 195mm !important;

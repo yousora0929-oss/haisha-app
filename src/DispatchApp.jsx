@@ -53,6 +53,7 @@ import {
 } from './utils/heartrailsGeo.js';
 import { isLocationPendingOrder, resolveInitialOrderStatus, resolveOrderDisplayStatus, sumOrderVolumesM3 } from './utils/orderWorkflow.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
+import { resolveGuestPreferredFactoryId, resolveProjectMainFactoryId } from './utils/projectFactory.js';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
 import {
@@ -1290,7 +1291,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           const subName = String(project.sub_contractor_name || project.contractor || '').trim();
           if (subName) setContractorName(subName);
           if (project.name) setSiteName(sanitizeSiteNameValue(project.name));
-          if (project.main_factory_id) setPreferredFactoryId(String(project.main_factory_id));
+          const mainFactoryId = resolveProjectMainFactoryId(project);
+          if (mainFactoryId) setPreferredFactoryId(mainFactoryId);
           lastAutofillProjectIdRef.current = String(project.id || '');
         },
         [allowedDeliveryAreas],
@@ -1727,7 +1729,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 setTraderName(locked.traderNameRaw);
                 setContractorName(locked.contractorName);
                 if (locked.projectName) setSiteName(sanitizeSiteNameValue(locked.projectName));
-                setPreferredFactoryId(String(primaryProject.main_factory_id || '').trim());
+                setPreferredFactoryId(resolveGuestPreferredFactoryId(primaryProject));
+                lastAutofillProjectIdRef.current = String(primaryProject.id);
                 if (customer?.phone_number) setSitePhone(String(customer.phone_number));
               } else {
                 setSelectedProjectId('');
@@ -2279,7 +2282,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           setTimeSlot(next.slot);
           if (!defaults.preferredFactoryId && defaults.projectId) {
             const proj = (projects || []).find((p) => p && String(p.id) === String(defaults.projectId));
-            if (proj?.main_factory_id) setPreferredFactoryId(String(proj.main_factory_id));
+            const mainId = resolveProjectMainFactoryId(proj);
+            if (mainId) setPreferredFactoryId(mainId);
           } else if (defaults.preferredFactoryId) {
             setPreferredFactoryId(defaults.preferredFactoryId);
           }
@@ -3206,7 +3210,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       setSelectedProjectId(pid);
                       setProjectSearchText(String(p.name || '').trim());
                       applyProjectSelection(p);
-                      const factoryId = String(p.main_factory_id ?? p.mainFactoryId ?? '').trim();
+                      const factoryId = resolveProjectMainFactoryId(p);
                       if (factoryId) setPreferredFactoryId(factoryId);
                       setSubmitError('');
                     }}

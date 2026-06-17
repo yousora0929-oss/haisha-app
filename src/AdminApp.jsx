@@ -33,6 +33,7 @@ import {
   parseDeliveryAreasTextInput,
   parseSpotThresholdVolume,
 } from './utils/deliveryAreas.js';
+import { swapMainFactorySubIds } from './utils/projectFactory.js';
 import { SCHEDULE_BLOCK_IDS, normalizeDayBlockSchedule, todayLocalISODate } from './haishaConstants.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
@@ -366,6 +367,7 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
   );
   const [mainFactoryId, setMainFactoryId] = useState(initial?.main_factory_id ?? '');
   const [subIds, setSubIds] = useState(() => new Set(initial?.sub_factory_ids ?? []));
+  const [mainFactorySwapNotice, setMainFactorySwapNotice] = useState('');
   const [deliveryArea, setDeliveryArea] = useState(initial?.delivery_area ?? '');
   const [siteAddressDetail, setSiteAddressDetail] = useState(initial?.site_address ?? '');
   const [lat, setLat] = useState(initial?.lat != null && Number.isFinite(initial.lat) ? String(initial.lat) : '');
@@ -385,6 +387,7 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
     setSubContractor(initial?.sub_contractor_name ?? initial?.contractor ?? '');
     setMainFactoryId(initial?.main_factory_id ?? '');
     setSubIds(new Set(initial?.sub_factory_ids ?? []));
+    setMainFactorySwapNotice('');
     setDeliveryArea(initial?.delivery_area ?? '');
     setSiteAddressDetail(initial?.site_address ?? '');
     setLat(initial?.lat != null && Number.isFinite(initial.lat) ? String(initial.lat) : '');
@@ -393,6 +396,27 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
     setSheetUrl(initial?.sheet_url ?? '');
     setAddressError('');
   }, [initial]);
+
+  const resolveFactoryName = (factoryId) => {
+    const id = String(factoryId || '').trim();
+    if (!id) return '工場';
+    return factories.find((f) => f && String(f.id) === id)?.name || '工場';
+  };
+
+  const handleMainFactoryChange = (newMainId) => {
+    const normalizedNew = String(newMainId || '').trim();
+    const oldMainId = String(mainFactoryId || '').trim();
+    if (normalizedNew === oldMainId) return;
+    setMainFactoryId(normalizedNew);
+    setSubIds((prev) => swapMainFactorySubIds(prev, oldMainId, normalizedNew));
+    if (oldMainId && oldMainId !== normalizedNew) {
+      setMainFactorySwapNotice(
+        `旧メイン工場「${resolveFactoryName(oldMainId)}」をサブ工場リストに移動しました。保存ボタンを押すまでデータベースには反映されません。`,
+      );
+    } else {
+      setMainFactorySwapNotice('');
+    }
+  };
 
   const toggleSub = (fid) => {
     setSubIds((prev) => {
@@ -422,6 +446,7 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
       return;
     }
     setAddressError('');
+    setMainFactorySwapNotice('');
     onSave({
       name: name.trim(),
       customer_id: customerId,
@@ -478,11 +503,7 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
         <select
           id="proj-main-factory"
           value={mainFactoryId}
-          onChange={(e) => {
-            const v = e.target.value;
-            setMainFactoryId(v);
-            if (v) setSubIds((prev) => { const n = new Set(prev); n.delete(v); return n; });
-          }}
+          onChange={(e) => handleMainFactoryChange(e.target.value)}
           className={fieldClass}
           required
         >
@@ -491,6 +512,11 @@ function ProjectForm({ factories, customers, allowedDeliveryAreas = [], initial,
             <option key={f.id} value={f.id}>{f.name}</option>
           ))}
         </select>
+        {mainFactorySwapNotice ? (
+          <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold leading-relaxed text-amber-900" role="status">
+            {mainFactorySwapNotice}
+          </p>
+        ) : null}
       </div>
       <fieldset className="rounded-lg border border-slate-200 bg-white p-3">
         <legend className="px-1 text-xs font-bold text-slate-600">サブ工場（複数可）</legend>
