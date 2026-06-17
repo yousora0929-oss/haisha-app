@@ -1,5 +1,15 @@
-import React, { useCallback, useId, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { filterSuggestItems } from '../utils/masterSuggest.js';
+
+// useId の代替（React 18未満 / Chrome 109 対応）
+let _suggestIdCounter = 0;
+function useStableId() {
+  const ref = useRef(null);
+  if (ref.current === null) {
+    ref.current = `cl-suggest-${++_suggestIdCounter}`;
+  }
+  return ref.current;
+}
 
 const LIST_CLASS =
   'absolute left-0 right-0 top-full z-[9999] mt-1 max-h-60 touch-pan-y overscroll-contain overflow-y-auto rounded-md border border-gray-200 bg-white text-gray-900 shadow-2xl dark:border-gray-700 dark:bg-gray-800 dark:text-white';
@@ -49,8 +59,8 @@ export function MasterSuggestInput({
   emptyQueryShowsPinnedOnly = false,
   searchResultLimit = 80,
 }) {
-  const autoId = useId();
-  const inputId = htmlFor || `suggest-${autoId.replace(/:/g, '')}`;
+  const autoId = useStableId();
+  const inputId = htmlFor || autoId;
   const [panelOpen, setPanelOpen] = useState(false);
   const blurTimerRef = useRef(null);
   const pointerRef = useRef(emptyPointerState());

@@ -1,6 +1,15 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { THEME_MODE_LABELS, THEME_MODES } from '../utils/theme.js';
 import { useTheme } from './ThemeProvider.jsx';
+
+let _themeToggleIdCounter = 0;
+function useStableId() {
+  const ref = useRef(null);
+  if (ref.current === null) {
+    ref.current = `cl-theme-${++_themeToggleIdCounter}`;
+  }
+  return ref.current;
+}
 
 const BTN =
   'min-h-[36px] rounded-lg border-2 px-2.5 py-1 text-[11px] font-black shadow-sm transition sm:min-h-[40px] sm:px-3 sm:text-xs';
@@ -13,7 +22,7 @@ export function ThemeToggle({ className = '', compact = false }) {
   const { mode, effective, setMode } = useTheme();
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
-  const panelId = useId();
+  const panelId = useStableId();
 
   useEffect(() => {
     if (!open) return undefined;

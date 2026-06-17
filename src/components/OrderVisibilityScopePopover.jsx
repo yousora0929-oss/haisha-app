@@ -1,5 +1,14 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { getOrderVisibilityScope, chipRoleLabel } from '../utils/orderVisibilityScope.js';
+
+let _popoverIdCounter = 0;
+function useStableId() {
+  const ref = useRef(null);
+  if (ref.current === null) {
+    ref.current = `cl-popover-${++_popoverIdCounter}`;
+  }
+  return ref.current;
+}
 
 /**
  * 公開範囲バッジ（クリックで工場一覧ポップオーバー）
@@ -7,7 +16,7 @@ import { getOrderVisibilityScope, chipRoleLabel } from '../utils/orderVisibility
 export function OrderVisibilityScopePopover({ order, escalationCtx, factoryNameById, className = '' }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
-  const panelId = useId();
+  const panelId = useStableId();
 
   const scope =
     order && escalationCtx ? getOrderVisibilityScope(order, escalationCtx, factoryNameById) : null;
