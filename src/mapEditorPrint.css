@@ -98,24 +98,37 @@
     flex: 0 0 auto !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
-    margin-bottom: 3mm !important;
+    margin-bottom: 4mm !important;
   }
 
   .map-editor-print-instruction-header {
-    margin-bottom: 2mm !important;
-    padding-bottom: 1mm !important;
+    margin-bottom: 1.5mm !important;
+    padding-bottom: 0.5mm !important;
   }
 
   .map-editor-print-instruction-header h1 {
-    font-size: 12pt !important;
+    font-size: 16pt !important;
     margin: 0 !important;
   }
 
   .map-editor-print-grid-table th,
   .map-editor-print-grid-table td {
-    padding: 1.5mm 2mm !important;
+    padding: 1mm 2.5mm !important;
+    line-height: 1.2 !important;
+  }
+
+  .map-editor-print-grid-table th {
+    font-size: 11pt !important;
+    padding-top: 0.5mm !important;
+    padding-bottom: 0.5mm !important;
+  }
+
+  .map-editor-print-grid-table td p:first-child {
     font-size: 9pt !important;
-    line-height: 1.25 !important;
+  }
+
+  .map-editor-print-grid-table td p:last-child {
+    font-size: 12pt !important;
   }
 
   .map-editor-print-sheet:not(.print-include-details) .map-editor-print-details-block {
@@ -146,9 +159,9 @@
   .map-editor-print-map-frame {
     display: block !important;
     width: 100% !important;
-    height: 550px !important;
-    min-height: 550px !important;
-    max-height: 550px !important;
+    height: 195mm !important;
+    min-height: 195mm !important;
+    max-height: 195mm !important;
     overflow: hidden !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
@@ -159,9 +172,9 @@
   .map-editor-print-map-frame > div,
   .map-editor-print-map-frame .leaflet-container {
     width: 100% !important;
-    height: 550px !important;
-    min-height: 550px !important;
-    max-height: 550px !important;
+    height: 195mm !important;
+    min-height: 195mm !important;
+    max-height: 195mm !important;
   }
 
   .map-editor-print-map-frame .leaflet-pane,

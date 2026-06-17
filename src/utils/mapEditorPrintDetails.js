@@ -59,18 +59,24 @@ function formatMixLabel(order) {
   );
 }
 
-function formatPouringTimeLabel(order) {
-  const explicit = field(
-    order.timePointLabel ??
-      order.time_point_label ??
-      order.timeSlotLabel ??
-      order.time_slot_label,
-  );
-  if (explicit !== '—') return explicit;
-  const slotLabel = formatTimeSlotLabel(
-    order.timeSlot ?? order.time_slot ?? order.preferredTimeSlot,
-  );
-  return slotLabel || '—';
+function formatUnloadDurationLabel(order) {
+  const labeled = field(order.unloadDurationLabel ?? order.unload_duration_label);
+  if (labeled !== '—') return labeled;
+  const raw = String(
+    order.unloadDuration ??
+      order.unload_duration ??
+      order.unloadDurationMinutes ??
+      order.unload_duration_minutes ??
+      order.unloadingTime ??
+      '',
+  ).trim();
+  if (!raw) return '30分（標準）';
+  if (raw === '15') return '15分';
+  if (raw === '30') return '30分（標準）';
+  if (raw === '45') return '45分';
+  if (raw === '60') return '60分（手押し車など時間要）';
+  if (raw === '95_plus') return '95分以上（要相談）';
+  return raw;
 }
 
 /**
@@ -137,8 +143,8 @@ export function buildOperationInstructionPrintGrid(order, project, siteTitle) {
         section: '打設内容',
         leftLabel: '配合',
         leftValue: formatMixLabel(order),
-        rightLabel: '打設時間',
-        rightValue: formatPouringTimeLabel(order),
+        rightLabel: '荷下ろし時間',
+        rightValue: formatUnloadDurationLabel(order),
       },
       {
         section: '出荷数量',
