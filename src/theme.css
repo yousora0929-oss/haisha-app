@@ -517,8 +517,11 @@ html.dark .map-editor-app .bg-slate-50 {
   background-color: var(--cl-bg-app) !important;
 }
 
-html.dark .leaflet-container {
+html.dark .map-editor-app .leaflet-container {
   background: var(--cl-bg-app);
+}
+html.dark .map-editor-print-sheet .leaflet-container {
+  background: #e2e8f0 !important;
 }
 html.dark .leaflet-control-attribution {
   background: rgb(31 41 55 / 0.92) !important;

@@ -197,7 +197,7 @@ export function MapEditorApp() {
       await printSheetRef.current?.prepareForPrint?.();
       if (cancelled || printRunIdRef.current !== runId) return;
       printSheetRef.current?.invalidateMapSize?.();
-      await new Promise((r) => window.setTimeout(r, 150));
+      await new Promise((r) => window.setTimeout(r, 400));
       if (cancelled || printRunIdRef.current !== runId) return;
       window.print();
     };

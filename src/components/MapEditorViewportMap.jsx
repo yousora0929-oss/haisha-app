@@ -90,7 +90,7 @@ function MapResizeFix({ fixedHeightPx = 0 }) {
   useEffect(() => {
     const run = () => map.invalidateSize({ animate: false });
     run();
-    const delays = fixedHeightPx > 0 ? [50, 200, 500, 900] : [80];
+    const delays = fixedHeightPx > 0 ? [50, 200, 500, 900, 1400] : [80, 200, 500];
     const timers = delays.map((ms) => window.setTimeout(run, ms));
     const onBeforePrint = () => run();
     window.addEventListener('beforeprint', onBeforePrint);
@@ -178,8 +178,8 @@ export function MapEditorViewportMap({
         <TileLayer
           attribution='&copy; OpenStreetMap'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          updateWhenIdle={Boolean(heightPx)}
-          keepBuffer={heightPx ? 3 : 1}
+          updateWhenIdle={false}
+          keepBuffer={heightPx ? 4 : 2}
         />
         {(annotations?.unloadPoints || []).map((u) => (
           <Circle
