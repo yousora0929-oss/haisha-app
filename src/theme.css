@@ -12,7 +12,7 @@ html.dark {
   --cl-bg-elevated: #374151;
   --cl-text-primary: #f9fafb;
   --cl-text-secondary: #f3f4f6;
-  --cl-text-muted: #d1d5db;
+  --cl-text-muted: #e5e7eb;
   --cl-border: #4b5563;
   --cl-border-strong: #6b7280;
 }
@@ -129,8 +129,17 @@ html.dark .text-slate-600,
 html.dark .text-slate-500 {
   color: var(--cl-text-muted) !important;
 }
-html.dark .text-slate-400 {
-  color: #9ca3af !important;
+html.dark .text-slate-400,
+html.dark .dark\:text-slate-400 {
+  color: #cbd5e1 !important; /* slate-300 · 約6:1 */
+}
+html.dark .text-slate-300,
+html.dark .dark\:text-slate-300,
+html.dark .text-gray-400,
+html.dark .dark\:text-gray-400,
+html.dark .text-gray-300,
+html.dark .dark\:text-gray-300 {
+  color: #e5e7eb !important;
 }
 html.dark .dark\:text-slate-100,
 html.dark .dark\:text-gray-100,
@@ -140,6 +149,7 @@ html.dark .text-gray-100 {
 
 /* ── ボーダー ─────────────────────────────────────────────────────────────── */
 html.dark .border-slate-100,
+html.dark .border-slate-100\/90,
 html.dark .border-slate-200,
 html.dark .border-slate-200\/80,
 html.dark .border-slate-200\/90,
@@ -167,7 +177,59 @@ html.dark textarea {
 }
 html.dark input::placeholder,
 html.dark textarea::placeholder {
-  color: #6b7280;
+  color: #94a3b8 !important; /* slate-400 */
+}
+
+/* ── 透明度（ダーク時は背景に溶けにくく） ─────────────────────────────────── */
+html.dark .opacity-50 {
+  opacity: 0.7 !important;
+}
+html.dark .opacity-45 {
+  opacity: 0.65 !important;
+}
+html.dark .opacity-60 {
+  opacity: 0.78 !important;
+}
+html.dark .opacity-65 {
+  opacity: 0.85 !important;
+}
+html.dark .opacity-70 {
+  opacity: 0.85 !important;
+}
+html.dark .opacity-75 {
+  opacity: 0.88 !important;
+}
+html.dark .opacity-\[0\.72\] {
+  opacity: 0.88 !important;
+}
+html.dark .opacity-80 {
+  opacity: 0.9 !important;
+}
+
+/* ── 淡色背景上の暗い文字（工場カード・バナー等） ─────────────────────────── */
+html.dark .bg-amber-50 .text-amber-900,
+html.dark .bg-amber-50 .text-amber-800,
+html.dark .bg-amber-50 .text-amber-950,
+html.dark .bg-amber-50\/70 .text-amber-900,
+html.dark .bg-amber-50\/90 .text-amber-900,
+html.dark .bg-amber-50\/95 .text-amber-900,
+html.dark .bg-amber-50\/95 .text-amber-950,
+html.dark .text-amber-900\/90,
+html.dark .text-amber-900\/85 {
+  color: #fcd34d !important;
+}
+
+html.dark .bg-red-50 .text-red-700,
+html.dark .bg-red-50 .text-red-800,
+html.dark .bg-red-50\/30 .text-red-700,
+html.dark .bg-red-50\/40 .text-red-700,
+html.dark .bg-red-100 .text-red-700 {
+  color: #fca5a5 !important;
+}
+
+html.dark .bg-violet-50 .text-violet-700,
+html.dark .bg-violet-50 .text-violet-800 {
+  color: #c4b5fd !important;
 }
 
 /* ── ホバー ─────────────────────────────────────────────────────────────── */

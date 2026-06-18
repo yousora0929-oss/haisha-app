@@ -1527,7 +1527,7 @@ function orderPartyInfo(order) {
               {terminalLocked ? (
                 <div className="cl-alert-warning-panel mt-3 space-y-2 rounded-lg border-2 border-amber-300 bg-amber-50/95 px-3 py-3">
                   <p className="text-sm font-black text-amber-950 sm:text-base">マスターの許可が必要です</p>
-                  <p className="text-xs font-bold leading-relaxed text-amber-900/90 sm:text-sm">
+                  <p className="text-xs font-bold leading-relaxed text-amber-900/90 dark:text-amber-200 sm:text-sm">
                     受注または拒否を確定したあとは、工場側からは変更できません。訂正が必要な場合はマスターが「ステータス再設定許可」で解除します。
                   </p>
                   {!order.factoryUnlockRequested && typeof onRequestUnlock === 'function' ? (
@@ -1556,7 +1556,7 @@ function orderPartyInfo(order) {
                   }
                   role="status"
                 >
-                  <p className="text-[11px] font-black uppercase tracking-wider text-slate-500 sm:text-xs">保留カウントダウン</p>
+                  <p className="text-[11px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-300 sm:text-xs">保留カウントダウン</p>
                   <p
                     className={
                       'mt-1 font-mono text-3xl font-black tabular-nums tracking-tight sm:text-4xl ' +
@@ -1566,9 +1566,9 @@ function orderPartyInfo(order) {
                     {pendingCountdown.expired ? '時間切れ' : pendingCountdown.label}
                   </p>
                   {pendingCountdown.expired ? (
-                    <p className="mt-2 text-xs font-bold text-red-700 sm:text-sm">5分経過しました。対応を確定するには受注・拒否を選んでください</p>
+                    <p className="mt-2 text-xs font-bold text-red-700 dark:text-red-300 sm:text-sm">5分経過しました。対応を確定するには受注・拒否を選んでください</p>
                   ) : (
-                    <p className="mt-1 text-xs font-bold text-amber-900/85 sm:text-sm">00:00 で時間切れ表示に切り替わります</p>
+                    <p className="mt-1 text-xs font-bold text-amber-900/85 dark:text-amber-200 sm:text-sm">00:00 で時間切れ表示に切り替わります</p>
                   )}
                 </div>
               ) : null}
@@ -1577,7 +1577,7 @@ function orderPartyInfo(order) {
 
           {!isToast && order.createdAt ? (
             <time
-              className="mt-4 block border-t border-slate-100 pt-3 text-xs font-bold text-slate-400 sm:text-sm"
+              className="mt-4 block border-t border-slate-100 pt-3 text-xs font-bold text-slate-400 dark:border-slate-600 dark:text-slate-300 sm:text-sm"
               dateTime={order.createdAt}
             >
               受信{' '}
@@ -1609,15 +1609,15 @@ function orderPartyInfo(order) {
       const rejectedLook = responseStatus === FACTORY_RESPONSE.REJECTED;
       const collapsedRejected = rejectedLook && !expanded;
       const outerArticleClass = collapsedRejected
-        ? 'rounded-xl border-2 border-red-600/90 bg-red-50/30 opacity-[0.72] shadow-sm ring-1 ring-red-200/60 overflow-hidden'
+        ? 'rounded-xl border-2 border-red-600/90 bg-red-50/30 opacity-[0.72] shadow-sm ring-1 ring-red-200/60 dark:opacity-90 overflow-hidden'
         : isCustomerCancelled
           ? 'rounded-2xl border-[3px] border-red-600 bg-red-50 shadow-xl ring-2 ring-red-200 overflow-hidden'
           : isAcceptedByMe
           ? 'rounded-2xl border-[3px] border-emerald-600 bg-emerald-50 shadow-xl ring-2 ring-emerald-200 overflow-hidden'
           : isAcceptedByOther
-            ? 'rounded-2xl border-2 border-slate-300 bg-slate-100 opacity-65 shadow-sm grayscale overflow-hidden'
+            ? 'rounded-2xl border-2 border-slate-300 bg-slate-100 opacity-65 shadow-sm grayscale dark:opacity-85 overflow-hidden'
             : isRejectedByMe
-              ? 'rounded-2xl border-2 border-slate-300 bg-slate-100 opacity-80 shadow-sm overflow-hidden'
+              ? 'rounded-2xl border-2 border-slate-300 bg-slate-100 opacity-80 shadow-sm dark:opacity-90 overflow-hidden'
               : cardFrame.trimEnd() + ' overflow-hidden';
 
       return (
@@ -1625,7 +1625,7 @@ function orderPartyInfo(order) {
           <div
             className={
               'flex w-full min-w-0 items-stretch ' +
-              (collapsedRejected ? 'bg-red-50/40' : 'border-b border-slate-100 bg-white')
+              (collapsedRejected ? 'bg-red-50/40' : 'border-b border-slate-100 bg-white dark:border-slate-600')
             }
           >
             <button
@@ -1727,7 +1727,7 @@ function orderPartyInfo(order) {
             </div>
           </div>
           {isActionable && (canAcceptOrder || canRejectOrder || canConsultOrder) ? (
-            <div className="border-t border-slate-100 bg-slate-50 px-3 py-2">
+            <div className="border-t border-slate-100 bg-slate-50 px-3 py-2 dark:border-slate-600">
               {isConsultingByMe ? (
                 <div
                   className="mb-2 rounded-xl border-2 border-blue-400 bg-blue-50 px-3 py-2 text-center text-sm font-black text-blue-900"
@@ -3968,12 +3968,12 @@ function orderPartyInfo(order) {
                 <section className="mx-auto max-w-4xl space-y-3 pb-8">
                   <header>
                     <h2 className="text-xl font-black text-slate-900 dark:text-slate-100">注文履歴</h2>
-                    <p className="mt-1 text-sm font-medium text-slate-600 dark:text-slate-400">
+                    <p className="mt-1 text-sm font-medium text-slate-600 dark:text-slate-300">
                       手動完了・予定日経過・他工場受注（受注日の翌日0時以降）の注文を表示します（予定日の新しい順）。
                     </p>
                   </header>
                   {factoryHistoryOrders.length === 0 ? (
-                    <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm font-bold text-slate-500 dark:border-slate-600 dark:bg-slate-900/50 dark:text-slate-400">
+                    <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm font-bold text-slate-500 dark:border-slate-600 dark:bg-slate-900/50 dark:text-slate-300">
                       履歴に表示する注文はありません
                     </p>
                   ) : (
