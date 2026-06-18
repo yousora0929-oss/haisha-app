@@ -425,9 +425,9 @@ function orderPartyInfo(order) {
                 if (isSystemChatSender(m.from)) {
                   return (
                     <li key={m.id} className="flex justify-center">
-                      <div className="max-w-[95%] rounded-xl border border-slate-300/80 bg-slate-100/95 px-3 py-2.5 text-center text-sm font-bold text-slate-700 shadow-sm sm:text-base">
+                      <div className="max-w-[95%] rounded-xl border border-slate-300/80 bg-slate-100/95 px-3 py-2.5 text-center text-sm font-bold text-slate-700 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 sm:text-base">
                         <p className="whitespace-pre-wrap break-words leading-snug">{m.body}</p>
-                        <p className="mt-1 text-xs font-black uppercase tracking-wider text-slate-500 sm:text-sm">
+                        <p className="mt-1 text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-300 sm:text-sm">
                           システム ·{' '}
                           {new Date(m.createdAt).toLocaleTimeString('ja-JP', {
                             hour: '2-digit',
@@ -1212,35 +1212,37 @@ function orderPartyInfo(order) {
                 (idx === 0 && !isRead && !isRejectedByMe ? 'ring-4 ring-orange-400 ring-offset-2 ring-offset-slate-50 ' : '');
 
       const primaryTopLabel = isToast ? 'text-[10px] sm:text-[11px]' : 'text-[11px] sm:text-xs';
+      const primaryFieldLabel =
+        primaryTopLabel + ' font-bold uppercase tracking-wider text-slate-500 dark:text-slate-300';
       const primaryValueDate = isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg';
       const primaryValueTime = isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg';
       const dateWrapClass =
-        'rounded-lg border-2 border-sky-500 bg-gradient-to-b from-sky-50 to-sky-100/90 px-2 py-1.5 shadow-sm ring-1 ring-sky-200/70';
+        'rounded-lg border-2 border-sky-500 bg-gradient-to-b from-sky-50 to-sky-100/90 px-2 py-1.5 shadow-sm ring-1 ring-sky-200/70 dark:border-sky-500/60 dark:from-sky-950/50 dark:to-sky-900/40 dark:ring-sky-800/40';
       const timeWrapClass =
-        'rounded-lg border-2 border-violet-500 bg-gradient-to-b from-violet-50 to-violet-100/90 px-2 py-1.5 shadow-sm ring-1 ring-violet-200/70';
+        'rounded-lg border-2 border-violet-500 bg-gradient-to-b from-violet-50 to-violet-100/90 px-2 py-1.5 shadow-sm ring-1 ring-violet-200/70 dark:border-violet-500/60 dark:from-violet-950/50 dark:to-violet-900/40 dark:ring-violet-800/40';
       const datePillClass =
         'inline-block rounded-md bg-sky-600 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow-sm sm:text-[11px]';
       const timePillClass =
         'inline-block rounded-md bg-violet-600 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow-sm sm:text-[11px]';
       const unloadWrapClass =
-        'rounded-lg border-2 border-cyan-600 bg-gradient-to-b from-cyan-50 to-sky-100/90 px-2 py-1.5 shadow-sm ring-1 ring-cyan-200/70';
+        'rounded-lg border-2 border-cyan-600 bg-gradient-to-b from-cyan-50 to-sky-100/90 px-2 py-1.5 shadow-sm ring-1 ring-cyan-200/70 dark:border-cyan-500/60 dark:from-cyan-950/50 dark:to-cyan-900/40 dark:ring-cyan-800/40';
       const unloadPillClass =
         'inline-block rounded-md bg-cyan-700 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow-sm sm:text-[11px]';
       const vehicleWrapClass = isLarge
-        ? 'rounded-lg border-2 border-emerald-600 bg-gradient-to-b from-emerald-50 to-emerald-100/90 px-2 py-1.5 shadow-sm ring-1 ring-emerald-200/70'
-        : 'rounded-lg border-2 border-amber-500 bg-gradient-to-b from-amber-50 to-amber-100/90 px-2 py-1.5 shadow-sm ring-1 ring-amber-200/70';
+        ? 'rounded-lg border-2 border-emerald-600 bg-gradient-to-b from-emerald-50 to-emerald-100/90 px-2 py-1.5 shadow-sm ring-1 ring-emerald-200/70 dark:border-emerald-500/60 dark:from-emerald-950/50 dark:to-emerald-900/40 dark:ring-emerald-800/40'
+        : 'rounded-lg border-2 border-amber-500 bg-gradient-to-b from-amber-50 to-amber-100/90 px-2 py-1.5 shadow-sm ring-1 ring-amber-200/70 dark:border-amber-500/60 dark:from-amber-950/50 dark:to-amber-900/40 dark:ring-amber-800/40';
       const vehiclePillClass = isLarge
         ? 'inline-block rounded-md bg-emerald-700 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow-sm sm:text-[11px]'
         : 'inline-block rounded-md bg-amber-600 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow-sm sm:text-[11px]';
       const qtyWrapClass = q.valid
-        ? 'rounded-lg border-2 border-orange-500 bg-gradient-to-b from-orange-50 to-amber-50/90 px-2 py-1.5 shadow-sm ring-1 ring-orange-200/70'
-        : 'rounded-lg border-2 border-slate-400 bg-gradient-to-b from-slate-50 to-slate-100/90 px-2 py-1.5 shadow-sm ring-1 ring-slate-200/60';
+        ? 'rounded-lg border-2 border-orange-500 bg-gradient-to-b from-orange-50 to-amber-50/90 px-2 py-1.5 shadow-sm ring-1 ring-orange-200/70 dark:border-orange-500/60 dark:from-orange-950/50 dark:to-orange-900/40 dark:ring-orange-800/40'
+        : 'rounded-lg border-2 border-slate-400 bg-gradient-to-b from-slate-50 to-slate-100/90 px-2 py-1.5 shadow-sm ring-1 ring-slate-200/60 dark:border-slate-600 dark:from-slate-900/50 dark:to-slate-800/40 dark:ring-slate-700/40';
       const qtyPillClass = q.valid
         ? 'inline-block rounded-md bg-orange-600 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow-sm sm:text-[11px]'
         : 'inline-block rounded-md bg-slate-500 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow-sm sm:text-[11px]';
       const testWrapClass = hasTest
-        ? 'rounded-lg border-2 border-fuchsia-600 bg-gradient-to-b from-fuchsia-50 to-fuchsia-100/90 px-2 py-1.5 shadow-sm ring-1 ring-fuchsia-200/70'
-        : 'rounded-lg border-2 border-slate-400 bg-gradient-to-b from-slate-50 to-slate-100/90 px-2 py-1.5 shadow-sm ring-1 ring-slate-200/60';
+        ? 'rounded-lg border-2 border-fuchsia-600 bg-gradient-to-b from-fuchsia-50 to-fuchsia-100/90 px-2 py-1.5 shadow-sm ring-1 ring-fuchsia-200/70 dark:border-fuchsia-500/60 dark:from-fuchsia-950/50 dark:to-fuchsia-900/40 dark:ring-fuchsia-800/40'
+        : 'rounded-lg border-2 border-slate-400 bg-gradient-to-b from-slate-50 to-slate-100/90 px-2 py-1.5 shadow-sm ring-1 ring-slate-200/60 dark:border-slate-600 dark:from-slate-900/50 dark:to-slate-800/40 dark:ring-slate-700/40';
       const testPillClass = hasTest
         ? 'inline-block rounded-md bg-fuchsia-700 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow-sm sm:text-[11px]'
         : 'inline-block rounded-md bg-slate-500 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow-sm sm:text-[11px]';
@@ -1248,14 +1250,23 @@ function orderPartyInfo(order) {
       const renderPrimarySummary = (opts) => {
         const { borderless } = opts || {};
         return (
-          <div className={borderless ? '' : 'rounded-lg border border-slate-200/90 bg-slate-50/80 px-2.5 py-2.5 shadow-inner sm:px-3'}>
+          <div
+            className={
+              borderless
+                ? ''
+                : 'rounded-lg border border-slate-200/90 bg-slate-50/80 px-2.5 py-2.5 shadow-inner dark:border-slate-600/80 dark:bg-slate-800/80 sm:px-3'
+            }
+          >
             <div className="-mx-0.5 w-full overflow-x-auto overflow-y-visible">
               <div className={ORDER_GRID_TOP + ' border-b border-slate-200/80 pb-2.5'}>
               <div className="min-w-[120px] shrink-0 text-left">
                 <div className={dateWrapClass}>
                   <span className={datePillClass}>日付</span>
                   <p
-                    className={'mt-1.5 whitespace-nowrap font-black tabular-nums text-sky-950 ' + primaryValueDate}
+                    className={
+                      'mt-1.5 whitespace-nowrap font-black tabular-nums text-sky-950 dark:text-sky-200 ' +
+                      primaryValueDate
+                    }
                     aria-label={`配車希望日 ${dateStr}`}
                   >
                     {dateStr}
@@ -1266,7 +1277,10 @@ function orderPartyInfo(order) {
                 <div className={timeWrapClass}>
                   <span className={timePillClass}>時刻</span>
                   <p
-                    className={'mt-1.5 whitespace-nowrap font-black tabular-nums text-violet-950 ' + primaryValueTime}
+                    className={
+                      'mt-1.5 whitespace-nowrap font-black tabular-nums text-violet-950 dark:text-violet-200 ' +
+                      primaryValueTime
+                    }
                     aria-label={`配車希望時刻 ${slotStr}`}
                   >
                     {slotStr}
@@ -1277,7 +1291,10 @@ function orderPartyInfo(order) {
                 <div className={unloadWrapClass}>
                   <span className={unloadPillClass}>荷卸し</span>
                   <p
-                    className={'mt-1.5 whitespace-nowrap font-black tabular-nums text-cyan-950 ' + primaryValueTime}
+                    className={
+                      'mt-1.5 whitespace-nowrap font-black tabular-nums text-cyan-950 dark:text-cyan-200 ' +
+                      primaryValueTime
+                    }
                     aria-label={`荷卸し予定時間 ${unloadDurationText}`}
                   >
                     {unloadDurationText}
@@ -1292,7 +1309,7 @@ function orderPartyInfo(order) {
                       'mt-1.5 whitespace-nowrap font-black tabular-nums ' +
                       primaryValueDate +
                       ' ' +
-                      (isLarge ? 'text-emerald-900' : 'text-amber-950')
+                      (isLarge ? 'text-emerald-900 dark:text-emerald-200' : 'text-amber-950 dark:text-amber-200')
                     }
                     aria-label={`車種 ${vehicle}`}
                   >
@@ -1308,7 +1325,7 @@ function orderPartyInfo(order) {
                       'mt-1.5 min-w-0 font-mono font-black tabular-nums ' +
                       primaryValueDate +
                       ' ' +
-                      (q.valid ? 'text-orange-950' : 'text-slate-600')
+                      (q.valid ? 'text-orange-950 dark:text-orange-200' : 'text-slate-600 dark:text-slate-300')
                     }
                     aria-label={`数量 ${q.text}`}
                   >
@@ -1324,7 +1341,7 @@ function orderPartyInfo(order) {
                       'mt-1.5 whitespace-nowrap font-black tabular-nums ' +
                       primaryValueDate +
                       ' ' +
-                      (hasTest ? 'text-fuchsia-950' : 'text-slate-600')
+                      (hasTest ? 'text-fuchsia-950 dark:text-fuchsia-200' : 'text-slate-600 dark:text-slate-300')
                     }
                     aria-label={hasTest ? '試験あり' : '試験なし'}
                   >
@@ -1336,7 +1353,7 @@ function orderPartyInfo(order) {
             </div>
             <div className={ORDER_GRID_META_2X2 + ' border-t border-slate-200/80 pt-2.5'}>
               <div className="min-w-0 text-left">
-                <p className={primaryTopLabel + ' font-bold uppercase tracking-wider text-slate-500'}>業者</p>
+                <p className={primaryFieldLabel}>業者</p>
                 <p
                   className={'mt-0.5 break-words font-bold text-slate-900 ' + (isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg')}
                   title={party.contractor}
@@ -1345,7 +1362,7 @@ function orderPartyInfo(order) {
                 </p>
               </div>
               <div className="min-w-0 border-l border-slate-200/70 pl-2 text-left">
-                <p className={primaryTopLabel + ' font-bold uppercase tracking-wider text-slate-500'}>商社</p>
+                <p className={primaryFieldLabel}>商社</p>
                 <p
                   className={'mt-0.5 break-words font-bold text-slate-900 ' + (isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg')}
                   title={trader || '—'}
@@ -1355,7 +1372,7 @@ function orderPartyInfo(order) {
               </div>
               <div className="min-w-0 border-t border-slate-200/60 pt-1.5 text-left">
                 <div className="flex flex-wrap items-start justify-between gap-2">
-                  <p className={primaryTopLabel + ' font-bold uppercase tracking-wider text-slate-500'}>現場名</p>
+                  <p className={primaryFieldLabel}>現場名</p>
                   {!isToast ? (
                     <SiteOrderUrlActions
                       urlToken={resolveSiteUrlToken(order, projectById, customerById)}
@@ -1377,10 +1394,10 @@ function orderPartyInfo(order) {
                 </p>
               </div>
               <div className="min-w-0 border-l border-t border-slate-200/60 pl-2 pt-1.5 text-left">
-                <p className={primaryTopLabel + ' font-bold uppercase tracking-wider text-slate-500'}>現場住所</p>
+                <p className={primaryFieldLabel}>現場住所</p>
                 <p
                   className={
-                    'mt-0.5 break-words font-bold leading-snug text-slate-700 ' +
+                    'mt-0.5 break-words font-bold leading-snug text-slate-700 dark:text-slate-200 ' +
                     (isToast ? 'text-xs sm:text-sm' : 'text-xs sm:text-base')
                   }
                   title={addr}

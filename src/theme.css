@@ -37,8 +37,17 @@ html.dark .bg-slate-50\/80,
 html.dark .bg-slate-50\/90 {
   background-color: rgb(17 24 39 / 0.92) !important;
 }
-html.dark .bg-slate-100 {
+html.dark .bg-slate-100,
+html.dark .bg-slate-100\/95 {
   background-color: var(--cl-bg-surface) !important;
+}
+html.dark .bg-slate-100\/95 .text-slate-700,
+html.dark .bg-slate-100\/95 .text-slate-500,
+html.dark .bg-slate-100\/95.text-slate-700 {
+  color: var(--cl-text-primary) !important;
+}
+html.dark .bg-slate-100\/95 .text-slate-500 {
+  color: var(--cl-text-muted) !important;
 }
 html.dark .bg-gray-50,
 html.dark .bg-gray-100 {
@@ -280,8 +289,24 @@ html.dark .bg-sky-200.text-sky-800,
 html.dark .bg-sky-200.text-sky-900,
 html.dark .bg-sky-200 .text-sky-800,
 html.dark .bg-sky-200 .text-sky-900,
-html.dark .from-sky-50 .text-sky-950 {
+html.dark .from-sky-50 .text-sky-950,
+html.dark .text-sky-950 {
   color: #bae6fd !important;
+}
+html.dark .text-cyan-950 {
+  color: #a5f3fc !important;
+}
+html.dark .text-emerald-900 {
+  color: #a7f3d0 !important;
+}
+html.dark .text-amber-950 {
+  color: #fde68a !important;
+}
+html.dark .text-orange-950 {
+  color: #fed7aa !important;
+}
+html.dark .text-fuchsia-950 {
+  color: #f5d0fe !important;
 }
 
 /* エメラルド系（system 通知・受注バナー等） */
