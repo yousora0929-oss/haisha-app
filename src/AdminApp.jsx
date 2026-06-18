@@ -35,6 +35,7 @@ import {
   parseSpotThresholdVolume,
 } from './utils/deliveryAreas.js';
 import { swapMainFactorySubIds } from './utils/projectFactory.js';
+import { customerSuggestTexts } from './utils/masterSuggest.js';
 import { fetchTownLocationsForMunicipality, resolveDeliveryPrefecture } from './utils/heartrailsGeo.js';
 import { SCHEDULE_BLOCK_IDS, normalizeDayBlockSchedule, todayLocalISODate } from './haishaConstants.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
@@ -376,7 +377,7 @@ function ProjectForm({
 }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [customerId, setCustomerId] = useState(initial?.customer_id ?? '');
-  const [contractorDisplayName, setContractorDisplayName] = useState(initial?.contractor_display_name ?? '');
+  const [contractorName, setContractorName] = useState('');
   const [tradingCompany, setTradingCompany] = useState(initial?.trading_company_name ?? initial?.trading_company ?? '');
   const [subContractor, setSubContractor] = useState(
     initial?.sub_contractor_name ?? initial?.contractor ?? '',
@@ -411,8 +412,19 @@ function ProjectForm({
 
   useEffect(() => {
     setName(initial?.name ?? '');
-    setCustomerId(initial?.customer_id ?? '');
-    setContractorDisplayName(initial?.contractor_display_name ?? '');
+    const display = String(initial?.contractor_display_name ?? '').trim();
+    const cid = String(initial?.customer_id ?? '').trim();
+    if (display) {
+      setContractorName(display);
+      setCustomerId(cid);
+    } else if (cid) {
+      const linked = (customers || []).find((c) => c && String(c.id) === cid);
+      setContractorName(String(linked?.company_name || linked?.name || '').trim());
+      setCustomerId(cid);
+    } else {
+      setContractorName('');
+      setCustomerId('');
+    }
     setTradingCompany(initial?.trading_company_name ?? initial?.trading_company ?? '');
     setSubContractor(initial?.sub_contractor_name ?? initial?.contractor ?? '');
     setMainFactoryId(initial?.main_factory_id ?? '');
@@ -425,7 +437,40 @@ function ProjectForm({
     setFolderUrl(initial?.folder_url ?? '');
     setSheetUrl(initial?.sheet_url ?? '');
     setAddressError('');
-  }, [initial]);
+  }, [initial, customers]);
+
+  const findCustomerByExactName = useCallback(
+    (text) => {
+      const q = String(text || '').trim().toLowerCase();
+      if (!q) return null;
+      return (
+        (customers || []).find(
+          (c) => String(c?.company_name || c?.name || '').trim().toLowerCase() === q,
+        ) || null
+      );
+    },
+    [customers],
+  );
+
+  const handleContractorNameChange = useCallback(
+    (text) => {
+      setContractorName(text);
+      const trimmed = String(text || '').trim();
+      if (!trimmed) {
+        setCustomerId('');
+        return;
+      }
+      const hit = findCustomerByExactName(trimmed);
+      if (hit) setCustomerId(String(hit.id));
+    },
+    [findCustomerByExactName],
+  );
+
+  const handleContractorSelect = useCallback((customer) => {
+    if (!customer?.id) return;
+    setCustomerId(String(customer.id));
+    setContractorName(String(customer.company_name || customer.name || '').trim());
+  }, []);
 
   useEffect(() => {
     const municipality = String(deliveryArea || '').trim();
@@ -535,10 +580,34 @@ function ProjectForm({
     }
     setAddressError('');
     setMainFactorySwapNotice('');
+    const typed = contractorName.trim();
+    let nextCustomerId = String(customerId || '').trim();
+    let nextDisplayName = '';
+
+    if (!typed) {
+      nextCustomerId = '';
+    } else {
+      const exactHit = findCustomerByExactName(typed);
+      const linked = nextCustomerId
+        ? (customers || []).find((c) => c && String(c.id) === nextCustomerId)
+        : null;
+      const masterName = linked ? String(linked.company_name || linked.name || '').trim() : '';
+
+      if (exactHit) {
+        nextCustomerId = String(exactHit.id);
+        const exactMaster = String(exactHit.company_name || exactHit.name || '').trim();
+        if (typed !== exactMaster) nextDisplayName = typed;
+      } else if (nextCustomerId && masterName && typed !== masterName) {
+        nextDisplayName = typed;
+      } else if (!nextCustomerId) {
+        nextDisplayName = typed;
+      }
+    }
+
     onSave({
       name: name.trim(),
-      customer_id: customerId,
-      contractor_display_name: contractorDisplayName.trim(),
+      customer_id: nextCustomerId,
+      contractor_display_name: nextDisplayName,
       trading_company_name: tradingCompany.trim(),
       trading_company: tradingCompany.trim(),
       contractor: subContractor.trim(),
@@ -567,29 +636,24 @@ function ProjectForm({
         <input id="proj-name" type="text" value={name} onChange={(e) => setName(e.target.value)} className={fieldClass} required />
       </div>
       <div>
-        <label className="text-xs font-bold text-slate-600" htmlFor="proj-customer">業者（元請）</label>
-        <select id="proj-customer" value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={fieldClass}>
-          <option value="">未設定</option>
-          {(customers || []).map((c) => (
-            <option key={c.id} value={c.id}>{c.company_name || c.name}</option>
-          ))}
-        </select>
-      </div>
-      <div>
-        <label className="text-xs font-bold text-slate-600" htmlFor="proj-contractor-display">
-          業者名（表記用・自由入力）
-        </label>
-        <p className="mt-0.5 text-[11px] font-medium text-slate-500">
-          印刷物・専用URL表示などに使う業者名（任意）
-        </p>
-        <input
-          id="proj-contractor-display"
-          type="text"
-          value={contractorDisplayName}
-          onChange={(e) => setContractorDisplayName(e.target.value)}
-          className={fieldClass}
-          placeholder="例: 〇〇建設（表記用）"
+        <MasterSuggestInput
+          label="業者（元請）"
+          htmlFor="proj-contractor"
+          name="proj_contractor"
+          value={contractorName}
+          onValueChange={handleContractorNameChange}
+          onSelect={handleContractorSelect}
+          items={customers}
+          getItemKey={(c) => String(c.id)}
+          getItemLabel={(c) => String(c.company_name || c.name || c.id || '').trim()}
+          getSearchTexts={customerSuggestTexts}
+          placeholder="業者名を入力（候補から選択可）"
+          emptyHint="該当する業者がありません（自由入力で表記用として保存できます）"
+          inputClassName="min-h-[44px] rounded-lg border-2 border-slate-200 px-3 py-2 text-sm"
         />
+        <p className="mt-1 text-[11px] font-medium text-slate-500">
+          業者マスタから選ぶと紐づけられます。候補にない名称も自由入力でき、印刷物・専用URLの表記に使われます（任意）。
+        </p>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div onBlur={handleTradingCompanyBlur}>
@@ -963,10 +1027,10 @@ function ProjectsSection({ factories, factoryNameById }) {
                 <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50/80">
                   <td className="px-3 py-2.5 font-bold text-slate-900">{p.name}</td>
                   <td className="px-3 py-2.5 text-slate-700">
-                    <div>{customers.find((c) => c.id === p.customer_id)?.company_name || customers.find((c) => c.id === p.customer_id)?.name || '—'}</div>
-                    {p.contractor_display_name?.trim() ? (
-                      <div className="mt-0.5 text-xs font-medium text-slate-500">{p.contractor_display_name.trim()}</div>
-                    ) : null}
+                    {p.contractor_display_name?.trim()
+                      || customers.find((c) => c.id === p.customer_id)?.company_name
+                      || customers.find((c) => c.id === p.customer_id)?.name
+                      || '—'}
                   </td>
                   <td className="px-3 py-2.5 text-slate-700">{(p.trading_company_name || p.trading_company)?.trim() || '—'}</td>
                   <td className="px-3 py-2.5 text-slate-700">{(p.sub_contractor_name || p.contractor)?.trim() || '—'}</td>
