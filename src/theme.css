@@ -125,9 +125,17 @@ html.dark .text-gray-800,
 html.dark .text-gray-700 {
   color: var(--cl-text-primary) !important;
 }
-html.dark .text-slate-600,
-html.dark .text-slate-500 {
+html.dark .text-slate-600 {
   color: var(--cl-text-muted) !important;
+}
+html.dark .text-slate-500,
+html.dark .dark\:text-slate-500 {
+  color: #d1d5db !important;
+}
+html.dark .text-\[10px\].text-slate-500,
+html.dark .text-\[11px\].text-slate-500,
+html.dark .text-xs.text-slate-500 {
+  color: #e5e7eb !important;
 }
 html.dark .text-slate-400,
 html.dark .dark\:text-slate-400 {
@@ -194,16 +202,26 @@ html.dark .opacity-65 {
   opacity: 0.85 !important;
 }
 html.dark .opacity-70 {
-  opacity: 0.85 !important;
+  opacity: 0.92 !important;
 }
 html.dark .opacity-75 {
-  opacity: 0.88 !important;
+  opacity: 0.95 !important;
 }
 html.dark .opacity-\[0\.72\] {
   opacity: 0.88 !important;
 }
 html.dark .opacity-80 {
-  opacity: 0.9 !important;
+  opacity: 0.95 !important;
+}
+
+/* チャット吹き出し等 — パステル背景をトーンダウン */
+html.dark .bg-sky-100,
+html.dark .bg-sky-50 {
+  background-color: rgb(7 89 133 / 0.45) !important;
+}
+html.dark .bg-emerald-100,
+html.dark .bg-emerald-50 {
+  background-color: rgb(6 78 59 / 0.45) !important;
 }
 
 /* ── 淡色背景上の暗い文字（工場カード・バナー等） ─────────────────────────── */
@@ -227,10 +245,111 @@ html.dark .bg-red-100 .text-red-700 {
   color: #fca5a5 !important;
 }
 
+/* バイオレット系（時刻バッジ等） */
+html.dark .bg-violet-50.text-violet-700,
+html.dark .bg-violet-50.text-violet-800,
+html.dark .bg-violet-50.text-violet-900,
 html.dark .bg-violet-50 .text-violet-700,
-html.dark .bg-violet-50 .text-violet-800 {
+html.dark .bg-violet-50 .text-violet-800,
+html.dark .bg-violet-50 .text-violet-900,
+html.dark .bg-violet-100.text-violet-700,
+html.dark .bg-violet-100.text-violet-800,
+html.dark .bg-violet-100.text-violet-900,
+html.dark .bg-violet-100 .text-violet-700,
+html.dark .bg-violet-100 .text-violet-800,
+html.dark .bg-violet-100 .text-violet-900,
+html.dark .from-violet-50 .text-violet-950,
+html.dark .from-violet-50 .text-violet-900 {
   color: #c4b5fd !important;
 }
+
+/* スカイ系（チャット自分側等） */
+html.dark .bg-sky-50.text-sky-700,
+html.dark .bg-sky-50.text-sky-800,
+html.dark .bg-sky-50.text-sky-900,
+html.dark .bg-sky-50 .text-sky-700,
+html.dark .bg-sky-50 .text-sky-800,
+html.dark .bg-sky-50 .text-sky-900,
+html.dark .bg-sky-100.text-sky-700,
+html.dark .bg-sky-100.text-sky-800,
+html.dark .bg-sky-100.text-sky-900,
+html.dark .bg-sky-100 .text-sky-700,
+html.dark .bg-sky-100 .text-sky-800,
+html.dark .bg-sky-100 .text-sky-900,
+html.dark .bg-sky-200.text-sky-800,
+html.dark .bg-sky-200.text-sky-900,
+html.dark .bg-sky-200 .text-sky-800,
+html.dark .bg-sky-200 .text-sky-900,
+html.dark .from-sky-50 .text-sky-950 {
+  color: #bae6fd !important;
+}
+
+/* エメラルド系（system 通知・受注バナー等） */
+html.dark .bg-emerald-50.text-emerald-700,
+html.dark .bg-emerald-50.text-emerald-800,
+html.dark .bg-emerald-50.text-emerald-900,
+html.dark .bg-emerald-50 .text-emerald-700,
+html.dark .bg-emerald-50 .text-emerald-800,
+html.dark .bg-emerald-50 .text-emerald-900,
+html.dark .bg-emerald-100.text-emerald-700,
+html.dark .bg-emerald-100.text-emerald-800,
+html.dark .bg-emerald-100.text-emerald-900,
+html.dark .bg-emerald-100 .text-emerald-700,
+html.dark .bg-emerald-100 .text-emerald-800,
+html.dark .bg-emerald-100 .text-emerald-900,
+html.dark .from-emerald-50 .text-emerald-900 {
+  color: #a7f3d0 !important;
+}
+
+/* シアン系（数量バッジなど） */
+html.dark .bg-cyan-50.text-cyan-700,
+html.dark .bg-cyan-50.text-cyan-800,
+html.dark .bg-cyan-50.text-cyan-900,
+html.dark .bg-cyan-50 .text-cyan-700,
+html.dark .bg-cyan-50 .text-cyan-800,
+html.dark .bg-cyan-50 .text-cyan-900,
+html.dark .bg-cyan-100.text-cyan-800,
+html.dark .bg-cyan-100.text-cyan-900,
+html.dark .bg-cyan-100 .text-cyan-800,
+html.dark .bg-cyan-100 .text-cyan-900,
+html.dark .from-cyan-50 .text-cyan-950 {
+  color: #a5f3fc !important;
+}
+
+/* インディゴ系 */
+html.dark .bg-indigo-50.text-indigo-700,
+html.dark .bg-indigo-50.text-indigo-800,
+html.dark .bg-indigo-50.text-indigo-900,
+html.dark .bg-indigo-50 .text-indigo-700,
+html.dark .bg-indigo-50 .text-indigo-800,
+html.dark .bg-indigo-50 .text-indigo-900,
+html.dark .bg-indigo-100.text-indigo-700,
+html.dark .bg-indigo-100.text-indigo-800,
+html.dark .bg-indigo-100.text-indigo-900,
+html.dark .bg-indigo-100 .text-indigo-700,
+html.dark .bg-indigo-100 .text-indigo-800,
+html.dark .bg-indigo-100 .text-indigo-900 {
+  color: #c7d2fe !important;
+}
+
+/* ローズ系 */
+html.dark .bg-rose-50.text-rose-700,
+html.dark .bg-rose-50.text-rose-800,
+html.dark .bg-rose-50 .text-rose-700,
+html.dark .bg-rose-50 .text-rose-800,
+html.dark .bg-rose-100.text-rose-700,
+html.dark .bg-rose-100.text-rose-800,
+html.dark .bg-rose-100 .text-rose-700,
+html.dark .bg-rose-100 .text-rose-800 {
+  color: #fda4af !important;
+}
+
+/* パステル背景なしの補助テキスト（地図登録済み表示など） */
+html.dark .text-emerald-800 {
+  color: #6ee7b7 !important;
+}
+
+/* cl-alert 系は後段ルールで彩度維持 — ここでは上書きしない */
 
 /* ── ホバー ─────────────────────────────────────────────────────────────── */
 html.dark .shadow-inner {
