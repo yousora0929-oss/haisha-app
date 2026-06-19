@@ -1204,6 +1204,13 @@ export function resolveScheduleCheckFactoryId(order) {
  * @param {Record<string, ReturnType<typeof normalizeFullSchedule>>} schedulesByFactoryId - 工場 id → 日付別スケジュール
  * @param {Record<string, string>} [factoryNameById] - 工場 id → 表示名（省略時は注文の factorySiteName / デフォルト）
  */
+function scheduleAutoRejectedFactoryIds(order) {
+  const raw =
+    order?.schedule_auto_rejected_factory_ids ?? order?.scheduleAutoRejectedFactoryIds ?? [];
+  if (!Array.isArray(raw)) return [];
+  return [...new Set(raw.map((x) => String(x).trim()).filter(Boolean))];
+}
+
 export async function persistScheduleAutoRejections({
   schedulesByFactoryId,
   orders,
@@ -1217,24 +1224,34 @@ export async function persistScheduleAutoRejections({
   const nextThreads = { ...chatThreads };
   const next = orders.map((o) => {
     if (!o || !o.id) return o;
-    if (o.factoryResponseStatus || o.scheduleAutoChecked) return o;
     const date = o.scheduleMatchDate || o.preferredDate;
-    if (!date || typeof date !== 'string') {
-      changed = true;
-      return { ...o, scheduleAutoChecked: true };
-    }
     const fid = resolveScheduleCheckFactoryId(o);
-    if (!fid) {
-      changed = true;
-      return { ...o, scheduleAutoChecked: true };
+    const currentRejected = Array.isArray(o.rejected_factory_ids)
+      ? o.rejected_factory_ids.map((x) => String(x).trim()).filter(Boolean)
+      : [];
+    const alreadyRejectedByFid = Boolean(fid && currentRejected.includes(fid));
+
+    if (!date || typeof date !== 'string') {
+      if (!o.scheduleAutoChecked) changed = true;
+      return o.scheduleAutoChecked ? o : { ...o, scheduleAutoChecked: true };
     }
+    if (!fid) {
+      if (!o.scheduleAutoChecked) changed = true;
+      return o.scheduleAutoChecked ? o : { ...o, scheduleAutoChecked: true };
+    }
+
     const scheduleMap = normalizeFullSchedule(byF[fid] || {});
     const dayBlocks = normalizeDayBlockSchedule(scheduleMap[date]);
     const reason = computeScheduleAutoRejectReason(o, dayBlocks);
+
     if (!reason) {
-      changed = true;
-      return { ...o, scheduleAutoChecked: true };
+      if (!o.scheduleAutoChecked) changed = true;
+      return o.scheduleAutoChecked ? o : { ...o, scheduleAutoChecked: true };
     }
+
+    // 満車判定済み・当該工場は既に拒否済みならスキップ
+    if (o.scheduleAutoChecked && alreadyRejectedByFid) return o;
+
     changed = true;
     const id = o.id;
     const body = `${reason}\n（満車のため拒否 — システム自動応答）`;
@@ -1246,19 +1263,29 @@ export async function persistScheduleAutoRejections({
       createdAt: new Date().toISOString(),
     });
     nextThreads[id] = list.slice(-100);
+
+    const nextRejected = [...new Set([...currentRejected, fid])];
+    const nextScheduleAuto = [...new Set([...scheduleAutoRejectedFactoryIds(o), fid])];
+    const orderStatus = String(o.status || 'pending').trim() || 'pending';
     const resolvedName =
       (o.factorySiteName && String(o.factorySiteName).trim()) ||
       (fid && factoryNameById[fid]) ||
       defaultFactorySiteName;
+
     return {
       ...o,
-      factoryResponseStatus: 'rejected',
-      factoryResponseLocked: true,
-      factoryRejectSource: 'schedule_auto',
-      factorySiteName: resolvedName,
-      factorySiteId: fid || defaultFactorySiteId,
+      status: orderStatus === 'accepted' ? orderStatus : 'pending',
+      rejected_factory_ids: nextRejected,
+      schedule_auto_rejected_factory_ids: nextScheduleAuto,
+      scheduleAutoRejectedFactoryIds: nextScheduleAuto,
       scheduleAutoChecked: true,
-      acceptedFactoryLabel: undefined,
+      factoryRejectSource: 'schedule_auto',
+      factorySiteName: resolvedName || o.factorySiteName || defaultFactorySiteName,
+      factorySiteId: orderStatus === 'accepted' ? (o.factorySiteId ?? o.factory_site_id) : null,
+      factory_site_id: orderStatus === 'accepted' ? (o.factory_site_id ?? o.factorySiteId) : null,
+      factoryResponseStatus: orderStatus === 'accepted' ? o.factoryResponseStatus : null,
+      factoryResponseLocked: orderStatus === 'accepted' ? o.factoryResponseLocked : null,
+      acceptedFactoryLabel: orderStatus === 'accepted' ? o.acceptedFactoryLabel : undefined,
       factoryPendingStartedAt: undefined,
       factoryPendingByName: undefined,
       factoryUnlockRequested: false,

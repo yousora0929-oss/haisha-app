@@ -1,6 +1,12 @@
-/** onesignal-push v24 — 拒否通知は「全社拒否（エスカレーション最終段階到達）」時のみ送信 */
+/** onesignal-push v25 — 満車自動拒否時のエスカレーション拡大通知 */
 
-const FUNCTION_VERSION = 24;
+import {
+  computeNewlyVisibleFactoryIds,
+  type EscalationPushContext,
+  type EscalationStep,
+} from '../_shared/escalationVisibility.ts';
+
+const FUNCTION_VERSION = 25;
 const PUSH_NOTIFY_COOLDOWN_MS = 60_000;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 
@@ -27,7 +33,8 @@ type PushEvent =
   | 'consult_start'
   | 'customer_chat'
   | 'factory_chat'
-  | 'customer_map_shared';
+  | 'customer_map_shared'
+  | 'escalation_expanded';
 
 type SlimPayload = {
   event?: PushEvent | string;
@@ -52,6 +59,8 @@ type OrderRow = {
   customer_id?: string | null;
   factory_site_id?: string | null;
   preferred_factory_id?: string | null;
+  project_id?: string | null;
+  factory_consult_status?: string | null;
   override_map_image_url?: string | null;
   map_annotations?: unknown;
   is_location_pending?: boolean | null;
@@ -1025,6 +1034,184 @@ async function sendToFactoryAudience(
   return sent;
 }
 
+async function fetchEscalationPushContext(projectId?: string): Promise<EscalationPushContext | null> {
+  const base = Deno.env.get('SUPABASE_URL')?.replace(/\/$/, '') || '';
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  if (!base || !serviceKey) return null;
+
+  const headers = {
+    apikey: serviceKey,
+    Authorization: `Bearer ${serviceKey}`,
+    Accept: 'application/json',
+  };
+
+  try {
+    const fetches: Promise<Response>[] = [
+      fetch(`${base}/rest/v1/factories?select=id,latitude,longitude`, { headers }),
+      fetch(`${base}/rest/v1/holidays?select=holiday_date`, { headers }),
+      fetch(`${base}/rest/v1/system_settings?select=start_time,end_time&id=eq.1`, { headers }),
+      fetch(
+        `${base}/rest/v1/factory_escalation_steps?select=factory_id,step_number,trigger_minutes,target_factory_count&order=factory_id.asc,trigger_minutes.asc`,
+        { headers },
+      ),
+    ];
+    if (projectId) {
+      fetches.push(
+        fetch(
+          `${base}/rest/v1/projects?select=id,main_factory_id,lat,lng&id=eq.${encodeURIComponent(projectId)}`,
+          { headers },
+        ),
+      );
+    }
+
+    const responses = await Promise.all(fetches);
+    const [factoriesRes, holidaysRes, settingsRes, stepsRes, projectRes] = responses;
+
+    if (!factoriesRes.ok) {
+      console.warn('[onesignal-push] escalation context factories fetch failed', factoriesRes.status);
+      return null;
+    }
+
+    const factories = await factoriesRes.json();
+    const holidays = holidaysRes.ok ? await holidaysRes.json() : [];
+    const settingsRows = settingsRes.ok ? await settingsRes.json() : [];
+    const stepRows = stepsRes.ok ? await stepsRes.json() : [];
+    const projectRows = projectRes?.ok ? await projectRes.json() : [];
+
+    const escalationStepsByFactoryId: Record<string, EscalationStep[]> = {};
+    for (const row of asArray(stepRows)) {
+      const o = asObject(row);
+      const fid = pickString(o.factory_id);
+      if (!fid) continue;
+      if (!escalationStepsByFactoryId[fid]) escalationStepsByFactoryId[fid] = [];
+      escalationStepsByFactoryId[fid].push({
+        step_number: Number(o.step_number) || 0,
+        trigger_minutes: Math.max(0, Number(o.trigger_minutes) || 0),
+        target_factory_count: Math.max(1, Number(o.target_factory_count) || 1),
+      });
+    }
+
+    const projectById: Record<string, { id?: string; main_factory_id?: string | null; lat?: number; lng?: number }> = {};
+    for (const row of asArray(projectRows)) {
+      const o = asObject(row);
+      const id = pickString(o.id);
+      if (!id) continue;
+      projectById[id] = {
+        id,
+        main_factory_id: pickString(o.main_factory_id) || null,
+        lat: Number(o.lat),
+        lng: Number(o.lng),
+      };
+    }
+
+    const settingsRow = asObject(asArray(settingsRows)[0]);
+    return {
+      factories: asArray(factories) as EscalationPushContext['factories'],
+      projectById,
+      settings: {
+        start_time: pickString(settingsRow.start_time) || '08:00:00',
+        end_time: pickString(settingsRow.end_time) || '16:00:00',
+      },
+      holidays: asArray(holidays) as EscalationPushContext['holidays'],
+      escalationStepsByFactoryId,
+      now: new Date(),
+    };
+  } catch (error) {
+    console.warn('[onesignal-push] escalation context fetch error', error);
+    return null;
+  }
+}
+
+function buildOldRowForRejectionDiff(newRow: OrderRow, oldRow?: OrderRow | null): OrderRow {
+  if (oldRow) return oldRow;
+  const rejected = asArray(newRow.rejected_factory_ids);
+  if (!rejected.length) return { ...newRow, rejected_factory_ids: [] };
+  return { ...newRow, rejected_factory_ids: rejected.slice(0, -1) };
+}
+
+function rejectedFactoryIdsArray(row?: OrderRow | null): string[] {
+  if (!row) return [];
+  const direct = asArray(row.rejected_factory_ids);
+  if (direct.length) {
+    return [...new Set(direct.map((x) => pickString(x)).filter(Boolean))];
+  }
+  const od = orderData(row);
+  return [...new Set(asArray(od.rejected_factory_ids ?? od.rejectedFactoryIds).map((x) => pickString(x)).filter(Boolean))];
+}
+
+async function sendEscalationExpandedNotifications(
+  row: OrderRow | null | undefined,
+  payload: SlimPayload | null | undefined,
+  orderId: string,
+  oldRow?: OrderRow | null,
+): Promise<string[]> {
+  let newRow = row ?? null;
+  if (!newRow && orderId) newRow = await fetchOrderRow(orderId);
+  if (!newRow) {
+    console.log('[onesignal-push] escalation_expanded skip: order unavailable', { orderId });
+    return [];
+  }
+
+  const status = effectiveStatus(newRow);
+  if (status !== 'pending' && status !== 'pending_association' && status !== '') {
+    console.log('[onesignal-push] escalation_expanded skip: not pending', { orderId, status });
+    return [];
+  }
+  if (pickString(newRow.factory_consult_status) === 'consulting') {
+    console.log('[onesignal-push] escalation_expanded skip: consulting', { orderId });
+    return [];
+  }
+
+  const oldRejected = rejectedFactoryIdsArray(oldRow ?? buildOldRowForRejectionDiff(newRow));
+  const newRejected = rejectedFactoryIdsArray(newRow);
+  if (newRejected.length <= oldRejected.length) {
+    console.log('[onesignal-push] escalation_expanded skip: rejected list did not grow', {
+      orderId,
+      oldRejected,
+      newRejected,
+    });
+    return [];
+  }
+
+  const pid = pickString(newRow.project_id, orderData(newRow).project_id, orderData(newRow).projectId);
+  const ctx = await fetchEscalationPushContext(pid || undefined);
+  if (!ctx) {
+    console.log('[onesignal-push] escalation_expanded skip: context unavailable', { orderId });
+    return [];
+  }
+
+  const oldState = oldRow ?? buildOldRowForRejectionDiff(newRow);
+  const newlyVisible = computeNewlyVisibleFactoryIds(oldState, newRow, ctx);
+  if (!newlyVisible.length) {
+    console.log('[onesignal-push] escalation_expanded skip: no newly visible factories', { orderId });
+    return [];
+  }
+
+  const contractorName = pickString(
+    payload?.contractor_name,
+    orderData(newRow).customerName,
+    orderData(newRow).customer_name,
+    orderData(newRow).contractorName,
+    '新規注文',
+  );
+  const message = `新規注文が入りました：${contractorName}`;
+  const data = { type: 'escalation_expanded', orderId, targetApp: 'factory' };
+  const customerId = resolveOrderCustomerId(newRow, payload);
+  const factoryIds = withoutExternalIds(newlyVisible, customerId);
+
+  console.log('[onesignal-push] escalation_expanded notify', { orderId, factoryIds, newlyVisible });
+
+  if (!factoryIds.length) return [];
+
+  if (await sendToExternalIds(factoryIds, message, data, {
+    orderId,
+    title: '【配車依頼】新しい注文があります',
+  })) {
+    return ['factory:escalation_expanded'];
+  }
+  return [];
+}
+
 async function sendNewOrderNotifications(
   row: OrderRow | null | undefined,
   payload: SlimPayload | null | undefined,
@@ -1269,6 +1456,11 @@ async function processSlimPayload(payload: SlimPayload): Promise<string[]> {
       sent.push(...await sendCustomerMapSharedNotifications(row, payload, orderId));
       break;
     }
+    case 'escalation_expanded': {
+      const row = orderId ? await fetchOrderRow(orderId) : null;
+      sent.push(...await sendEscalationExpandedNotifications(row, payload, orderId));
+      break;
+    }
     default:
       console.warn('[onesignal-push] unknown event', event);
   }
@@ -1323,6 +1515,12 @@ async function processLegacyWebhook(payload: LegacyWebhookPayload): Promise<stri
 
     if (wasMapSharedOrUpdated(oldRecord, record)) {
       sent.push(...await sendCustomerMapSharedNotifications(record, null, orderId));
+    }
+
+    const oldRejectedLen = rejectedFactoryIdsArray(oldRecord).length;
+    const newRejectedLen = rejectedFactoryIdsArray(record).length;
+    if (newRejectedLen > oldRejectedLen) {
+      sent.push(...await sendEscalationExpandedNotifications(record, null, orderId, oldRecord));
     }
   }
 
