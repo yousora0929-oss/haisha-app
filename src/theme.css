@@ -69,7 +69,8 @@ html.dark .bg-gray-900 {
 }
 
 /* 淡色アクセント（一覧カード等・低彩度） */
-html.dark .bg-indigo-50 {
+html.dark .bg-indigo-50,
+html.dark .bg-indigo-50\/70 {
   background-color: rgb(49 46 129 / 0.35) !important;
 }
 html.dark .bg-sky-50,
@@ -159,6 +160,7 @@ html.dark .dark\:text-gray-300 {
   color: #e5e7eb !important;
 }
 html.dark .dark\:text-slate-100,
+html.dark .dark\:text-slate-200,
 html.dark .dark\:text-gray-100,
 html.dark .text-gray-100 {
   color: var(--cl-text-primary) !important;

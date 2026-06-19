@@ -1214,6 +1214,10 @@ function orderPartyInfo(order) {
       const primaryTopLabel = isToast ? 'text-[10px] sm:text-[11px]' : 'text-[11px] sm:text-xs';
       const primaryFieldLabel =
         primaryTopLabel + ' font-bold uppercase tracking-wider text-slate-500 dark:text-slate-300';
+      const primaryFieldValue =
+        'font-bold text-slate-900 dark:text-slate-100';
+      const primaryFieldValueSm =
+        'font-bold leading-snug text-slate-700 dark:text-slate-100';
       const primaryValueDate = isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg';
       const primaryValueTime = isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg';
       const dateWrapClass =
@@ -1351,26 +1355,26 @@ function orderPartyInfo(order) {
               </div>
             </div>
             </div>
-            <div className={ORDER_GRID_META_2X2 + ' border-t border-slate-200/80 pt-2.5'}>
+            <div className={ORDER_GRID_META_2X2 + ' border-t border-slate-200/80 pt-2.5 dark:border-slate-600/80'}>
               <div className="min-w-0 text-left">
                 <p className={primaryFieldLabel}>業者</p>
                 <p
-                  className={'mt-0.5 break-words font-bold text-slate-900 ' + (isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg')}
+                  className={'mt-0.5 break-words ' + primaryFieldValue + ' ' + (isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg')}
                   title={party.contractor}
                 >
                   {party.contractor}
                 </p>
               </div>
-              <div className="min-w-0 border-l border-slate-200/70 pl-2 text-left">
+              <div className="min-w-0 border-l border-slate-200/70 pl-2 text-left dark:border-slate-600/70">
                 <p className={primaryFieldLabel}>商社</p>
                 <p
-                  className={'mt-0.5 break-words font-bold text-slate-900 ' + (isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg')}
+                  className={'mt-0.5 break-words ' + primaryFieldValue + ' ' + (isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg')}
                   title={trader || '—'}
                 >
                   {trader || '—'}
                 </p>
               </div>
-              <div className="min-w-0 border-t border-slate-200/60 pt-1.5 text-left">
+              <div className="min-w-0 border-t border-slate-200/60 pt-1.5 text-left dark:border-slate-600/60">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <p className={primaryFieldLabel}>現場名</p>
                   {!isToast ? (
@@ -1387,17 +1391,19 @@ function orderPartyInfo(order) {
                   ) : null}
                 </div>
                 <p
-                  className={'mt-0.5 break-words font-bold text-slate-900 ' + (isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg')}
+                  className={'mt-0.5 break-words ' + primaryFieldValue + ' ' + (isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg')}
                   title={party.site}
                 >
                   {party.site}
                 </p>
               </div>
-              <div className="min-w-0 border-l border-t border-slate-200/60 pl-2 pt-1.5 text-left">
+              <div className="min-w-0 border-l border-t border-slate-200/60 pl-2 pt-1.5 text-left dark:border-slate-600/60">
                 <p className={primaryFieldLabel}>現場住所</p>
                 <p
                   className={
-                    'mt-0.5 break-words font-bold leading-snug text-slate-700 dark:text-slate-200 ' +
+                    'mt-0.5 break-words ' +
+                    primaryFieldValueSm +
+                    ' ' +
                     (isToast ? 'text-xs sm:text-sm' : 'text-xs sm:text-base')
                   }
                   title={addr}
@@ -1430,7 +1436,7 @@ function orderPartyInfo(order) {
         }
         return (
         <div className="grid min-w-0 gap-2">
-          <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50/70 p-2 shadow-inner">
+          <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50/70 p-2 shadow-inner dark:border-indigo-500/40 dark:bg-indigo-950/35">
             {renderPrimarySummary({ borderless: true })}
           </div>
           <div className="flex flex-wrap items-center gap-2">
