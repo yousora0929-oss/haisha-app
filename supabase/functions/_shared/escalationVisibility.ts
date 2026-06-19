@@ -20,11 +20,12 @@ type OrderLike = {
   project_id?: string | null;
   preferred_factory_id?: string | null;
   factory_site_id?: string | null;
+  factory_consult_status?: string | null;
+  factory_consult_by_factory_id?: string | null;
   is_spot?: boolean | null;
   delivery_lat?: number | string | null;
   delivery_lng?: number | string | null;
   rejected_factory_ids?: unknown;
-  factory_consult_status?: string | null;
 };
 
 type FactoryLike = {
@@ -36,6 +37,9 @@ type FactoryLike = {
 type ProjectLike = {
   id?: string;
   main_factory_id?: string | null;
+  sub_factory_ids?: unknown;
+  lat?: number | string | null;
+  lng?: number | string | null;
 };
 
 export type EscalationPushContext = {
@@ -95,7 +99,7 @@ function getActiveEscalationStep(steps: EscalationStep[], effectiveMinutes: numb
   for (const step of list) {
     if (minutes >= step.trigger_minutes) active = step;
   }
-  return active || { step_number: 1, trigger_minutes: 0, target_factory_count: 1 };
+  return active || { step_number: 1, trigger_minutes: 0, target_factory_count: 3 };
 }
 
 function rejectedFactoryIdSet(order?: OrderLike | null): Set<string> {
@@ -258,24 +262,17 @@ function getOrderSiteCoords(order: OrderLike, projectById: Record<string, Projec
 
   const pid = orderProjectId(order);
   const project = pid ? projectById[pid] : null;
-  const plat = Number((project as { lat?: number })?.lat);
-  const plng = Number((project as { lng?: number })?.lng);
+  const plat = Number(project?.lat);
+  const plng = Number(project?.lng);
   if (Number.isFinite(plat) && Number.isFinite(plng)) return { lat: plat, lng: plng };
   return null;
 }
 
-function rankFactoryIdsForOrder(order: OrderLike, ctx: EscalationPushContext): string[] {
+function sortFactoryIdsByDistance(order: OrderLike, ctx: EscalationPushContext): string[] {
   const known = (ctx.factories || [])
     .map((f) => pickString(f.id))
     .filter(Boolean);
-  const preferredId = orderPreferredFactoryId(order);
   const siteCoords = getOrderSiteCoords(order, ctx.projectById);
-  const od = orderData(order);
-  const userSpecified =
-    order.preferred_factory_user_specified === true ||
-    od.preferred_factory_user_specified === true ||
-    od.preferredFactoryUserSpecified === true;
-
   const rankedWithDist = (ctx.factories || [])
     .map((f) => {
       const id = pickString(f.id);
@@ -287,56 +284,123 @@ function rankFactoryIdsForOrder(order: OrderLike, ctx: EscalationPushContext): s
     })
     .filter((x): x is { id: string; dist: number } => Boolean(x))
     .sort((a, b) => a.dist - b.dist || a.id.localeCompare(b.id));
+  const ranked = rankedWithDist.map((x) => x.id);
+  return ranked.length ? ranked : known;
+}
 
-  let ranked = rankedWithDist.map((x) => x.id);
-  if (!ranked.length) ranked = [...known];
+/** escalationUtils.buildCandidateFactoryIds と同等 */
+export function buildCandidateFactoryIds(order: OrderLike, ctx: EscalationPushContext): string[] {
+  const rejectedIds = rejectedFactoryIdSet(order);
+  const known = (ctx.factories || [])
+    .map((f) => pickString(f.id))
+    .filter(Boolean);
+  const knownSet = new Set(known);
+  const od = orderData(order);
+  const pid = orderProjectId(order);
+  const project = pid ? ctx.projectById[pid] : null;
 
-  if (userSpecified && preferredId && known.includes(preferredId)) {
-    ranked = [preferredId, ...ranked.filter((id) => id !== preferredId)];
+  const vipIds = [
+    orderPreferredFactoryId(order),
+    pickString(od.main_factory_id, od.mainFactoryId),
+    pickString(project?.main_factory_id),
+  ].filter((id) => id && knownSet.has(id));
+
+  const subSource = od.sub_factory_ids ?? od.subFactoryIds ?? project?.sub_factory_ids ?? [];
+  const subIds = asArray(subSource)
+    .map((x) => pickString(x))
+    .filter((id) => id && knownSet.has(id));
+
+  const sortedByDistance = sortFactoryIdsByDistance(order, ctx);
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  for (const id of [...vipIds, ...subIds, ...sortedByDistance]) {
+    if (!id || seen.has(id) || rejectedIds.has(id)) continue;
+    candidates.push(id);
+    seen.add(id);
   }
 
-  return ranked.length ? ranked : known;
+  if (!candidates.length && known.length) {
+    const preferredId = orderPreferredFactoryId(order);
+    if (preferredId && knownSet.has(preferredId)) return [preferredId];
+    const mainId = pickString(project?.main_factory_id);
+    if (mainId && knownSet.has(mainId)) return [mainId];
+    return [...known];
+  }
+
+  return candidates;
 }
 
 function resolveEscalationAnchorFactoryId(
   order: OrderLike,
   project: ProjectLike | null | undefined,
-  ranked: string[],
+  candidates: string[],
 ): string {
-  const od = orderData(order);
-  const userSpecified =
-    order.preferred_factory_user_specified === true ||
-    od.preferred_factory_user_specified === true ||
-    od.preferredFactoryUserSpecified === true;
-  const preferredId = userSpecified ? orderPreferredFactoryId(order) : '';
+  const preferredId = orderPreferredFactoryId(order);
   if (preferredId) return preferredId;
+  const od = orderData(order);
+  const mainFromOrder = pickString(od.main_factory_id, od.mainFactoryId);
+  if (mainFromOrder) return mainFromOrder;
   const mainId = pickString(project?.main_factory_id);
   if (mainId) return mainId;
-  return ranked[0] || '';
+  return candidates[0] || '';
+}
+
+export function isOrderVisibleToFactory(order: OrderLike, factoryId: string, ctx: EscalationPushContext): boolean {
+  const fid = pickString(factoryId);
+  if (!fid) return false;
+
+  const rejectedIds = rejectedFactoryIdSet(order);
+  if (rejectedIds.has(fid)) return false;
+
+  const od = orderData(order);
+  const status = pickString(order?.status, od.status);
+  if (status === 'deleted' || status === 'pending_association') return false;
+
+  const assigned = pickString(order?.factory_site_id, od.factory_site_id, od.factorySiteId);
+  if (assigned) return assigned === fid;
+
+  const consultStatus = pickString(order?.factory_consult_status, od.factory_consult_status, od.factoryConsultStatus);
+  if (consultStatus === 'consulting' && status !== 'accepted') {
+    const consultBy = pickString(order?.factory_consult_by_factory_id, od.factory_consult_by_factory_id, od.factoryConsultByFactoryId);
+    return Boolean(consultBy) && fid === consultBy;
+  }
+
+  const isSpot = Boolean(order?.is_spot ?? od.is_spot);
+  const pid = orderProjectId(order);
+  const project = pid && !isSpot ? ctx.projectById[pid] : null;
+
+  if (status === 'accepted') {
+    if (!assigned) return false;
+    if (!isSpot) {
+      const preferredId = orderPreferredFactoryId(order);
+      const mainId = pickString(project?.main_factory_id);
+      const subIds = asArray(project?.sub_factory_ids).map((x) => pickString(x)).filter(Boolean);
+      return assigned === fid || [preferredId, mainId, ...subIds].includes(fid);
+    }
+    return true;
+  }
+
+  const effectiveMinutes = getEffectiveEscalationMinutes(order, ctx);
+  if (effectiveMinutes == null) return false;
+
+  const candidates = buildCandidateFactoryIds(order, ctx);
+  const anchorId = resolveEscalationAnchorFactoryId(order, project, candidates);
+  const steps = getEscalationStepsForAnchor(anchorId, ctx.escalationStepsByFactoryId);
+  const active = getActiveEscalationStep(steps, effectiveMinutes);
+  const visibleCount = Math.max(1, Number(active.target_factory_count) || 3);
+  const visibleIds = candidates.slice(0, visibleCount);
+  return visibleIds.includes(fid);
 }
 
 function getVisibleFactoryIdsForOrder(order: OrderLike, ctx: EscalationPushContext): string[] {
   const status = pickString(order?.status, orderData(order).status);
   if (status === 'deleted' || status === 'pending_association') return [];
-  const consultStatus = pickString(order?.factory_consult_status, orderData(order).factory_consult_status);
-  if (consultStatus === 'consulting' && status !== 'accepted') return [];
 
-  const assigned = pickString(order?.factory_site_id, orderData(order).factory_site_id, orderData(order).factorySiteId);
-  if (status === 'accepted') return assigned ? [assigned] : [];
-  if (assigned) return [assigned];
+  const known = (ctx.factories || [])
+    .map((f) => pickString(f.id))
+    .filter(Boolean);
 
-  const effectiveMinutes = getEffectiveEscalationMinutes(order, ctx);
-  if (effectiveMinutes == null) return [];
-
-  const pid = orderProjectId(order);
-  const project = pid ? ctx.projectById[pid] : null;
-  const ranked = rankFactoryIdsForOrder(order, ctx);
-  const anchorId = resolveEscalationAnchorFactoryId(order, project, ranked);
-  const steps = getEscalationStepsForAnchor(anchorId, ctx.escalationStepsByFactoryId);
-  const active = getActiveEscalationStep(steps, effectiveMinutes);
-  const count = Math.max(1, Number(active.target_factory_count) || 1);
-  const rejected = rejectedFactoryIdSet(order);
-  return ranked.slice(0, count).filter((id) => !rejected.has(id));
+  return known.filter((fid) => isOrderVisibleToFactory(order, fid, ctx));
 }
 
 /** rejected_factory_ids 更新前後で新たに公開対象になった工場 ID */

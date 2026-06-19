@@ -138,32 +138,103 @@ function getProjectEscalationIds(order, project) {
   };
 }
 
-function resolveEscalationAnchorFactoryId(order, project, ranked) {
-  const preferredId = isUserSpecifiedPreferredFactory(order) ? orderPreferredFactoryId(order) : '';
-  if (preferredId) return preferredId;
-  const mainId = normalizeFactoryRefId(project?.main_factory_id);
-  if (mainId) return mainId;
-  return ranked?.[0] || '';
+function orderDataObject(order) {
+  const od = order?.order_data;
+  return od && typeof od === 'object' && !Array.isArray(od) ? od : {};
 }
 
-function isOrderVisibleByEscalationSteps(order, factoryId, ctx, project, ranked, effectiveMinutes) {
-  const anchorId = resolveEscalationAnchorFactoryId(order, project, ranked);
+function resolveEscalationAnchorFactoryId(order, project, candidates) {
+  const preferredId = orderPreferredFactoryId(order);
+  if (preferredId) return preferredId;
+  const od = orderDataObject(order);
+  const mainFromOrder = normalizeFactoryRefId(od.main_factory_id ?? od.mainFactoryId);
+  if (mainFromOrder) return mainFromOrder;
+  const mainId = normalizeFactoryRefId(project?.main_factory_id);
+  if (mainId) return mainId;
+  return candidates?.[0] || '';
+}
+
+function sortFactoryIdsByDistance(factories, order, projectById, globalAllowedAreas) {
+  const siteCoords = getOrderSiteCoords(order, projectById);
+  return rankFactoryIdsByDistance(order, projectById, siteCoords, factories, globalAllowedAreas);
+}
+
+/**
+ * エスカレーション公開候補工場 ID（VIP → サブ → 距離順、重複・拒否済み除外）
+ */
+export function buildCandidateFactoryIds(order, factories, projectById, globalAllowedAreas) {
+  const rejectedIds = rejectedFactoryIdSet(order);
+  const knownFactoryIds = buildKnownFactoryIdSet(factories);
+  const od = orderDataObject(order);
+  const pid = orderProjectId(order);
+  const project = pid ? projectById?.[pid] : null;
+
+  const vipIds = [
+    orderPreferredFactoryId(order),
+    normalizeFactoryRefId(od.main_factory_id ?? od.mainFactoryId),
+    normalizeFactoryRefId(project?.main_factory_id),
+  ].filter((id) => id && knownFactoryIds.has(id));
+
+  const subSource =
+    od.sub_factory_ids ?? od.subFactoryIds ?? project?.sub_factory_ids ?? [];
+  const subIds = (Array.isArray(subSource) ? subSource : [])
+    .map((x) => normalizeFactoryRefId(x))
+    .filter((id) => id && knownFactoryIds.has(id));
+
+  const sortedByDistance = sortFactoryIdsByDistance(factories, order, projectById, globalAllowedAreas);
+
+  const candidates = [];
+  const seen = new Set();
+  for (const id of [...vipIds, ...subIds, ...sortedByDistance]) {
+    const fid = String(id || '').trim();
+    if (!fid || seen.has(fid) || rejectedIds.has(fid)) continue;
+    candidates.push(fid);
+    seen.add(fid);
+  }
+
+  if (!candidates.length && knownFactoryIds.size > 0) {
+    return resolveEscalationEmptyFallback(order, projectById, knownFactoryIds);
+  }
+
+  return candidates;
+}
+
+function logOrderVisibilityDebug(payload) {
+  if (typeof console !== 'undefined' && typeof console.log === 'function') {
+    console.log('[isOrderVisibleToFactory]', payload);
+  }
+}
+
+function isOrderVisibleByEscalationSteps(order, factoryId, ctx, project, effectiveMinutes) {
+  const candidates = buildCandidateFactoryIds(
+    order,
+    ctx.factories || [],
+    ctx.projectById,
+    ctx.globalAllowedAreas,
+  );
+  const anchorId = resolveEscalationAnchorFactoryId(order, project, candidates);
   const steps = getEscalationStepsForAnchor(anchorId, ctx.escalationStepsByFactoryId);
   const active = getActiveEscalationStep(steps, effectiveMinutes);
-  const count = Math.max(1, Number(active.target_factory_count) || 1);
-  const rejected = rejectedFactoryIdSet(order);
-  const eligible = (Array.isArray(ranked) ? ranked : []).filter(
-    (id) => !rejected.has(String(id || '').trim()),
-  );
-  const visibleIds = eligible.slice(0, count);
+  const visibleCount = Math.max(1, Number(active.target_factory_count) || 3);
+  const visibleIds = candidates.slice(0, visibleCount);
+  const fid = String(factoryId || '').trim();
+  const result = visibleIds.includes(fid);
+  logOrderVisibilityDebug({
+    orderId: order?.id,
+    factoryId: fid,
+    is_spot: Boolean(order?.is_spot),
+    preferred: orderPreferredFactoryId(order) || null,
+    visibleCount,
+    candidates: visibleIds,
+    isVisible: result,
+  });
   if (!visibleIds.length) return false;
-  return visibleIds.includes(String(factoryId || '').trim());
+  return result;
 }
 
 export function getOrderEscalationStepInfo(order, ctx) {
   const pid = orderProjectId(order);
   const project = pid ? ctx?.projectById?.[pid] : null;
-  const ranked = ctx?.areaFactoryIdsByOrder?.get(order?.id) || [];
   const effectiveMinutes = getEffectiveEscalationMinutes(
     order,
     ctx?.projectById,
@@ -171,7 +242,13 @@ export function getOrderEscalationStepInfo(order, ctx) {
     ctx?.holidays,
     ctx?.now,
   );
-  const anchorId = resolveEscalationAnchorFactoryId(order, project, ranked);
+  const candidates = buildCandidateFactoryIds(
+    order,
+    ctx?.factories || [],
+    ctx?.projectById,
+    ctx?.globalAllowedAreas,
+  );
+  const anchorId = resolveEscalationAnchorFactoryId(order, project, candidates);
   const steps = getEscalationStepsForAnchor(anchorId, ctx?.escalationStepsByFactoryId);
   const active = getActiveEscalationStep(steps, effectiveMinutes);
   const nextThreshold = getNextEscalationThreshold(steps, effectiveMinutes);
@@ -328,7 +405,7 @@ export function rankFactoryIdsForOrder(order, projectById, factories, globalAllo
     ranked = rankFactoryIdsByDistance(order, projectById, siteCoords, factories, globalAllowedAreas);
   }
 
-  const finalized = finalizeEscalationRank(ranked, order, projectById, factories);
+  const finalized = buildCandidateFactoryIds(order, factories, projectById, globalAllowedAreas);
 
   if (typeof console !== 'undefined' && typeof console.log === 'function') {
     console.log('【Escalation Debug】rankFactoryIdsForOrder 結果', {
@@ -422,10 +499,41 @@ export function isOrderVisibleToFactory(order, factoryId, ctx) {
   const fid = String(factoryId || '').trim();
   if (!fid || !order) return false;
 
+  const rejectedIds = [...rejectedFactoryIdSet(order)];
+  if (rejectedIds.includes(fid)) {
+    logOrderVisibilityDebug({
+      orderId: order?.id,
+      factoryId: fid,
+      is_spot: Boolean(order?.is_spot),
+      preferred: orderPreferredFactoryId(order) || null,
+      visibleCount: 0,
+      candidates: [],
+      isVisible: false,
+      reason: 'rejected',
+    });
+    return false;
+  }
+
   const assigned = orderFactoryId(order);
   const status = order?.status != null ? String(order.status) : '';
   if (status === 'deleted') return false;
   if (status === 'pending_association') return false;
+
+  const factorySiteId = normalizeFactoryRefId(order?.factory_site_id ?? order?.factorySiteId);
+  if (factorySiteId) {
+    const result = factorySiteId === fid;
+    logOrderVisibilityDebug({
+      orderId: order?.id,
+      factoryId: fid,
+      is_spot: Boolean(order?.is_spot),
+      preferred: orderPreferredFactoryId(order) || null,
+      visibleCount: result ? 1 : 0,
+      candidates: result ? [factorySiteId] : [],
+      isVisible: result,
+      reason: 'factory_site_id',
+    });
+    return result;
+  }
 
   // 相談中はエスカレーションを停止し、相談している工場のみに表示する
   const consultStatus = String(order?.factory_consult_status ?? order?.factoryConsultStatus ?? '').trim();
@@ -433,12 +541,34 @@ export function isOrderVisibleToFactory(order, factoryId, ctx) {
     const consultBy = normalizeFactoryRefId(
       order?.factory_consult_by_factory_id ?? order?.factoryConsultByFactoryId,
     );
-    return Boolean(consultBy) && fid === consultBy;
+    const result = Boolean(consultBy) && fid === consultBy;
+    logOrderVisibilityDebug({
+      orderId: order?.id,
+      factoryId: fid,
+      is_spot: Boolean(order?.is_spot),
+      preferred: orderPreferredFactoryId(order) || null,
+      visibleCount: result ? 1 : 0,
+      candidates: consultBy ? [consultBy] : [],
+      isVisible: result,
+      reason: 'consulting',
+    });
+    return result;
   }
 
   const associationPool = associationAssignedFactoryIds(order);
   if (associationPool.length > 0 && status === 'pending') {
-    return associationPool.includes(fid);
+    const result = associationPool.includes(fid);
+    logOrderVisibilityDebug({
+      orderId: order?.id,
+      factoryId: fid,
+      is_spot: Boolean(order?.is_spot),
+      preferred: orderPreferredFactoryId(order) || null,
+      visibleCount: associationPool.length,
+      candidates: associationPool,
+      isVisible: result,
+      reason: 'association',
+    });
+    return result;
   }
 
   const isSpot = Boolean(order.is_spot);
@@ -453,12 +583,9 @@ export function isOrderVisibleToFactory(order, factoryId, ctx) {
   if (assigned && assigned === fid) return true;
   if (assigned && assigned !== fid) return false;
 
-  const preferredId = orderPreferredFactoryId(order);
-  const ranked = ctx.areaFactoryIdsByOrder?.get(order.id) || [];
-  const areaIds = ranked.length ? ranked : ctx.allFactoryIds || [];
   const effectiveMinutes = getEffectiveEscalationMinutes(order, ctx.projectById, ctx.settings, ctx.holidays, ctx.now);
 
-  return isOrderVisibleByEscalationSteps(order, fid, ctx, project, areaIds, effectiveMinutes);
+  return isOrderVisibleByEscalationSteps(order, fid, ctx, project, effectiveMinutes);
 }
 
 /**
