@@ -1,4 +1,4 @@
-/** onesignal-push v25 — 満車自動拒否時のエスカレーション拡大通知 */
+/** onesignal-push v26 — システム自動チャットの誤通知防止 */
 
 import {
   computeNewlyVisibleFactoryIds,
@@ -6,7 +6,7 @@ import {
   type EscalationStep,
 } from '../_shared/escalationVisibility.ts';
 
-const FUNCTION_VERSION = 25;
+const FUNCTION_VERSION = 26;
 const PUSH_NOTIFY_COOLDOWN_MS = 60_000;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 
@@ -152,6 +152,28 @@ function isCustomerSideChatSender(from: unknown): boolean {
 
 function isFactorySideChatSender(from: unknown): boolean {
   return FACTORY_SIDE_SENDERS.has(normalizeChatSender(from));
+}
+
+function isSystemChatSender(from: unknown): boolean {
+  return normalizeChatSender(from) === 'system';
+}
+
+function isSkippableSystemAutoChatMessage(
+  message: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!message || typeof message !== 'object') return false;
+  const body = pickString(message.body);
+  if (!body) return false;
+  return body.includes('— システム自動応答') || body.includes('満車のため拒否');
+}
+
+function shouldSkipChatPushNotification(
+  message: Record<string, unknown> | null | undefined,
+  chatFrom: string,
+): boolean {
+  if (isSystemChatSender(chatFrom)) return true;
+  if (isSkippableSystemAutoChatMessage(message)) return true;
+  return false;
 }
 
 function withoutExternalIds(ids: string[], ...exclude: unknown[]): string[] {
@@ -1245,6 +1267,11 @@ async function sendCustomerChatNotifications(
   orderId: string,
   chatFrom: string,
 ): Promise<string[]> {
+  const latestMessage = row ? latestChatMessage(asArray(row.chat_messages)) : null;
+  if (shouldSkipChatPushNotification(latestMessage, chatFrom)) {
+    console.log('[onesignal-push] skip customer_chat: system auto reply', { orderId, chatFrom });
+    return [];
+  }
   if (!isFactorySideChatSender(chatFrom)) {
     console.log('[onesignal-push] skip customer_chat: sender is not factory/admin', { orderId, chatFrom });
     return [];
@@ -1270,6 +1297,11 @@ async function sendFactoryChatNotifications(
   orderId: string,
   chatFrom: string,
 ): Promise<string[]> {
+  const latestMessage = row ? latestChatMessage(asArray(row.chat_messages)) : null;
+  if (shouldSkipChatPushNotification(latestMessage, chatFrom)) {
+    console.log('[onesignal-push] skip factory_chat: system auto reply', { orderId, chatFrom });
+    return [];
+  }
   if (!isCustomerSideChatSender(chatFrom)) {
     console.log('[onesignal-push] skip factory_chat: sender is not customer/master', { orderId, chatFrom });
     return [];
@@ -1504,7 +1536,9 @@ async function processLegacyWebhook(payload: LegacyWebhookPayload): Promise<stri
 
     if (chatAdded) {
       const chatFrom = pickString(latest?.from);
-      if (isFactorySideChatSender(chatFrom)) {
+      if (shouldSkipChatPushNotification(latest, chatFrom)) {
+        console.log('[onesignal-push] legacy chat skip system auto reply', { orderId, chatFrom });
+      } else if (isFactorySideChatSender(chatFrom)) {
         sent.push(...await sendCustomerChatNotifications(record, null, orderId, chatFrom));
       } else if (isCustomerSideChatSender(chatFrom)) {
         sent.push(...await sendFactoryChatNotifications(record, null, orderId, chatFrom));
@@ -1553,7 +1587,9 @@ async function processRescued(record: OrderRow, hint: 'chat' | 'status' | 'inser
       return sent;
     }
     const chatFrom = pickString(latest.from);
-    if (isFactorySideChatSender(chatFrom)) {
+    if (shouldSkipChatPushNotification(latest, chatFrom)) {
+      console.log('[onesignal-push] rescued chat skip system auto reply', { orderId, chatFrom });
+    } else if (isFactorySideChatSender(chatFrom)) {
       sent.push(...await sendCustomerChatNotifications(record, null, orderId, chatFrom));
     } else if (isCustomerSideChatSender(chatFrom)) {
       sent.push(...await sendFactoryChatNotifications(record, null, orderId, chatFrom));
@@ -1575,6 +1611,11 @@ async function routeChatFromOrder(row: OrderRow, message: string, orderId: strin
 
   const chatFrom = pickString(latest.from);
   console.log('[onesignal-push] chat route from order', { orderId, chatFrom, customer_id: row.customer_id });
+
+  if (shouldSkipChatPushNotification(latest, chatFrom)) {
+    console.log('[onesignal-push] chat_message skip system auto reply', { orderId, chatFrom });
+    return null;
+  }
 
   if (isFactorySideChatSender(chatFrom)) {
     const sent = await sendCustomerChatNotifications(row, null, orderId, chatFrom);

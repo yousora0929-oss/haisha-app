@@ -1251,20 +1251,18 @@ export async function persistScheduleAutoRejections({
   const nextThreads = { ...chatThreads };
   const next = orders.map((o) => {
     if (!o || !o.id) return o;
+    if (o.factoryResponseStatus || o.scheduleAutoChecked) return o;
+
     const date = o.scheduleMatchDate || o.preferredDate;
     const fid = resolveScheduleCheckFactoryId(o);
-    const currentRejected = Array.isArray(o.rejected_factory_ids)
-      ? o.rejected_factory_ids.map((x) => String(x).trim()).filter(Boolean)
-      : [];
-    const alreadyRejectedByFid = Boolean(fid && currentRejected.includes(fid));
 
     if (!date || typeof date !== 'string') {
-      if (!o.scheduleAutoChecked) changed = true;
-      return o.scheduleAutoChecked ? o : { ...o, scheduleAutoChecked: true };
+      changed = true;
+      return { ...o, scheduleAutoChecked: true };
     }
     if (!fid) {
-      if (!o.scheduleAutoChecked) changed = true;
-      return o.scheduleAutoChecked ? o : { ...o, scheduleAutoChecked: true };
+      changed = true;
+      return { ...o, scheduleAutoChecked: true };
     }
 
     const scheduleMap = normalizeFullSchedule(byF[fid] || {});
@@ -1272,14 +1270,14 @@ export async function persistScheduleAutoRejections({
     const reason = computeScheduleAutoRejectReason(o, dayBlocks);
 
     if (!reason) {
-      if (!o.scheduleAutoChecked) changed = true;
-      return o.scheduleAutoChecked ? o : { ...o, scheduleAutoChecked: true };
+      changed = true;
+      return { ...o, scheduleAutoChecked: true };
     }
 
-    // 満車判定済み・当該工場は既に拒否済みならスキップ
-    if (o.scheduleAutoChecked && alreadyRejectedByFid) return o;
-
     changed = true;
+    const currentRejected = Array.isArray(o.rejected_factory_ids)
+      ? o.rejected_factory_ids.map((x) => String(x).trim()).filter(Boolean)
+      : [];
     const id = o.id;
     const resolvedName =
       (o.factorySiteName && String(o.factorySiteName).trim()) ||
