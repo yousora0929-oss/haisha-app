@@ -109,7 +109,7 @@ export function computeScheduleAutoRejectReason(order, dayBlocks) {
   const meta = SCHEDULE_BLOCKS.find((b) => b.id === bid);
   const windowLabel = meta ? meta.label : bid;
   const vj = vk === 'small' ? '小型' : '大型';
-  return `【自動】${windowLabel}・${vj}は満車のため受諾不可`;
+  return `【自動】${windowLabel}・${vj}はただいま受入が難しい状況です`;
 }
 
 /** 今日を含む31日分の type=date 用 min/max */

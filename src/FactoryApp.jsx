@@ -3483,7 +3483,9 @@ function orderPartyInfo(order) {
           markOrderRead(order.id);
           if (order?.id) notifiedOrderIds.current.add(order.id);
           try {
-            const nextIds = await db.rejectOrderForFactory(order.id, activeFactoryId);
+            const nextIds = await db.rejectOrderForFactory(order.id, activeFactoryId, {
+              factoryName: activeFactoryName,
+            });
             const patchRejected = (o) =>
               o?.id === order.id
                 ? {

@@ -52,6 +52,11 @@ import {
   townNamesFromLocationList,
 } from './utils/heartrailsGeo.js';
 import { isLocationPendingOrder, resolveInitialOrderStatus, resolveOrderDisplayStatus, sumOrderVolumesM3 } from './utils/orderWorkflow.js';
+import {
+  CUSTOMER_FULL_REJECTION_MESSAGE,
+  CUSTOMER_ORDER_REJECTED_LABEL,
+  customerFullRejectionDashboardNotice,
+} from './utils/customerStatusLabels.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { resolveGuestPreferredFactoryId, resolveProjectMainFactoryId } from './utils/projectFactory.js';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
@@ -334,7 +339,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return { key: 'active', label: '受注', className: 'bg-blue-600 text-white border-blue-700' };
       }
       if (st === 'rejected') {
-        return { key: 'cancelled', label: '拒否', className: 'bg-red-600 text-white border-red-700' };
+        return { key: 'cancelled', label: CUSTOMER_ORDER_REJECTED_LABEL, className: 'bg-red-600 text-white border-red-700' };
       }
       if (st === 'pending_association') {
         return { key: 'active', label: '組合承認待ち', className: 'cl-alert-association bg-violet-600 text-white border-violet-700' };
@@ -390,10 +395,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return (
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex rounded-full bg-red-600 px-3 py-1 text-xs font-black text-white shadow-sm">
-              工場より拒否
+              {CUSTOMER_ORDER_REJECTED_LABEL}
             </span>
-            <span className="rounded-full border border-red-200 bg-white px-3 py-1 text-xs font-black text-red-900 shadow-sm">
-              {displayName}
+            <span className="rounded-full border border-red-200 bg-white px-3 py-1 text-xs font-black text-red-900 shadow-sm dark:border-red-800 dark:bg-red-950/40 dark:text-red-100">
+              {CUSTOMER_FULL_REJECTION_MESSAGE}
             </span>
             {order.factoryRejectSource === 'schedule_auto' ? (
               <span className="rounded-full bg-slate-600 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-white">
@@ -494,7 +499,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             {expired ? '時間切れ' : label}
           </p>
           {expired ? (
-            <p className="mt-1 text-[10px] font-bold text-red-700">5分経過。工場の受注・拒否をお待ちください。</p>
+            <p className="mt-1 text-[10px] font-bold text-red-700">5分経過。工場の受注・回答をお待ちください。</p>
           ) : (
             <p className="mt-1 text-[10px] font-bold text-amber-900/85">工場画面と同じ5:00からのカウントダウンです</p>
           )}
@@ -1488,6 +1493,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               } else {
                 const detected = detectCustomerOrderNotifications(prevOrders, displayOrders, isRelevantDashboardOrder);
                 if (!Array.isArray(detected.acceptedSiteLabels)) detected.acceptedSiteLabels = [];
+                if (!Array.isArray(detected.rejectedSiteLabels)) detected.rejectedSiteLabels = [];
                 if (realtimePayload) {
                   const fromPayload = analyzeCustomerOrderRealtimePayload(
                     realtimePayload,
@@ -1495,9 +1501,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     db.normalizeOrderRow,
                   );
                   if (fromPayload.factoryAccepted) detected.factoryAccepted = true;
+                  if (fromPayload.factoryRejected) detected.factoryRejected = true;
                   if (fromPayload.factoryReassigned) detected.factoryReassigned = true;
                   if (Array.isArray(fromPayload.acceptedSiteLabels)) {
                     detected.acceptedSiteLabels.push(...fromPayload.acceptedSiteLabels.filter(Boolean));
+                  }
+                  if (Array.isArray(fromPayload.rejectedSiteLabels)) {
+                    detected.rejectedSiteLabels.push(...fromPayload.rejectedSiteLabels.filter(Boolean));
                   }
                 }
                 if (detected.factoryAccepted) {
@@ -1510,6 +1520,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       : '注文が工場に受注されました';
                   showDashboardNotice(siteMsg, { playSound: false });
                   playOrderConfirmedSound();
+                } else if (detected.factoryRejected) {
+                  const sites = Array.isArray(detected.rejectedSiteLabels)
+                    ? detected.rejectedSiteLabels.filter(Boolean)
+                    : [];
+                  const site = sites[0] || '';
+                  showDashboardNotice(customerFullRejectionDashboardNotice(site), { playSound });
                 } else if (detected.factoryReassigned) {
                   showDashboardNotice('手配先工場が変更・調整されました', { playSound });
                 }
@@ -2145,7 +2161,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             await appendOrderChatMessage(
               orderId,
               'system',
-              '【マスター】ステータス再設定を許可しました。工場は再度 受注／拒否／保留 を選択できます。',
+              '【マスター】ステータス再設定を許可しました。工場は再度 受注／回答／保留 を選択できます。',
             );
             await refreshDashboard();
           } catch (err) {
@@ -3745,7 +3761,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   <div className="min-w-0">
                     <h2 className="text-base font-black text-slate-900 dark:text-gray-100">進行中の注文ステータス</h2>
                     <p className="mt-1.5 text-xs leading-relaxed text-slate-400 dark:text-gray-300">
-                      工場画面の受注／拒否／保留がここに反映されます。
+                      工場画面の対応状況（受注・回答・保留）がここに反映されます。
                     </p>
                   </div>
                 </div>

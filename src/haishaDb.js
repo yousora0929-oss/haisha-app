@@ -15,6 +15,10 @@ import { normalizeAssociationFactorySelection } from './utils/associationFactory
 import { shouldResetOrderStatusOnFactoryReassign } from './utils/orderFactoryReassign.js';
 import { ensureOrderPreferredFactoryForInsert } from './utils/dispatchBulkOrder.js';
 import {
+  customerFactoryRejectionChatMessage,
+  customerScheduleAutoRejectChatBody,
+} from './utils/customerStatusLabels.js';
+import {
   DISPATCH_DEFAULT_FACTORY_SITE_ID,
   DISPATCH_DEFAULT_FACTORY_SITE_NAME,
   computeScheduleAutoRejectReason,
@@ -858,15 +862,18 @@ export async function acceptOrderForFactory(order, factorySiteId, factorySiteNam
   return nextOrder;
 }
 
-export async function rejectOrderForFactory(orderId, factoryId) {
+export async function rejectOrderForFactory(orderId, factoryId, options = {}) {
   const id = String(orderId || '').trim();
   const fid = sanitizeRefId(factoryId);
   if (!id) throw new Error('orderId が必要です');
   if (!fid) throw new Error('factoryId が必要です');
 
+  const factoryName = String(options?.factoryName ?? options?.factory_name ?? '').trim();
+  const appendCustomerChat = options?.appendCustomerChat !== false;
+
   const { data: row, error: selErr } = await supabase
     .from('orders')
-    .select('order_data, rejected_factory_ids')
+    .select('order_data, rejected_factory_ids, chat_messages')
     .eq('id', id)
     .maybeSingle();
   if (selErr) {
@@ -878,6 +885,8 @@ export async function rejectOrderForFactory(orderId, factoryId) {
   const current = Array.isArray(row.rejected_factory_ids)
     ? row.rejected_factory_ids.map((x) => String(x)).filter(Boolean)
     : [];
+  if (current.includes(fid)) return current;
+
   const nextIds = [...new Set([...current, fid])];
   const od =
     row.order_data && typeof row.order_data === 'object' && !Array.isArray(row.order_data)
@@ -885,11 +894,29 @@ export async function rejectOrderForFactory(orderId, factoryId) {
       : {};
   const nextOrderData = { ...od, rejected_factory_ids: nextIds };
 
+  let chatMessages = normalizeChatMessages(row.chat_messages);
+  if (appendCustomerChat) {
+    const name =
+      factoryName ||
+      String(od.factorySiteName ?? od.factory_site_name ?? od.acceptedFactoryLabel ?? '').trim() ||
+      '工場';
+    chatMessages = [
+      ...chatMessages,
+      {
+        id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+        from: 'system',
+        body: customerFactoryRejectionChatMessage(name),
+        createdAt: new Date().toISOString(),
+      },
+    ].slice(-100);
+  }
+
   const { error: upErr } = await supabase
     .from('orders')
     .update({
       rejected_factory_ids: nextIds,
       order_data: nextOrderData,
+      chat_messages: chatMessages,
       factory_consult_status: null,
       factory_consult_started_at: null,
       factory_consult_by_factory_id: null,
@@ -1254,7 +1281,11 @@ export async function persistScheduleAutoRejections({
 
     changed = true;
     const id = o.id;
-    const body = `${reason}\n（満車のため拒否 — システム自動応答）`;
+    const resolvedName =
+      (o.factorySiteName && String(o.factorySiteName).trim()) ||
+      (fid && factoryNameById[fid]) ||
+      defaultFactorySiteName;
+    const body = customerScheduleAutoRejectChatBody(reason, resolvedName);
     const list = Array.isArray(nextThreads[id]) ? [...nextThreads[id]] : [];
     list.push({
       id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
@@ -1267,10 +1298,6 @@ export async function persistScheduleAutoRejections({
     const nextRejected = [...new Set([...currentRejected, fid])];
     const nextScheduleAuto = [...new Set([...scheduleAutoRejectedFactoryIds(o), fid])];
     const orderStatus = String(o.status || 'pending').trim() || 'pending';
-    const resolvedName =
-      (o.factorySiteName && String(o.factorySiteName).trim()) ||
-      (fid && factoryNameById[fid]) ||
-      defaultFactorySiteName;
 
     return {
       ...o,

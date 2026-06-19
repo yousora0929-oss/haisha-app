@@ -1,4 +1,5 @@
 const ACCEPTED_STATUSES = new Set(['accepted', 'confirmed']);
+const REJECTED_STATUSES = new Set(['rejected', 'cancelled']);
 
 function effectiveStatus(order) {
   const od =
@@ -23,6 +24,17 @@ function isPendingLike(status) {
 
 function isAcceptedLike(status) {
   return ACCEPTED_STATUSES.has(String(status || '').trim());
+}
+
+function isRejectedLike(status) {
+  return REJECTED_STATUSES.has(String(status || '').trim());
+}
+
+function orderSiteLabel(order) {
+  return (
+    String(order?.siteName ?? order?.projectName ?? order?.site_name ?? order?.project_name ?? '').trim() ||
+    String(order?.id || '').trim()
+  );
 }
 
 function factorySiteId(order) {
@@ -57,6 +69,15 @@ export function orderFactoryWasAccepted(prev, next) {
   return isPendingLike(prevStatus) && isAcceptedLike(nextStatus);
 }
 
+/** 全社対応不可: pending 系 → rejected / cancelled */
+export function orderFactoryWasRejected(prev, next) {
+  if (!prev?.id || !next?.id) return false;
+  const prevStatus = effectiveStatus(prev);
+  const nextStatus = effectiveStatus(next);
+  if (String(nextStatus) === 'customer_cancelled') return false;
+  return isPendingLike(prevStatus) && isRejectedLike(nextStatus);
+}
+
 /** 管理者による手配先変更 */
 export function orderFactoryAssignmentChanged(prev, next) {
   if (!prev?.id || !next?.id) return false;
@@ -75,10 +96,16 @@ function buildPrevMap(prevOrders) {
 
 /**
  * 再フェッチ前後からカスタマー向け通知イベントを検出
- * @returns {{ factoryAccepted: boolean, factoryReassigned: boolean, acceptedSiteLabels: string[] }}
+ * @returns {{ factoryAccepted: boolean, factoryRejected: boolean, factoryReassigned: boolean, acceptedSiteLabels: string[], rejectedSiteLabels: string[] }}
  */
 export function detectCustomerOrderNotifications(prevOrders, nextOrders, isRelevantOrder) {
-  const result = { factoryAccepted: false, factoryReassigned: false, acceptedSiteLabels: [] };
+  const result = {
+    factoryAccepted: false,
+    factoryRejected: false,
+    factoryReassigned: false,
+    acceptedSiteLabels: [],
+    rejectedSiteLabels: [],
+  };
   const isRelevant = typeof isRelevantOrder === 'function' ? isRelevantOrder : () => true;
   const prevById = buildPrevMap(prevOrders);
   const nextList = (Array.isArray(nextOrders) ? nextOrders : []).filter(isRelevant);
@@ -88,10 +115,12 @@ export function detectCustomerOrderNotifications(prevOrders, nextOrders, isRelev
     if (!prev) continue;
     if (orderFactoryWasAccepted(prev, next)) {
       result.factoryAccepted = true;
-      const site =
-        String(next.siteName ?? next.projectName ?? next.site_name ?? next.project_name ?? '').trim() ||
-        String(next.id || '').trim();
+      const site = orderSiteLabel(next);
       if (site) result.acceptedSiteLabels.push(site);
+    } else if (orderFactoryWasRejected(prev, next)) {
+      result.factoryRejected = true;
+      const site = orderSiteLabel(next);
+      if (site) result.rejectedSiteLabels.push(site);
     } else if (orderFactoryAssignmentChanged(prev, next)) {
       result.factoryReassigned = true;
     }
@@ -105,7 +134,14 @@ export function detectCustomerOrderNotifications(prevOrders, nextOrders, isRelev
  * @param {(row: object) => object|null} [normalizeRow]
  */
 export function analyzeCustomerOrderRealtimePayload(payload, isRelevantOrder, normalizeRow) {
-  const result = { factoryAccepted: false, factoryReassigned: false, acceptedSiteLabels: [], refetch: true };
+  const result = {
+    factoryAccepted: false,
+    factoryRejected: false,
+    factoryReassigned: false,
+    acceptedSiteLabels: [],
+    rejectedSiteLabels: [],
+    refetch: true,
+  };
   const isRelevant = typeof isRelevantOrder === 'function' ? isRelevantOrder : () => true;
   const normalize = typeof normalizeRow === 'function' ? normalizeRow : (row) => row;
   if (!payload) return result;
@@ -123,10 +159,12 @@ export function analyzeCustomerOrderRealtimePayload(payload, isRelevantOrder, no
 
   if (orderFactoryWasAccepted(oldRow, newRow)) {
     result.factoryAccepted = true;
-    const site =
-      String(newRow.siteName ?? newRow.projectName ?? newRow.site_name ?? newRow.project_name ?? '').trim() ||
-      String(newRow.id || '').trim();
+    const site = orderSiteLabel(newRow);
     if (site) result.acceptedSiteLabels.push(site);
+  } else if (orderFactoryWasRejected(oldRow, newRow)) {
+    result.factoryRejected = true;
+    const site = orderSiteLabel(newRow);
+    if (site) result.rejectedSiteLabels.push(site);
   } else if (orderFactoryAssignmentChanged(oldRow, newRow)) {
     result.factoryReassigned = true;
   }
