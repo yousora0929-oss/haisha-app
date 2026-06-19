@@ -208,7 +208,11 @@ function getEffectiveEscalationMinutes(order: OrderLike, ctx: EscalationPushCont
   if (!created) return 0;
   const minutes = getElapsedMinutesSinceEffectiveStart(created, ctx.settings, ctx.holidays, ctx.now ?? new Date());
   const isSpot = Boolean(order?.is_spot ?? od.is_spot);
-  if (isSpot) return minutes;
+  if (isSpot) {
+    const rejected = rejectedFactoryIdSet(order);
+    if (rejected.size > 0 && minutes < 15) return 15;
+    return minutes;
+  }
 
   const pid = orderProjectId(order);
   const project = pid ? ctx.projectById[pid] : null;
@@ -266,6 +270,11 @@ function rankFactoryIdsForOrder(order: OrderLike, ctx: EscalationPushContext): s
     .filter(Boolean);
   const preferredId = orderPreferredFactoryId(order);
   const siteCoords = getOrderSiteCoords(order, ctx.projectById);
+  const od = orderData(order);
+  const userSpecified =
+    order.preferred_factory_user_specified === true ||
+    od.preferred_factory_user_specified === true ||
+    od.preferredFactoryUserSpecified === true;
 
   const rankedWithDist = (ctx.factories || [])
     .map((f) => {
@@ -282,7 +291,7 @@ function rankFactoryIdsForOrder(order: OrderLike, ctx: EscalationPushContext): s
   let ranked = rankedWithDist.map((x) => x.id);
   if (!ranked.length) ranked = [...known];
 
-  if (preferredId && known.includes(preferredId)) {
+  if (userSpecified && preferredId && known.includes(preferredId)) {
     ranked = [preferredId, ...ranked.filter((id) => id !== preferredId)];
   }
 
@@ -294,7 +303,12 @@ function resolveEscalationAnchorFactoryId(
   project: ProjectLike | null | undefined,
   ranked: string[],
 ): string {
-  const preferredId = orderPreferredFactoryId(order);
+  const od = orderData(order);
+  const userSpecified =
+    order.preferred_factory_user_specified === true ||
+    od.preferred_factory_user_specified === true ||
+    od.preferredFactoryUserSpecified === true;
+  const preferredId = userSpecified ? orderPreferredFactoryId(order) : '';
   if (preferredId) return preferredId;
   const mainId = pickString(project?.main_factory_id);
   if (mainId) return mainId;

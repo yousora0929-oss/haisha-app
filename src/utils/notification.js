@@ -11,13 +11,31 @@ function appId() {
   return String(import.meta.env.VITE_ONESIGNAL_APP_ID || ONESIGNAL_APP_ID || '').trim();
 }
 
-/** OneSignal External ID 用（UUID / factory_id など。電話番号は使わない） */
+/** OneSignal External ID 用（UUID 等。電話番号は使わない） */
 export function normalizeOneSignalExternalId(value) {
   return String(value ?? '').trim();
 }
 
 function normalizeExternalId(value) {
   return normalizeOneSignalExternalId(value);
+}
+
+function withOneSignalPrefix(rawId, prefix) {
+  const id = normalizeOneSignalExternalId(rawId);
+  if (!id) return '';
+  return id.startsWith(prefix) ? id : `${prefix}${id}`;
+}
+
+export function buildCustomerOneSignalExternalId(customerId) {
+  return withOneSignalPrefix(customerId, 'customer_');
+}
+
+export function buildFactoryOneSignalExternalId(factoryId) {
+  return withOneSignalPrefix(factoryId, 'factory_');
+}
+
+export function buildAdminOneSignalExternalId(adminId) {
+  return withOneSignalPrefix(adminId, 'admin_');
 }
 
 async function readBoundOneSignalExternalId() {
@@ -32,6 +50,22 @@ async function readBoundOneSignalExternalId() {
     /* ignore */
   }
   return '';
+}
+
+export async function logOneSignalState(context = '') {
+  try {
+    await initOneSignal();
+    const externalId = await readBoundOneSignalExternalId();
+    const pushSubscriptionId = OneSignal.User?.PushSubscription?.id;
+    console.log('[OneSignal] state', {
+      context: context ? String(context) : undefined,
+      externalId: externalId || '',
+      pushSubscriptionId: pushSubscriptionId != null ? String(pushSubscriptionId) : '',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.warn('[OneSignal] state log failed', error);
+  }
 }
 
 function readOneSignalDebugValue(label, getter) {
@@ -172,6 +206,16 @@ export async function registerOneSignalUser(externalId, tags = {}) {
   try {
     await initOneSignal();
     const boundBeforeLogin = await readBoundOneSignalExternalId();
+    if (boundBeforeLogin && boundBeforeLogin !== normalizedId) {
+      if (OneSignal?.logout) {
+        await OneSignal.logout();
+        console.log('[OneSignal] logged out previous external_id before login', {
+          previous: boundBeforeLogin,
+          next: normalizedId,
+        });
+      }
+    }
+
     const optedInBefore = OneSignal.User?.PushSubscription?.optedIn;
     const permissionBefore = OneSignal.Notifications?.permission;
     const alreadySubscribed =
@@ -179,6 +223,8 @@ export async function registerOneSignalUser(externalId, tags = {}) {
       (optedInBefore === true || permissionBefore === true || permissionBefore === 'granted');
 
     await OneSignal.login(String(normalizedId));
+    console.log('[OneSignal] logged in as', normalizedId);
+
     if (tags && Object.keys(tags).length > 0) {
       await OneSignal.User.addTags(
         Object.fromEntries(Object.entries(tags).map(([key, value]) => [key, String(value ?? '')])),
@@ -224,6 +270,7 @@ export async function registerOneSignalUser(externalId, tags = {}) {
     if (!optedIn && permission !== true && permission !== 'granted') {
       console.warn('[OneSignal] プッシュ未購読 — ブラウザの通知許可を確認してください');
     }
+    await logOneSignalState('after login');
     logOneSignalDebug();
     return Boolean(optedIn || permission === true || permission === 'granted');
   } catch (error) {
@@ -232,17 +279,24 @@ export async function registerOneSignalUser(externalId, tags = {}) {
   }
 }
 
-export async function logoutOneSignalUser() {
+export async function unregisterOneSignalUser() {
   try {
     await initOneSignal();
-    console.log('OneSignalからID紐付けを解除します');
-    await OneSignal.logout();
-    console.log('OneSignalからID紐付けを解除しました');
+    if (OneSignal?.logout) {
+      await OneSignal.logout();
+      console.log('[OneSignal] logged out (external_id cleared)');
+    }
+    await logOneSignalState('after logout');
     return true;
   } catch (error) {
-    console.warn('[OneSignal] logout に失敗しました', error);
+    console.warn('[OneSignal] logout failed', error);
     return false;
   }
+}
+
+/** @deprecated unregisterOneSignalUser を使用 */
+export async function logoutOneSignalUser() {
+  return unregisterOneSignalUser();
 }
 
 export function clearAppBadge() {
@@ -251,4 +305,3 @@ export function clearAppBadge() {
     console.error('バッジの消去に失敗しました:', error);
   });
 }
-

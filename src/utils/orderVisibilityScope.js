@@ -4,6 +4,7 @@ import {
   getOrderEscalationStepInfo,
   getOrderSiteCoords,
   getVisibleFactoryIdsForOrder,
+  isUserSpecifiedPreferredFactory,
 } from './escalationUtils.js';
 import { getOrderDeliveryAreaContext } from './deliveryAreaEscalation.js';
 import { associationAssignedFactoryIds } from './associationFactoryAssignment.js';
@@ -159,7 +160,7 @@ export function getOrderVisibilityScope(order, ctx, factoryNameById = {}) {
   const chips = visibleFactoryIds.map((id) => {
     let role = 'visible';
     if (id === assignedId) role = 'assigned';
-    else if (id === preferredId) role = 'preferred';
+    else if (id === preferredId && isUserSpecifiedPreferredFactory(order)) role = 'preferred';
     else if (id === mainId) role = 'main';
     else if (subIds.includes(id)) role = 'sub';
     return { id, name: factoryName(factoryNameById, id), role };
@@ -243,7 +244,12 @@ export function getOrderVisibilityScope(order, ctx, factoryNameById = {}) {
     }
   }
 
-  if (preferredId && visibleFactoryIds.length === 1 && visibleFactoryIds[0] === preferredId) {
+  if (
+    preferredId &&
+    isUserSpecifiedPreferredFactory(order) &&
+    visibleFactoryIds.length === 1 &&
+    visibleFactoryIds[0] === preferredId
+  ) {
     return {
       ...base,
       kind: 'preferred_only',

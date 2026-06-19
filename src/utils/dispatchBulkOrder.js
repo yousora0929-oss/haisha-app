@@ -5,11 +5,7 @@ import {
   normalizeAllowedDeliveryAreas,
 } from './deliveryAreas.js';
 import { looksLikeUrlText, sanitizeSiteNameValue } from './siteNameDisplay.js';
-import {
-  buildEscalationContext,
-  normalizeFactoryRefId,
-  rankFactoryIdsForOrder,
-} from './escalationUtils.js';
+import { normalizeFactoryRefId } from './escalationUtils.js';
 
 /** 物件マスタから工場ID（main_factory_id）を抽出 */
 export function resolveFactoryIdFromProject(project) {
@@ -51,33 +47,25 @@ export function resolveOrderPreferredFactoryId(context) {
 }
 
 /**
- * INSERT 前に preferred_factory_id を補完（スポット注文の RLS 用）
- * 物件注文は project_id 経由の RLS のため、未指定のままにする
+ * INSERT 前に preferred_factory_id を正規化する。
+ * スポットはユーザー明示指定のみ保持（自動補完しない）。RLS は spot + 配達エリアで公開。
  */
-export function ensureOrderPreferredFactoryForInsert(order, { factories = [], projects = [] } = {}) {
+export function ensureOrderPreferredFactoryForInsert(order) {
   if (!order || typeof order !== 'object') return order;
-  const isSpot = Boolean(order.is_spot ?? order.isSpot);
-
   const existing = normalizeFactoryRefId(order.preferred_factory_id ?? order.preferredFactoryId);
-  if (existing) {
-    return {
-      ...order,
-      preferred_factory_id: existing,
-      preferredFactoryId: existing,
-    };
-  }
-
-  if (!isSpot) return order;
-
-  const ctx = buildEscalationContext([order], factories, projects, {}, [], new Date());
-  const ranked = rankFactoryIdsForOrder(order, ctx.projectById, factories, ctx.globalAllowedAreas);
-  const first = ranked[0] || '';
-  if (!first) return order;
-
+  const userSpecified = Boolean(
+    order.preferred_factory_user_specified ??
+      order.preferredFactoryUserSpecified ??
+      order.order_data?.preferred_factory_user_specified ??
+      order.order_data?.preferredFactoryUserSpecified,
+  );
+  if (!existing) return order;
   return {
     ...order,
-    preferred_factory_id: first,
-    preferredFactoryId: first,
+    preferred_factory_id: existing,
+    preferredFactoryId: existing,
+    preferred_factory_user_specified: userSpecified,
+    preferredFactoryUserSpecified: userSpecified,
   };
 }
 
@@ -349,6 +337,8 @@ export function buildDispatchOrderForDate(preferredDate, context) {
     rough_lng: locationPending ? representativeCoords.lng : null,
     preferred_factory_id: prefFid || null,
     preferredFactoryId: prefFid || null,
+    preferred_factory_user_specified: Boolean(prefFid),
+    preferredFactoryUserSpecified: Boolean(prefFid),
     main_factory_id: mainFactoryId || null,
     mainFactoryId: mainFactoryId || null,
     preferredFactoryName: preferredFactoryName || '',

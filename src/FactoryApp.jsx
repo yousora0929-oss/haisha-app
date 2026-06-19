@@ -26,7 +26,7 @@ import {
   getOrderMinutesForScheduleScan,
   computeScheduleAutoRejectReason,
 } from './haishaConstants.js';
-import { registerOneSignalUser, logoutOneSignalUser } from './utils/notification.js';
+import { registerOneSignalUser, unregisterOneSignalUser, buildFactoryOneSignalExternalId } from './utils/notification.js';
 import {
   clearPushRedirect,
   consumePushRedirectForApp,
@@ -2731,7 +2731,7 @@ function orderPartyInfo(order) {
             setActiveFactoryName(displayName);
             setIsFactoryAuthenticated(true);
             primeNotificationAlarm();
-            await registerOneSignalUser(String(fid), { role: 'factory', factory_id: String(fid) });
+            await registerOneSignalUser(buildFactoryOneSignalExternalId(fid), { role: 'factory', factory_id: String(fid) });
             setLoginPassword('');
             setHiddenOrderIds(new Set());
             setToastOrder(null);
@@ -2782,7 +2782,7 @@ function orderPartyInfo(order) {
         const factoryId = String(activeFactoryId);
         (async () => {
           if (cancelled || !factoryId) return;
-          await registerOneSignalUser(String(factoryId), {
+          await registerOneSignalUser(buildFactoryOneSignalExternalId(factoryId), {
             role: 'factory',
             factory_id: String(factoryId),
           });
@@ -2793,7 +2793,7 @@ function orderPartyInfo(order) {
       }, [isFactoryAuthenticated, activeFactoryId]);
 
       const handleFactoryLogout = useCallback(() => {
-        void logoutOneSignalUser();
+        void unregisterOneSignalUser().catch(() => {});
         stopNotificationAlarm();
         setToastOrder(null);
         setToastIsReassignment(false);

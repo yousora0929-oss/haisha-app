@@ -21,7 +21,8 @@ import {
 import {
   clearAppBadge,
   registerOneSignalUser,
-  logoutOneSignalUser,
+  unregisterOneSignalUser,
+  buildCustomerOneSignalExternalId,
   setupNotificationClickRedirect,
 } from './utils/notification.js';
 import {
@@ -52,10 +53,14 @@ import {
   townNamesFromLocationList,
 } from './utils/heartrailsGeo.js';
 import { isLocationPendingOrder, resolveInitialOrderStatus, resolveOrderDisplayStatus, sumOrderVolumesM3 } from './utils/orderWorkflow.js';
+import { buildEscalationContext } from './utils/escalationUtils.js';
 import {
+  CUSTOMER_FACTORY_HOLD_LABEL,
   CUSTOMER_FULL_REJECTION_MESSAGE,
   CUSTOMER_ORDER_REJECTED_LABEL,
   customerFullRejectionDashboardNotice,
+  isFactoryHoldPending,
+  resolveCustomerDispatchWaitingLabel,
 } from './utils/customerStatusLabels.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { resolveGuestPreferredFactoryId, resolveProjectMainFactoryId } from './utils/projectFactory.js';
@@ -327,7 +332,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       };
     }
 
-    function historyStatusMeta(order) {
+    function historyStatusMeta(order, escalationCtx = null) {
       const st = resolveOrderDisplayStatus(order);
       if (['customer_cancelled', 'cancelled', 'deleted'].includes(st)) {
         return { key: 'cancelled', label: 'キャンセル', className: 'bg-red-600 text-white border-red-700' };
@@ -344,7 +349,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       if (st === 'pending_association') {
         return { key: 'active', label: '組合承認待ち', className: 'cl-alert-association bg-violet-600 text-white border-violet-700' };
       }
-      return { key: 'active', label: '配車待ち', className: 'bg-amber-400 text-amber-950 border-amber-500' };
+      if (st === 'pending' && isFactoryHoldPending(order)) {
+        return { key: 'active', label: CUSTOMER_FACTORY_HOLD_LABEL, className: 'bg-amber-500 text-amber-950 border-amber-600' };
+      }
+      return {
+        key: 'active',
+        label: resolveCustomerDispatchWaitingLabel(order, escalationCtx),
+        className: 'bg-amber-400 text-amber-950 border-amber-500',
+      };
     }
 
     /** 将来のAPI連携用（画面には表示しない） */
@@ -371,9 +383,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       return iso;
     }
 
-    function OrderStatusBadges({ order }) {
+    function OrderStatusBadges({ order, escalationCtx = null }) {
       const st = resolveOrderDisplayStatus(order);
       const displayName = getDefaultFactoryDisplayName(order);
+      const dispatchLabel = resolveCustomerDispatchWaitingLabel(order, escalationCtx);
       if (st === 'customer_cancelled') {
         return (
           <span className="inline-flex rounded-full border-2 border-red-600 bg-red-50 px-3 py-1 text-xs font-black text-red-700 shadow-sm">
@@ -409,21 +422,35 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         );
       }
       if (st === 'pending') {
-        const who = order.factoryPendingByName?.trim() || displayName;
+        if (isFactoryHoldPending(order)) {
+          const who = order.factoryPendingByName?.trim() || displayName;
+          return (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex rounded-full bg-amber-500 px-3 py-1 text-xs font-black text-amber-950 shadow-sm">
+                {CUSTOMER_FACTORY_HOLD_LABEL}
+              </span>
+              <span className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-black text-amber-950 shadow-sm">
+                {who}
+              </span>
+            </div>
+          );
+        }
         return (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex rounded-full bg-amber-500 px-3 py-1 text-xs font-black text-amber-950 shadow-sm">
-              保留対応中
-            </span>
-            <span className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-black text-amber-950 shadow-sm">
-              {who}
-            </span>
-          </div>
+          <span className="inline-flex rounded-full border-2 border-amber-400 bg-amber-100 px-3 py-1 text-xs font-black text-amber-950 shadow-sm">
+            {dispatchLabel}
+          </span>
+        );
+      }
+      if (st === 'pending_association') {
+        return (
+          <span className="inline-flex rounded-full border-2 border-violet-600 bg-violet-100 px-3 py-1 text-xs font-black text-violet-900 shadow-sm">
+            組合承認待ち
+          </span>
         );
       }
       return (
-        <span className="inline-flex rounded-full border-2 border-slate-300 bg-slate-100 px-3 py-1 text-xs font-black text-slate-700">
-          工場の回答待ち
+        <span className="inline-flex rounded-full border-2 border-amber-400 bg-amber-100 px-3 py-1 text-xs font-black text-amber-950 shadow-sm">
+          {dispatchLabel}
         </span>
       );
     }
@@ -697,6 +724,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       onOpenChat,
       onAllowStatusReset,
       guestToken = '',
+      escalationCtx = null,
     }) {
       const addr = order.siteAddress?.trim() || '';
       const party = orderPartyInfo(order);
@@ -790,7 +818,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   {timeSummary}
                 </p>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <OrderStatusBadges order={order} />
+                  <OrderStatusBadges order={order} escalationCtx={escalationCtx} />
                   <LocationPendingBadge order={order} />
                 </div>
               </div>
@@ -978,7 +1006,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
     }
 
-    function CustomerOrderCalendar({ orders, selectedDate, onSelectDate, currentMonth, onMonthChange }) {
+    function CustomerOrderCalendar({ orders, selectedDate, onSelectDate, currentMonth, onMonthChange, escalationCtx = null }) {
       const [expandedStatusOrderId, setExpandedStatusOrderId] = useState('');
       const lastTapRef = useRef({ orderId: null, at: 0 });
       const days = useMemo(() => {
@@ -1012,7 +1040,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [orders]);
       const selectedOrders = ordersByDate[selectedDate] || [];
       const statusClass = (order) => {
-        const meta = historyStatusMeta(order);
+        const meta = historyStatusMeta(order, escalationCtx);
         if (meta.key === 'completed') return 'bg-slate-500 text-white';
         if (meta.key === 'cancelled') return 'bg-red-500 text-white';
         if (meta.label === '受注') return 'bg-emerald-600 text-white';
@@ -1083,7 +1111,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               <ul className="mt-3 grid gap-3 lg:grid-cols-2">
                 {selectedOrders.map((order) => {
                   const party = orderPartyInfo(order);
-                  const meta = historyStatusMeta(order);
+                  const meta = historyStatusMeta(order, escalationCtx);
                   return (
                     <li
                       key={order.id}
@@ -1104,7 +1132,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50 p-3">
                             <p className="text-[10px] font-black uppercase tracking-wider text-indigo-600">現在のステータス</p>
                             <div className="mt-2">
-                              <OrderStatusBadges order={order} />
+                              <OrderStatusBadges order={order} escalationCtx={escalationCtx} />
                             </div>
                             <div className="mt-3">
                               <ConfirmedDetailsBlock order={order} />
@@ -1211,6 +1239,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [historyCustomerFilter, setHistoryCustomerFilter] = useState('all');
       const [factories, setFactories] = useState([]);
       const [projects, setProjects] = useState([]);
+      const [holidays, setHolidays] = useState([]);
+      const [systemSettings, setSystemSettings] = useState({ start_time: '08:00:00', end_time: '16:00:00' });
+      const [escalationStepsByFactoryId, setEscalationStepsByFactoryId] = useState({});
+      const [escalationTick, setEscalationTick] = useState(0);
       const [customers, setCustomers] = useState([]);
       const [currentCustomerId, setCurrentCustomerId] = useState(() => {
         try {
@@ -1605,17 +1637,23 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               setAdminSettings(adminSettingRows || { admin_name: '', phone_number: '' });
               return;
             }
-            const [rows, projs, customerRows, adminSettingRows] = await Promise.all([
+            const [rows, projs, customerRows, adminSettingRows, holidayRows, opSettings, escalationSteps] = await Promise.all([
               db.fetchFactories(),
               db.fetchProjects(),
               db.fetchCustomers(),
               db.fetchDispatchOperationalSettings(),
+              db.fetchHolidays().catch(() => []),
+              db.fetchSystemSettings().catch(() => ({ start_time: '08:00:00', end_time: '16:00:00' })),
+              db.fetchEscalationSteps().catch(() => ({})),
             ]);
             if (cancelled) return;
             setFactories(rows);
             setProjects(projs);
             setCustomers(customerRows);
             setAdminSettings(adminSettingRows || { admin_name: '', phone_number: '' });
+            setHolidays(Array.isArray(holidayRows) ? holidayRows : []);
+            setSystemSettings(opSettings || { start_time: '08:00:00', end_time: '16:00:00' });
+            setEscalationStepsByFactoryId(escalationSteps && typeof escalationSteps === 'object' ? escalationSteps : {});
             setCurrentCustomerId((cur) => {
               if (cur && customerRows.some((c) => c && c.id === cur)) return cur;
               return '';
@@ -1841,14 +1879,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           if (isGuestSiteOrder) {
             const guestCustomerId = String(guestSiteOrderCtx?.customer?.id ?? currentCustomerId ?? '').trim();
             if (!guestCustomerId || cancelled) return;
-            void registerOneSignalUser(String(guestCustomerId), {
+            void registerOneSignalUser(buildCustomerOneSignalExternalId(guestCustomerId), {
               role: 'customer',
               customer_id: String(guestCustomerId),
             }).catch(() => {});
             return;
           }
           if (!isLoggedIn || !currentCustomerId || cancelled) return;
-          void registerOneSignalUser(String(currentCustomerId), {
+          void registerOneSignalUser(buildCustomerOneSignalExternalId(currentCustomerId), {
             role: 'customer',
             customer_id: String(currentCustomerId),
           }).catch(() => {});
@@ -1973,6 +2011,39 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       useEffect(() => {
         if (activeChatOrderId && !activeChatOrder) setActiveChatOrderId('');
       }, [activeChatOrderId, activeChatOrder]);
+
+      const customerEscalationCtx = useMemo(
+        () =>
+          buildEscalationContext(
+            dashboardOrders,
+            factories,
+            projects,
+            {
+              ...(adminSettings || {}),
+              start_time: systemSettings?.start_time,
+              end_time: systemSettings?.end_time,
+            },
+            holidays,
+            new Date(),
+            escalationStepsByFactoryId,
+          ),
+        [
+          dashboardOrders,
+          factories,
+          projects,
+          adminSettings,
+          systemSettings,
+          holidays,
+          escalationStepsByFactoryId,
+          escalationTick,
+        ],
+      );
+
+      useEffect(() => {
+        const id = window.setInterval(() => setEscalationTick((t) => t + 1), 60_000);
+        return () => window.clearInterval(id);
+      }, []);
+
       const historyRows = useMemo(() => {
         const sorted = sortOrdersForHistory(
           (dashboardOrders || []).filter((o) => o && isOrderInHistoryView(o, today)),
@@ -1992,12 +2063,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             mix: String(o.confirmedMixText ?? o.mixText ?? '').trim(),
             quantityM3: o.confirmedQuantityM3 ?? o.quantityM3 ?? '',
             siteAddress: o.siteAddress ?? '',
-            statusMeta: historyStatusMeta(o),
+            statusMeta: historyStatusMeta(o, customerEscalationCtx),
             deliveryDate: getOrderDeliveryDateISO(o),
             createdAt: o.createdAt || '',
           };
         });
-      }, [dashboardOrders, today]);
+      }, [dashboardOrders, today, customerEscalationCtx]);
       const filteredHistoryRows = useMemo(
         () =>
           historyRows.filter((row) => {
@@ -2228,7 +2299,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               logDispatchError('[DispatchApp] 通知アラーム初期化に失敗（続行）', alarmErr);
             }
 
-            void registerOneSignalUser(String(customer.id || ''), {
+            void registerOneSignalUser(buildCustomerOneSignalExternalId(customer.id), {
               role: 'customer',
               customer_id: String(customer.id || ''),
             }).catch(() => {});
@@ -2245,7 +2316,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
 
       const handleCustomerLogout = useCallback(() => {
-        void logoutOneSignalUser();
+        void unregisterOneSignalUser().catch(() => {});
         setIsLoggedIn(false);
         setCurrentCustomerId('');
         setCustomers([]);
@@ -3790,6 +3861,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                               onOpenChat={handleOpenChat}
                               onAllowStatusReset={handleAllowStatusReset}
                               guestToken={isGuestSiteOrder ? guestOrderToken : ''}
+                              escalationCtx={customerEscalationCtx}
                             />
                           ))}
                           </div>
@@ -3958,6 +4030,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 selectedDate={customerCalendarSelectedDate}
                 onSelectDate={setCustomerCalendarSelectedDate}
                 currentMonth={customerCalendarMonth}
+                escalationCtx={customerEscalationCtx}
                 onMonthChange={(nextMonth) => {
                   const next = nextMonth instanceof Date && !Number.isNaN(nextMonth.getTime()) ? nextMonth : new Date();
                   const normalized = new Date(next.getFullYear(), next.getMonth(), 1);

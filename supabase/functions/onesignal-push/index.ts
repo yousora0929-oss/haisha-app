@@ -1,4 +1,4 @@
-/** onesignal-push v26 — システム自動チャットの誤通知防止 */
+/** onesignal-push v27 — External ID プレフィックス + 移行期フォールバック */
 
 import {
   computeNewlyVisibleFactoryIds,
@@ -6,9 +6,12 @@ import {
   type EscalationStep,
 } from '../_shared/escalationVisibility.ts';
 
-const FUNCTION_VERSION = 26;
+const FUNCTION_VERSION = 27;
 const PUSH_NOTIFY_COOLDOWN_MS = 60_000;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
+/** プレフィックス導入前の端末向けに無印 ID へも送る期間（ISO8601） */
+const ONESIGNAL_LEGACY_EXTERNAL_ID_UNTIL =
+  Deno.env.get('ONESIGNAL_LEGACY_EXTERNAL_ID_UNTIL') || '2026-07-05T00:00:00.000Z';
 
 /** factory_escalation_steps 未設定時のデフォルト（src/utils/escalationSteps.js と同一） */
 const DEFAULT_ESCALATION_STEPS = [
@@ -185,10 +188,54 @@ function withoutExternalIds(ids: string[], ...exclude: unknown[]): string[] {
   return [...new Set(ids.map((id) => pickString(id)).filter((id) => id && !banned.has(id)))];
 }
 
+function withOneSignalExternalPrefix(rawId: string, prefix: 'customer_' | 'factory_' | 'admin_'): string {
+  const id = pickString(rawId);
+  if (!id) return '';
+  return id.startsWith(prefix) ? id : `${prefix}${id}`;
+}
+
+function onesignalCustomerExternalId(customerId: string): string {
+  return withOneSignalExternalPrefix(customerId, 'customer_');
+}
+
+function onesignalFactoryExternalId(factoryId: string): string {
+  return withOneSignalExternalPrefix(factoryId, 'factory_');
+}
+
+/** 移行期: プレフィックス付き + 旧無印 ID の両方へ送る */
+function expandOneSignalExternalIds(ids: string[]): string[] {
+  const expanded = new Set<string>();
+  const legacyUntil = Date.parse(ONESIGNAL_LEGACY_EXTERNAL_ID_UNTIL);
+  const useLegacy = Number.isFinite(legacyUntil) && Date.now() < legacyUntil;
+
+  for (const raw of ids) {
+    const id = pickString(raw);
+    if (!id) continue;
+    expanded.add(id);
+
+    if (id.startsWith('customer_')) {
+      if (useLegacy) expanded.add(id.slice('customer_'.length));
+      continue;
+    }
+    if (id.startsWith('factory_')) {
+      if (useLegacy) expanded.add(id.slice('factory_'.length));
+      continue;
+    }
+    if (id.startsWith('admin_')) {
+      if (useLegacy) expanded.add(id.slice('admin_'.length));
+      continue;
+    }
+
+    if (useLegacy) expanded.add(id);
+  }
+
+  return [...expanded];
+}
+
 /** カスタマー向けプッシュは customers.id のみ（電話番号エイリアスは使わない） */
 function resolveCustomerPushIds(row?: OrderRow | null, payload?: SlimPayload | null): string[] {
   const customerId = pickString(row?.customer_id, payload?.customer_id);
-  return customerId ? [customerId] : [];
+  return customerId ? [onesignalCustomerExternalId(customerId)] : [];
 }
 
 /** 工場向けプッシュは受注工場 → 第一希望の1件のみ（複数 alias による重複を防ぐ） */
@@ -209,7 +256,7 @@ function resolvePrimaryFactoryPushId(row?: OrderRow | null, payload?: SlimPayloa
 function resolveFactoryPushTargetIds(row?: OrderRow | null, payload?: SlimPayload | null): string[] {
   const primary = resolvePrimaryFactoryPushId(row, payload);
   if (!primary) return [];
-  return withoutExternalIds([primary], row?.customer_id, payload?.customer_id);
+  return withoutExternalIds([onesignalFactoryExternalId(primary)], row?.customer_id, payload?.customer_id);
 }
 
 function resolveChatMessageId(row?: OrderRow | null, payload?: SlimPayload | null): string {
@@ -961,7 +1008,9 @@ async function sendToExternalIds(
   data: Record<string, unknown> = {},
   options: { orderId?: string; title?: string } = {},
 ) {
-  const ids = [...new Set(externalIds.map((id) => String(id || '').trim()).filter(Boolean))];
+  const ids = expandOneSignalExternalIds([
+    ...new Set(externalIds.map((id) => String(id || '').trim()).filter(Boolean)),
+  ]);
   if (!ids.length || !message) return false;
 
   const orderId = pickString(options.orderId, data.orderId);
@@ -1219,7 +1268,11 @@ async function sendEscalationExpandedNotifications(
   const message = `新規注文が入りました：${contractorName}`;
   const data = { type: 'escalation_expanded', orderId, targetApp: 'factory' };
   const customerId = resolveOrderCustomerId(newRow, payload);
-  const factoryIds = withoutExternalIds(newlyVisible, customerId);
+  const factoryIds = withoutExternalIds(
+    newlyVisible.map((fid) => onesignalFactoryExternalId(fid)),
+    customerId,
+    onesignalCustomerExternalId(customerId),
+  );
 
   console.log('[onesignal-push] escalation_expanded notify', { orderId, factoryIds, newlyVisible });
 

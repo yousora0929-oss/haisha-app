@@ -42,6 +42,11 @@ import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/site
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
+import {
+  registerOneSignalUser,
+  unregisterOneSignalUser,
+  buildAdminOneSignalExternalId,
+} from './utils/notification.js';
 import { AdminEscalationSection } from './components/AdminEscalationSection.jsx';
 import { AdminCsvImportButton } from './components/AdminCsvImportButton.jsx';
 import { AdminCsvDownloadButton } from './components/AdminCsvDownloadButton.jsx';
@@ -2825,9 +2830,14 @@ export function AdminApp() {
   const handleAdminLogin = useCallback((admin) => {
     setIsAdminLoggedIn(true);
     if (admin) setAdminSettings(admin);
+    void registerOneSignalUser(buildAdminOneSignalExternalId(admin?.id ?? 1), {
+      role: 'admin',
+      admin_id: String(admin?.id ?? 1),
+    }).catch(() => {});
   }, []);
 
   const handleAdminLogout = useCallback(() => {
+    void unregisterOneSignalUser().catch(() => {});
     try {
       sessionStorage.removeItem(ADMIN_AUTH_SESSION_KEY);
     } catch {
