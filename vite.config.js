@@ -12,7 +12,7 @@ function spaHtmlFallback() {
     configureServer(server) {
       server.middlewares.use((req, _res, next) => {
         const url = req.url?.split('?')[0] || '';
-        if (/^\/map-editor\/[^/]+\/?$/.test(url)) {
+        if (/^\/map-editor\/project\/[^/]+\/?$/.test(url) || /^\/map-editor\/[^/]+\/?$/.test(url)) {
           req.url = '/MapEditor.html';
         } else if (/^\/order\/[^/]+\/?$/.test(url) || /^\/guest-order\/[^/]+\/?$/.test(url)) {
           req.url = '/DispatchOrderPrototype.html';

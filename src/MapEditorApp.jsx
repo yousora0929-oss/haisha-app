@@ -3,6 +3,7 @@ import { MapEditorInteractive } from './components/MapEditorInteractive.jsx';
 import { MapEditorToolbar } from './components/MapEditorToolbar.jsx';
 import {
   fetchOrderForMapEditor,
+  fetchProjectForMapEditor,
   saveOrderOverrideMap,
   saveProjectDefaultMap,
 } from './haishaDb.js';
@@ -12,7 +13,8 @@ import {
   MAP_EDITOR_TOOLS,
   markMapEditorOpenedAsPopup,
   navigateBackFromMapEditor,
-  parseMapEditorOrderId,
+  parseMapEditorContext,
+  publishMapEditorProjectSaved,
 } from './mapEditorConstants.js';
 import { isValidExternalUrl, normalizeExternalUrl } from './utils/urlValidation.js';
 import { boundsFromCenter, emptyMapAnnotations } from './utils/mapAnnotations.js';
@@ -23,7 +25,7 @@ import { shouldShowBlueprintOverlay, stripSavedSnapshotOverlay } from './utils/m
 
 const MAP_SOURCE_LABEL = {
   override: 'この打設日の専用マップ',
-  default: 'プロジェクトの基本マップ',
+  default: '物件の基本現場地図',
   none: '白紙（ベース画像未設定）',
   upload: 'アップロードしたベース画像',
 };
@@ -41,7 +43,9 @@ function withImageOverlayLocal(annotations, imageUrl) {
 }
 
 export function MapEditorApp() {
-  const orderId = parseMapEditorOrderId();
+  const editorContext = useMemo(() => parseMapEditorContext(), []);
+  const isProjectMode = editorContext.mode === 'project';
+  const editorTargetId = editorContext.id;
   const editorRef = useRef(null);
   const baseUploadRef = useRef(null);
   const localBlobUrlRef = useRef(null);
@@ -220,8 +224,12 @@ export function MapEditorApp() {
     let cancelled = false;
 
     async function load() {
-      if (!orderId) {
-        setLoadError('URLに注文IDがありません（/map-editor/:order_id）');
+      if (!editorTargetId) {
+        setLoadError(
+          isProjectMode
+            ? 'URLに物件IDがありません（/map-editor/project/:id）'
+            : 'URLに注文IDがありません（/map-editor/:order_id）',
+        );
         setLoading(false);
         return;
       }
@@ -230,7 +238,34 @@ export function MapEditorApp() {
       setLoadError('');
       try {
         await ensureMapEditorPanelAuth();
-        const result = await fetchOrderForMapEditor(orderId);
+
+        if (isProjectMode) {
+          const result = await fetchProjectForMapEditor(editorTargetId);
+          if (cancelled) return;
+          if (!result) {
+            const hasAuth = hasAnyPanelSession() || Boolean(parseMapEditorGuestTokenFromUrl());
+            setLoadError(
+              hasAuth
+                ? '物件が見つからないか、閲覧権限がありません。'
+                : '認証情報がありません。管理画面から開くか、専用URL（?token=）付きのリンクをご利用ください。',
+            );
+            return;
+          }
+          revokeLocalBlob();
+          setEditorOrder(null);
+          setEditorProject(result.project || null);
+          setResolvedOrderId('');
+          setProjectId(result.projectId || editorTargetId);
+          setSiteLabel(result.title);
+          setBaseImageUrl(result.displayImageUrl || '');
+          setMapSource(result.mapSource || 'none');
+          setOverrideMapUrl('');
+          setDefaultMapUrl(result.defaultMapImageUrl || '');
+          applyLoadedAnnotations(result);
+          return;
+        }
+
+        const result = await fetchOrderForMapEditor(editorTargetId);
         if (cancelled) return;
 
         if (!result) {
@@ -253,27 +288,7 @@ export function MapEditorApp() {
         setMapSource(result.mapSource || 'none');
         setOverrideMapUrl(result.overrideMapImageUrl || '');
         setDefaultMapUrl(result.defaultMapImageUrl || '');
-        const loaded = result.mapAnnotations || emptyMapAnnotations();
-        const centerLat = safeParseFloat(loaded?.center?.lat);
-        const centerLng = safeParseFloat(loaded?.center?.lng);
-        const centerZoom = safeParseFloat(loaded?.center?.zoom);
-        if (centerLat != null && centerLng != null) {
-          loaded.center = {
-            ...loaded.center,
-            lat: centerLat,
-            lng: centerLng,
-            zoom: Number.isFinite(centerZoom) ? centerZoom : loaded?.center?.zoom ?? 17,
-          };
-        }
-        setAnnotations(stripSavedSnapshotOverlay(loaded, result.displayImageUrl || ''));
-        if (result.initialFlyTarget) {
-          const lat = safeParseFloat(result.initialFlyTarget.lat);
-          const lng = safeParseFloat(result.initialFlyTarget.lng);
-          const zoom = safeParseFloat(result.initialFlyTarget.zoom);
-          if (lat != null && lng != null) {
-            setFlyTarget({ lat, lng, zoom: Number.isFinite(zoom) ? zoom : 17, key: Date.now() });
-          }
-        }
+        applyLoadedAnnotations(result);
       } catch (err) {
         if (!cancelled) {
           setLoadError(err?.message || 'データの読み込みに失敗しました');
@@ -283,11 +298,35 @@ export function MapEditorApp() {
       }
     }
 
+    function applyLoadedAnnotations(result) {
+      const loaded = result.mapAnnotations || emptyMapAnnotations();
+      const centerLat = safeParseFloat(loaded?.center?.lat);
+      const centerLng = safeParseFloat(loaded?.center?.lng);
+      const centerZoom = safeParseFloat(loaded?.center?.zoom);
+      if (centerLat != null && centerLng != null) {
+        loaded.center = {
+          ...loaded.center,
+          lat: centerLat,
+          lng: centerLng,
+          zoom: Number.isFinite(centerZoom) ? centerZoom : loaded?.center?.zoom ?? 17,
+        };
+      }
+      setAnnotations(stripSavedSnapshotOverlay(loaded, result.displayImageUrl || ''));
+      if (result.initialFlyTarget) {
+        const lat = safeParseFloat(result.initialFlyTarget.lat);
+        const lng = safeParseFloat(result.initialFlyTarget.lng);
+        const zoom = safeParseFloat(result.initialFlyTarget.zoom);
+        if (lat != null && lng != null) {
+          setFlyTarget({ lat, lng, zoom: Number.isFinite(zoom) ? zoom : 17, key: Date.now() });
+        }
+      }
+    }
+
     load();
     return () => {
       cancelled = true;
     };
-  }, [orderId, revokeLocalBlob, safeParseFloat]);
+  }, [editorTargetId, isProjectMode, revokeLocalBlob, safeParseFloat]);
 
   const handleBaseImageUpload = (e) => {
     const file = e.target.files?.[0];
@@ -337,7 +376,12 @@ export function MapEditorApp() {
   };
 
   const runSave = async (mode) => {
-    if (saving || !resolvedOrderId) return;
+    const saveMode = isProjectMode ? 'project' : mode;
+    const targetProjectId = isProjectMode ? editorTargetId : projectId;
+    const targetOrderId = isProjectMode ? '' : resolvedOrderId;
+    if (saving) return;
+    if (saveMode === 'project' && !targetProjectId) return;
+    if (saveMode !== 'project' && !targetOrderId) return;
     setSaving(true);
     try {
       const dataUrl = await editorRef.current?.toDataURL?.();
@@ -345,11 +389,9 @@ export function MapEditorApp() {
 
       const payload = withImageOverlayLocal(annotations, baseImageUrl);
 
-      if (mode === 'project') {
-        if (!projectId) {
-          throw new Error('スポット注文など、物件に紐づいていないため基本マップは保存できません');
-        }
-        const result = await saveProjectDefaultMap(projectId, dataUrl, payload);
+      if (saveMode === 'project') {
+        const result = await saveProjectDefaultMap(targetProjectId, dataUrl, payload);
+        publishMapEditorProjectSaved(targetProjectId);
         if (result.publicUrl) {
           setDefaultMapUrl(result.publicUrl);
           setLastSavedUrl(result.publicUrl);
@@ -357,15 +399,15 @@ export function MapEditorApp() {
         setAnnotations(result.map_annotations || payload);
         setConfirmMode(null);
         if (result.savedFully) {
-          showToast('変更を保存しました（基本マップ）');
+          showToast('変更を保存しました（物件の基本現場地図）');
           askReturnAfterSave();
         } else if (result.storageUploadFailed && result.storageWarning) {
           showToast(`注釈データは保存しました。${result.storageWarning}`);
         } else {
-          showToast('変更を保存しました（基本マップ）');
+          showToast('変更を保存しました（物件の基本現場地図）');
         }
       } else {
-        const result = await saveOrderOverrideMap(resolvedOrderId, dataUrl, payload);
+        const result = await saveOrderOverrideMap(targetOrderId, dataUrl, payload);
         if (result.publicUrl) {
           setOverrideMapUrl(result.publicUrl);
           setBaseImageUrl(result.publicUrl);
@@ -399,10 +441,25 @@ export function MapEditorApp() {
     }
   };
 
-  if (!orderId) {
+  const openSaveConfirm = () => {
+    if (isProjectMode) {
+      setConfirmMode('project');
+      return;
+    }
+    setConfirmMode('order');
+  };
+
+  if (!editorTargetId) {
     return (
       <div className="flex min-h-[100dvh] items-center justify-center bg-slate-100 p-6">
-        <ErrorCard title="URLが不正です" message="パスに注文IDを含めてください。例: /map-editor/ord_xxxx" />
+        <ErrorCard
+          title="URLが不正です"
+          message={
+            isProjectMode
+              ? 'パスに物件IDを含めてください。例: /map-editor/project/{物件ID}'
+              : 'パスに注文IDを含めてください。例: /map-editor/ord_xxxx'
+          }
+        />
       </div>
     );
   }
@@ -539,7 +596,7 @@ export function MapEditorApp() {
           </button>
           <button
             type="button"
-            onClick={() => setConfirmMode('order')}
+            onClick={openSaveConfirm}
             disabled={saving}
             className={mobileBarBtn + ' bg-emerald-600 text-white ring-2 ring-emerald-300/50'}
           >
@@ -599,7 +656,7 @@ export function MapEditorApp() {
           </button>
           <button
             type="button"
-            onClick={() => setConfirmMode('order')}
+            onClick={openSaveConfirm}
             disabled={saving}
             className={actionBtn + ' bg-emerald-600 text-white ring-2 ring-emerald-300/50'}
           >
@@ -614,39 +671,41 @@ export function MapEditorApp() {
         <div className="map-editor-no-print fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-6">
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-xl">
             <h2 className="text-base font-black">
-              {confirmMode === 'project' ? '基本マップとして保存' : '打設日用として保存'}
+              {confirmMode === 'project' || isProjectMode ? '物件の基本現場地図として保存' : '打設日用として保存'}
             </h2>
             <p className="mt-2 text-sm font-bold leading-relaxed text-slate-600">
               地図上の注釈（赤〇・スタンプ・コメント）と合成画像を保存します。
             </p>
             <div className="mt-4 flex flex-col gap-2">
+              {!isProjectMode ? (
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => setConfirmMode('order')}
+                  className={
+                    'w-full rounded-xl border-2 px-3 py-2 text-sm font-black transition ' +
+                    (confirmMode === 'order'
+                      ? 'border-indigo-600 bg-indigo-600 text-white'
+                      : 'border-slate-200 bg-slate-50 text-slate-800 hover:bg-white')
+                  }
+                >
+                  🚀 打設日用として保存
+                </button>
+              ) : null}
               <button
                 type="button"
-                disabled={saving}
-                onClick={() => setConfirmMode('order')}
-                className={
-                  'w-full rounded-xl border-2 px-3 py-2 text-sm font-black transition ' +
-                  (confirmMode === 'order'
-                    ? 'border-indigo-600 bg-indigo-600 text-white'
-                    : 'border-slate-200 bg-slate-50 text-slate-800 hover:bg-white')
-                }
-              >
-                🚀 打設日用として保存
-              </button>
-              <button
-                type="button"
-                disabled={saving || !projectId}
-                title={!projectId ? '物件に紐づく注文のみ利用可能' : ''}
+                disabled={saving || (!isProjectMode && !projectId)}
+                title={!isProjectMode && !projectId ? '物件に紐づく注文のみ利用可能' : ''}
                 onClick={() => setConfirmMode('project')}
                 className={
                   'w-full rounded-xl border-2 px-3 py-2 text-sm font-black transition ' +
                   (confirmMode === 'project'
                     ? 'border-emerald-700 bg-emerald-600 text-white'
                     : 'border-slate-200 bg-slate-50 text-slate-800 hover:bg-white') +
-                  (!projectId ? ' opacity-50' : '')
+                  (!isProjectMode && !projectId ? ' opacity-50' : '')
                 }
               >
-                💾 基本マップとして保存
+                💾 {isProjectMode ? '基本現場地図として保存' : '基本マップとして保存'}
               </button>
             </div>
             <div className="mt-5 flex gap-3">

@@ -1479,6 +1479,10 @@ function mapProjectRow(row) {
         : '',
     folder_url: normalizeExternalUrl(row.folder_url),
     sheet_url: normalizeExternalUrl(row.sheet_url),
+    default_map_image_url: String(
+      row.default_map_image_url ?? row.map_base_image_url ?? row.mapBaseImageUrl ?? '',
+    ).trim(),
+    map_annotations: row.map_annotations && typeof row.map_annotations === 'object' ? row.map_annotations : null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -2458,13 +2462,61 @@ export async function fetchOrderForMapEditor(orderId) {
   };
 }
 
+/** 物件マスタ用: 基本現場地図エディタの読み込み */
+export async function fetchProjectForMapEditor(projectId) {
+  const id = String(projectId || '').trim();
+  if (!id) throw new Error('projectId が必要です');
+
+  let row = null;
+  let error;
+  ({ data: row, error } = await supabase.from('projects').select(PROJECT_MAP_SELECT).eq('id', id).maybeSingle());
+  if (error && isMissingRelationOrColumnError(error)) {
+    ({ data: row, error } = await supabase
+      .from('projects')
+      .select('id, name, default_map_image_url, map_base_image_url, lat, lng')
+      .eq('id', id)
+      .maybeSingle());
+  }
+  if (error) {
+    console.error('fetchProjectForMapEditor failed', error);
+    throw error;
+  }
+  if (!row) return null;
+
+  const project = mapProjectRow(row) || { id, name: row.name != null ? String(row.name) : '' };
+  const defaultMapImageUrl = pickProjectDefaultMapUrl(row);
+  const displayImageUrl = normalizeExternalUrl(defaultMapImageUrl) || '';
+  const mapSource = displayImageUrl ? 'default' : 'none';
+  const projectCenter = pickMapEditorCenter(null, row);
+  const rawAnnotations = row.map_annotations;
+  let mapAnnotations = normalizeMapAnnotations(rawAnnotations, {
+    projectCenter,
+    imageUrl: '',
+  });
+  mapAnnotations = stripSavedSnapshotOverlay(mapAnnotations, displayImageUrl);
+  const { annotations: viewAnnotations, flyTarget: initialFlyTarget } =
+    getInitialMapViewFromAnnotations(mapAnnotations);
+  mapAnnotations = viewAnnotations;
+
+  return {
+    project: row,
+    projectId: id,
+    displayImageUrl,
+    mapSource,
+    defaultMapImageUrl,
+    mapAnnotations,
+    initialFlyTarget,
+    title: String(project.name || row.name || '').trim() || `物件 ${id}`,
+  };
+}
+
 /**
  * プロジェクト基本マップとして保存
  * Storage: maps/projects/{project_id}_{timestamp}.png
  */
 export async function saveProjectDefaultMap(projectId, imageDataUrl, mapAnnotations) {
   const pid = String(projectId || '').trim();
-  if (!pid) throw new Error('projectId が必要です（物件に紐づく注文のみ基本マップを保存できます）');
+  if (!pid) throw new Error('projectId が必要です');
 
   const normalized = normalizeMapAnnotations(mapAnnotations, { imageUrl: '' });
   const timestamp = Date.now();
@@ -2488,6 +2540,12 @@ export async function saveProjectDefaultMap(projectId, imageDataUrl, mapAnnotati
 
   const row = { map_annotations: savedAnnotations };
   if (upload.ok && publicUrl) row.default_map_image_url = publicUrl;
+  const centerLat = Number(savedAnnotations?.center?.lat);
+  const centerLng = Number(savedAnnotations?.center?.lng);
+  if (Number.isFinite(centerLat) && Number.isFinite(centerLng)) {
+    row.lat = centerLat;
+    row.lng = centerLng;
+  }
 
   let data;
   let error;

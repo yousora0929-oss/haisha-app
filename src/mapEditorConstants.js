@@ -58,6 +58,8 @@ export const MAP_EDITOR_RETURN_SESSION_KEY = 'haisha_map_editor_return_url_v1';
 /** 地図保存完了を他タブ（工場画面など）へ通知 */
 export const MAP_EDITOR_ORDER_SAVED_EVENT_KEY = 'haisha_map_editor_order_saved_v1';
 export const MAP_EDITOR_ORDER_SAVED_DOM_EVENT = 'haisha-map-order-saved';
+export const MAP_EDITOR_PROJECT_SAVED_EVENT_KEY = 'haisha_map_editor_project_saved_v1';
+export const MAP_EDITOR_PROJECT_SAVED_DOM_EVENT = 'haisha-map-project-saved';
 
 export function publishMapEditorOrderSaved(orderId) {
   const id = String(orderId || '').trim();
@@ -220,6 +222,77 @@ export function navigateAfterMapEditorSave() {
   return navigateBackFromMapEditor();
 }
 
+export function publishMapEditorProjectSaved(projectId) {
+  const id = String(projectId || '').trim();
+  if (!id || typeof window === 'undefined') return;
+  const payload = JSON.stringify({ projectId: id, at: Date.now() });
+  try {
+    localStorage.setItem(MAP_EDITOR_PROJECT_SAVED_EVENT_KEY, payload);
+  } catch {
+    /* ignore */
+  }
+  try {
+    window.dispatchEvent(new CustomEvent(MAP_EDITOR_PROJECT_SAVED_DOM_EVENT, { detail: { projectId: id } }));
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage({ type: 'haisha_map_editor_project_saved', projectId: id }, window.location.origin);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/** /map-editor/:order_id または /map-editor/project/:project_id */
+export function parseMapEditorContext() {
+  if (typeof window === 'undefined') return { mode: null, id: null };
+  const projectMatch = window.location.pathname.match(/\/map-editor\/project\/([^/?#]+)/i);
+  if (projectMatch?.[1]) {
+    return { mode: 'project', id: decodeURIComponent(projectMatch[1]) };
+  }
+  const orderMatch = window.location.pathname.match(/\/map-editor\/([^/?#]+)/i);
+  if (orderMatch?.[1] && String(orderMatch[1]).toLowerCase() !== 'project') {
+    return { mode: 'order', id: decodeURIComponent(orderMatch[1]) };
+  }
+  const q = new URLSearchParams(window.location.search).get('orderId');
+  if (q) return { mode: 'order', id: String(q).trim() };
+  return { mode: null, id: null };
+}
+
+/** 物件の基本現場地図エディタURL */
+export function buildProjectMapEditorUrl(projectId, baseOrigin, options = {}) {
+  const id = String(projectId || '').trim();
+  if (!id) return '';
+  const envOrigin =
+    typeof import.meta !== 'undefined' && import.meta.env?.VITE_PUBLIC_APP_ORIGIN
+      ? String(import.meta.env.VITE_PUBLIC_APP_ORIGIN).replace(/\/$/, '')
+      : '';
+  const origin =
+    (baseOrigin && String(baseOrigin).replace(/\/$/, '')) ||
+    envOrigin ||
+    (typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '');
+
+  const params = new URLSearchParams();
+  if (typeof window !== 'undefined') {
+    const ret = window.location.href;
+    if (ret && !/\/map-editor\//i.test(ret)) {
+      params.set('return', ret);
+    }
+    const explicitToken = String(options.guestToken ?? options.token ?? '').trim();
+    const guestToken = explicitToken || resolveGuestSiteOrderToken();
+    if (guestToken) {
+      params.set('token', guestToken);
+    }
+  }
+
+  let url = `${origin}/map-editor/project/${encodeURIComponent(id)}`;
+  const qs = params.toString();
+  if (qs) url += `?${qs}`;
+  return url;
+}
+
 /** 注文に紐づく地図エディタURL（Vite dev / 静的ホストで /map-editor/:id にルーティング） */
 export function buildMapEditorUrl(orderId, baseOrigin, options = {}) {
   const id = String(orderId || '').trim();
@@ -252,11 +325,8 @@ export function buildMapEditorUrl(orderId, baseOrigin, options = {}) {
   return url;
 }
 
-/** URL パスまたはクエリから order_id を取得 */
+/** URL パスまたはクエリから order_id を取得（物件モードのときは null） */
 export function parseMapEditorOrderId() {
-  if (typeof window === 'undefined') return null;
-  const pathMatch = window.location.pathname.match(/\/map-editor\/([^/?#]+)/i);
-  if (pathMatch?.[1]) return decodeURIComponent(pathMatch[1]);
-  const q = new URLSearchParams(window.location.search).get('orderId');
-  return q ? String(q).trim() : null;
+  const ctx = parseMapEditorContext();
+  return ctx.mode === 'order' ? ctx.id : null;
 }

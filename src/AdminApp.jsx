@@ -6,7 +6,7 @@ import {
   hasAdminPanelSession,
   ensurePanelRealtimeAuth,
 } from './supabaseClient.js';
-import { MapPicker } from './MapPicker.jsx';
+import { ProjectMapEditorUrlActions } from './components/ProjectMapEditorUrlActions.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
@@ -27,6 +27,7 @@ import { ProjectExternalUrlActions } from './components/ProjectExternalUrlAction
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
 import { externalUrlValidationMessage } from './utils/urlValidation.js';
 import { buildOrderVisibilityContext } from './utils/orderVisibilityScope.js';
+import { MAP_EDITOR_PROJECT_SAVED_DOM_EVENT } from './mapEditorConstants.js';
 import {
   formatDeliveryAreasTextInput,
   getDeliveryAreaValidationMessage,
@@ -742,25 +743,39 @@ function ProjectForm({
           {addressError}
         </p>
       ) : null}
+      <ProjectMapEditorUrlActions
+        projectId={initial?.id}
+        projectName={name}
+        project={initial}
+        variant="default"
+      />
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="text-xs font-bold text-slate-600" htmlFor="proj-lat">緯度（lat）</label>
-          <input id="proj-lat" type="text" inputMode="decimal" placeholder="例: 33.5902" value={lat} onChange={(e) => setLat(e.target.value)} className={fieldClass} />
+          <input
+            id="proj-lat"
+            type="text"
+            readOnly
+            value={lat}
+            placeholder="現場地図で設定"
+            className={fieldClass + ' bg-slate-50'}
+          />
         </div>
         <div>
           <label className="text-xs font-bold text-slate-600" htmlFor="proj-lng">経度（lng）</label>
-          <input id="proj-lng" type="text" inputMode="decimal" placeholder="例: 130.4017" value={lng} onChange={(e) => setLng(e.target.value)} className={fieldClass} />
+          <input
+            id="proj-lng"
+            type="text"
+            readOnly
+            value={lng}
+            placeholder="現場地図で設定"
+            className={fieldClass + ' bg-slate-50'}
+          />
         </div>
       </div>
-      <MapPicker
-        key={initial?.id ?? 'new'}
-        lat={lat}
-        lng={lng}
-        onPositionChange={(la, ln) => {
-          setLat(la);
-          setLng(ln);
-        }}
-      />
+      <p className="text-[11px] font-medium text-slate-500">
+        座標は現場地図エディタの保存時に自動反映されます（スポット注文と同じエディタ）。
+      </p>
       <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-3">
         <p className="text-xs font-black uppercase tracking-wide text-slate-500">外部リンク（Google Drive / スプレッドシート）</p>
         <div>
@@ -867,6 +882,23 @@ function ProjectsSection({ factories, factoryNameById }) {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    const onProjectMapSaved = async (event) => {
+      const projectId = String(event?.detail?.projectId || '').trim();
+      if (!projectId || String(editing?.id) !== projectId) return;
+      try {
+        const rows = await db.fetchProjects();
+        setProjects(rows);
+        const fresh = rows.find((p) => String(p?.id) === projectId);
+        if (fresh) setEditing(fresh);
+      } catch (e) {
+        console.error('[ProjectsSection] project map saved refresh failed', e);
+      }
+    };
+    window.addEventListener(MAP_EDITOR_PROJECT_SAVED_DOM_EVENT, onProjectMapSaved);
+    return () => window.removeEventListener(MAP_EDITOR_PROJECT_SAVED_DOM_EVENT, onProjectMapSaved);
+  }, [editing?.id]);
 
   useEffect(() => {
     let timerId = null;
