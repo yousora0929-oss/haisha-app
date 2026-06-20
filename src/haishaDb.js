@@ -2174,6 +2174,65 @@ export async function updateSystemSettings({ start_time, end_time }) {
 
 const PROJECT_MAP_SELECT =
   'id, name, default_map_image_url, map_base_image_url, lat, lng, map_annotations';
+const PROJECT_MAP_SELECT_LEGACY =
+  'id, name, map_base_image_url, lat, lng, map_annotations';
+const PROJECT_MAP_SELECT_MIN =
+  'id, name, map_base_image_url, lat, lng';
+
+async function selectProjectMapRow(projectId, select = PROJECT_MAP_SELECT) {
+  const id = String(projectId || '').trim();
+  const { data, error } = await supabase.from('projects').select(select).eq('id', id).maybeSingle();
+  return { data, error };
+}
+
+/** default_map_image_url 未作成DBでも map_base_image_url で動作 */
+async function fetchProjectMapRow(projectId) {
+  const attempts = [PROJECT_MAP_SELECT, PROJECT_MAP_SELECT_LEGACY, PROJECT_MAP_SELECT_MIN];
+  let lastError = null;
+  for (const select of attempts) {
+    const { data, error } = await selectProjectMapRow(projectId, select);
+    if (!error) return data;
+    if (!isMissingRelationOrColumnError(error)) throw error;
+    lastError = error;
+  }
+  throw lastError || new Error('物件が見つかりません');
+}
+
+async function updateProjectMapRow(projectId, patch) {
+  const id = String(projectId || '').trim();
+  const imageUrl = String(patch.default_map_image_url ?? patch.map_base_image_url ?? '').trim();
+  const basePatch = { ...patch };
+  delete basePatch.default_map_image_url;
+  delete basePatch.map_base_image_url;
+
+  const variants = [];
+  if (imageUrl) {
+    variants.push({ ...basePatch, default_map_image_url: imageUrl });
+    variants.push({ ...basePatch, map_base_image_url: imageUrl });
+  }
+  variants.push({ ...basePatch });
+
+  let lastError = null;
+  for (const row of variants) {
+    for (const select of [PROJECT_MAP_SELECT, PROJECT_MAP_SELECT_LEGACY, PROJECT_MAP_SELECT_MIN]) {
+      const { data, error } = await supabase.from('projects').update(row).eq('id', id).select(select).single();
+      if (!error) return data;
+      if (!isMissingRelationOrColumnError(error)) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('物件マップの保存に失敗しました');
+}
+
+async function selectExistingProjectMapUrl(projectId) {
+  const attempts = ['default_map_image_url, map_base_image_url', 'map_base_image_url'];
+  for (const select of attempts) {
+    const { data, error } = await selectProjectMapRow(projectId, select);
+    if (!error) return data;
+    if (!isMissingRelationOrColumnError(error)) throw error;
+  }
+  return null;
+}
 
 function dataUrlToBlob(dataUrl) {
   const raw = String(dataUrl || '');
@@ -2467,20 +2526,7 @@ export async function fetchProjectForMapEditor(projectId) {
   const id = String(projectId || '').trim();
   if (!id) throw new Error('projectId が必要です');
 
-  let row = null;
-  let error;
-  ({ data: row, error } = await supabase.from('projects').select(PROJECT_MAP_SELECT).eq('id', id).maybeSingle());
-  if (error && isMissingRelationOrColumnError(error)) {
-    ({ data: row, error } = await supabase
-      .from('projects')
-      .select('id, name, default_map_image_url, map_base_image_url, lat, lng')
-      .eq('id', id)
-      .maybeSingle());
-  }
-  if (error) {
-    console.error('fetchProjectForMapEditor failed', error);
-    throw error;
-  }
+  const row = await fetchProjectMapRow(id);
   if (!row) return null;
 
   const project = mapProjectRow(row) || { id, name: row.name != null ? String(row.name) : '' };
