@@ -26,6 +26,7 @@ type OrderLike = {
   delivery_lat?: number | string | null;
   delivery_lng?: number | string | null;
   rejected_factory_ids?: unknown;
+  association_assigned_factory_ids?: unknown;
 };
 
 type FactoryLike = {
@@ -69,6 +70,17 @@ function pickString(...values: unknown[]): string {
 
 function orderData(row?: OrderLike | null): Record<string, unknown> {
   return asObject(row?.order_data);
+}
+
+function associationAssignedFactoryIds(order: OrderLike): string[] {
+  const od = orderData(order);
+  const raw =
+    order?.association_assigned_factory_ids ??
+    od.association_assigned_factory_ids ??
+    od.associationAssignedFactoryIds;
+  return asArray(raw)
+    .map((x) => pickString(x))
+    .filter(Boolean);
 }
 
 function normalizeEscalationSteps(rows: unknown): EscalationStep[] {
@@ -363,6 +375,11 @@ export function isOrderVisibleToFactory(order: OrderLike, factoryId: string, ctx
   if (consultStatus === 'consulting' && status !== 'accepted') {
     const consultBy = pickString(order?.factory_consult_by_factory_id, od.factory_consult_by_factory_id, od.factoryConsultByFactoryId);
     return Boolean(consultBy) && fid === consultBy;
+  }
+
+  const associationPool = associationAssignedFactoryIds(order);
+  if (associationPool.length > 0 && status === 'pending') {
+    return associationPool.includes(fid);
   }
 
   const isSpot = Boolean(order?.is_spot ?? od.is_spot);

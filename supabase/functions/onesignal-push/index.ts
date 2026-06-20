@@ -1,4 +1,4 @@
-/** onesignal-push v27 — External ID プレフィックス + 移行期フォールバック */
+/** onesignal-push v28 — 組合せ割当（association_assigned_factory_ids）対応 */
 
 import {
   computeNewlyVisibleFactoryIds,
@@ -6,7 +6,7 @@ import {
   type EscalationStep,
 } from '../_shared/escalationVisibility.ts';
 
-const FUNCTION_VERSION = 27;
+const FUNCTION_VERSION = 28;
 const PUSH_NOTIFY_COOLDOWN_MS = 60_000;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 /** プレフィックス導入前の端末向けに無印 ID へも送る期間（ISO8601） */
@@ -37,7 +37,8 @@ type PushEvent =
   | 'customer_chat'
   | 'factory_chat'
   | 'customer_map_shared'
-  | 'escalation_expanded';
+  | 'escalation_expanded'
+  | 'association_approved';
 
 type SlimPayload = {
   event?: PushEvent | string;
@@ -71,6 +72,7 @@ type OrderRow = {
   delivery_lng?: number | string | null;
   push_notified_at?: string | null;
   rejected_factory_ids?: unknown;
+  association_assigned_factory_ids?: unknown;
 };
 
 type LegacyWebhookPayload = {
@@ -116,6 +118,24 @@ function pickString(...values: unknown[]): string {
 
 function orderData(row: OrderRow | null | undefined): Record<string, unknown> {
   return asObject(row?.order_data);
+}
+
+function associationAssignedFactoryIdsFromRow(row?: OrderRow | null): string[] {
+  const od = orderData(row);
+  const raw =
+    row?.association_assigned_factory_ids ??
+    od.association_assigned_factory_ids ??
+    od.associationAssignedFactoryIds;
+  return [...new Set(asArray(raw).map((x) => pickString(x)).filter(Boolean))];
+}
+
+function isAssociationApprovedTransition(
+  oldRow?: OrderRow | null,
+  newRow?: OrderRow | null,
+): boolean {
+  const oldStatus = effectiveStatus(oldRow);
+  const newStatus = effectiveStatus(newRow);
+  return oldStatus === 'pending_association' && newStatus === 'pending';
 }
 
 function effectiveStatus(row: OrderRow | null | undefined): string {
@@ -1287,6 +1307,58 @@ async function sendEscalationExpandedNotifications(
   return [];
 }
 
+async function sendAssociationApprovedNotifications(
+  row: OrderRow | null | undefined,
+  payload: SlimPayload | null | undefined,
+  orderId: string,
+): Promise<string[]> {
+  let orderRow = row ?? null;
+  if (!orderRow && orderId) orderRow = await fetchOrderRow(orderId);
+  if (!orderRow) {
+    console.log('[onesignal-push] association_approved skip: order unavailable', { orderId });
+    return [];
+  }
+
+  const assocPool = associationAssignedFactoryIdsFromRow(orderRow);
+  const preferredId = pickString(
+    orderRow.preferred_factory_id,
+    payload?.preferred_factory_id,
+    orderData(orderRow).preferred_factory_id,
+    orderData(orderRow).preferredFactoryId,
+  );
+  const targets = assocPool.length > 0
+    ? assocPool
+    : preferredId
+      ? [preferredId]
+      : [];
+
+  if (!targets.length) {
+    console.log('[onesignal-push] association_approved skip: no factory targets', { orderId });
+    return [];
+  }
+
+  const customerId = resolveOrderCustomerId(orderRow, payload);
+  const factoryIds = withoutExternalIds(
+    targets.map((fid) => onesignalFactoryExternalId(fid)),
+    customerId,
+    onesignalCustomerExternalId(customerId),
+  );
+  if (!factoryIds.length) {
+    console.log('[onesignal-push] association_approved skip: no external ids', { orderId, targets });
+    return [];
+  }
+
+  const message = '組合承認の注文です。対応可否をご確認ください';
+  const data = { type: 'association_approved', orderId, targetApp: 'factory' };
+  const ok = await sendToExternalIds(factoryIds, message, data, {
+    orderId,
+    title: '【新規注文】配車依頼があります',
+  });
+
+  console.log('[onesignal-push] association_approved notify', { orderId, targets, factoryIds, ok });
+  return ok ? ['factory:association_approved'] : [];
+}
+
 async function sendNewOrderNotifications(
   row: OrderRow | null | undefined,
   payload: SlimPayload | null | undefined,
@@ -1546,6 +1618,11 @@ async function processSlimPayload(payload: SlimPayload): Promise<string[]> {
       sent.push(...await sendEscalationExpandedNotifications(row, payload, orderId));
       break;
     }
+    case 'association_approved': {
+      const row = orderId ? await fetchOrderRow(orderId) : null;
+      sent.push(...await sendAssociationApprovedNotifications(row, payload, orderId));
+      break;
+    }
     default:
       console.warn('[onesignal-push] unknown event', event);
   }
@@ -1573,7 +1650,9 @@ async function processLegacyWebhook(payload: LegacyWebhookPayload): Promise<stri
   if (eventType === 'UPDATE' && oldRecord) {
     const oldStatus = effectiveStatus(oldRecord);
     const newStatus = effectiveStatus(record);
-    if (isPendingLike(oldStatus) && isAcceptedLike(newStatus)) {
+    if (isAssociationApprovedTransition(oldRecord, record)) {
+      sent.push(...await sendAssociationApprovedNotifications(record, null, orderId));
+    } else if (isPendingLike(oldStatus) && isAcceptedLike(newStatus)) {
       sent.push(...await sendOrderAcceptedNotifications(record, null, orderId));
     } else if (isPendingLike(oldStatus) && isRejectedLike(newStatus)) {
       sent.push(...await sendOrderRejectedNotifications(record, null, orderId));
