@@ -27,7 +27,10 @@ import { ProjectExternalUrlActions } from './components/ProjectExternalUrlAction
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
 import { externalUrlValidationMessage } from './utils/urlValidation.js';
 import { buildOrderVisibilityContext } from './utils/orderVisibilityScope.js';
-import { MAP_EDITOR_PROJECT_SAVED_DOM_EVENT } from './mapEditorConstants.js';
+import {
+  MAP_EDITOR_PROJECT_SAVED_DOM_EVENT,
+  MAP_EDITOR_PROJECT_SAVED_EVENT_KEY,
+} from './mapEditorConstants.js';
 import {
   formatDeliveryAreasTextInput,
   getDeliveryAreaValidationMessage,
@@ -884,20 +887,50 @@ function ProjectsSection({ factories, factoryNameById }) {
   useEffect(() => { void load(); }, [load]);
 
   useEffect(() => {
-    const onProjectMapSaved = async (event) => {
-      const projectId = String(event?.detail?.projectId || '').trim();
-      if (!projectId || String(editing?.id) !== projectId) return;
+    const refreshProjectAfterMapSave = async (projectId) => {
+      const id = String(projectId || '').trim();
+      if (!id) return;
       try {
         const rows = await db.fetchProjects();
         setProjects(rows);
-        const fresh = rows.find((p) => String(p?.id) === projectId);
-        if (fresh) setEditing(fresh);
+        if (String(editing?.id) === id) {
+          const fresh = rows.find((p) => String(p?.id) === id);
+          if (fresh) setEditing(fresh);
+        }
       } catch (e) {
         console.error('[ProjectsSection] project map saved refresh failed', e);
       }
     };
+
+    const onProjectMapSaved = (event) => {
+      void refreshProjectAfterMapSave(event?.detail?.projectId);
+    };
+
+    const onStorage = (event) => {
+      if (event.key !== MAP_EDITOR_PROJECT_SAVED_EVENT_KEY) return;
+      try {
+        const parsed = JSON.parse(String(event.newValue || '{}'));
+        void refreshProjectAfterMapSave(parsed?.projectId);
+      } catch {
+        /* ignore */
+      }
+    };
+
+    const onMessage = (event) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type === 'haisha_map_editor_project_saved') {
+        void refreshProjectAfterMapSave(event.data?.projectId);
+      }
+    };
+
     window.addEventListener(MAP_EDITOR_PROJECT_SAVED_DOM_EVENT, onProjectMapSaved);
-    return () => window.removeEventListener(MAP_EDITOR_PROJECT_SAVED_DOM_EVENT, onProjectMapSaved);
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('message', onMessage);
+    return () => {
+      window.removeEventListener(MAP_EDITOR_PROJECT_SAVED_DOM_EVENT, onProjectMapSaved);
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('message', onMessage);
+    };
   }, [editing?.id]);
 
   useEffect(() => {

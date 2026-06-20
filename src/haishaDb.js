@@ -1,9 +1,11 @@
 import { MAP_STORAGE_BUCKET, MAP_STAMP_TYPES, publishMapEditorOrderSaved } from './mapEditorConstants.js';
 import {
   annotationsToLegacyStamps,
+  applyInitialViewCenter,
   boundsFromCenter,
   getInitialMapViewFromAnnotations,
   normalizeMapAnnotations,
+  pickCoordsFromMapAnnotations,
 } from './utils/mapAnnotations.js';
 import { stripSavedSnapshotOverlay } from './utils/mapEditorOverlay.js';
 import { normalizeExternalUrl } from './utils/urlValidation.js';
@@ -2006,8 +2008,6 @@ export async function updateProject(projectId, payload) {
     customer_id: sanitizeRefId(payload.customer_id),
     main_factory_id,
     sub_factory_ids,
-    lat: payload.lat != null && payload.lat !== '' && Number.isFinite(Number(payload.lat)) ? Number(payload.lat) : null,
-    lng: payload.lng != null && payload.lng !== '' && Number.isFinite(Number(payload.lng)) ? Number(payload.lng) : null,
     trading_company_name: String(payload.trading_company_name || payload.trading_company || '').trim() || null,
     trading_company: String(payload.trading_company || payload.trading_company_name || '').trim() || null,
     contractor: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
@@ -2018,6 +2018,10 @@ export async function updateProject(projectId, payload) {
     folder_url: normalizeExternalUrl(payload.folder_url) || null,
     sheet_url: normalizeExternalUrl(payload.sheet_url) || null,
   };
+  const latNum = payload.lat != null && payload.lat !== '' ? Number(payload.lat) : NaN;
+  const lngNum = payload.lng != null && payload.lng !== '' ? Number(payload.lng) : NaN;
+  if (Number.isFinite(latNum)) row.lat = latNum;
+  if (Number.isFinite(lngNum)) row.lng = lngNum;
   const { data, error } = await supabase.from('projects').update(row).eq('id', id).select('*').single();
   if (error) throw error;
   return mapProjectRow(data);
@@ -2237,6 +2241,19 @@ async function updateProjectMapRow(projectId, patch) {
     }
   }
   throw lastError || new Error('物件マップの保存に失敗しました');
+}
+
+/** 地図保存後の lat/lng を確実に反映（注釈のみ更新が先に成功した場合のフォールバック） */
+async function syncProjectLatLng(projectId, lat, lng) {
+  const id = String(projectId || '').trim();
+  if (!id || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const patch = { lat, lng };
+  for (const select of ['id, lat, lng', 'id']) {
+    const { data, error } = await supabase.from('projects').update(patch).eq('id', id).select(select).maybeSingle();
+    if (!error) return data;
+    if (!isMissingRelationOrColumnError(error)) throw error;
+  }
+  return null;
 }
 
 async function selectExistingProjectMapUrl(projectId) {
@@ -2577,7 +2594,7 @@ export async function saveProjectDefaultMap(projectId, imageDataUrl, mapAnnotati
   const pid = String(projectId || '').trim();
   if (!pid) throw new Error('projectId が必要です');
 
-  const normalized = normalizeMapAnnotations(mapAnnotations, { imageUrl: '' });
+  const normalized = applyInitialViewCenter(normalizeMapAnnotations(mapAnnotations, { imageUrl: '' }));
   const timestamp = Date.now();
   const storagePath = `projects/${pid}_${timestamp}.png`;
   const upload = imageDataUrl
@@ -2591,22 +2608,27 @@ export async function saveProjectDefaultMap(projectId, imageDataUrl, mapAnnotati
   }
 
   const publicUrl = upload.ok ? upload.publicUrl : existingUrl;
-  const savedAnnotations = withImageOverlay({ ...normalized, center: normalized.center }, publicUrl);
+  const savedAnnotations = applyInitialViewCenter(withImageOverlay(normalized, publicUrl));
+  const coords = pickCoordsFromMapAnnotations(savedAnnotations);
 
   const row = { map_annotations: savedAnnotations };
   if (upload.ok && publicUrl) {
     row.default_map_image_url = publicUrl;
   }
-  const centerLat = Number(savedAnnotations?.center?.lat);
-  const centerLng = Number(savedAnnotations?.center?.lng);
-  if (Number.isFinite(centerLat) && Number.isFinite(centerLng)) {
-    row.lat = centerLat;
-    row.lng = centerLng;
+  if (coords) {
+    row.lat = coords.lat;
+    row.lng = coords.lng;
   }
 
   let data;
   try {
     data = await updateProjectMapRow(pid, row);
+    if (coords) {
+      const synced = await syncProjectLatLng(pid, coords.lat, coords.lng);
+      if (synced && (synced.lat != null || synced.lng != null)) {
+        data = { ...(data || {}), ...synced };
+      }
+    }
   } catch (error) {
     console.error('saveProjectDefaultMap failed', error);
     throw error;

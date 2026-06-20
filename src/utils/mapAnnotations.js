@@ -222,6 +222,22 @@ export function getInitialMapViewFromAnnotations(annotations) {
   return { annotations: ann, flyTarget };
 }
 
+/** 荷卸し地点 → 注釈中心の順で projects.lat/lng 用座標を取得 */
+export function pickCoordsFromMapAnnotations(annotations) {
+  const first = (annotations?.unloadPoints || []).find(
+    (u) => u && Number.isFinite(Number(u.lat)) && Number.isFinite(Number(u.lng)),
+  );
+  if (first) {
+    return { lat: Number(first.lat), lng: Number(first.lng) };
+  }
+  const clat = Number(annotations?.center?.lat);
+  const clng = Number(annotations?.center?.lng);
+  if (Number.isFinite(clat) && Number.isFinite(clng)) {
+    return { lat: clat, lng: clng };
+  }
+  return null;
+}
+
 /** unloadPoints 先頭の座標を center に反映（地図起動時の表示用） */
 export function applyInitialViewCenter(annotations) {
   if (!annotations || typeof annotations !== 'object') return annotations;
