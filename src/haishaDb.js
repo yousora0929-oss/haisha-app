@@ -2172,12 +2172,38 @@ export async function updateSystemSettings({ start_time, end_time }) {
 // 地図スタンプエディタ（/map-editor/:order_id）ハイブリッド連携
 // -----------------------------------------------------------------------------
 
-const PROJECT_MAP_SELECT =
-  'id, name, default_map_image_url, map_base_image_url, lat, lng, map_annotations';
-const PROJECT_MAP_SELECT_LEGACY =
-  'id, name, map_base_image_url, lat, lng, map_annotations';
-const PROJECT_MAP_SELECT_MIN =
-  'id, name, map_base_image_url, lat, lng';
+const PROJECT_MAP_SELECT_ATTEMPTS = [
+  'id, name, default_map_image_url, map_base_image_url, lat, lng, map_annotations',
+  'id, name, default_map_image_url, lat, lng, map_annotations',
+  'id, name, default_map_image_url, lat, lng',
+  'id, name, map_base_image_url, lat, lng, map_annotations',
+  'id, name, map_base_image_url, lat, lng',
+  'id, name, lat, lng, map_annotations',
+  'id, name, lat, lng',
+];
+
+/** @deprecated PROJECT_MAP_SELECT_ATTEMPTS を使用 */
+const PROJECT_MAP_SELECT = PROJECT_MAP_SELECT_ATTEMPTS[0];
+
+function buildProjectMapPatchVariants(patch) {
+  const imageUrl = String(patch.default_map_image_url ?? patch.map_base_image_url ?? '').trim();
+  const basePatch = { ...patch };
+  delete basePatch.default_map_image_url;
+  delete basePatch.map_base_image_url;
+  const withoutAnnotations = { ...basePatch };
+  delete withoutAnnotations.map_annotations;
+
+  const variants = [];
+  const bases = basePatch.map_annotations != null ? [basePatch, withoutAnnotations] : [basePatch];
+  for (const body of bases) {
+    if (imageUrl) {
+      variants.push({ ...body, default_map_image_url: imageUrl });
+      variants.push({ ...body, map_base_image_url: imageUrl });
+    }
+    variants.push({ ...body });
+  }
+  return variants;
+}
 
 async function selectProjectMapRow(projectId, select = PROJECT_MAP_SELECT) {
   const id = String(projectId || '').trim();
@@ -2185,11 +2211,10 @@ async function selectProjectMapRow(projectId, select = PROJECT_MAP_SELECT) {
   return { data, error };
 }
 
-/** default_map_image_url 未作成DBでも map_base_image_url で動作 */
+/** 地図URLカラムの有無に依存しない物件マップ行取得 */
 async function fetchProjectMapRow(projectId) {
-  const attempts = [PROJECT_MAP_SELECT, PROJECT_MAP_SELECT_LEGACY, PROJECT_MAP_SELECT_MIN];
   let lastError = null;
-  for (const select of attempts) {
+  for (const select of PROJECT_MAP_SELECT_ATTEMPTS) {
     const { data, error } = await selectProjectMapRow(projectId, select);
     if (!error) return data;
     if (!isMissingRelationOrColumnError(error)) throw error;
@@ -2200,21 +2225,11 @@ async function fetchProjectMapRow(projectId) {
 
 async function updateProjectMapRow(projectId, patch) {
   const id = String(projectId || '').trim();
-  const imageUrl = String(patch.default_map_image_url ?? patch.map_base_image_url ?? '').trim();
-  const basePatch = { ...patch };
-  delete basePatch.default_map_image_url;
-  delete basePatch.map_base_image_url;
-
-  const variants = [];
-  if (imageUrl) {
-    variants.push({ ...basePatch, default_map_image_url: imageUrl });
-    variants.push({ ...basePatch, map_base_image_url: imageUrl });
-  }
-  variants.push({ ...basePatch });
+  const variants = buildProjectMapPatchVariants(patch);
 
   let lastError = null;
   for (const row of variants) {
-    for (const select of [PROJECT_MAP_SELECT, PROJECT_MAP_SELECT_LEGACY, PROJECT_MAP_SELECT_MIN]) {
+    for (const select of PROJECT_MAP_SELECT_ATTEMPTS) {
       const { data, error } = await supabase.from('projects').update(row).eq('id', id).select(select).single();
       if (!error) return data;
       if (!isMissingRelationOrColumnError(error)) throw error;
@@ -2225,7 +2240,11 @@ async function updateProjectMapRow(projectId, patch) {
 }
 
 async function selectExistingProjectMapUrl(projectId) {
-  const attempts = ['default_map_image_url, map_base_image_url', 'map_base_image_url'];
+  const attempts = [
+    'default_map_image_url',
+    'map_base_image_url',
+    'default_map_image_url, map_base_image_url',
+  ];
   for (const select of attempts) {
     const { data, error } = await selectProjectMapRow(projectId, select);
     if (!error) return data;
@@ -2577,7 +2596,6 @@ export async function saveProjectDefaultMap(projectId, imageDataUrl, mapAnnotati
   const row = { map_annotations: savedAnnotations };
   if (upload.ok && publicUrl) {
     row.default_map_image_url = publicUrl;
-    row.map_base_image_url = publicUrl;
   }
   const centerLat = Number(savedAnnotations?.center?.lat);
   const centerLng = Number(savedAnnotations?.center?.lng);
