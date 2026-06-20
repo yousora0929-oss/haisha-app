@@ -6,6 +6,21 @@ export function resolveProjectMainFactoryId(project) {
   return id || '';
 }
 
+/** 物件選択時のソフト警告（ドロップダウン表示は妨げない） */
+export function getProjectDataGapWarnings(project) {
+  if (!project || typeof project !== 'object') return [];
+  const warnings = [];
+  if (!resolveProjectMainFactoryId(project)) {
+    warnings.push('メイン工場が未設定です（管理画面で設定してください）');
+  }
+  const lat = project.lat != null ? Number(project.lat) : NaN;
+  const lng = project.lng != null ? Number(project.lng) : NaN;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    warnings.push('現場座標が未設定です（現場地図で荷卸し地点を保存してください）');
+  }
+  return warnings;
+}
+
 /**
  * メイン工場変更時にサブ工場 ID 集合を更新（新メインを除外・旧メインを追加）
  * @param {Iterable<string>} prevSubIds

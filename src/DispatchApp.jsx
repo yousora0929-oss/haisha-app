@@ -63,7 +63,7 @@ import {
   resolveCustomerDispatchWaitingLabel,
 } from './utils/customerStatusLabels.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
-import { resolveGuestPreferredFactoryId, resolveProjectMainFactoryId } from './utils/projectFactory.js';
+import { resolveGuestPreferredFactoryId, resolveProjectMainFactoryId, getProjectDataGapWarnings } from './utils/projectFactory.js';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
 import {
@@ -1433,10 +1433,35 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         [isGuestSiteOrder, guestSiteOrderCtx, isOrderForCurrentCustomer],
       );
       const filteredProjects = useMemo(
-        () => (projects || []).filter((p) => p && String(p.customer_id || '') === String(currentCustomerId || '')),
+        () =>
+          (projects || []).filter(
+            (p) => p && String(p.customer_id || '').trim() === String(currentCustomerId || '').trim(),
+          ),
         [projects, currentCustomerId],
       );
+      const projectSelectionWarnings = useMemo(
+        () => (selectedProject ? getProjectDataGapWarnings(selectedProject) : []),
+        [selectedProject],
+      );
       const hasCurrentCustomer = Boolean(String(currentCustomerId || '').trim());
+
+      useEffect(() => {
+        if (typeof console === 'undefined' || typeof console.log !== 'function') return;
+        const cid = String(currentCustomerId || '').trim();
+        console.log('[ProjectDropdown] all projects:', (projects || []).length);
+        console.log('[ProjectDropdown] currentCustomerId:', cid);
+        console.log('[ProjectDropdown] filtered:', filteredProjects.length);
+        console.log(
+          '[ProjectDropdown] filter reasons:',
+          (projects || []).map((p) => ({
+            id: p?.id,
+            name: p?.name,
+            customer_id_match: String(p?.customer_id || '').trim() === cid,
+            has_main: Boolean(resolveProjectMainFactoryId(p)),
+            has_coords: Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lng)),
+          })),
+        );
+      }, [projects, currentCustomerId, filteredProjects]);
 
       useEffect(() => {
         setCustomerSearchText(currentCustomerDisplayName);
@@ -1701,7 +1726,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setSelectedProjectId((cur) => {
           if (!cur) return cur;
           const p = (projects || []).find((x) => x && x.id === cur);
-          const valid = p && String(p.customer_id || '') === String(currentCustomerId || '');
+          const valid = p && String(p.customer_id || '').trim() === String(currentCustomerId || '').trim();
           if (!valid) {
             lastAutofillProjectIdRef.current = '';
           }
@@ -1864,7 +1889,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         if (lastAutofillProjectIdRef.current === selectedProjectId) return;
         const p = (projects || []).find((x) => x && String(x.id) === String(selectedProjectId));
         if (!p) return;
-        if (String(p.customer_id || '') !== String(currentCustomerId || '')) return;
+        if (String(p.customer_id || '').trim() !== String(currentCustomerId || '').trim()) return;
         applyProjectSelection(p);
       }, [orderKind, selectedProjectId, projects, currentCustomerId, applyProjectSelection]);
 
@@ -3311,6 +3336,19 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
                       この業者に紐づく物件がありません。管理画面で物件に業者（会社）を設定するか、スポット注文を選んでください。
                     </p>
+                  ) : null}
+                  {projectSelectionWarnings.length > 0 ? (
+                    <div
+                      className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold leading-relaxed text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100"
+                      role="status"
+                    >
+                      <p className="font-black">⚠️ この物件は発注前に確認が必要です</p>
+                      <ul className="mt-1 list-inside list-disc space-y-0.5">
+                        {projectSelectionWarnings.map((msg) => (
+                          <li key={msg}>{msg}</li>
+                        ))}
+                      </ul>
+                    </div>
                   ) : null}
                   {selectedProject ? (
                     <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">

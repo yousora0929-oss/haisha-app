@@ -98,7 +98,11 @@ export function MasterSuggestInput({
   }, [items, value, resolveSearchTexts, isEmptyQuery, emptyQueryShowsPinnedOnly, searchResultLimit]);
 
   const showPinned = panelOpen && !disabled && isEmptyQuery && pinnedList.length > 0;
-  const showFiltered = panelOpen && !disabled && !isEmptyQuery && filtered.length > 0;
+  const showFiltered =
+    panelOpen &&
+    !disabled &&
+    filtered.length > 0 &&
+    (!isEmptyQuery || !emptyQueryShowsPinnedOnly);
   const showEmpty =
     panelOpen &&
     !disabled &&
