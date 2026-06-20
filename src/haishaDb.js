@@ -2474,18 +2474,12 @@ export async function fetchOrderForMapEditor(orderId) {
   let project = projectFromRpc;
   const projectId = String(order.project_id || '').trim();
   if (projectId && !project) {
-    let p;
-    let pErr;
-    ({ data: p, error: pErr } = await supabase.from('projects').select(PROJECT_MAP_SELECT).eq('id', projectId).maybeSingle());
-    if (pErr && isMissingRelationOrColumnError(pErr)) {
-      ({ data: p, error: pErr } = await supabase
-        .from('projects')
-        .select('id, name, default_map_image_url, map_base_image_url, lat, lng')
-        .eq('id', projectId)
-        .maybeSingle());
+    try {
+      project = await fetchProjectMapRow(projectId);
+    } catch (pErr) {
+      console.warn('[fetchOrderForMapEditor] project load failed', pErr);
+      project = null;
     }
-    if (pErr) console.warn('[fetchOrderForMapEditor] project load failed', pErr);
-    project = p;
   }
 
   const { url: displayImageUrl, source: mapSource } = resolveMapDisplayUrl(order, project, row);
@@ -2572,11 +2566,7 @@ export async function saveProjectDefaultMap(projectId, imageDataUrl, mapAnnotati
     : { ok: false, publicUrl: '', storagePath, error: null };
 
   let existingUrl = '';
-  const { data: existingProject } = await supabase
-    .from('projects')
-    .select('default_map_image_url, map_base_image_url')
-    .eq('id', pid)
-    .maybeSingle();
+  const existingProject = await selectExistingProjectMapUrl(pid);
   if (existingProject) {
     existingUrl = String(existingProject.default_map_image_url || existingProject.map_base_image_url || '').trim();
   }
@@ -2585,7 +2575,10 @@ export async function saveProjectDefaultMap(projectId, imageDataUrl, mapAnnotati
   const savedAnnotations = withImageOverlay({ ...normalized, center: normalized.center }, publicUrl);
 
   const row = { map_annotations: savedAnnotations };
-  if (upload.ok && publicUrl) row.default_map_image_url = publicUrl;
+  if (upload.ok && publicUrl) {
+    row.default_map_image_url = publicUrl;
+    row.map_base_image_url = publicUrl;
+  }
   const centerLat = Number(savedAnnotations?.center?.lat);
   const centerLng = Number(savedAnnotations?.center?.lng);
   if (Number.isFinite(centerLat) && Number.isFinite(centerLng)) {
@@ -2594,26 +2587,9 @@ export async function saveProjectDefaultMap(projectId, imageDataUrl, mapAnnotati
   }
 
   let data;
-  let error;
-  ({ data, error } = await supabase.from('projects').update(row).eq('id', pid).select(PROJECT_MAP_SELECT).single());
-  if (error && isMissingRelationOrColumnError(error)) {
-    const fallbackRow = upload.ok && publicUrl ? { default_map_image_url: publicUrl } : {};
-    if (Object.keys(fallbackRow).length === 0) {
-      ({ data, error } = await supabase
-        .from('projects')
-        .select('id, name, default_map_image_url, map_base_image_url, lat, lng')
-        .eq('id', pid)
-        .single());
-    } else {
-      ({ data, error } = await supabase
-        .from('projects')
-        .update(fallbackRow)
-        .eq('id', pid)
-        .select('id, name, default_map_image_url, map_base_image_url, lat, lng')
-        .single());
-    }
-  }
-  if (error) {
+  try {
+    data = await updateProjectMapRow(pid, row);
+  } catch (error) {
     console.error('saveProjectDefaultMap failed', error);
     throw error;
   }
