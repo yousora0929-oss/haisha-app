@@ -39,6 +39,10 @@ import {
   parseSpotThresholdVolume,
 } from './utils/deliveryAreas.js';
 import { swapMainFactorySubIds } from './utils/projectFactory.js';
+import {
+  createSalesStaffMember,
+  normalizeSalesStaffList,
+} from './utils/salesStaff.js';
 import { customerSuggestTexts } from './utils/masterSuggest.js';
 import { fetchTownLocationsForMunicipality, resolveDeliveryPrefecture } from './utils/heartrailsGeo.js';
 import { SCHEDULE_BLOCK_IDS, normalizeDayBlockSchedule, todayLocalISODate } from './haishaConstants.js';
@@ -380,6 +384,7 @@ function ProjectForm({
   tradingCompanies = [],
   allowedDeliveryAreas = [],
   deliveryPrefecture = '',
+  salesStaffList = [],
   onTradingCompanyAdded,
   initial,
   onSave,
@@ -422,6 +427,23 @@ function ProjectForm({
         .filter((row) => row.town),
     [townList],
   );
+  const staffOptions = useMemo(() => normalizeSalesStaffList(salesStaffList), [salesStaffList]);
+
+  const handleSalesStaffChange = (staffId) => {
+    const id = String(staffId || '').trim();
+    if (!id) {
+      setSalesAdminId('');
+      setSalesAdminName('');
+      return;
+    }
+    const member = staffOptions.find((m) => m.id === id);
+    if (member) {
+      setSalesAdminId(member.id);
+      setSalesAdminName(member.name);
+    } else if (id === String(salesAdminId || '').trim()) {
+      return;
+    }
+  };
 
   useEffect(() => {
     setName(initial?.name ?? '');
@@ -449,10 +471,22 @@ function ProjectForm({
     setLng(initial?.lng != null && Number.isFinite(initial.lng) ? String(initial.lng) : '');
     setFolderUrl(initial?.folder_url ?? '');
     setSheetUrl(initial?.sheet_url ?? '');
-    setSalesAdminId(initial?.sales_admin_id ?? '');
-    setSalesAdminName(initial?.sales_admin_name ?? '');
+    const storedId = String(initial?.sales_admin_id ?? '').trim();
+    const storedName = String(initial?.sales_admin_name ?? '').trim();
+    const staffMember = storedId
+      ? staffOptions.find((m) => m.id === storedId)
+      : storedName
+        ? staffOptions.find((m) => m.name === storedName)
+        : null;
+    if (staffMember) {
+      setSalesAdminId(staffMember.id);
+      setSalesAdminName(staffMember.name);
+    } else {
+      setSalesAdminId(storedId);
+      setSalesAdminName(storedName);
+    }
     setAddressError('');
-  }, [initial, customers]);
+  }, [initial, customers, staffOptions]);
 
   const findCustomerByExactName = useCallback(
     (text) => {
@@ -737,33 +771,36 @@ function ProjectForm({
           </ul>
         )}
       </fieldset>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div>
-          <label className="text-xs font-bold text-slate-600" htmlFor="proj-sales-admin-id">
-            担当営業 ID（プッシュ通知先）
-          </label>
-          <input
-            id="proj-sales-admin-id"
-            type="text"
-            value={salesAdminId}
-            onChange={(e) => setSalesAdminId(e.target.value)}
-            className={fieldClass}
-            placeholder="例: admin_1"
-          />
-        </div>
-        <div>
-          <label className="text-xs font-bold text-slate-600" htmlFor="proj-sales-admin-name">
-            担当営業名
-          </label>
-          <input
-            id="proj-sales-admin-name"
-            type="text"
-            value={salesAdminName}
-            onChange={(e) => setSalesAdminName(e.target.value)}
-            className={fieldClass}
-            placeholder="例: 山田営業"
-          />
-        </div>
+      <div>
+        <label className="text-xs font-bold text-slate-600" htmlFor="proj-sales-admin">
+          担当営業
+        </label>
+        <select
+          id="proj-sales-admin"
+          value={salesAdminId}
+          onChange={(e) => handleSalesStaffChange(e.target.value)}
+          className={fieldClass}
+        >
+          <option value="">未設定</option>
+          {salesAdminId && !staffOptions.some((m) => m.id === salesAdminId) ? (
+            <option value={salesAdminId}>{salesAdminName || salesAdminId}（マスタ未登録）</option>
+          ) : null}
+          {staffOptions.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+              {m.phone ? `（${m.phone}）` : ''}
+            </option>
+          ))}
+        </select>
+        {salesAdminId ? (
+          <p className="mt-1 font-mono text-[11px] text-slate-500">ID: {salesAdminId}</p>
+        ) : null}
+        <p className="mt-1 text-[11px] font-medium text-slate-500">
+          「管理者情報設定」で担当営業を登録できます。全工場拒否時は管理画面の「要フォロー」で確認してください（SMS通知は将来対応）。
+        </p>
+        {staffOptions.length === 0 ? (
+          <p className="mt-1 text-[11px] font-bold text-amber-800">担当営業が未登録です。先に管理者情報設定で追加してください。</p>
+        ) : null}
       </div>
       <DeliveryAreaAddressField
         idPrefix="proj"
@@ -887,6 +924,7 @@ function ProjectsSection({ factories, factoryNameById }) {
   const [customers, setCustomers] = useState([]);
   const [tradingCompanies, setTradingCompanies] = useState([]);
   const [allowedDeliveryAreas, setAllowedDeliveryAreas] = useState([]);
+  const [salesStaff, setSalesStaff] = useState([]);
   const [deliveryPrefecture, setDeliveryPrefecture] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -911,6 +949,7 @@ function ProjectsSection({ factories, factoryNameById }) {
       setCustomers(customerRows);
       setTradingCompanies(tradingRows);
       setAllowedDeliveryAreas(normalizeAllowedDeliveryAreas(settings?.allowed_delivery_areas));
+      setSalesStaff(normalizeSalesStaffList(settings?.sales_staff));
       setDeliveryPrefecture(resolveDeliveryPrefecture(settings));
     } catch (e) {
       console.error('物件取得エラー', e);
@@ -974,12 +1013,13 @@ function ProjectsSection({ factories, factoryNameById }) {
     let unsub = () => {};
     void (async () => {
       unsub = await db.subscribeHaishaRealtime((payload) => {
-        if (payload?.table !== 'customers') return;
-        if (timerId != null) window.clearTimeout(timerId);
-        timerId = window.setTimeout(() => {
-          timerId = null;
-          void load();
-        }, 500);
+        if (payload?.table === 'customers' || payload?.table === 'admin_settings') {
+          if (timerId != null) window.clearTimeout(timerId);
+          timerId = window.setTimeout(() => {
+            timerId = null;
+            void load();
+          }, 500);
+        }
       });
     })();
     return () => {
@@ -1102,6 +1142,7 @@ function ProjectsSection({ factories, factoryNameById }) {
             tradingCompanies={tradingCompanies}
             allowedDeliveryAreas={allowedDeliveryAreas}
             deliveryPrefecture={deliveryPrefecture}
+            salesStaffList={salesStaff}
             onTradingCompanyAdded={handleTradingCompanyAdded}
             initial={editing}
             onSave={handleSave}
@@ -1861,6 +1902,9 @@ function AdminSettingsSection() {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [deliveryAreasText, setDeliveryAreasText] = useState('');
   const [spotThresholdVolume, setSpotThresholdVolume] = useState('50');
+  const [salesStaff, setSalesStaff] = useState([]);
+  const [newStaffName, setNewStaffName] = useState('');
+  const [newStaffPhone, setNewStaffPhone] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newPasswordConfirm, setNewPasswordConfirm] = useState('');
@@ -1878,6 +1922,9 @@ function AdminSettingsSection() {
       setPhoneNumber(settings.phone_number || '');
       setDeliveryAreasText(formatDeliveryAreasTextInput(settings.allowed_delivery_areas));
       setSpotThresholdVolume(String(parseSpotThresholdVolume(settings.spot_threshold_volume)));
+      setSalesStaff(normalizeSalesStaffList(settings.sales_staff));
+      setNewStaffName('');
+      setNewStaffPhone('');
       setCurrentPassword('');
       setNewPassword('');
       setNewPasswordConfirm('');
@@ -1920,6 +1967,7 @@ function AdminSettingsSection() {
         phone_number: phoneNumber.trim(),
         allowed_delivery_areas: parseDeliveryAreasTextInput(deliveryAreasText),
         spot_threshold_volume: parseSpotThresholdVolume(spotThresholdVolume),
+        sales_staff: salesStaff,
       });
       if (wantsPasswordChange) {
         await db.updateAdminPassword(currentPassword.trim(), newPassword.trim());
@@ -1937,6 +1985,25 @@ function AdminSettingsSection() {
 
   const fieldClass =
     'mt-1 min-h-[44px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200';
+
+  const handleAddSalesStaff = (e) => {
+    e.preventDefault();
+    setError('');
+    try {
+      const member = createSalesStaffMember({ name: newStaffName, phone: newStaffPhone });
+      setSalesStaff((prev) => normalizeSalesStaffList([...(prev || []), member]));
+      setNewStaffName('');
+      setNewStaffPhone('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '担当営業の追加に失敗しました');
+    }
+  };
+
+  const handleRemoveSalesStaff = (staffId) => {
+    const id = String(staffId || '').trim();
+    if (!id) return;
+    setSalesStaff((prev) => (prev || []).filter((m) => m.id !== id));
+  };
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-md sm:p-6">
@@ -2021,6 +2088,65 @@ function AdminSettingsSection() {
               autoComplete="new-password"
             />
             <p className="mt-1 text-xs font-bold text-slate-500">パスワードを変更しない場合は3つのパスワード欄をすべて空欄にしてください。</p>
+          </div>
+          <div className="sm:col-span-2 rounded-xl border border-slate-200 bg-white p-4">
+            <h3 className="text-sm font-black text-slate-800">担当営業マスタ</h3>
+            <p className="mt-1 text-[11px] font-medium text-slate-500">
+              物件の「担当営業」プルダウンに表示されます。電話番号は将来のSMS通知用です（現在は未対応）。
+            </p>
+            <ul className="mt-3 space-y-2">
+              {salesStaff.length === 0 ? (
+                <li className="text-sm text-slate-500">登録された担当営業はありません。</li>
+              ) : (
+                salesStaff.map((m) => (
+                  <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-black text-slate-900">{m.name}</p>
+                      <p className="font-mono text-[11px] text-slate-500">ID: {m.id}</p>
+                      {m.phone ? <p className="text-xs text-slate-600">{m.phone}</p> : null}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveSalesStaff(m.id)}
+                      className="shrink-0 rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-bold text-red-800"
+                    >
+                      削除
+                    </button>
+                  </li>
+                ))
+              )}
+            </ul>
+            <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+              <div>
+                <label className="text-xs font-bold text-slate-600" htmlFor="admin-new-staff-name">担当営業名</label>
+                <input
+                  id="admin-new-staff-name"
+                  type="text"
+                  value={newStaffName}
+                  onChange={(e) => setNewStaffName(e.target.value)}
+                  className={fieldClass}
+                  placeholder="例: 山田営業"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-600" htmlFor="admin-new-staff-phone">電話番号（任意）</label>
+                <input
+                  id="admin-new-staff-phone"
+                  type="tel"
+                  value={newStaffPhone}
+                  onChange={(e) => setNewStaffPhone(e.target.value)}
+                  className={fieldClass}
+                  placeholder="将来SMS用"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleAddSalesStaff}
+                className="min-h-[44px] rounded-lg border-2 border-indigo-300 bg-indigo-50 px-4 text-sm font-black text-indigo-800 hover:bg-indigo-100"
+              >
+                追加
+              </button>
+            </div>
           </div>
           <div className="sm:col-span-2">
             <button type="submit" disabled={saving} className="min-h-[44px] rounded-lg bg-indigo-600 px-4 text-sm font-black text-white shadow hover:bg-indigo-700 disabled:opacity-50">

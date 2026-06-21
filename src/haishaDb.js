@@ -32,6 +32,7 @@ import {
   computeAssignedProjectRejectUpdates,
   isAssignedProject,
 } from './utils/assignedProjectEscalation.js';
+import { normalizeSalesStaffList } from './utils/salesStaff.js';
 
 const ORDER_SELECT =
   'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at';
@@ -1950,6 +1951,7 @@ function mapAdminSettingsRow(row) {
     login_password: row?.login_password != null ? String(row.login_password) : '',
     allowed_delivery_areas: normalizeAllowedDeliveryAreas(row?.allowed_delivery_areas),
     spot_threshold_volume: parseSpotThresholdVolume(row?.spot_threshold_volume),
+    sales_staff: normalizeSalesStaffList(row?.sales_staff),
     updated_at: row?.updated_at,
   };
 }
@@ -2006,6 +2008,9 @@ export async function updateAdminSettings(payload) {
   }
   if (Object.prototype.hasOwnProperty.call(payload || {}, 'spot_threshold_volume')) {
     row.spot_threshold_volume = parseSpotThresholdVolume(payload.spot_threshold_volume);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload || {}, 'sales_staff')) {
+    row.sales_staff = normalizeSalesStaffList(payload.sales_staff);
   }
   const { data, error } = await supabase
     .from('admin_settings')

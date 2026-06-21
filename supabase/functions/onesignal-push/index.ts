@@ -6,7 +6,7 @@ import {
   type EscalationStep,
 } from '../_shared/escalationVisibility.ts';
 
-const FUNCTION_VERSION = 29;
+const FUNCTION_VERSION = 30;
 const PUSH_NOTIFY_COOLDOWN_MS = 60_000;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 /** プレフィックス導入前の端末向けに無印 ID へも送る期間（ISO8601） */
@@ -1420,26 +1420,12 @@ async function sendOrderAwaitingAdminNotifications(
   payload: SlimPayload | null | undefined,
   orderId: string,
 ): Promise<string[]> {
-  const salesAdminId = pickString(payload?.sales_admin_id);
-  const message = '【要対応】割当工場が全て対応困難です。顧客との相談が必要です';
-  const data = { type: 'order_awaiting_admin', orderId, targetApp: 'admin' };
-  const sent: string[] = [];
-
-  if (salesAdminId) {
-    const adminIds = expandOneSignalExternalIds([withOneSignalExternalPrefix(salesAdminId, 'admin_')]);
-    if (await sendToExternalIds(adminIds, message, data, {
-      orderId,
-      title: '【要フォロー】割当工場全拒否',
-    })) {
-      sent.push('admin:order_awaiting_admin');
-    }
-    return sent;
-  }
-
-  if (await sendToRole('admin', message, data, { orderId, title: '【要フォロー】割当工場全拒否' })) {
-    sent.push('admin:order_awaiting_admin');
-  }
-  return sent;
+  // 担当営業へのプッシュは未対応（将来 SMS 送信予定）。管理画面の「要フォロー」で確認する。
+  console.log('[onesignal-push] order_awaiting_admin skip push (SMS planned)', {
+    orderId: pickString(orderId, row?.id, payload?.order_id),
+    sales_admin_id: pickString(payload?.sales_admin_id),
+  });
+  return [];
 }
 
 async function sendNewOrderNotifications(
