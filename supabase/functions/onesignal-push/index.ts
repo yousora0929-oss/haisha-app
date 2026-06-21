@@ -6,7 +6,7 @@ import {
   type EscalationStep,
 } from '../_shared/escalationVisibility.ts';
 
-const FUNCTION_VERSION = 28;
+const FUNCTION_VERSION = 29;
 const PUSH_NOTIFY_COOLDOWN_MS = 60_000;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 /** プレフィックス導入前の端末向けに無印 ID へも送る期間（ISO8601） */
@@ -38,7 +38,10 @@ type PushEvent =
   | 'factory_chat'
   | 'customer_map_shared'
   | 'escalation_expanded'
-  | 'association_approved';
+  | 'association_approved'
+  | 'order_assigned_main'
+  | 'order_assigned_sub_next'
+  | 'order_awaiting_admin';
 
 type SlimPayload = {
   event?: PushEvent | string;
@@ -53,6 +56,8 @@ type SlimPayload = {
   chat_from?: string | null;
   chat_message_id?: string | null;
   status?: string | null;
+  target_factory_id?: string | null;
+  sales_admin_id?: string | null;
 };
 
 type OrderRow = {
@@ -1359,6 +1364,84 @@ async function sendAssociationApprovedNotifications(
   return ok ? ['factory:association_approved'] : [];
 }
 
+async function sendToSpecificFactory(
+  factoryId: string,
+  message: string,
+  data: Record<string, unknown> = {},
+  options: { orderId?: string; title?: string } = {},
+): Promise<boolean> {
+  const fid = pickString(factoryId);
+  if (!fid || !message) return false;
+  return sendToExternalIds([onesignalFactoryExternalId(fid)], message, data, {
+    orderId: pickString(options.orderId, data.orderId),
+    title: options.title,
+  });
+}
+
+async function sendAssignedMainNotifications(
+  row: OrderRow | null | undefined,
+  payload: SlimPayload | null | undefined,
+  orderId: string,
+): Promise<string[]> {
+  const targetId = pickString(payload?.target_factory_id, payload?.preferred_factory_id);
+  const contractorName = pickString(
+    payload?.contractor_name,
+    orderData(row).customerName,
+    orderData(row).customer_name,
+    orderData(row).contractorName,
+    '新規注文',
+  );
+  const message = `新規注文が入りました：${contractorName}`;
+  const data = { type: 'order_assigned_main', orderId, targetApp: 'factory' };
+  const ok = await sendToSpecificFactory(targetId, message, data, {
+    orderId,
+    title: '【新規注文】割当物件の配車依頼',
+  });
+  return ok ? ['factory:order_assigned_main'] : [];
+}
+
+async function sendAssignedSubNextNotifications(
+  row: OrderRow | null | undefined,
+  payload: SlimPayload | null | undefined,
+  orderId: string,
+): Promise<string[]> {
+  const targetId = pickString(payload?.target_factory_id);
+  const message = 'メイン工場が対応困難でした。ご対応いただけますか';
+  const data = { type: 'order_assigned_sub_next', orderId, targetApp: 'factory' };
+  const ok = await sendToSpecificFactory(targetId, message, data, {
+    orderId,
+    title: '【配車依頼】サブ工場へのお願い',
+  });
+  return ok ? ['factory:order_assigned_sub_next'] : [];
+}
+
+async function sendOrderAwaitingAdminNotifications(
+  row: OrderRow | null | undefined,
+  payload: SlimPayload | null | undefined,
+  orderId: string,
+): Promise<string[]> {
+  const salesAdminId = pickString(payload?.sales_admin_id);
+  const message = '【要対応】割当工場が全て対応困難です。顧客との相談が必要です';
+  const data = { type: 'order_awaiting_admin', orderId, targetApp: 'admin' };
+  const sent: string[] = [];
+
+  if (salesAdminId) {
+    const adminIds = expandOneSignalExternalIds([withOneSignalExternalPrefix(salesAdminId, 'admin_')]);
+    if (await sendToExternalIds(adminIds, message, data, {
+      orderId,
+      title: '【要フォロー】割当工場全拒否',
+    })) {
+      sent.push('admin:order_awaiting_admin');
+    }
+    return sent;
+  }
+
+  if (await sendToRole('admin', message, data, { orderId, title: '【要フォロー】割当工場全拒否' })) {
+    sent.push('admin:order_awaiting_admin');
+  }
+  return sent;
+}
+
 async function sendNewOrderNotifications(
   row: OrderRow | null | undefined,
   payload: SlimPayload | null | undefined,
@@ -1621,6 +1704,21 @@ async function processSlimPayload(payload: SlimPayload): Promise<string[]> {
     case 'association_approved': {
       const row = orderId ? await fetchOrderRow(orderId) : null;
       sent.push(...await sendAssociationApprovedNotifications(row, payload, orderId));
+      break;
+    }
+    case 'order_assigned_main': {
+      const row = orderId ? await fetchOrderRow(orderId) : null;
+      sent.push(...await sendAssignedMainNotifications(row, payload, orderId));
+      break;
+    }
+    case 'order_assigned_sub_next': {
+      const row = orderId ? await fetchOrderRow(orderId) : null;
+      sent.push(...await sendAssignedSubNextNotifications(row, payload, orderId));
+      break;
+    }
+    case 'order_awaiting_admin': {
+      const row = orderId ? await fetchOrderRow(orderId) : null;
+      sent.push(...await sendOrderAwaitingAdminNotifications(row, payload, orderId));
       break;
     }
     default:

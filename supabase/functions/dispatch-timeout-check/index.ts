@@ -1,12 +1,12 @@
 /**
- * dispatch-timeout-check v1
- * pg_cron から5分おきに呼ばれ、エスカレーション最終段階 + 10分を超えても
- * 未受注（pending / pending_association）の注文を検出し、顧客へ拒否通知を1回だけ送る。
- * 二重送信防止は orders.push_timeout_notified_at で行う。
+ * dispatch-timeout-check v2
+ * - 通常注文: エスカレーション最終段階 + 10分で顧客へタイムアウト通知
+ * - 割当物件: サブ工場への通知から10分応答なしで次サブへ（または管理者フォローへ）
  */
 
-const FUNCTION_VERSION = 1;
+const FUNCTION_VERSION = 2;
 const TIMEOUT_GRACE_MINUTES = 10;
+const SUB_FACTORY_TIMEOUT_MINUTES = 10;
 
 /** factory_escalation_steps 未設定時のデフォルト（src/utils/escalationSteps.js と同一） */
 const DEFAULT_ESCALATION_STEPS = [
@@ -26,11 +26,22 @@ type OrderRow = {
   status?: string | null;
   order_data?: Record<string, unknown> | null;
   customer_id?: string | null;
+  project_id?: string | null;
   preferred_factory_id?: string | null;
   factory_site_id?: string | null;
   created_at?: string | null;
   push_timeout_notified_at?: string | null;
   factory_consult_status?: string | null;
+  is_spot?: boolean | null;
+  rejected_factory_ids?: unknown;
+  sub_factory_current_index?: number | null;
+  sub_factory_notified_at?: string | null;
+};
+
+type ProjectRow = {
+  id?: string;
+  main_factory_id?: string | null;
+  sub_factory_ids?: unknown;
 };
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -76,6 +87,34 @@ function effectiveStatus(row: OrderRow | null | undefined): string {
   return pickString(row?.status, od.status) || 'pending';
 }
 
+function associationPoolLen(row: OrderRow | null | undefined): number {
+  const od = orderData(row);
+  const pool = asArray(od.association_assigned_factory_ids ?? od.associationAssignedFactoryIds);
+  return pool.length;
+}
+
+function isAssignedProjectOrder(row: OrderRow, project: ProjectRow | null | undefined): boolean {
+  if (!row || !project) return false;
+  const od = orderData(row);
+  if (Boolean(row.is_spot ?? od.is_spot)) return false;
+  if (!pickString(row.project_id, od.project_id, od.projectId)) return false;
+  if (associationPoolLen(row) > 0) return false;
+  const mainId = pickString(project.main_factory_id);
+  const subLen = asArray(project.sub_factory_ids).length;
+  return Boolean(mainId) || subLen > 0;
+}
+
+function normalizeSubFactoryIds(raw: unknown): string[] {
+  return asArray(raw).map((x) => pickString(x)).filter(Boolean);
+}
+
+function rejectedFactoryIds(row: OrderRow): string[] {
+  const direct = asArray(row.rejected_factory_ids).map((x) => pickString(x)).filter(Boolean);
+  if (direct.length) return [...new Set(direct)];
+  const od = orderData(row);
+  return [...new Set(asArray(od.rejected_factory_ids ?? od.rejectedFactoryIds).map((x) => pickString(x)).filter(Boolean))];
+}
+
 function resolveAnchorFactoryId(row: OrderRow | null | undefined): string {
   const od = orderData(row);
   return pickString(
@@ -103,6 +142,7 @@ function normalizeEscalationSteps(rows: unknown): EscalationStep[] {
 }
 
 const escalationCache = new Map<string, EscalationStep[]>();
+const projectCache = new Map<string, ProjectRow | null>();
 
 async function fetchEscalationSteps(factoryId: string): Promise<EscalationStep[]> {
   const fid = pickString(factoryId);
@@ -126,20 +166,51 @@ async function fetchEscalationSteps(factoryId: string): Promise<EscalationStep[]
       },
     );
     if (!response.ok) {
-      console.warn('[dispatch-timeout-check] escalation steps fetch failed', { factoryId: fid, status: response.status });
       escalationCache.set(fid, DEFAULT_ESCALATION_STEPS);
       return DEFAULT_ESCALATION_STEPS;
     }
     const steps = normalizeEscalationSteps(await response.json());
     escalationCache.set(fid, steps);
     return steps;
-  } catch (error) {
-    console.warn('[dispatch-timeout-check] escalation steps fetch error — use default', { factoryId: fid, error });
+  } catch {
     return DEFAULT_ESCALATION_STEPS;
   }
 }
 
-/** エスカレーション最終段階の trigger_minutes（最大） */
+async function fetchProject(projectId: string): Promise<ProjectRow | null> {
+  const pid = pickString(projectId);
+  if (!pid) return null;
+  if (projectCache.has(pid)) return projectCache.get(pid) ?? null;
+
+  const { base, serviceKey } = supabaseEnv();
+  if (!base || !serviceKey) return null;
+
+  try {
+    const response = await fetch(
+      `${base}/rest/v1/projects?id=eq.${encodeURIComponent(pid)}` +
+        `&select=id,main_factory_id,sub_factory_ids`,
+      {
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          Accept: 'application/json',
+        },
+      },
+    );
+    if (!response.ok) {
+      projectCache.set(pid, null);
+      return null;
+    }
+    const rows = await response.json();
+    const row = Array.isArray(rows) && rows[0] ? (rows[0] as ProjectRow) : null;
+    projectCache.set(pid, row);
+    return row;
+  } catch {
+    projectCache.set(pid, null);
+    return null;
+  }
+}
+
 function finalEscalationTriggerMinutes(steps: EscalationStep[]): number {
   const list = steps.length ? steps : DEFAULT_ESCALATION_STEPS;
   const last = list[list.length - 1];
@@ -154,7 +225,7 @@ async function fetchPendingOrders(): Promise<OrderRow[]> {
     const response = await fetch(
       `${base}/rest/v1/orders?status=in.(pending,pending_association)` +
         `&push_timeout_notified_at=is.null` +
-        `&select=id,status,order_data,customer_id,preferred_factory_id,factory_site_id,created_at,push_timeout_notified_at,factory_consult_status`,
+        `&select=id,status,order_data,customer_id,project_id,preferred_factory_id,factory_site_id,created_at,push_timeout_notified_at,factory_consult_status,is_spot,rejected_factory_ids,sub_factory_current_index,sub_factory_notified_at`,
       {
         headers: {
           apikey: serviceKey,
@@ -163,19 +234,60 @@ async function fetchPendingOrders(): Promise<OrderRow[]> {
         },
       },
     );
-    if (!response.ok) {
-      console.warn('[dispatch-timeout-check] pending orders fetch failed', { status: response.status });
-      return [];
-    }
+    if (!response.ok) return [];
     const rows = await response.json();
     return Array.isArray(rows) ? (rows as OrderRow[]) : [];
-  } catch (error) {
-    console.warn('[dispatch-timeout-check] pending orders fetch error', error);
+  } catch {
     return [];
   }
 }
 
-/** push_timeout_notified_at を立てる（既に立っていれば敗北＝二重送信回避） */
+async function fetchAssignedSubTimeoutOrders(): Promise<OrderRow[]> {
+  const { base, serviceKey } = supabaseEnv();
+  if (!base || !serviceKey) return [];
+
+  try {
+    const response = await fetch(
+      `${base}/rest/v1/orders?status=eq.pending` +
+        `&sub_factory_notified_at=not.is.null` +
+        `&sub_factory_current_index=gte.0` +
+        `&select=id,status,order_data,project_id,rejected_factory_ids,sub_factory_current_index,sub_factory_notified_at,is_spot`,
+      {
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          Accept: 'application/json',
+        },
+      },
+    );
+    if (!response.ok) return [];
+    const rows = await response.json();
+    return Array.isArray(rows) ? (rows as OrderRow[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function patchOrder(orderId: string, body: Record<string, unknown>): Promise<boolean> {
+  const { base, serviceKey } = supabaseEnv();
+  if (!base || !serviceKey || !orderId) return false;
+  try {
+    const response = await fetch(`${base}/rest/v1/orders?id=eq.${encodeURIComponent(orderId)}`, {
+      method: 'PATCH',
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify(body),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function claimTimeoutNotify(orderId: string): Promise<boolean> {
   const { base, serviceKey } = supabaseEnv();
   if (!base || !serviceKey || !orderId) return false;
@@ -195,14 +307,10 @@ async function claimTimeoutNotify(orderId: string): Promise<boolean> {
         body: JSON.stringify({ push_timeout_notified_at: now }),
       },
     );
-    if (!response.ok) {
-      console.warn('[dispatch-timeout-check] claim timeout failed', { orderId, status: response.status });
-      return false;
-    }
+    if (!response.ok) return false;
     const rows = await response.json();
     return Array.isArray(rows) && rows.length > 0;
-  } catch (error) {
-    console.warn('[dispatch-timeout-check] claim timeout error', { orderId, error });
+  } catch {
     return false;
   }
 }
@@ -231,18 +339,70 @@ async function postTimeoutPush(row: OrderRow): Promise<boolean> {
       },
       body: '{}',
     });
-    if (!response.ok) {
-      console.warn('[dispatch-timeout-check] onesignal-push call failed', {
-        orderId: pickString(row.id),
-        status: response.status,
-      });
-      return false;
-    }
-    return true;
-  } catch (error) {
-    console.warn('[dispatch-timeout-check] onesignal-push call error', { orderId: pickString(row.id), error });
+    return response.ok;
+  } catch {
     return false;
   }
+}
+
+async function processSubFactoryTimeouts(): Promise<{ checked: number; advanced: number; orderIds: string[] }> {
+  const orders = await fetchAssignedSubTimeoutOrders();
+  const now = Date.now();
+  const orderIds: string[] = [];
+  let advanced = 0;
+
+  for (const row of orders) {
+    const orderId = pickString(row.id);
+    if (!orderId) continue;
+    if (pickString(row.factory_consult_status) === 'consulting') continue;
+
+    const notifiedAt = pickString(row.sub_factory_notified_at);
+    const notifiedMs = notifiedAt ? Date.parse(notifiedAt) : NaN;
+    if (Number.isNaN(notifiedMs)) continue;
+    if ((now - notifiedMs) / 60000 <= SUB_FACTORY_TIMEOUT_MINUTES) continue;
+
+    const projectId = pickString(row.project_id, orderData(row).project_id, orderData(row).projectId);
+    const project = await fetchProject(projectId);
+    if (!isAssignedProjectOrder(row, project)) continue;
+
+    const subIds = normalizeSubFactoryIds(project?.sub_factory_ids);
+    const currentIndex = Number(row.sub_factory_current_index ?? -1);
+    if (currentIndex < 0 || currentIndex >= subIds.length) continue;
+
+    const timedOutFactoryId = subIds[currentIndex];
+    const rejected = rejectedFactoryIds(row);
+    if (!rejected.includes(timedOutFactoryId)) rejected.push(timedOutFactoryId);
+
+    const nextIndex = currentIndex + 1;
+    const nowIso = new Date().toISOString();
+    const od = orderData(row);
+    const patch: Record<string, unknown> = {
+      rejected_factory_ids: rejected,
+      order_data: { ...od, rejected_factory_ids: rejected, rejectedFactoryIds: rejected },
+    };
+
+    if (nextIndex < subIds.length) {
+      patch.sub_factory_current_index = nextIndex;
+      patch.sub_factory_notified_at = nowIso;
+    } else {
+      patch.status = 'awaiting_admin_followup';
+      patch.admin_followup_started_at = nowIso;
+      patch.sub_factory_notified_at = null;
+    }
+
+    const ok = await patchOrder(orderId, patch);
+    if (ok) {
+      advanced += 1;
+      orderIds.push(orderId);
+      console.log('[dispatch-timeout-check] sub factory timeout advanced', {
+        orderId,
+        timedOutFactoryId,
+        nextIndex: nextIndex < subIds.length ? nextIndex : null,
+      });
+    }
+  }
+
+  return { checked: orders.length, advanced, orderIds };
 }
 
 async function processTimeouts(): Promise<{ checked: number; timedOut: number; notified: string[] }> {
@@ -255,8 +415,11 @@ async function processTimeouts(): Promise<{ checked: number; timedOut: number; n
     const orderId = pickString(row.id);
     if (!orderId) continue;
     if (effectiveStatus(row) === 'customer_cancelled') continue;
-    // 相談中はエスカレーション停止中のためタイムアウト判定から除外
     if (pickString(row.factory_consult_status) === 'consulting') continue;
+
+    const projectId = pickString(row.project_id, orderData(row).project_id, orderData(row).projectId);
+    const project = projectId ? await fetchProject(projectId) : null;
+    if (isAssignedProjectOrder(row, project)) continue;
 
     const created = pickString(row.created_at);
     const createdMs = created ? Date.parse(created) : NaN;
@@ -270,19 +433,9 @@ async function processTimeouts(): Promise<{ checked: number; timedOut: number; n
 
     timedOut += 1;
     const claimed = await claimTimeoutNotify(orderId);
-    if (!claimed) {
-      console.log('[dispatch-timeout-check] already notified — skip', { orderId });
-      continue;
-    }
+    if (!claimed) continue;
 
     const ok = await postTimeoutPush(row);
-    console.log('[dispatch-timeout-check] timeout notify', {
-      orderId,
-      elapsedMinutes: Math.round(elapsedMinutes),
-      finalTrigger,
-      grace: TIMEOUT_GRACE_MINUTES,
-      pushOk: ok,
-    });
     if (ok) notified.push(orderId);
   }
 
@@ -303,10 +456,16 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const subResult = await processSubFactoryTimeouts();
     const result = await processTimeouts();
-    console.log('[dispatch-timeout-check] done', { v: FUNCTION_VERSION, ...result, ms: Date.now() - started });
+    console.log('[dispatch-timeout-check] done', {
+      v: FUNCTION_VERSION,
+      sub: subResult,
+      ...result,
+      ms: Date.now() - started,
+    });
     return new Response(
-      JSON.stringify({ ok: true, v: FUNCTION_VERSION, ...result, ms: Date.now() - started }),
+      JSON.stringify({ ok: true, v: FUNCTION_VERSION, sub: subResult, ...result, ms: Date.now() - started }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     );
   } catch (error) {

@@ -28,9 +28,13 @@ import {
   normalizeDayBlockSchedule,
   normalizeFullSchedule,
 } from './haishaConstants.js';
+import {
+  computeAssignedProjectRejectUpdates,
+  isAssignedProject,
+} from './utils/assignedProjectEscalation.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at';
+  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -340,6 +344,60 @@ export function normalizeOrderRow(row) {
         ? String(od.customerChatReadAt)
         : od.customer_chat_read_at != null
           ? String(od.customer_chat_read_at)
+          : '',
+    sub_factory_current_index:
+      row.sub_factory_current_index != null
+        ? Number(row.sub_factory_current_index)
+        : od.sub_factory_current_index != null
+          ? Number(od.sub_factory_current_index)
+          : od.subFactoryCurrentIndex != null
+            ? Number(od.subFactoryCurrentIndex)
+            : -1,
+    subFactoryCurrentIndex:
+      row.sub_factory_current_index != null
+        ? Number(row.sub_factory_current_index)
+        : od.subFactoryCurrentIndex != null
+          ? Number(od.subFactoryCurrentIndex)
+          : od.sub_factory_current_index != null
+            ? Number(od.sub_factory_current_index)
+            : -1,
+    sub_factory_notified_at:
+      row.sub_factory_notified_at != null
+        ? String(row.sub_factory_notified_at)
+        : od.sub_factory_notified_at != null
+          ? String(od.sub_factory_notified_at)
+          : '',
+    subFactoryNotifiedAt:
+      row.sub_factory_notified_at != null
+        ? String(row.sub_factory_notified_at)
+        : od.subFactoryNotifiedAt != null
+          ? String(od.subFactoryNotifiedAt)
+          : '',
+    admin_followup_notes: Array.isArray(row.admin_followup_notes)
+      ? row.admin_followup_notes
+      : Array.isArray(od.admin_followup_notes)
+        ? od.admin_followup_notes
+        : Array.isArray(od.adminFollowupNotes)
+          ? od.adminFollowupNotes
+          : [],
+    adminFollowupNotes: Array.isArray(row.admin_followup_notes)
+      ? row.admin_followup_notes
+      : Array.isArray(od.adminFollowupNotes)
+        ? od.adminFollowupNotes
+        : Array.isArray(od.admin_followup_notes)
+          ? od.admin_followup_notes
+          : [],
+    admin_followup_started_at:
+      row.admin_followup_started_at != null
+        ? String(row.admin_followup_started_at)
+        : od.admin_followup_started_at != null
+          ? String(od.admin_followup_started_at)
+          : '',
+    adminFollowupStartedAt:
+      row.admin_followup_started_at != null
+        ? String(row.admin_followup_started_at)
+        : od.adminFollowupStartedAt != null
+          ? String(od.adminFollowupStartedAt)
           : '',
   };
 }
@@ -701,6 +759,29 @@ export async function updateOrderDetails(orderId, updatedData) {
     const at = String(patch.accepted_at ?? patch.acceptedAt ?? '').trim();
     updateRow.accepted_at = at || null;
   }
+  if (Object.prototype.hasOwnProperty.call(patch, 'sub_factory_current_index') ||
+      Object.prototype.hasOwnProperty.call(patch, 'subFactoryCurrentIndex')) {
+    const raw = patch.sub_factory_current_index ?? patch.subFactoryCurrentIndex;
+    updateRow.sub_factory_current_index = raw == null || raw === '' ? null : Number(raw);
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'sub_factory_notified_at') ||
+      Object.prototype.hasOwnProperty.call(patch, 'subFactoryNotifiedAt')) {
+    const at = String(patch.sub_factory_notified_at ?? patch.subFactoryNotifiedAt ?? '').trim();
+    updateRow.sub_factory_notified_at = at || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'admin_followup_notes') ||
+      Object.prototype.hasOwnProperty.call(patch, 'adminFollowupNotes')) {
+    const notes = patch.admin_followup_notes ?? patch.adminFollowupNotes;
+    updateRow.admin_followup_notes = Array.isArray(notes) ? notes : [];
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'admin_followup_started_at') ||
+      Object.prototype.hasOwnProperty.call(patch, 'adminFollowupStartedAt')) {
+    const at = String(patch.admin_followup_started_at ?? patch.adminFollowupStartedAt ?? '').trim();
+    updateRow.admin_followup_started_at = at || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'chat_messages') || Object.prototype.hasOwnProperty.call(patch, 'chatMessages')) {
+    updateRow.chat_messages = normalizeChatMessages(patch.chat_messages ?? patch.chatMessages);
+  }
   const { data: updated, error: upErr } = await supabase
     .from('orders')
     .update(updateRow)
@@ -894,7 +975,7 @@ export async function rejectOrderForFactory(orderId, factoryId, options = {}) {
 
   const { data: row, error: selErr } = await supabase
     .from('orders')
-    .select('order_data, rejected_factory_ids, chat_messages')
+    .select(ORDER_SELECT)
     .eq('id', id)
     .maybeSingle();
   if (selErr) {
@@ -903,6 +984,7 @@ export async function rejectOrderForFactory(orderId, factoryId, options = {}) {
   }
   if (!row) throw new Error('注文が見つかりません');
 
+  const currentOrder = normalizeOrderRow(row) || { id };
   const current = Array.isArray(row.rejected_factory_ids)
     ? row.rejected_factory_ids.map((x) => String(x)).filter(Boolean)
     : [];
@@ -932,22 +1014,150 @@ export async function rejectOrderForFactory(orderId, factoryId, options = {}) {
     ].slice(-100);
   }
 
-  const { error: upErr } = await supabase
-    .from('orders')
-    .update({
-      rejected_factory_ids: nextIds,
-      order_data: nextOrderData,
-      chat_messages: chatMessages,
-      factory_consult_status: null,
-      factory_consult_started_at: null,
-      factory_consult_by_factory_id: null,
-    })
-    .eq('id', id);
+  const updatePayload = {
+    rejected_factory_ids: nextIds,
+    order_data: nextOrderData,
+    chat_messages: chatMessages,
+    factory_consult_status: null,
+    factory_consult_started_at: null,
+    factory_consult_by_factory_id: null,
+  };
+
+  const projectId = String(currentOrder.project_id ?? currentOrder.projectId ?? row.project_id ?? '').trim();
+  if (projectId) {
+    const project = await fetchProjectById(projectId);
+    if (project && isAssignedProject(currentOrder, project)) {
+      const assignedPatch = computeAssignedProjectRejectUpdates(currentOrder, project, fid);
+      if (assignedPatch) {
+        Object.assign(updatePayload, assignedPatch);
+        if (assignedPatch.status) {
+          nextOrderData.status = assignedPatch.status;
+          updatePayload.order_data = nextOrderData;
+        }
+        if (assignedPatch.sub_factory_current_index != null) {
+          nextOrderData.sub_factory_current_index = assignedPatch.sub_factory_current_index;
+          nextOrderData.subFactoryCurrentIndex = assignedPatch.sub_factory_current_index;
+          updatePayload.order_data = nextOrderData;
+        }
+        if (assignedPatch.sub_factory_notified_at) {
+          nextOrderData.sub_factory_notified_at = assignedPatch.sub_factory_notified_at;
+          nextOrderData.subFactoryNotifiedAt = assignedPatch.sub_factory_notified_at;
+          updatePayload.order_data = nextOrderData;
+        }
+        if (assignedPatch.admin_followup_started_at) {
+          nextOrderData.admin_followup_started_at = assignedPatch.admin_followup_started_at;
+          nextOrderData.adminFollowupStartedAt = assignedPatch.admin_followup_started_at;
+          updatePayload.order_data = nextOrderData;
+        }
+      }
+    }
+  }
+
+  const { error: upErr } = await supabase.from('orders').update(updatePayload).eq('id', id);
   if (upErr) {
     console.error('rejectOrderForFactory update failed', upErr);
     throw upErr;
   }
   return nextIds;
+}
+
+async function fetchProjectById(projectId) {
+  const id = String(projectId || '').trim();
+  if (!id) return null;
+  const { data, error } = await supabase
+    .from('projects')
+    .select('id, main_factory_id, sub_factory_ids, sales_admin_id, sales_admin_name')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) {
+    console.error('fetchProjectById failed', error);
+    throw error;
+  }
+  return data ? mapProjectRow(data) : null;
+}
+
+export async function appendAdminFollowupNote(orderId, { type, content, adminId, adminName }) {
+  const id = String(orderId || '').trim();
+  const noteType = String(type || 'other').trim() || 'other';
+  const body = String(content || '').trim();
+  if (!id) throw new Error('orderId が必要です');
+  if (!body) throw new Error('内容を入力してください');
+
+  const { data: row, error: selErr } = await supabase
+    .from('orders')
+    .select('admin_followup_notes')
+    .eq('id', id)
+    .maybeSingle();
+  if (selErr) throw selErr;
+  if (!row) throw new Error('注文が見つかりません');
+
+  const current = Array.isArray(row.admin_followup_notes) ? row.admin_followup_notes : [];
+  const entry = {
+    id: 'note_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+    type: ['email', 'phone', 'meeting', 'other'].includes(noteType) ? noteType : 'other',
+    timestamp: new Date().toISOString(),
+    admin_id: String(adminId || '').trim() || 'admin_1',
+    admin_name: String(adminName || '').trim() || '管理者',
+    content: body,
+  };
+  const nextNotes = [...current, entry].slice(-200);
+
+  return updateOrderDetails(id, {
+    admin_followup_notes: nextNotes,
+    adminFollowupNotes: nextNotes,
+  });
+}
+
+/** 要フォロー注文: 管理者が工場を手動指定して配車待ちへ戻す */
+export async function adminAssignFactoryFromFollowup(orderId, factorySiteId, options = {}) {
+  const id = String(orderId || '').trim();
+  const fid = sanitizeRefId(factorySiteId);
+  if (!id) throw new Error('orderId が必要です');
+  if (!fid) throw new Error('factorySiteId が必要です');
+
+  const factoryName = String(options?.factoryName ?? options?.factory_name ?? '').trim() || '指定工場';
+  const adminName = String(options?.adminName ?? options?.admin_name ?? '').trim() || '管理者';
+
+  const { data: row, error: selErr } = await supabase
+    .from('orders')
+    .select(ORDER_SELECT)
+    .eq('id', id)
+    .maybeSingle();
+  if (selErr) throw selErr;
+  if (!row) throw new Error('注文が見つかりません');
+
+  const chatMessages = [
+    ...normalizeChatMessages(row.chat_messages),
+    {
+      id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+      from: 'system',
+      body: `【管理者対応】${factoryName}での対応で進めます`,
+      createdAt: new Date().toISOString(),
+    },
+  ].slice(-100);
+
+  return adminUpdateOrder(id, {
+    status: 'pending',
+    factory_site_id: fid,
+    factorySiteId: fid,
+    preferred_factory_id: fid,
+    preferredFactoryId: fid,
+    factoryResponseStatus: undefined,
+    factoryResponseLocked: false,
+    factoryPendingStartedAt: undefined,
+    factoryPendingByName: undefined,
+    factoryRejectSource: undefined,
+    sub_factory_current_index: null,
+    subFactoryCurrentIndex: null,
+    sub_factory_notified_at: null,
+    subFactoryNotifiedAt: null,
+    chat_messages: chatMessages,
+    chatMessages,
+    admin_assign_factory_name: factoryName,
+    adminAssignFactoryName: factoryName,
+    admin_assign_by_name: adminName,
+    adminAssignByName: adminName,
+  });
 }
 
 /** 工場「相談」開始: 時間制限なしの交渉中ステートにする（相談中の工場のみ操作可能） */
@@ -1517,6 +1727,8 @@ function mapProjectRow(row) {
     default_map_image_url: String(
       row.default_map_image_url ?? row.map_base_image_url ?? row.mapBaseImageUrl ?? '',
     ).trim(),
+    sales_admin_id: row.sales_admin_id != null ? String(row.sales_admin_id).trim() : '',
+    sales_admin_name: row.sales_admin_name != null ? String(row.sales_admin_name).trim() : '',
     map_annotations: row.map_annotations && typeof row.map_annotations === 'object' ? row.map_annotations : null,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -1985,6 +2197,8 @@ export async function bulkInsertProjects(projectRows) {
       folder_url: normalizeExternalUrl(payload.folder_url) || null,
       sheet_url: normalizeExternalUrl(payload.sheet_url) || null,
       url_token: resolveUrlTokenForInsert(payload),
+      sales_admin_id: String(payload.sales_admin_id ?? '').trim() || null,
+      sales_admin_name: String(payload.sales_admin_name ?? '').trim() || null,
     };
   });
 
@@ -2022,6 +2236,8 @@ export async function insertProject(payload) {
     folder_url: normalizeExternalUrl(payload.folder_url) || null,
     sheet_url: normalizeExternalUrl(payload.sheet_url) || null,
     url_token: resolveUrlTokenForInsert(payload),
+    sales_admin_id: String(payload.sales_admin_id ?? '').trim() || null,
+    sales_admin_name: String(payload.sales_admin_name ?? '').trim() || null,
   };
   const { data, error } = await supabase.from('projects').insert(row).select('*').single();
   if (error) throw error;
@@ -2050,8 +2266,9 @@ export async function updateProject(projectId, payload) {
     site_address: String(payload.site_address || '').trim() || null,
     folder_url: normalizeExternalUrl(payload.folder_url) || null,
     sheet_url: normalizeExternalUrl(payload.sheet_url) || null,
+    sales_admin_id: String(payload.sales_admin_id ?? '').trim() || null,
+    sales_admin_name: String(payload.sales_admin_name ?? '').trim() || null,
   };
-  const latNum = payload.lat != null && payload.lat !== '' ? Number(payload.lat) : NaN;
   const lngNum = payload.lng != null && payload.lng !== '' ? Number(payload.lng) : NaN;
   if (Number.isFinite(latNum)) row.lat = latNum;
   if (Number.isFinite(lngNum)) row.lng = lngNum;

@@ -27,6 +27,7 @@ type OrderLike = {
   delivery_lng?: number | string | null;
   rejected_factory_ids?: unknown;
   association_assigned_factory_ids?: unknown;
+  sub_factory_current_index?: number | null;
 };
 
 type FactoryLike = {
@@ -41,6 +42,7 @@ type ProjectLike = {
   sub_factory_ids?: unknown;
   lat?: number | string | null;
   lng?: number | string | null;
+  sales_admin_id?: string | null;
 };
 
 export type EscalationPushContext = {
@@ -342,6 +344,46 @@ export function buildCandidateFactoryIds(order: OrderLike, ctx: EscalationPushCo
   return candidates;
 }
 
+function normalizeSubFactoryIds(raw: unknown): string[] {
+  return asArray(raw).map((x) => pickString(x)).filter(Boolean);
+}
+
+function assignedProjectSubIndex(order?: OrderLike | null): number {
+  const od = orderData(order);
+  const raw = order?.sub_factory_current_index ?? od.sub_factory_current_index ?? od.subFactoryCurrentIndex;
+  if (raw == null || raw === '') return -1;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : -1;
+}
+
+function isAssignedProject(order: OrderLike, project: ProjectLike | null | undefined): boolean {
+  if (!order || !project) return false;
+  const od = orderData(order);
+  if (Boolean(order.is_spot ?? od.is_spot)) return false;
+  if (!orderProjectId(order)) return false;
+  if (associationAssignedFactoryIds(order).length > 0) return false;
+  const mainId = pickString(project.main_factory_id);
+  const subIds = normalizeSubFactoryIds(project.sub_factory_ids);
+  return Boolean(mainId) || subIds.length > 0;
+}
+
+function isOrderVisibleToAssignedProjectFactory(
+  order: OrderLike,
+  project: ProjectLike,
+  factoryId: string,
+): boolean {
+  const fid = pickString(factoryId);
+  if (!fid) return false;
+  const mainId = pickString(project.main_factory_id);
+  const subIds = normalizeSubFactoryIds(project.sub_factory_ids);
+  const rejectedIds = rejectedFactoryIdSet(order);
+  const currentSubIndex = assignedProjectSubIndex(order);
+
+  if (mainId && !rejectedIds.has(mainId)) return fid === mainId;
+  if (currentSubIndex >= 0 && currentSubIndex < subIds.length) return fid === subIds[currentSubIndex];
+  return false;
+}
+
 function resolveEscalationAnchorFactoryId(
   order: OrderLike,
   project: ProjectLike | null | undefined,
@@ -367,6 +409,7 @@ export function isOrderVisibleToFactory(order: OrderLike, factoryId: string, ctx
   const od = orderData(order);
   const status = pickString(order?.status, od.status);
   if (status === 'deleted' || status === 'pending_association') return false;
+  if (status === 'awaiting_admin_followup') return false;
 
   const assigned = pickString(order?.factory_site_id, od.factory_site_id, od.factorySiteId);
   if (assigned) return assigned === fid;
@@ -395,6 +438,10 @@ export function isOrderVisibleToFactory(order: OrderLike, factoryId: string, ctx
       return assigned === fid || [preferredId, mainId, ...subIds].includes(fid);
     }
     return true;
+  }
+
+  if (isAssignedProject(order, project) && status === 'pending') {
+    return isOrderVisibleToAssignedProjectFactory(order, project!, fid);
   }
 
   const effectiveMinutes = getEffectiveEscalationMinutes(order, ctx);

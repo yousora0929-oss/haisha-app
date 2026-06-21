@@ -13,6 +13,10 @@ import {
   getEscalationStepsForAnchor,
   getNextEscalationThreshold,
 } from './escalationSteps.js';
+import {
+  isAssignedProject,
+  isOrderVisibleToAssignedProjectFactory,
+} from './assignedProjectEscalation.js';
 
 function orderCreatedAt(order) {
   return order?.createdAt ?? order?.created_at ?? null;
@@ -518,6 +522,7 @@ export function isOrderVisibleToFactory(order, factoryId, ctx) {
   const status = order?.status != null ? String(order.status) : '';
   if (status === 'deleted') return false;
   if (status === 'pending_association') return false;
+  if (status === 'awaiting_admin_followup') return false;
 
   const factorySiteId = normalizeFactoryRefId(order?.factory_site_id ?? order?.factorySiteId);
   if (factorySiteId) {
@@ -582,6 +587,21 @@ export function isOrderVisibleToFactory(order, factoryId, ctx) {
   }
   if (assigned && assigned === fid) return true;
   if (assigned && assigned !== fid) return false;
+
+  if (isAssignedProject(order, project) && status === 'pending') {
+    const visible = isOrderVisibleToAssignedProjectFactory(order, project, fid);
+    logOrderVisibilityDebug({
+      orderId: order?.id,
+      factoryId: fid,
+      is_spot: Boolean(order?.is_spot),
+      preferred: orderPreferredFactoryId(order) || null,
+      visibleCount: visible ? 1 : 0,
+      candidates: visible ? [fid] : [],
+      isVisible: visible,
+      reason: 'assigned_project',
+    });
+    return visible;
+  }
 
   const effectiveMinutes = getEffectiveEscalationMinutes(order, ctx.projectById, ctx.settings, ctx.holidays, ctx.now);
 

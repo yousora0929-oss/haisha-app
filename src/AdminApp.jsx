@@ -147,6 +147,7 @@ function orderStatusLabel(status) {
   if (status === 'customer_cancelled') return 'キャンセル';
   if (status === 'rejected') return '見送り';
   if (status === 'pending_association') return '組合承認待ち';
+  if (status === 'awaiting_admin_followup') return '要フォロー';
   return '配車待ち';
 }
 
@@ -156,6 +157,7 @@ function statusBadgeClass(status) {
   if (status === 'accepted') return 'border-emerald-300 bg-emerald-50 text-emerald-800';
   if (status === 'rejected') return 'border-red-300 bg-red-50 text-red-800';
   if (status === 'pending_association') return 'cl-alert-association cl-alert-status border-violet-400 bg-violet-50 text-violet-900';
+  if (status === 'awaiting_admin_followup') return 'cl-alert-status border-rose-400 bg-rose-50 text-rose-900';
   return 'cl-alert-status border-amber-300 bg-amber-50 text-amber-900';
 }
 
@@ -403,6 +405,8 @@ function ProjectForm({
   const [lng, setLng] = useState(initial?.lng != null && Number.isFinite(initial.lng) ? String(initial.lng) : '');
   const [folderUrl, setFolderUrl] = useState(initial?.folder_url ?? '');
   const [sheetUrl, setSheetUrl] = useState(initial?.sheet_url ?? '');
+  const [salesAdminId, setSalesAdminId] = useState(initial?.sales_admin_id ?? '');
+  const [salesAdminName, setSalesAdminName] = useState(initial?.sales_admin_name ?? '');
   const [addressError, setAddressError] = useState('');
   const linkedCustomer = useMemo(
     () => (customers || []).find((c) => c && String(c.id) === String(customerId || '')),
@@ -445,6 +449,8 @@ function ProjectForm({
     setLng(initial?.lng != null && Number.isFinite(initial.lng) ? String(initial.lng) : '');
     setFolderUrl(initial?.folder_url ?? '');
     setSheetUrl(initial?.sheet_url ?? '');
+    setSalesAdminId(initial?.sales_admin_id ?? '');
+    setSalesAdminName(initial?.sales_admin_name ?? '');
     setAddressError('');
   }, [initial, customers]);
 
@@ -629,6 +635,8 @@ function ProjectForm({
       lng: lng.trim(),
       folder_url: folderUrl.trim(),
       sheet_url: sheetUrl.trim(),
+      sales_admin_id: salesAdminId.trim(),
+      sales_admin_name: salesAdminName.trim(),
     });
   };
 
@@ -729,6 +737,34 @@ function ProjectForm({
           </ul>
         )}
       </fieldset>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <label className="text-xs font-bold text-slate-600" htmlFor="proj-sales-admin-id">
+            担当営業 ID（プッシュ通知先）
+          </label>
+          <input
+            id="proj-sales-admin-id"
+            type="text"
+            value={salesAdminId}
+            onChange={(e) => setSalesAdminId(e.target.value)}
+            className={fieldClass}
+            placeholder="例: admin_1"
+          />
+        </div>
+        <div>
+          <label className="text-xs font-bold text-slate-600" htmlFor="proj-sales-admin-name">
+            担当営業名
+          </label>
+          <input
+            id="proj-sales-admin-name"
+            type="text"
+            value={salesAdminName}
+            onChange={(e) => setSalesAdminName(e.target.value)}
+            className={fieldClass}
+            placeholder="例: 山田営業"
+          />
+        </div>
+      </div>
       <DeliveryAreaAddressField
         idPrefix="proj"
         allowedAreas={allowedDeliveryAreas}
@@ -2225,6 +2261,212 @@ function AdminOrderDetailModal({
   );
 }
 
+function AdminFollowupOrderCard({
+  order,
+  factories,
+  factoryNameById,
+  chatMessages,
+  adminName,
+  onOpenDetail,
+  onOrderUpdated,
+}) {
+  const [noteType, setNoteType] = useState('phone');
+  const [noteContent, setNoteContent] = useState('');
+  const [selectedFactoryId, setSelectedFactoryId] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
+  const [savingAssign, setSavingAssign] = useState(false);
+  const [localError, setLocalError] = useState('');
+  const [showChat, setShowChat] = useState(false);
+
+  const party = orderPartyInfo(order);
+  const rejectedIds = Array.isArray(order.rejected_factory_ids) ? order.rejected_factory_ids : [];
+  const notes = Array.isArray(order.admin_followup_notes)
+    ? order.admin_followup_notes
+    : Array.isArray(order.adminFollowupNotes)
+      ? order.adminFollowupNotes
+      : [];
+  const messages = Array.isArray(chatMessages) ? chatMessages : [];
+
+  const handleAddNote = async () => {
+    if (!noteContent.trim()) return;
+    setSavingNote(true);
+    setLocalError('');
+    try {
+      const updated = await db.appendAdminFollowupNote(order.id, {
+        type: noteType,
+        content: noteContent.trim(),
+        adminId: 'admin_1',
+        adminName: adminName || '管理者',
+      });
+      onOrderUpdated(updated);
+      setNoteContent('');
+    } catch (e) {
+      console.error(e);
+      setLocalError('外部対応記録の保存に失敗しました。');
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
+  const handleAssignFactory = async () => {
+    const fid = String(selectedFactoryId || '').trim();
+    if (!fid) return;
+    if (!window.confirm(`${factoryNameById[fid] || fid} に手動配車しますか？`)) return;
+    setSavingAssign(true);
+    setLocalError('');
+    try {
+      const updated = await db.adminAssignFactoryFromFollowup(order.id, fid, {
+        factoryName: factoryNameById[fid] || fid,
+        adminName: adminName || '管理者',
+      });
+      onOrderUpdated(updated);
+    } catch (e) {
+      console.error(e);
+      setLocalError('工場の手動指定に失敗しました。');
+    } finally {
+      setSavingAssign(false);
+    }
+  };
+
+  const noteTypeLabel = (type) => {
+    if (type === 'email') return 'メール';
+    if (type === 'phone') return '電話';
+    if (type === 'meeting') return '面談';
+    return 'その他';
+  };
+
+  return (
+    <li className="rounded-xl border border-rose-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-black text-slate-900">
+            {formatDateJp(orderDeliveryDate(order))} {formatOrderTime(order)} · {party.site}
+          </p>
+          <p className="mt-1 text-xs font-bold text-slate-600">
+            {party.contractor} · 担当 {party.orderedBy} · {party.phone}
+          </p>
+          <p className="mt-2 text-xs text-slate-600">
+            拒否工場:{' '}
+            {rejectedIds.length
+              ? rejectedIds.map((id) => factoryNameById[id] || id).join('、')
+              : '—'}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setShowChat((v) => !v)}
+            className="min-h-[36px] rounded-lg border border-slate-300 bg-white px-3 text-xs font-black text-slate-700"
+          >
+            {showChat ? 'チャットを閉じる' : 'チャットを開く'}
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenDetail(order)}
+            className="min-h-[36px] rounded-lg border border-indigo-300 bg-indigo-50 px-3 text-xs font-black text-indigo-800"
+          >
+            注文詳細
+          </button>
+        </div>
+      </div>
+
+      {showChat ? (
+        <div className="mt-3 max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
+          {messages.length === 0 ? (
+            <p className="text-slate-500">チャットはまだありません。</p>
+          ) : (
+            messages.map((m) => (
+              <p key={m.id} className="mb-2 border-b border-slate-200 pb-2 last:mb-0 last:border-0">
+                <span className="font-black text-slate-700">[{m.from}]</span>{' '}
+                <span className="text-slate-500">{m.createdAt ? new Date(m.createdAt).toLocaleString('ja-JP') : ''}</span>
+                <br />
+                {m.body}
+              </p>
+            ))
+          )}
+        </div>
+      ) : null}
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+          <h4 className="text-xs font-black text-slate-700">外部対応記録</h4>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <select
+              value={noteType}
+              onChange={(e) => setNoteType(e.target.value)}
+              className="min-h-[36px] rounded-md border border-slate-200 bg-white px-2 text-xs font-bold"
+            >
+              <option value="email">メール</option>
+              <option value="phone">電話</option>
+              <option value="meeting">面談</option>
+              <option value="other">その他</option>
+            </select>
+            <button
+              type="button"
+              onClick={handleAddNote}
+              disabled={savingNote || !noteContent.trim()}
+              className="min-h-[36px] rounded-md bg-slate-800 px-3 text-xs font-black text-white disabled:opacity-50"
+            >
+              {savingNote ? '保存中…' : '記録を追加'}
+            </button>
+          </div>
+          <textarea
+            value={noteContent}
+            onChange={(e) => setNoteContent(e.target.value)}
+            rows={3}
+            placeholder="メール送信内容・電話メモなど"
+            className="mt-2 w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs"
+          />
+          {notes.length > 0 ? (
+            <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto text-[11px] text-slate-700">
+              {[...notes].reverse().map((n) => (
+                <li key={n.id} className="rounded border border-slate-200 bg-white px-2 py-1">
+                  <span className="font-black">{noteTypeLabel(n.type)}</span>
+                  {' · '}
+                  {n.admin_name || '管理者'}
+                  {' · '}
+                  {n.timestamp ? new Date(n.timestamp).toLocaleString('ja-JP') : ''}
+                  <br />
+                  {n.content}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+
+        <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+          <h4 className="text-xs font-black text-slate-700">工場を手動指定</h4>
+          <p className="mt-1 text-[11px] text-slate-500">顧客と相談のうえ、依頼先工場を選んで配車待ちに戻します。</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <select
+              value={selectedFactoryId}
+              onChange={(e) => setSelectedFactoryId(e.target.value)}
+              className="min-h-[36px] min-w-[12rem] flex-1 rounded-md border border-slate-200 bg-white px-2 text-xs font-bold"
+            >
+              <option value="">工場を選択</option>
+              {(factories || []).map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name || f.id}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={handleAssignFactory}
+              disabled={savingAssign || !selectedFactoryId}
+              className="min-h-[36px] rounded-md bg-indigo-700 px-3 text-xs font-black text-white disabled:opacity-50"
+            >
+              {savingAssign ? '指定中…' : '工場を指定'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {localError ? <p className="mt-2 text-xs font-bold text-red-700">{localError}</p> : null}
+    </li>
+  );
+}
+
 function OrdersMonitorSection({
   factories,
   factoryNameById,
@@ -2246,22 +2488,28 @@ function OrdersMonitorSection({
   const [holidays, setHolidays] = useState([]);
   const [systemSettings, setSystemSettings] = useState({});
   const [escalationStepsByFactoryId, setEscalationStepsByFactoryId] = useState({});
+  const [chatThreads, setChatThreads] = useState({});
+  const [adminName, setAdminName] = useState('管理者');
 
   const load = useCallback(async () => {
     setError('');
     try {
-      const [{ orders: rows }, projs, hols, settings, escalationSteps] = await Promise.all([
+      const [{ orders: rows, chatThreads: threads }, projs, hols, settings, escalationSteps, adminSettings] =
+        await Promise.all([
         db.fetchOrdersWithChat(),
         db.fetchProjects(),
         db.fetchHolidays(),
         db.fetchSystemSettings(),
         db.fetchEscalationSteps(),
+        db.fetchAdminSettings(),
       ]);
       setOrders(rows);
+      setChatThreads(threads || {});
       setProjects(projs);
       setHolidays(hols);
       setSystemSettings(settings || {});
       setEscalationStepsByFactoryId(escalationSteps || {});
+      setAdminName(String(adminSettings?.admin_name || '').trim() || '管理者');
     } catch (e) {
       console.error(e);
       setError('注文一覧の取得に失敗しました。');
@@ -2349,6 +2597,11 @@ function OrdersMonitorSection({
     () => visibleOrders.filter((o) => orderStatus(o) === 'pending_association'),
     [visibleOrders],
   );
+  const followupOrders = useMemo(
+    () => visibleOrders.filter((o) => orderStatus(o) === 'awaiting_admin_followup'),
+    [visibleOrders],
+  );
+  const followupCount = followupOrders.length;
   const acceptedCount = visibleOrders.filter((o) => orderStatus(o) === 'accepted').length;
   const completedCount = visibleOrders.filter((o) => orderStatus(o) === 'completed').length;
   const cancelledCount = visibleOrders.filter((o) => orderStatus(o) === 'customer_cancelled').length;
@@ -2520,7 +2773,7 @@ function OrdersMonitorSection({
         </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-6">
+      <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-7">
         <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
           <p className="text-xs font-bold text-slate-500">全注文</p>
           <p className="mt-1 text-2xl font-black text-slate-900">{visibleOrders.length}</p>
@@ -2528,6 +2781,10 @@ function OrdersMonitorSection({
         <div className="cl-alert-warning-panel rounded-xl border border-violet-200 bg-violet-50 px-3 py-3">
           <p className="text-xs font-bold text-violet-700">組合承認待ち</p>
           <p className="mt-1 text-2xl font-black text-violet-900">{pendingAssociationCount}</p>
+        </div>
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-3">
+          <p className="text-xs font-bold text-rose-700">要フォロー</p>
+          <p className="mt-1 text-2xl font-black text-rose-900">{followupCount}</p>
         </div>
         <div className="cl-alert-warning-panel rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
           <p className="text-xs font-bold text-amber-700">pending</p>
@@ -2584,6 +2841,29 @@ function OrdersMonitorSection({
                 </li>
               );
             })}
+          </ul>
+        </div>
+      ) : null}
+
+      {!loading && activeMonitorTab === 'orders' && followupOrders.length > 0 ? (
+        <div className="mt-4 rounded-xl border-2 border-rose-300 bg-rose-50/60 p-4">
+          <h3 className="text-base font-black text-rose-950">要フォロー（割当工場全拒否 · {followupOrders.length}件）</h3>
+          <p className="mt-1 text-xs font-medium text-rose-900/90">
+            メイン・サブ工場がすべて対応困難です。顧客と相談し、外部対応記録を残したうえで工場を手動指定してください。
+          </p>
+          <ul className="mt-3 space-y-3">
+            {followupOrders.map((o) => (
+              <AdminFollowupOrderCard
+                key={o.id}
+                order={o}
+                factories={factories}
+                factoryNameById={factoryNameById}
+                chatMessages={chatThreads[o.id]}
+                adminName={adminName}
+                onOpenDetail={setDetailOrder}
+                onOrderUpdated={applyOrderUpdate}
+              />
+            ))}
           </ul>
         </div>
       ) : null}

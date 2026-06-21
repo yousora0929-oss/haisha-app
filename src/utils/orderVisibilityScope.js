@@ -8,6 +8,11 @@ import {
 } from './escalationUtils.js';
 import { getOrderDeliveryAreaContext } from './deliveryAreaEscalation.js';
 import { associationAssignedFactoryIds } from './associationFactoryAssignment.js';
+import {
+  assignedProjectCurrentTargetFactoryId,
+  assignedProjectSubIndex,
+  isAssignedProject,
+} from './assignedProjectEscalation.js';
 
 function orderStatus(order) {
   return String(order?.status || 'pending').trim();
@@ -116,6 +121,48 @@ export function getOrderVisibilityScope(order, ctx, factoryNameById = {}) {
       subFactoryIds: subPool,
       listIcon: { emoji: '🛡️', count: visibleFactoryIds.length, shortLabel: '組合指定' },
       chips,
+    };
+  }
+
+  if (status === 'awaiting_admin_followup') {
+    return {
+      ...base,
+      kind: 'awaiting_admin_followup',
+      summary: '管理者フォロー待ち（工場には非表示）',
+      detail: '割当のメイン・サブ工場がすべて対応困難です。担当営業が顧客と相談し、手動で工場を指定します。',
+      visibleFactoryIds: [],
+      visibleFactoryNames: [],
+      listIcon: { emoji: '📞', count: null, shortLabel: '要フォロー' },
+      chips: [{ id: 'admin', name: '担当営業', role: 'admin' }],
+    };
+  }
+
+  if (isAssignedProject(order, project) && status === 'pending') {
+    const targetId = assignedProjectCurrentTargetFactoryId(order, project);
+    const subIdx = assignedProjectSubIndex(order);
+    const phase =
+      targetId && targetId === mainId
+        ? 'メイン工場のみに通知'
+        : subIdx >= 0
+          ? `サブ工場 ${subIdx + 1}/${subIds.length} に順次通知`
+          : '割当工場フロー';
+    const visibleFactoryIds = targetId ? [targetId] : [];
+    const visibleFactoryNames = visibleFactoryIds.map((id) => factoryName(factoryNameById, id));
+    return {
+      ...base,
+      kind: 'assigned_project_sequential',
+      summary: targetId
+        ? `${factoryName(factoryNameById, targetId)} のみに表示`
+        : '工場非表示（管理者対応待ち）',
+      detail: `割当物件の特別フロー: ${phase}。時間経過による拡散は行いません。`,
+      visibleFactoryIds,
+      visibleFactoryNames,
+      listIcon: { emoji: '🏗️', count: visibleFactoryIds.length || null, shortLabel: '割当順次' },
+      chips: visibleFactoryIds.map((id) => ({
+        id,
+        name: factoryName(factoryNameById, id),
+        role: id === mainId ? 'main' : subIds.includes(id) ? 'sub' : 'visible',
+      })),
     };
   }
 
