@@ -97,6 +97,20 @@ function normalizeChatMessages(raw) {
     .slice(-100);
 }
 
+function areChatMessagesEqual(a, b) {
+  const left = normalizeChatMessages(a);
+  const right = normalizeChatMessages(b);
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    const l = left[i];
+    const r = right[i];
+    if (l.id !== r.id || l.from !== r.from || l.body !== r.body || l.createdAt !== r.createdAt) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function createOrderId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `ord_${crypto.randomUUID()}`;
@@ -171,13 +185,15 @@ function buildOrderDbPatch(row) {
   const patch = {
     has_test: Boolean(row.has_test),
     order_data: sanitizeOrderDataForDb(row.order_data),
-    chat_messages: row.chat_messages,
     customer_id: sanitizeRefId(row.customer_id),
     ordered_by: row.ordered_by != null ? String(row.ordered_by).trim() || null : null,
     factory_site_id: sanitizeRefId(row.factory_site_id),
     status: row.status || 'pending',
     rejected_factory_ids: Array.isArray(row.rejected_factory_ids) ? row.rejected_factory_ids : [],
   };
+  if (Object.prototype.hasOwnProperty.call(row, 'chat_messages')) {
+    patch.chat_messages = row.chat_messages;
+  }
   if (row.accepted_at != null && String(row.accepted_at).trim()) {
     patch.accepted_at = String(row.accepted_at).trim();
   }
@@ -460,7 +476,7 @@ export async function upsertOrdersBatch(orders, chatThreads) {
       ? [...new Set(o.rejected_factory_ids.map((x) => String(x).trim()).filter(Boolean))]
       : [];
     const acceptedAt = String(o.accepted_at ?? o.acceptedAt ?? '').trim();
-    return {
+    const row = {
       id: String(id),
       has_test: hasTest,
       order_data: sanitizeOrderDataForDb({
@@ -481,7 +497,6 @@ export async function upsertOrdersBatch(orders, chatThreads) {
         main_factory_id: mainFactoryId,
         mainFactoryId: mainFactoryId,
       }),
-      chat_messages: msgs,
       customer_id: customerId,
       ordered_by: orderedBy || null,
       factory_site_id: factorySiteId,
@@ -489,6 +504,10 @@ export async function upsertOrdersBatch(orders, chatThreads) {
       rejected_factory_ids: rejectedFactoryIds,
       ...(acceptedAt ? { accepted_at: acceptedAt } : {}),
     };
+    if (!existingById.has(id) || !areChatMessagesEqual(msgs, existingById.get(id))) {
+      row.chat_messages = msgs;
+    }
+    return row;
   }).filter(Boolean);
 
   const existingIds = new Set(existingById.keys());
@@ -1250,6 +1269,7 @@ export async function persistScheduleAutoRejections({
 }) {
   const byF = schedulesByFactoryId && typeof schedulesByFactoryId === 'object' ? schedulesByFactoryId : {};
   let changed = false;
+  const changedOrderIds = new Set();
   const nextThreads = { ...chatThreads };
   const next = orders.map((o) => {
     if (!o || !o.id) return o;
@@ -1260,10 +1280,12 @@ export async function persistScheduleAutoRejections({
 
     if (!date || typeof date !== 'string') {
       changed = true;
+      changedOrderIds.add(o.id);
       return { ...o, scheduleAutoChecked: true };
     }
     if (!fid) {
       changed = true;
+      changedOrderIds.add(o.id);
       return { ...o, scheduleAutoChecked: true };
     }
 
@@ -1273,10 +1295,12 @@ export async function persistScheduleAutoRejections({
 
     if (!reason) {
       changed = true;
+      changedOrderIds.add(o.id);
       return { ...o, scheduleAutoChecked: true };
     }
 
     changed = true;
+    changedOrderIds.add(o.id);
     const currentRejected = Array.isArray(o.rejected_factory_ids)
       ? o.rejected_factory_ids.map((x) => String(x).trim()).filter(Boolean)
       : [];
@@ -1319,7 +1343,16 @@ export async function persistScheduleAutoRejections({
     };
   });
   if (!changed) return { changed: false, orders, chatThreads };
-  await upsertOrdersBatch(next, nextThreads);
+
+  const changedOrders = next.filter((o) => o && changedOrderIds.has(o.id));
+  const changedThreads = {};
+  for (const id of changedOrderIds) {
+    if (nextThreads[id]) changedThreads[id] = nextThreads[id];
+  }
+
+  if (changedOrders.length > 0) {
+    await upsertOrdersBatch(changedOrders, changedThreads);
+  }
   return { changed: true, orders: next, chatThreads: nextThreads };
 }
 
