@@ -79,7 +79,7 @@ begin
     return v_main;
   end if;
 
-  if (v_idx >= 0
+  if v_idx >= 0
      and v_idx < coalesce(jsonb_array_length(v_subs), 0) then
     return coalesce(v_subs->>v_idx, '');
   end if;
