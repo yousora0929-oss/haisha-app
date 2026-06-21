@@ -2274,6 +2274,7 @@ export async function updateProject(projectId, payload) {
     sales_admin_id: String(payload.sales_admin_id ?? '').trim() || null,
     sales_admin_name: String(payload.sales_admin_name ?? '').trim() || null,
   };
+  const latNum = payload.lat != null && payload.lat !== '' ? Number(payload.lat) : NaN;
   const lngNum = payload.lng != null && payload.lng !== '' ? Number(payload.lng) : NaN;
   if (Number.isFinite(latNum)) row.lat = latNum;
   if (Number.isFinite(lngNum)) row.lng = lngNum;
