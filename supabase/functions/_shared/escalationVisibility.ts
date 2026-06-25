@@ -337,19 +337,21 @@ export function rankFactoryIdsByDistance(
       const dist = siteCoords
         ? calculateDistance(siteCoords.lat, siteCoords.lng, f.latitude, f.longitude)
         : Infinity;
-      const vol = monthlyVolumeByFactory[id] ?? 0;
+      const rawVol = monthlyVolumeByFactory[id];
+      const vol = rawVol !== undefined && rawVol !== null ? Number(rawVol) : null;
       return { id, dist, vol };
     })
-    .filter((x): x is { id: string; dist: number; vol: number } => Boolean(x));
+    .filter((x): x is { id: string; dist: number; vol: number | null } => Boolean(x));
 
   const maxDist = Math.max(...items.map((x) => x.dist).filter(Number.isFinite), 1);
-  const maxVol = Math.max(...items.map((x) => x.vol), 1);
+  const volValues = items.map((x) => x.vol).filter((v): v is number => v != null);
+  const maxVol = volValues.length > 0 ? Math.max(...volValues) : 1;
   const capWeight = 1 - distanceWeight;
 
   const scored = items
     .map((x) => {
       const dScore = Number.isFinite(x.dist) ? 1 - x.dist / maxDist : 0;
-      const cScore = 1 - x.vol / maxVol;
+      const cScore = x.vol != null ? 1 - x.vol / maxVol : 0.5;
       const total = dScore * distanceWeight + cScore * capWeight;
       return { ...x, total };
     })
