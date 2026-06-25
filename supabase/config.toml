@@ -1,4 +1,6 @@
 # Supabase local / deploy config (minimal)
+project_id = "vwgsbhseoijbkdzwijnw"
+
 [functions.onesignal-push]
 verify_jwt = false
 

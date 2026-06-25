@@ -51,6 +51,8 @@ export type EscalationPushContext = {
   settings: { start_time?: string; end_time?: string };
   holidays: Array<{ holiday_date?: string } | string>;
   escalationStepsByFactoryId: Record<string, EscalationStep[]>;
+  monthlyVolumeByFactory: Record<string, number>;
+  distanceWeight: number;
   now?: Date;
 };
 
@@ -246,7 +248,12 @@ function getEffectiveEscalationMinutes(order: OrderLike, ctx: EscalationPushCont
   return minutes;
 }
 
-function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
+function calculateDistance(
+  lat1: number,
+  lng1: number,
+  lat2: number | string | null | undefined,
+  lng2: number | string | null | undefined,
+): number {
   const la1 = Number(lat1);
   const ln1 = Number(lng1);
   const la2 = Number(lat2);
@@ -282,28 +289,119 @@ function getOrderSiteCoords(order: OrderLike, projectById: Record<string, Projec
   return null;
 }
 
-function sortFactoryIdsByDistance(order: OrderLike, ctx: EscalationPushContext): string[] {
-  const known = (ctx.factories || [])
-    .map((f) => pickString(f.id))
-    .filter(Boolean);
-  const siteCoords = getOrderSiteCoords(order, ctx.projectById);
-  const rankedWithDist = (ctx.factories || [])
+/** factory_escalation_steps 行から月次出荷量マップを組み立て（step_number 最小を採用） */
+export function buildMonthlyVolumeByFactoryFromRows(rows: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  const sorted = asArray(rows).slice().sort((a, b) => {
+    const ao = asObject(a);
+    const bo = asObject(b);
+    const fa = pickString(ao.factory_id);
+    const fb = pickString(bo.factory_id);
+    if (fa !== fb) return fa.localeCompare(fb);
+    return (Number(ao.step_number) || 0) - (Number(bo.step_number) || 0);
+  });
+  for (const row of sorted) {
+    const o = asObject(row);
+    const fid = pickString(o.factory_id);
+    if (!fid || out[fid] !== undefined) continue;
+    out[fid] = o.monthly_volume_m3 != null && Number.isFinite(Number(o.monthly_volume_m3))
+      ? Number(o.monthly_volume_m3)
+      : 0;
+  }
+  return out;
+}
+
+/** distance_weight 設定行からウェイトを取得（未設定時 0.7） */
+export function parseEscalationDistanceWeight(row: unknown): number {
+  const o = asObject(row);
+  const w = o.distance_weight;
+  return w != null && Number.isFinite(Number(w)) ? Number(w) : 0.7;
+}
+
+/** 距離・容量スコアの高い順に工場 ID を並べる（escalationUtils.rankFactoryIdsByDistance と同等） */
+export function rankFactoryIdsByDistance(
+  order: OrderLike,
+  projectById: Record<string, ProjectLike>,
+  siteCoords: { lat: number; lng: number } | null,
+  factories: FactoryLike[],
+  monthlyVolumeByFactory: Record<string, number> = {},
+  distanceWeight = 0.7,
+): string[] {
+  const list = Array.isArray(factories) ? factories : [];
+  const eligibleWithFallback = list;
+
+  const items = eligibleWithFallback
     .map((f) => {
-      const id = pickString(f.id);
+      const id = String(f?.id ?? '').trim();
       if (!id) return null;
       const dist = siteCoords
-        ? calculateDistance(siteCoords.lat, siteCoords.lng, Number(f.latitude), Number(f.longitude))
+        ? calculateDistance(siteCoords.lat, siteCoords.lng, f.latitude, f.longitude)
         : Infinity;
-      return { id, dist };
+      const vol = monthlyVolumeByFactory[id] ?? 0;
+      return { id, dist, vol };
     })
-    .filter((x): x is { id: string; dist: number } => Boolean(x))
-    .sort((a, b) => a.dist - b.dist || a.id.localeCompare(b.id));
-  const ranked = rankedWithDist.map((x) => x.id);
-  return ranked.length ? ranked : known;
+    .filter((x): x is { id: string; dist: number; vol: number } => Boolean(x));
+
+  const maxDist = Math.max(...items.map((x) => x.dist).filter(Number.isFinite), 1);
+  const maxVol = Math.max(...items.map((x) => x.vol), 1);
+  const capWeight = 1 - distanceWeight;
+
+  const scored = items
+    .map((x) => {
+      const dScore = Number.isFinite(x.dist) ? 1 - x.dist / maxDist : 0;
+      const cScore = 1 - x.vol / maxVol;
+      const total = dScore * distanceWeight + cScore * capWeight;
+      return { ...x, total };
+    })
+    .sort((a, b) => b.total - a.total || a.id.localeCompare(b.id));
+
+  const ids = scored.map((x) => x.id);
+
+  console.log('[escalationVisibility] DISTANCE scored', {
+    orderId: pickString(order.id, orderData(order).id),
+    distanceWeight,
+    capWeight,
+    top3: scored.slice(0, 3).map((x) => ({
+      id: x.id,
+      dist: Number.isFinite(x.dist) ? x.dist.toFixed(1) : x.dist,
+      vol: x.vol,
+      score: x.total?.toFixed(3),
+    })),
+  });
+
+  if (ids.length) return ids;
+  return list.map((f) => pickString(f.id)).filter(Boolean);
+}
+
+function sortFactoryIdsByDistance(
+  order: OrderLike,
+  ctx: EscalationPushContext,
+  monthlyVolumeByFactory?: Record<string, number>,
+  distanceWeight?: number,
+): string[] {
+  const vol = monthlyVolumeByFactory ?? ctx.monthlyVolumeByFactory ?? {};
+  const weight = distanceWeight ?? ctx.distanceWeight ?? 0.7;
+  const siteCoords = getOrderSiteCoords(order, ctx.projectById);
+  return rankFactoryIdsByDistance(order, ctx.projectById, siteCoords, ctx.factories, vol, weight);
+}
+
+/** escalationUtils.rankFactoryIdsForOrder の Edge 向け簡易版（距離ベースのみ） */
+export function rankFactoryIdsForOrder(
+  order: OrderLike,
+  ctx: EscalationPushContext,
+  monthlyVolumeByFactory?: Record<string, number>,
+  distanceWeight?: number,
+): string[] {
+  return buildCandidateFactoryIds(order, ctx, monthlyVolumeByFactory, distanceWeight);
 }
 
 /** escalationUtils.buildCandidateFactoryIds と同等 */
-export function buildCandidateFactoryIds(order: OrderLike, ctx: EscalationPushContext): string[] {
+export function buildCandidateFactoryIds(
+  order: OrderLike,
+  ctx: EscalationPushContext,
+  monthlyVolumeByFactory?: Record<string, number>,
+  distanceWeight?: number,
+): string[] {
   const rejectedIds = rejectedFactoryIdSet(order);
   const known = (ctx.factories || [])
     .map((f) => pickString(f.id))
@@ -324,7 +422,9 @@ export function buildCandidateFactoryIds(order: OrderLike, ctx: EscalationPushCo
     .map((x) => pickString(x))
     .filter((id) => id && knownSet.has(id));
 
-  const sortedByDistance = sortFactoryIdsByDistance(order, ctx);
+  const vol = monthlyVolumeByFactory ?? ctx.monthlyVolumeByFactory ?? {};
+  const weight = distanceWeight ?? ctx.distanceWeight ?? 0.7;
+  const sortedByDistance = sortFactoryIdsByDistance(order, ctx, vol, weight);
   const candidates: string[] = [];
   const seen = new Set<string>();
   for (const id of [...vipIds, ...subIds, ...sortedByDistance]) {

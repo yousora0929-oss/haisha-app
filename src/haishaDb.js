@@ -3239,3 +3239,69 @@ export async function saveEscalationSteps(factoryId, stepsArray) {
     throw insertError;
   }
 }
+
+/**
+ * 全工場の月次出荷量を factory_escalation_steps から取得
+ * 戻り値: { [factoryId: string]: number }  (未設定は 0)
+ */
+export async function fetchMonthlyVolumeByFactory() {
+  const { data, error } = await supabase
+    .from('factory_escalation_steps')
+    .select('factory_id, monthly_volume_m3')
+    .order('step_number', { ascending: true });
+  if (error) throw error;
+  const out = {};
+  for (const row of data || []) {
+    const fid = String(row.factory_id || '').trim();
+    if (!fid) continue;
+    // factory_id ごとに最初に現れた値を採用（step_number最小）
+    if (out[fid] === undefined) {
+      out[fid] = row.monthly_volume_m3 != null ? Number(row.monthly_volume_m3) : 0;
+    }
+  }
+  return out;
+}
+
+/**
+ * 指定工場の全ステップに monthly_volume_m3 を一括更新
+ * @param {string} factoryId
+ * @param {number|null} volumeM3
+ */
+export async function saveMonthlyVolumeForFactory(factoryId, volumeM3) {
+  const fid = String(factoryId || '').trim();
+  if (!fid) throw new Error('factoryId が必要です');
+  const value =
+    volumeM3 != null && Number.isFinite(Number(volumeM3)) ? Number(volumeM3) : null;
+  const { error } = await supabase
+    .from('factory_escalation_steps')
+    .update({ monthly_volume_m3: value })
+    .eq('factory_id', fid);
+  if (error) throw error;
+}
+
+/**
+ * distance_weight 設定を取得（シングルトン行）
+ * 戻り値: number (0.0〜1.0、未設定時は 0.7)
+ */
+export async function fetchEscalationDistanceWeight() {
+  const { data, error } = await supabase
+    .from('factory_escalation_weight_config')
+    .select('distance_weight')
+    .eq('id', 1)
+    .maybeSingle();
+  if (error) throw error;
+  const w = data?.distance_weight;
+  return w != null && Number.isFinite(Number(w)) ? Number(w) : 0.7;
+}
+
+/**
+ * distance_weight 設定を保存（UPSERT）
+ * @param {number} weight 0.0〜1.0
+ */
+export async function saveEscalationDistanceWeight(weight) {
+  const w = Math.max(0, Math.min(1, Number(weight)));
+  const { error } = await supabase
+    .from('factory_escalation_weight_config')
+    .upsert({ id: 1, distance_weight: w, updated_at: new Date().toISOString() });
+  if (error) throw error;
+}

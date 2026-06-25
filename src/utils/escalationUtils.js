@@ -158,15 +158,37 @@ function resolveEscalationAnchorFactoryId(order, project, candidates) {
   return candidates?.[0] || '';
 }
 
-function sortFactoryIdsByDistance(factories, order, projectById, globalAllowedAreas) {
+function sortFactoryIdsByDistance(
+  factories,
+  order,
+  projectById,
+  globalAllowedAreas,
+  monthlyVolumeByFactory = {},
+  distanceWeight = 0.7,
+) {
   const siteCoords = getOrderSiteCoords(order, projectById);
-  return rankFactoryIdsByDistance(order, projectById, siteCoords, factories, globalAllowedAreas);
+  return rankFactoryIdsByDistance(
+    order,
+    projectById,
+    siteCoords,
+    factories,
+    globalAllowedAreas,
+    monthlyVolumeByFactory,
+    distanceWeight,
+  );
 }
 
 /**
  * エスカレーション公開候補工場 ID（VIP → サブ → 距離順、重複・拒否済み除外）
  */
-export function buildCandidateFactoryIds(order, factories, projectById, globalAllowedAreas) {
+export function buildCandidateFactoryIds(
+  order,
+  factories,
+  projectById,
+  globalAllowedAreas,
+  monthlyVolumeByFactory = {},
+  distanceWeight = 0.7,
+) {
   const rejectedIds = rejectedFactoryIdSet(order);
   const knownFactoryIds = buildKnownFactoryIdSet(factories);
   const od = orderDataObject(order);
@@ -185,7 +207,14 @@ export function buildCandidateFactoryIds(order, factories, projectById, globalAl
     .map((x) => normalizeFactoryRefId(x))
     .filter((id) => id && knownFactoryIds.has(id));
 
-  const sortedByDistance = sortFactoryIdsByDistance(factories, order, projectById, globalAllowedAreas);
+  const sortedByDistance = sortFactoryIdsByDistance(
+    factories,
+    order,
+    projectById,
+    globalAllowedAreas,
+    monthlyVolumeByFactory,
+    distanceWeight,
+  );
 
   const candidates = [];
   const seen = new Set();
@@ -384,7 +413,14 @@ function resolveEscalationRankMode(order, projectById, globalAllowedAreas) {
 }
 
 /** 注文ごとのエスカレーション対象工場 ID（距離 or 市町村ベース） */
-export function rankFactoryIdsForOrder(order, projectById, factories, globalAllowedAreas) {
+export function rankFactoryIdsForOrder(
+  order,
+  projectById,
+  factories,
+  globalAllowedAreas,
+  monthlyVolumeByFactory = {},
+  distanceWeight = 0.7,
+) {
   const addrCtx = getOrderDeliveryAreaContext(order, projectById, globalAllowedAreas);
   const rankMode = resolveEscalationRankMode(order, projectById, globalAllowedAreas);
   const siteCoords = rankMode.siteCoords ?? getOrderSiteCoords(order, projectById);
@@ -406,10 +442,25 @@ export function rankFactoryIdsForOrder(order, projectById, factories, globalAllo
   if (rankMode.mode === 'AREA_BASED') {
     ranked = rankFactoryIdsByDeliveryArea(order, projectById, factories, globalAllowedAreas);
   } else {
-    ranked = rankFactoryIdsByDistance(order, projectById, siteCoords, factories, globalAllowedAreas);
+    ranked = rankFactoryIdsByDistance(
+      order,
+      projectById,
+      siteCoords,
+      factories,
+      globalAllowedAreas,
+      monthlyVolumeByFactory,
+      distanceWeight,
+    );
   }
 
-  const finalized = buildCandidateFactoryIds(order, factories, projectById, globalAllowedAreas);
+  const finalized = buildCandidateFactoryIds(
+    order,
+    factories,
+    projectById,
+    globalAllowedAreas,
+    monthlyVolumeByFactory,
+    distanceWeight,
+  );
 
   if (typeof console !== 'undefined' && typeof console.log === 'function') {
     console.log('【Escalation Debug】rankFactoryIdsForOrder 結果', {
@@ -423,8 +474,16 @@ export function rankFactoryIdsForOrder(order, projectById, factories, globalAllo
   return finalized;
 }
 
-/** 距離の近い順に工場 ID を並べる */
-export function rankFactoryIdsByDistance(order, projectById, siteCoords, factories, globalAllowedAreas) {
+/** 距離・容量スコアの高い順に工場 ID を並べる */
+export function rankFactoryIdsByDistance(
+  order,
+  projectById,
+  siteCoords,
+  factories,
+  globalAllowedAreas,
+  monthlyVolumeByFactory = {},
+  distanceWeight = 0.7,
+) {
   const list = Array.isArray(factories) ? factories : [];
   const addrCtx = getOrderDeliveryAreaContext(order, projectById, globalAllowedAreas);
   const hasAddress =
@@ -442,19 +501,32 @@ export function rankFactoryIdsByDistance(order, projectById, siteCoords, factori
   // 空になった場合は安全のため全体へフォールバック（VIP/空配列回避は finalizeEscalationRank 側でも行う）
   const eligibleWithFallback = eligible.length ? eligible : list;
 
-  const rankedWithDist = eligibleWithFallback
+  const items = eligibleWithFallback
     .map((f) => {
       const id = f?.id != null ? String(f.id) : '';
       if (!id) return null;
       const dist = siteCoords
         ? calculateDistance(siteCoords.lat, siteCoords.lng, f.latitude, f.longitude)
         : Infinity;
-      return { id, dist };
+      const vol = monthlyVolumeByFactory[id] ?? 0;
+      return { id, dist, vol };
     })
-    .filter(Boolean)
-    .sort((a, b) => a.dist - b.dist || a.id.localeCompare(b.id));
+    .filter(Boolean);
 
-  const ids = rankedWithDist.map((x) => x.id);
+  const maxDist = Math.max(...items.map((x) => x.dist).filter(Number.isFinite), 1);
+  const maxVol = Math.max(...items.map((x) => x.vol), 1);
+  const capWeight = 1 - distanceWeight;
+
+  const scored = items
+    .map((x) => {
+      const dScore = Number.isFinite(x.dist) ? 1 - x.dist / maxDist : 0;
+      const cScore = 1 - x.vol / maxVol;
+      const total = dScore * distanceWeight + cScore * capWeight;
+      return { ...x, total };
+    })
+    .sort((a, b) => b.total - a.total || a.id.localeCompare(b.id));
+
+  const ids = scored.map((x) => x.id);
 
   if (typeof console !== 'undefined' && typeof console.log === 'function') {
     console.log('【Escalation Debug】DISTANCE eligible', {
@@ -462,7 +534,14 @@ export function rankFactoryIdsByDistance(order, projectById, siteCoords, factori
       判定対象の町名: addressDetail,
       許容プール数: eligible.length,
       許容プールフォールバック: eligible.length === 0,
-      距離順: rankedWithDist.map((x) => ({ id: x.id, km: Number.isFinite(x.dist) ? Number(x.dist.toFixed(3)) : x.dist })),
+      distanceWeight,
+      capWeight,
+      スコア上位3件: scored.slice(0, 3).map((x) => ({
+        id: x.id,
+        dist: Number.isFinite(x.dist) ? x.dist.toFixed(1) : x.dist,
+        vol: x.vol,
+        score: x.total?.toFixed(3),
+      })),
     });
   }
 

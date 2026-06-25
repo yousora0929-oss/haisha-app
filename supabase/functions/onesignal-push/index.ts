@@ -1,9 +1,11 @@
 /** onesignal-push v28 — 組合せ割当（association_assigned_factory_ids）対応 */
 
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
   computeNewlyVisibleFactoryIds,
   type EscalationPushContext,
   type EscalationStep,
+  rankFactoryIdsForOrder,
 } from '../_shared/escalationVisibility.ts';
 
 const FUNCTION_VERSION = 30;
@@ -20,11 +22,44 @@ const DEFAULT_ESCALATION_STEPS = [
   { step_number: 3, trigger_minutes: 30, target_factory_count: 8 },
 ];
 
-type EscalationStep = {
-  step_number: number;
-  trigger_minutes: number;
-  target_factory_count: number;
-};
+function getSupabaseClient(): SupabaseClient {
+  const url = Deno.env.get('SUPABASE_URL') ?? '';
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+
+/** エスカレーション容量スコアリング用の月次出荷量・距離ウェイト（注文処理前に一度だけ取得） */
+async function fetchEscalationScoringConfig(supabaseClient: SupabaseClient): Promise<{
+  monthlyVolumeByFactory: Record<string, number>;
+  distanceWeight: number;
+}> {
+  const { data: volRows } = await supabaseClient
+    .from('factory_escalation_steps')
+    .select('factory_id, monthly_volume_m3')
+    .order('step_number', { ascending: true });
+
+  const monthlyVolumeByFactory: Record<string, number> = {};
+  for (const row of volRows ?? []) {
+    const fid = String(row.factory_id ?? '').trim();
+    if (fid && monthlyVolumeByFactory[fid] === undefined) {
+      monthlyVolumeByFactory[fid] = row.monthly_volume_m3 != null
+        ? Number(row.monthly_volume_m3)
+        : 0;
+    }
+  }
+
+  const { data: wRow } = await supabaseClient
+    .from('factory_escalation_weight_config')
+    .select('distance_weight')
+    .eq('id', 1)
+    .maybeSingle();
+
+  const distanceWeight = wRow?.distance_weight != null
+    ? Number(wRow.distance_weight)
+    : 0.7;
+
+  return { monthlyVolumeByFactory, distanceWeight };
+}
 
 type PushEvent =
   | 'new_order'
@@ -1210,6 +1245,8 @@ async function fetchEscalationPushContext(projectId?: string): Promise<Escalatio
       },
       holidays: asArray(holidays) as EscalationPushContext['holidays'],
       escalationStepsByFactoryId,
+      monthlyVolumeByFactory: {},
+      distanceWeight: 0.7,
       now: new Date(),
     };
   } catch (error) {
@@ -1270,11 +1307,31 @@ async function sendEscalationExpandedNotifications(
   }
 
   const pid = pickString(newRow.project_id, orderData(newRow).project_id, orderData(newRow).projectId);
-  const ctx = await fetchEscalationPushContext(pid || undefined);
+  const supabaseClient = getSupabaseClient();
+  const [scoring, ctx] = await Promise.all([
+    fetchEscalationScoringConfig(supabaseClient),
+    fetchEscalationPushContext(pid || undefined),
+  ]);
   if (!ctx) {
     console.log('[onesignal-push] escalation_expanded skip: context unavailable', { orderId });
     return [];
   }
+  const { monthlyVolumeByFactory, distanceWeight } = scoring;
+  ctx.monthlyVolumeByFactory = monthlyVolumeByFactory;
+  ctx.distanceWeight = distanceWeight;
+
+  const rankedCandidates = rankFactoryIdsForOrder(
+    newRow,
+    ctx,
+    monthlyVolumeByFactory,
+    distanceWeight,
+  );
+  console.log('[onesignal-push] escalation_expanded ranked', {
+    orderId,
+    distanceWeight,
+    candidateCount: rankedCandidates.length,
+    top: rankedCandidates.slice(0, 5),
+  });
 
   const oldState = oldRow ?? buildOldRowForRejectionDiff(newRow);
   const newlyVisible = computeNewlyVisibleFactoryIds(oldState, newRow, ctx);
