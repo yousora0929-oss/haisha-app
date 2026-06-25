@@ -3314,6 +3314,67 @@ export async function bulkSaveMonthlyVolumes(entries) {
 }
 
 /**
+ * 全工場の出荷量サマリーを返す
+ * 戻り値: Array<{
+ *   factoryId: string,
+ *   factoryName: string,
+ *   monthlyVolumeM3: number|null,
+ *   volumeUpdatedAt: string|null  // ISO8601
+ * }>
+ * factory_id ごとに重複排除（step_number 最小行を代表）
+ */
+export async function fetchVolumesSummary() {
+  const { data, error } = await supabase
+    .from('factory_escalation_steps')
+    .select('factory_id, monthly_volume_m3, volume_updated_at')
+    .order('step_number', { ascending: true });
+  if (error) throw error;
+
+  const seen = new Map();
+  for (const row of data ?? []) {
+    const fid = String(row.factory_id ?? '').trim();
+    if (!fid || seen.has(fid)) continue;
+    seen.set(fid, {
+      factoryId: fid,
+      monthlyVolumeM3: row.monthly_volume_m3 != null
+        ? Number(row.monthly_volume_m3)
+        : null,
+      volumeUpdatedAt: row.volume_updated_at ?? null,
+    });
+  }
+
+  const { data: factories, error: fe } = await supabase
+    .from('factories')
+    .select('id, name');
+  if (fe) throw fe;
+
+  const nameById = {};
+  for (const f of factories ?? []) nameById[String(f.id)] = f.name ?? '不明';
+
+  return [...seen.values()].map((row) => ({
+    ...row,
+    factoryName: nameById[row.factoryId] ?? `ID:${row.factoryId}`,
+  }));
+}
+
+/**
+ * 単一工場の monthly_volume_m3 を更新（インライン編集用）
+ * volume_updated_at はトリガーが自動更新
+ */
+export async function updateMonthlyVolume(factoryId, volumeM3) {
+  const fid = String(factoryId || '').trim();
+  if (!fid) throw new Error('factoryId が必要です');
+  const value = volumeM3 != null && Number.isFinite(Number(volumeM3))
+    ? Number(volumeM3)
+    : null;
+  const { error } = await supabase
+    .from('factory_escalation_steps')
+    .update({ monthly_volume_m3: value })
+    .eq('factory_id', fid);
+  if (error) throw error;
+}
+
+/**
  * distance_weight 設定を取得（シングルトン行）
  * 戻り値: number (0.0〜1.0、未設定時は 0.7)
  */

@@ -85,25 +85,21 @@ export function AdminEscalationSection({ factories = [] }) {
   const [notice, setNotice] = useState('');
   const [tableReady, setTableReady] = useState(true);
   const [distanceWeight, setDistanceWeight] = useState(0.7);
-  const [volumeByFactory, setVolumeByFactory] = useState({});
   const [weightSaving, setWeightSaving] = useState(false);
-  const [volumeSavingId, setVolumeSavingId] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const [meta, weight, volumes] = await Promise.all([
+      const [meta, weight] = await Promise.all([
         db.fetchEscalationStepsMeta(),
         db.fetchEscalationDistanceWeight(),
-        db.fetchMonthlyVolumeByFactory(),
       ]);
       setTableReady(Boolean(meta?.tableReady));
       if (!meta?.tableReady) {
         setError(db.ESCALATION_STEPS_MIGRATION_HINT);
       }
       setDistanceWeight(weight);
-      setVolumeByFactory(volumes || {});
       setRows(buildFactoryDrafts(factories, meta?.byFactory || {}));
     } catch (e) {
       console.error('[AdminEscalationSection] load failed', e);
@@ -260,28 +256,6 @@ export function AdminEscalationSection({ factories = [] }) {
     }
   };
 
-  const handleSaveVolume = async (factoryId, factoryName) => {
-    const raw = volumeByFactory[factoryId];
-    const value = raw === '' || raw == null ? null : Number(raw);
-    if (value != null && (!Number.isFinite(value) || value < 0)) {
-      setError('出荷量は 0 以上の数値で入力してください');
-      return;
-    }
-    setVolumeSavingId(factoryId);
-    setError('');
-    setNotice('');
-    try {
-      await db.saveMonthlyVolumeForFactory(factoryId, value);
-      setNotice(`${factoryName} の出荷量を更新しました`);
-      window.setTimeout(() => setNotice(''), 4000);
-    } catch (e) {
-      console.error('[AdminEscalationSection] volume save failed', e);
-      setError(e?.message || '出荷量の保存に失敗しました');
-    } finally {
-      setVolumeSavingId('');
-    }
-  };
-
   const distanceWeightPercent = Math.round(distanceWeight * 100);
   const capacityWeightPercent = 100 - distanceWeightPercent;
 
@@ -296,21 +270,94 @@ export function AdminEscalationSection({ factories = [] }) {
         <button type="button" className={tabButtonClass('escalation')} onClick={() => setActiveTab('escalation')}>
           エスカレーション設定
         </button>
-        <button type="button" className={tabButtonClass('volume-import')} onClick={() => setActiveTab('volume-import')}>
-          出荷量インポート
+        <button type="button" className={tabButtonClass('scoring-weight')} onClick={() => setActiveTab('scoring-weight')}>
+          スコアリング重み設定
+        </button>
+        <button
+          type="button"
+          className={tabButtonClass('volume-management')}
+          onClick={() => setActiveTab('volume-management')}
+        >
+          出荷量管理
         </button>
       </nav>
 
-      {activeTab === 'volume-import' ? (
+      {activeTab === 'volume-management' ? (
         <AdminVolumeImport />
+      ) : (
+        <>
+      {error ? (
+        <p
+          className="mb-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-bold text-red-800 dark:border-red-800 dark:bg-red-950/50 dark:text-red-200"
+          role="alert"
+        >
+          {error}
+        </p>
+      ) : null}
+      {notice ? (
+        <p
+          className="mb-3 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+          role="status"
+        >
+          {notice}
+        </p>
+      ) : null}
+
+      {activeTab === 'scoring-weight' ? (
+        <>
+          <div>
+            <h2 className="text-lg font-black text-gray-900 dark:text-white">📊 スコアリング重み設定</h2>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              エスカレーション優先度の算出に使う、距離スコアと当月出荷量スコアの重みを設定します（管理者のみ）。
+            </p>
+          </div>
+          {loading ? (
+            <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">読み込み中…</p>
+          ) : (
+            <article className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 dark:border-indigo-800 dark:bg-indigo-950/30">
+              <h3 className="text-sm font-black text-gray-900 dark:text-white">エスカレーション優先度スコアリング</h3>
+              <div className="mt-3 space-y-2">
+                <label className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-slate-700 dark:text-slate-300">
+                  <span className="shrink-0 font-bold">距離スコア重み:</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={5}
+                    value={distanceWeightPercent}
+                    onChange={(e) => setDistanceWeight(Number(e.target.value) / 100)}
+                    disabled={!tableReady}
+                    className="h-2 min-w-[12rem] flex-1 cursor-pointer accent-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-label="距離スコア重み"
+                  />
+                  <span className="w-10 shrink-0 text-right font-black text-indigo-700 dark:text-indigo-300">
+                    {distanceWeightPercent}%
+                  </span>
+                </label>
+                <p className="text-xs font-medium text-slate-600 dark:text-slate-400">
+                  キャパスコア重み: {capacityWeightPercent}%（自動）
+                </p>
+              </div>
+              <div className="mt-3 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => void handleSaveWeight()}
+                  disabled={weightSaving || !tableReady}
+                  className="rounded-lg border border-indigo-300 bg-white px-4 py-2 text-xs font-black text-indigo-900 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-600 dark:bg-slate-800 dark:text-indigo-200 dark:hover:bg-indigo-900/50"
+                >
+                  {weightSaving ? '保存中…' : '保存'}
+                </button>
+              </div>
+            </article>
+          )}
+        </>
       ) : (
         <>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-black text-gray-900 dark:text-white">🚨 工場別・多段階エスカレーション設定</h2>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            注文から経過した分数ごとに通知工場数を設定します。
-            距離スコアと当月出荷量スコアを合算して優先順位を決定します（管理者のみ）。
+            注文から経過した分数ごとに通知工場数を設定します（管理者のみ）。
           </p>
         </div>
         {rows.length > 0 ? (
@@ -324,61 +371,6 @@ export function AdminEscalationSection({ factories = [] }) {
           </button>
         ) : null}
       </div>
-
-      {error ? (
-        <p
-          className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-bold text-red-800 dark:border-red-800 dark:bg-red-950/50 dark:text-red-200"
-          role="alert"
-        >
-          {error}
-        </p>
-      ) : null}
-      {notice ? (
-        <p
-          className="mt-3 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
-          role="status"
-        >
-          {notice}
-        </p>
-      ) : null}
-
-      {!loading ? (
-        <article className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 dark:border-indigo-800 dark:bg-indigo-950/30">
-          <h3 className="text-sm font-black text-gray-900 dark:text-white">📊 エスカレーション優先度スコアリング</h3>
-          <div className="mt-3 space-y-2">
-            <label className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-slate-700 dark:text-slate-300">
-              <span className="shrink-0 font-bold">距離スコア重み:</span>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                step={5}
-                value={distanceWeightPercent}
-                onChange={(e) => setDistanceWeight(Number(e.target.value) / 100)}
-                disabled={!tableReady}
-                className="h-2 min-w-[12rem] flex-1 cursor-pointer accent-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
-                aria-label="距離スコア重み"
-              />
-              <span className="w-10 shrink-0 text-right font-black text-indigo-700 dark:text-indigo-300">
-                {distanceWeightPercent}%
-              </span>
-            </label>
-            <p className="text-xs font-medium text-slate-600 dark:text-slate-400">
-              キャパスコア重み: {capacityWeightPercent}%（自動）
-            </p>
-          </div>
-          <div className="mt-3 flex justify-end">
-            <button
-              type="button"
-              onClick={() => void handleSaveWeight()}
-              disabled={weightSaving || !tableReady}
-              className="rounded-lg border border-indigo-300 bg-white px-4 py-2 text-xs font-black text-indigo-900 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-600 dark:bg-slate-800 dark:text-indigo-200 dark:hover:bg-indigo-900/50"
-            >
-              {weightSaving ? '保存中…' : '保存'}
-            </button>
-          </div>
-        </article>
-      ) : null}
 
       {loading ? (
         <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">読み込み中…</p>
@@ -399,35 +391,6 @@ export function AdminEscalationSection({ factories = [] }) {
                   </span>
                 ) : null}
               </h3>
-
-              <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-800">
-                <span className="font-bold text-slate-700 dark:text-slate-300">当月出荷量:</span>
-                <input
-                  type="number"
-                  min={0}
-                  step={0.5}
-                  value={volumeByFactory[factory.factory_id] ?? ''}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setVolumeByFactory((prev) => ({
-                      ...prev,
-                      [factory.factory_id]: v === '' ? '' : Number(v),
-                    }));
-                  }}
-                  className={`${NUM_INPUT_CLASS} w-24`}
-                  aria-label={`${factory.factory_name} の当月出荷量`}
-                  disabled={!tableReady}
-                />
-                <span className="text-slate-600 dark:text-slate-400">m³</span>
-                <button
-                  type="button"
-                  onClick={() => void handleSaveVolume(factory.factory_id, factory.factory_name)}
-                  disabled={volumeSavingId === factory.factory_id || !tableReady}
-                  className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1 text-xs font-black text-indigo-900 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-200 dark:hover:bg-indigo-900/50"
-                >
-                  {volumeSavingId === factory.factory_id ? '更新中…' : '更新'}
-                </button>
-              </div>
 
               {factory.steps.length === 0 ? (
                 <p className="mt-2 text-xs font-medium text-slate-500 dark:text-slate-400">
@@ -513,6 +476,8 @@ export function AdminEscalationSection({ factories = [] }) {
           {saving ? '保存中…' : '全工場のエスカレーションルールを一括保存'}
         </button>
       </div>
+        </>
+      )}
         </>
       )}
     </section>
