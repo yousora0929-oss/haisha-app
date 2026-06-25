@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import * as db from '../haishaDb.js';
+import { AdminVolumeImport } from './AdminVolumeImport.jsx';
 
 const SECTION =
   'rounded-2xl border border-gray-200 bg-white p-4 text-gray-900 shadow-md dark:border-gray-700 dark:bg-slate-800 dark:text-white sm:p-6';
@@ -76,6 +77,7 @@ function factoryIdsKey(factories) {
  * 管理者画面 — 工場別・多段階エスカレーション設定
  */
 export function AdminEscalationSection({ factories = [] }) {
+  const [activeTab, setActiveTab] = useState('escalation');
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -283,8 +285,26 @@ export function AdminEscalationSection({ factories = [] }) {
   const distanceWeightPercent = Math.round(distanceWeight * 100);
   const capacityWeightPercent = 100 - distanceWeightPercent;
 
+  const tabButtonClass = (tab) =>
+    tab === activeTab
+      ? 'border-b-2 border-indigo-600 px-4 py-2 text-sm font-black text-indigo-700 dark:border-indigo-400 dark:text-indigo-300'
+      : 'border-b-2 border-transparent px-4 py-2 text-sm font-bold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200';
+
   return (
     <section className={SECTION}>
+      <nav className="-mx-1 mb-6 flex flex-wrap gap-1 border-b border-gray-200 dark:border-gray-700">
+        <button type="button" className={tabButtonClass('escalation')} onClick={() => setActiveTab('escalation')}>
+          エスカレーション設定
+        </button>
+        <button type="button" className={tabButtonClass('volume-import')} onClick={() => setActiveTab('volume-import')}>
+          出荷量インポート
+        </button>
+      </nav>
+
+      {activeTab === 'volume-import' ? (
+        <AdminVolumeImport />
+      ) : (
+        <>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-black text-gray-900 dark:text-white">🚨 工場別・多段階エスカレーション設定</h2>
@@ -493,6 +513,8 @@ export function AdminEscalationSection({ factories = [] }) {
           {saving ? '保存中…' : '全工場のエスカレーションルールを一括保存'}
         </button>
       </div>
+        </>
+      )}
     </section>
   );
 }

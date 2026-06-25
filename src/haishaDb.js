@@ -3280,6 +3280,40 @@ export async function saveMonthlyVolumeForFactory(factoryId, volumeM3) {
 }
 
 /**
+ * 工場名 → factory_id のマップを返す
+ * 戻り値: { [factory_name: string]: string }
+ */
+export async function fetchFactoryNameToIdMap() {
+  const { data, error } = await supabase
+    .from('factories')
+    .select('id, name');
+  if (error) throw error;
+  const map = {};
+  for (const row of data ?? []) {
+    if (row.name) map[row.name.trim()] = String(row.id);
+  }
+  return map;
+}
+
+/**
+ * 全工場の monthly_volume_m3 を一括上書き保存
+ * @param {Array<{factoryId: string, volumeM3: number|null}>} entries
+ */
+export async function bulkSaveMonthlyVolumes(entries) {
+  for (const { factoryId, volumeM3 } of entries) {
+    const fid = String(factoryId || '').trim();
+    if (!fid) continue;
+    const value =
+      volumeM3 != null && Number.isFinite(Number(volumeM3)) ? Number(volumeM3) : null;
+    const { error } = await supabase
+      .from('factory_escalation_steps')
+      .update({ monthly_volume_m3: value })
+      .eq('factory_id', fid);
+    if (error) throw error;
+  }
+}
+
+/**
  * distance_weight 設定を取得（シングルトン行）
  * 戻り値: number (0.0〜1.0、未設定時は 0.7)
  */
