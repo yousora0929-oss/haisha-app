@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import * as db from '../haishaDb.js';
 
 const emptyMember = () => ({
@@ -7,6 +7,62 @@ const emptyMember = () => ({
   phone: '',
   password: '',
 });
+
+function parseCsvRows(text) {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const rows = [];
+  for (const line of lines) {
+    if (/organization_name/i.test(line)) continue;
+    const parts = line.split(',');
+    const orgName = (parts[0] ?? '').trim();
+    if (!orgName) continue;
+    rows.push({
+      orgName,
+      managerName: (parts[1] ?? '').trim(),
+      phone: (parts[2] ?? '').trim(),
+      password: (parts[3] ?? '').trim(),
+    });
+  }
+  return rows;
+}
+
+function buildCsvPreview(rows, orgs) {
+  const existingOrgNames = new Set(orgs.map((o) => o.name.trim()));
+  const existingPhones = new Set(
+    orgs
+      .flatMap((o) => o.members || [])
+      .map((m) => (m.phone_number ?? '').trim())
+      .filter(Boolean),
+  );
+
+  const grouped = {};
+  for (const row of rows) {
+    const key = row.orgName;
+    if (!grouped[key]) {
+      grouped[key] = {
+        orgName: key,
+        orgIsNew: !existingOrgNames.has(key),
+        members: [],
+      };
+    }
+    const phoneConflict = row.phone !== '' && existingPhones.has(row.phone);
+    grouped[key].members.push({ ...row, phoneConflict });
+  }
+
+  let importCount = 0;
+  let skipCount = 0;
+  for (const g of Object.values(grouped)) {
+    for (const m of g.members) {
+      if (m.phoneConflict) skipCount += 1;
+      else importCount += 1;
+    }
+  }
+
+  return { groups: Object.values(grouped), importCount, skipCount };
+}
 
 function memberToForm(member) {
   return {
@@ -37,6 +93,10 @@ export function AdminOrgSection({ orgType, label }) {
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [csvPanelOpen, setCsvPanelOpen] = useState(false);
+  const [csvText, setCsvText] = useState('');
+  const [csvPreview, setCsvPreview] = useState(null);
+  const csvFileInputRef = useRef(null);
 
   const loadOrgs = useCallback(async () => {
     setLoading(true);
@@ -202,11 +262,195 @@ export function AdminOrgSection({ orgType, label }) {
     }
   };
 
+  const handleCsvFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setCsvText(String(reader.result ?? ''));
+      setCsvPreview(null);
+      setError('');
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handleCsvPreview = () => {
+    const rows = parseCsvRows(csvText);
+    if (!rows.length) {
+      setError('有効なCSV行がありません');
+      setCsvPreview(null);
+      return;
+    }
+    setCsvPreview(buildCsvPreview(rows, orgs));
+    setError('');
+  };
+
+  const handleCsvImport = async () => {
+    if (!csvPreview?.groups?.length) return;
+    const toImport = [];
+    for (const g of csvPreview.groups) {
+      for (const m of g.members) {
+        if (!m.phoneConflict) {
+          toImport.push({
+            orgName: m.orgName,
+            managerName: m.managerName,
+            phone: m.phone,
+            password: m.password,
+          });
+        }
+      }
+    }
+    if (!toImport.length) {
+      setError('インポート対象がありません');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const { created, skipped } = await db.bulkImportOrgMembers(
+        toImport,
+        orgType,
+        orgs,
+        orgs.flatMap((o) => o.members || []),
+      );
+      const rows = await db.fetchOrganizationsWithMembers(orgType);
+      setOrgs(Array.isArray(rows) ? rows : []);
+      setCsvPanelOpen(false);
+      setCsvText('');
+      setCsvPreview(null);
+      showNotice(`${created}件登録しました（${skipped}件スキップ）`);
+    } catch (e) {
+      setError(formatError(e, 'CSVインポートに失敗しました'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const inputClass =
     'rounded border border-gray-200 px-2 py-1 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200';
 
   return (
     <section>
+      <div className="mb-4">
+        <button
+          type="button"
+          onClick={() => {
+            setCsvPanelOpen((open) => !open);
+            if (csvPanelOpen) {
+              setCsvPreview(null);
+            }
+          }}
+          className="text-sm font-medium text-indigo-700 hover:text-indigo-900"
+        >
+          📥 CSVで一括登録 {csvPanelOpen ? '▲' : '▼'}
+        </button>
+
+        {csvPanelOpen ? (
+          <div className="border border-dashed border-indigo-300 rounded-lg p-4 mb-4 bg-indigo-50 mt-3">
+            <p className="text-sm font-bold text-indigo-900">📥 CSVで一括登録</p>
+            <p className="mt-2 text-xs text-slate-600">
+              フォーマット:
+              <br />
+              <code className="text-xs">organization_name,manager_name,phone_number,password</code>
+            </p>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <input
+                ref={csvFileInputRef}
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                onChange={handleCsvFileChange}
+              />
+              <button
+                type="button"
+                onClick={() => csvFileInputRef.current?.click()}
+                disabled={loading}
+                className="rounded border border-indigo-300 bg-white px-3 py-1 text-sm text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
+              >
+                CSVファイルを選択
+              </button>
+              <span className="text-xs text-slate-500">or テキスト貼り付け:</span>
+            </div>
+
+            <textarea
+              value={csvText}
+              onChange={(e) => {
+                setCsvText(e.target.value);
+                setCsvPreview(null);
+              }}
+              rows={6}
+              placeholder="organization_name,manager_name,phone_number,password"
+              className="mt-2 w-full rounded border border-gray-200 bg-white p-2 text-sm font-mono outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200"
+              disabled={loading}
+            />
+
+            <button
+              type="button"
+              onClick={handleCsvPreview}
+              disabled={loading || !csvText.trim()}
+              className="mt-3 bg-indigo-600 text-white px-3 py-1 rounded text-sm hover:bg-indigo-500 disabled:opacity-60"
+            >
+              プレビュー確認
+            </button>
+
+            {csvPreview ? (
+              <div className="mt-4">
+                <p className="text-xs font-bold text-slate-600 mb-2">▼ プレビュー結果</p>
+                <div className="space-y-3">
+                  {csvPreview.groups.map((group) => (
+                    <div key={group.orgName}>
+                      <p
+                        className={
+                          group.orgIsNew
+                            ? 'text-green-700 font-medium'
+                            : 'text-blue-700 font-medium'
+                        }
+                      >
+                        {group.orgIsNew ? '🆕' : '➕'} {group.orgName}
+                        {group.orgIsNew ? '（新規組織）' : '（既存組織）'}
+                      </p>
+                      <ul className="mt-1 space-y-0.5 pl-4">
+                        {group.members.map((m, idx) => (
+                          <li
+                            key={`${group.orgName}-${m.phone}-${m.managerName}-${idx}`}
+                            className={
+                              m.phoneConflict
+                                ? 'text-yellow-600 text-sm'
+                                : 'text-green-600 text-sm'
+                            }
+                          >
+                            {m.phoneConflict ? '⚠️' : '✅'}{' '}
+                            {m.managerName || '—'} {m.phone || '—'}{' '}
+                            {m.phoneConflict
+                              ? '→ 電話番号重複・スキップ'
+                              : group.orgIsNew
+                                ? '→ 新規登録'
+                                : '→ 追加登録'}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-3 text-sm text-slate-700">
+                  新規登録: {csvPreview.importCount}件 / スキップ: {csvPreview.skipCount}件
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void handleCsvImport()}
+                  disabled={loading || csvPreview.importCount === 0}
+                  className="mt-3 bg-indigo-600 text-white px-3 py-1 rounded text-sm hover:bg-indigo-500 disabled:opacity-60"
+                >
+                  この内容でインポート
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
       <div className="mb-4 flex flex-wrap items-center gap-3">
         {!showNewOrgForm ? (
           <button

@@ -1914,6 +1914,74 @@ export async function deleteOrgMember(id) {
   if (error) throw error;
 }
 
+/**
+ * CSVパース結果を一括インポート
+ * @param {Array<{orgName, managerName, phone, password}>} rows
+ * @param {'agent'|'cooperative'} orgType
+ * @param {Array<{id, name}>} existingOrgs  既存組織一覧
+ * @param {Array<{phone_number}>} existingMembers 既存担当者一覧
+ * @returns {{ created: number, skipped: number }}
+ */
+export async function bulkImportOrgMembers(rows, orgType, existingOrgs, existingMembers) {
+  // 既存組織名→IDのマップ
+  const orgNameToId = {};
+  for (const o of existingOrgs) orgNameToId[o.name.trim()] = o.id;
+
+  // 既存電話番号のSet
+  const existingPhones = new Set(
+    existingMembers.map((m) => (m.phone_number ?? '').trim()).filter(Boolean),
+  );
+
+  let created = 0;
+  let skipped = 0;
+
+  // 組織名ごとにグループ化して処理
+  const grouped = {};
+  for (const row of rows) {
+    const key = row.orgName.trim();
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(row);
+  }
+
+  for (const [orgName, members] of Object.entries(grouped)) {
+    // 組織が存在しなければ作成
+    let orgId = orgNameToId[orgName];
+    if (!orgId) {
+      const { data, error } = await supabase
+        .from('organizations')
+        .insert({ name: orgName, type: orgType })
+        .select('id')
+        .single();
+      if (error) throw error;
+      orgId = data.id;
+      orgNameToId[orgName] = orgId;
+    }
+
+    // 担当者を登録（電話番号重複はスキップ）
+    for (const m of members) {
+      const phone = (m.phone ?? '').trim();
+      if (phone && existingPhones.has(phone)) {
+        skipped++;
+        continue;
+      }
+      const { error } = await supabase
+        .from('customers')
+        .insert({
+          organization_id: orgId,
+          role: orgType,
+          manager_name: m.managerName?.trim() ?? null,
+          phone_number: phone || null,
+          login_password: m.password?.trim() ?? null,
+        });
+      if (error) throw error;
+      if (phone) existingPhones.add(phone);
+      created++;
+    }
+  }
+
+  return { created, skipped };
+}
+
 function mapCustomerRow(row) {
   if (!row || typeof row !== 'object') return null;
   const companyName = row.company_name != null ? String(row.company_name) : row.name != null ? String(row.name) : '';

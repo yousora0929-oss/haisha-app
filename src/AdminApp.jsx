@@ -63,10 +63,8 @@ import { AdminOrgSection } from './components/AdminOrgSection.jsx';
 import {
   downloadCustomersExportCsv,
   downloadProjectsExportCsv,
-  downloadTradingCompaniesExportCsv,
   parseCustomersCsvFile,
   parseProjectsCsvFile,
-  parseTradingCompaniesCsvFile,
   stripImportMeta,
 } from './utils/adminCsvImport.js';
 
@@ -1203,241 +1201,6 @@ function ProjectsSection({ factories, factoryNameById }) {
                     <div className="flex flex-wrap gap-1">
                       <button type="button" onClick={() => { setEditing(p); setFormMode('edit'); }} className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-bold hover:bg-slate-50">編集</button>
                       <button type="button" onClick={() => handleDelete(p)} className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-bold text-red-800 hover:bg-red-100">削除</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function TradingCompaniesSection() {
-  const [tradingCompanies, setTradingCompanies] = useState([]);
-  const [projects, setProjects] = useState([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [companyName, setCompanyName] = useState('');
-  const [editingCompany, setEditingCompany] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const [rows, projectRows] = await Promise.all([db.fetchTradingCompanies(), db.fetchProjects()]);
-      setTradingCompanies(rows);
-      setProjects(projectRows);
-    } catch (e) {
-      console.error('商社一覧取得エラー', e);
-      setError(formatSupabaseError(e, '商社一覧の取得に失敗しました'));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-    let unsub = () => {};
-    void (async () => {
-      unsub = await db.subscribeHaishaRealtime((payload) => {
-        if (payload?.table === 'trading_companies') void load();
-      });
-    })();
-    return () => unsub();
-  }, [load]);
-
-  const resetForm = () => {
-    setCompanyName('');
-    setEditingCompany(null);
-  };
-
-  const startEdit = (company) => {
-    setEditingCompany(company);
-    setCompanyName(company?.name || '');
-    setError('');
-    setNotice('');
-  };
-
-  const countProjectRefs = useCallback(
-    (name) => {
-      const q = String(name || '').trim();
-      if (!q) return 0;
-      return (projects || []).filter(
-        (p) => String(p.trading_company_name || p.trading_company || '').trim() === q,
-      ).length;
-    },
-    [projects],
-  );
-
-  const handleSave = async (e) => {
-    e.preventDefault();
-    const name = companyName.trim();
-    if (!name) {
-      setError('商社名を入力してください。');
-      return;
-    }
-    setSaving(true);
-    setError('');
-    setNotice('');
-    try {
-      if (editingCompany?.id) await db.updateTradingCompany(editingCompany.id, { name });
-      else await db.insertTradingCompany({ name });
-      resetForm();
-      setNotice(editingCompany?.id ? '商社情報を更新しました。' : '商社を登録しました。');
-      await load();
-      window.setTimeout(() => setNotice(''), 3000);
-    } catch (e2) {
-      console.error('商社保存エラー', e2);
-      setError(formatSupabaseError(e2, '商社の保存に失敗しました'));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDelete = async (company) => {
-    if (!company?.id) return;
-    const name = company.name || 'この商社';
-    const refCount = countProjectRefs(name);
-    const warn =
-      refCount > 0
-        ? `\n※ ${refCount}件の物件で商社名「${name}」が参照されています（文字列参照のため削除は可能です）。`
-        : '';
-    if (!window.confirm(`「${name}」を削除しますか？${warn}`)) return;
-    setError('');
-    setNotice('');
-    try {
-      await db.deleteTradingCompany(company.id);
-      if (editingCompany?.id === company.id) resetForm();
-      setNotice('商社を削除しました。');
-      await load();
-      window.setTimeout(() => setNotice(''), 3000);
-    } catch (e) {
-      console.error('商社削除エラー', e);
-      setError(formatSupabaseError(e, '商社の削除に失敗しました'));
-    }
-  };
-
-  const fieldClass =
-    'mt-1 min-h-[44px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200';
-
-  const filteredCompanies = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return tradingCompanies;
-    return tradingCompanies.filter((t) => String(t.name || '').toLowerCase().includes(q));
-  }, [tradingCompanies, searchQuery]);
-
-  return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-md sm:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-black text-slate-900">商社管理</h2>
-          <p className="mt-1 text-xs text-slate-500">trading_companies テーブル · 物件フォームの商社名サジェストに反映されます</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <AdminCsvImportButton
-            label="CSV一括取込"
-            entityLabel="件の商社"
-            parseFile={parseTradingCompaniesCsvFile}
-            previewColumns={[{ key: 'name', label: '商社名' }]}
-            onImport={async (preview) => {
-              const payload = preview.rows.map(stripImportMeta);
-              await db.bulkInsertTradingCompanies(payload);
-              const skipped = preview.skipped?.length ?? 0;
-              setNotice(
-                `${payload.length}件の商社を取り込みました。${skipped > 0 ? `（${skipped}行スキップ）` : ''}`,
-              );
-            }}
-            onComplete={() => {
-              void load();
-              window.setTimeout(() => setNotice(''), 5000);
-            }}
-          />
-          <AdminCsvDownloadButton
-            disabled={loading}
-            onDownload={() => {
-              downloadTradingCompaniesExportCsv(tradingCompanies);
-              setNotice(`${tradingCompanies.length}件の商社をCSVでダウンロードしました。`);
-              window.setTimeout(() => setNotice(''), 4000);
-            }}
-          />
-        </div>
-      </div>
-
-      {error ? <p className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-bold text-red-800" role="alert">{error}</p> : null}
-      {notice ? <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800" role="status">{notice}</p> : null}
-
-      <form onSubmit={handleSave} className="mt-4 grid gap-3 rounded-xl border-2 border-indigo-100 bg-indigo-50/40 p-4 sm:grid-cols-3">
-        <div className="sm:col-span-3">
-          <h3 className="text-sm font-black text-slate-900">{editingCompany ? '商社を編集' : '商社を新規登録'}</h3>
-        </div>
-        <div className="sm:col-span-2">
-          <label className="text-xs font-bold text-slate-600" htmlFor="trading-company-name">
-            商社名 <span className="text-red-600">*</span>
-          </label>
-          <input
-            id="trading-company-name"
-            type="text"
-            value={companyName}
-            onChange={(e) => setCompanyName(e.target.value)}
-            className={fieldClass}
-            placeholder="例: ○○商事"
-            required
-          />
-        </div>
-        <div className="flex flex-wrap items-end gap-2 sm:col-span-3">
-          <button type="submit" disabled={saving} className="min-h-[44px] rounded-lg bg-indigo-600 px-4 text-sm font-black text-white shadow hover:bg-indigo-700 disabled:opacity-50">
-            {saving ? '保存中…' : editingCompany ? '商社情報を更新' : '＋ 商社を登録'}
-          </button>
-          {editingCompany ? (
-            <button type="button" onClick={resetForm} disabled={saving} className="min-h-[44px] rounded-lg border-2 border-slate-300 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50">
-              編集をキャンセル
-            </button>
-          ) : null}
-        </div>
-      </form>
-
-      {loading ? <p className="mt-4 text-sm text-slate-500">読み込み中…</p> : null}
-      {!loading && tradingCompanies.length > 0 ? (
-        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
-          <label className="text-xs font-black text-slate-600" htmlFor="trading-company-search">商社検索</label>
-          <input
-            id="trading-company-search"
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-bold text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
-            placeholder="商社名で検索"
-          />
-        </div>
-      ) : null}
-      {!loading && tradingCompanies.length === 0 ? (
-        <p className="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-600">登録された商社はありません。</p>
-      ) : null}
-      {!loading && tradingCompanies.length > 0 ? (
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full min-w-[480px] border-collapse text-left text-sm">
-            <thead>
-              <tr className="border-b-2 border-slate-200 bg-slate-50">
-                <th className="px-3 py-2 font-black text-slate-700">商社名</th>
-                <th className="px-3 py-2 font-black text-slate-700">物件参照数</th>
-                <th className="px-3 py-2 font-black text-slate-700">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredCompanies.map((t) => (
-                <tr key={t.id} className="border-b border-slate-100 hover:bg-slate-50/80">
-                  <td className="px-3 py-2.5 font-bold text-slate-900">{t.name}</td>
-                  <td className="px-3 py-2.5 text-slate-600">{countProjectRefs(t.name)}</td>
-                  <td className="px-3 py-2.5">
-                    <div className="flex flex-wrap gap-1">
-                      <button type="button" onClick={() => startEdit(t)} className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-bold hover:bg-slate-50">編集</button>
-                      <button type="button" onClick={() => handleDelete(t)} className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-bold text-red-800 hover:bg-red-100">削除</button>
                     </div>
                   </td>
                 </tr>
@@ -3516,7 +3279,6 @@ export function AdminApp() {
             {tabBtn('factoryNews', 'ニュース配信')}
             {tabBtn('adminSettings', '管理者情報設定')}
             {tabBtn('projects', '物件管理')}
-            {tabBtn('tradingCompanies', '商社管理')}
             {tabBtn('agents', '商社')}
             {tabBtn('cooperatives', '組合員')}
             {tabBtn('customers', '業者管理')}
@@ -3547,7 +3309,6 @@ export function AdminApp() {
         {tab === 'factoryNews' ? <AdminFactoryNewsSection factories={factories} /> : null}
         {tab === 'adminSettings' ? <AdminSettingsSection /> : null}
         {tab === 'projects' ? <ProjectsSection factories={factories} factoryNameById={factoryNameById} /> : null}
-        {tab === 'tradingCompanies' ? <TradingCompaniesSection /> : null}
         {tab === 'agents' ? <AdminOrgSection orgType="agent" label="商社" /> : null}
         {tab === 'cooperatives' ? <AdminOrgSection orgType="cooperative" label="組合員" /> : null}
         {tab === 'customers' ? <CustomersSection organizations={organizations} /> : null}
