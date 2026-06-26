@@ -1449,7 +1449,7 @@ function TradingCompaniesSection() {
   );
 }
 
-function CustomersSection() {
+function CustomersSection({ organizations = [] }) {
   const [customers, setCustomers] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [companyName, setCompanyName] = useState('');
@@ -1457,6 +1457,8 @@ function CustomersSection() {
   const [managerName, setManagerName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [role, setRole] = useState('contractor');
+  const [organizationId, setOrganizationId] = useState(null);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1494,6 +1496,8 @@ function CustomersSection() {
     setManagerName('');
     setPhoneNumber('');
     setLoginPassword('');
+    setRole('contractor');
+    setOrganizationId(null);
     setEditingCustomer(null);
   };
 
@@ -1504,6 +1508,8 @@ function CustomersSection() {
     setManagerName(customer?.manager_name || '');
     setPhoneNumber(customer?.phone_number || '');
     setLoginPassword(customer?.login_password || '');
+    setRole(customer?.role || 'contractor');
+    setOrganizationId(customer?.organization_id ?? null);
     setError('');
     setNotice('');
   };
@@ -1533,6 +1539,9 @@ function CustomersSection() {
         manager_name: managerName.trim(),
         phone_number: phoneNumber.trim(),
         login_password: loginPassword.trim(),
+        role: role || 'contractor',
+        organization_id:
+          role === 'agent' || role === 'cooperative' ? organizationId || null : null,
       };
       if (editingCustomer?.id) await db.updateCustomer(editingCustomer.id, payload);
       else await db.addCustomer(payload);
@@ -1690,6 +1699,45 @@ function CustomersSection() {
             required
           />
         </div>
+        <div>
+          <label className="block text-xs font-black text-slate-600">
+            ロール
+            <select
+              value={role ?? 'contractor'}
+              onChange={(e) => {
+                const next = e.target.value;
+                setRole(next);
+                if (next === 'contractor') setOrganizationId(null);
+              }}
+              className={fieldClass}
+            >
+              <option value="contractor">業者（contractor）</option>
+              <option value="agent">商社担当者（agent）</option>
+              <option value="cooperative">組合担当者（cooperative）</option>
+            </select>
+          </label>
+        </div>
+        {role === 'agent' || role === 'cooperative' ? (
+          <div>
+            <label className="block text-xs font-black text-slate-600">
+              所属組織
+              <select
+                value={organizationId ?? ''}
+                onChange={(e) => setOrganizationId(e.target.value || null)}
+                className={fieldClass}
+              >
+                <option value="">— 未設定 —</option>
+                {organizations
+                  .filter((o) => o.type === (role === 'agent' ? 'agent' : 'cooperative'))
+                  .map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          </div>
+        ) : null}
         <div className="flex flex-wrap gap-2 sm:col-span-5">
           <button type="submit" disabled={saving} className="min-h-[44px] rounded-lg bg-indigo-600 px-4 text-sm font-black text-white shadow hover:bg-indigo-700 disabled:opacity-50">
             {saving ? '保存中…' : editingCustomer ? '業者情報を更新' : '＋ 業者を登録'}
@@ -1727,6 +1775,8 @@ function CustomersSection() {
                 <th className="px-3 py-2 font-black text-slate-700">代表担当者名</th>
                 <th className="px-3 py-2 font-black text-slate-700">電話番号</th>
                 <th className="px-3 py-2 font-black text-slate-700">ログインPW</th>
+                <th className="px-3 py-2 font-black text-slate-700">ロール</th>
+                <th className="px-3 py-2 font-black text-slate-700">所属組織</th>
                 <th className="px-3 py-2 font-black text-slate-700">操作</th>
               </tr>
             </thead>
@@ -1738,6 +1788,12 @@ function CustomersSection() {
                   <td className="px-3 py-2.5 text-slate-700">{c.manager_name?.trim() || '—'}</td>
                   <td className="px-3 py-2.5 text-slate-700">{c.phone_number?.trim() || '—'}</td>
                   <td className="px-3 py-2.5 font-mono text-xs text-slate-600">{c.login_password?.trim() || '—'}</td>
+                  <td className="px-3 py-2.5 text-slate-700">
+                    {c.role === 'agent' ? '商社' : c.role === 'cooperative' ? '組合' : '業者'}
+                  </td>
+                  <td className="px-3 py-2.5 text-slate-700">
+                    {organizations.find((o) => o.id === c.organization_id)?.name ?? '—'}
+                  </td>
                   <td className="px-3 py-2.5">
                     <div className="flex flex-wrap gap-1">
                       <button type="button" onClick={() => startEdit(c)} className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50">
@@ -3199,6 +3255,262 @@ function CustomerInquirySection() {
   );
 }
 
+function OrganizationsSection({ organizations, onReload }) {
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [editTarget, setEditTarget] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ name: '', type: 'agent', cooperative_id: null });
+
+  const cooperatives = organizations.filter((o) => o.type === 'cooperative');
+  const agents = organizations.filter((o) => o.type === 'agent');
+
+  const startNew = () => {
+    setEditTarget(null);
+    setForm({ name: '', type: 'agent', cooperative_id: null });
+    setShowForm(true);
+    setError('');
+  };
+
+  const startEdit = (org) => {
+    setEditTarget(org);
+    setForm({ name: org.name, type: org.type, cooperative_id: org.cooperative_id ?? null });
+    setShowForm(true);
+    setError('');
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      if (editTarget) {
+        await db.updateOrganization(editTarget.id, form);
+        setNotice('更新しました。');
+      } else {
+        await db.insertOrganization(form);
+        setNotice('登録しました。');
+      }
+      setShowForm(false);
+      await onReload();
+      window.setTimeout(() => setNotice(''), 3000);
+    } catch (e) {
+      setError(formatSupabaseError(e, '保存に失敗しました'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (org) => {
+    if (!window.confirm(`「${org.name}」を削除しますか？\n紐づく担当者がいる場合は削除できないことがあります。`)) return;
+    try {
+      await db.deleteOrganization(org.id);
+      setNotice('削除しました。');
+      await onReload();
+      window.setTimeout(() => setNotice(''), 3000);
+    } catch (e) {
+      setError(formatSupabaseError(e, '削除に失敗しました'));
+    }
+  };
+
+  const fieldClass =
+    'mt-1 min-h-[44px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200';
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-md sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-black text-slate-900">組織管理</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            organizations テーブル · 商社（agent）と組合（cooperative）を管理します
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={startNew}
+          className="min-h-[40px] rounded-xl border-2 border-indigo-500 bg-indigo-600 px-4 text-sm font-black text-white shadow-sm hover:bg-indigo-500"
+        >
+          ＋ 新規登録
+        </button>
+      </div>
+
+      {notice ? (
+        <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800">
+          {notice}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-800">
+          {error}
+        </p>
+      ) : null}
+
+      {showForm ? (
+        <div className="mt-4 rounded-xl border-2 border-indigo-200 bg-indigo-50 p-4">
+          <p className="text-sm font-black text-indigo-900">
+            {editTarget ? `「${editTarget.name}」を編集` : '新規組織を登録'}
+          </p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="block text-xs font-black text-slate-600">
+              組織名
+              <input
+                type="text"
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                className={fieldClass}
+                placeholder="例: 大分商事株式会社"
+              />
+            </label>
+            <label className="block text-xs font-black text-slate-600">
+              種別
+              <select
+                value={form.type}
+                onChange={(e) => setForm((f) => ({ ...f, type: e.target.value, cooperative_id: null }))}
+                className={fieldClass}
+              >
+                <option value="agent">商社（agent）</option>
+                <option value="cooperative">組合（cooperative）</option>
+              </select>
+            </label>
+            {form.type === 'agent' ? (
+              <label className="block text-xs font-black text-slate-600">
+                所属組合（任意）
+                <select
+                  value={form.cooperative_id ?? ''}
+                  onChange={(e) => setForm((f) => ({ ...f, cooperative_id: e.target.value || null }))}
+                  className={fieldClass}
+                >
+                  <option value="">— 未所属 —</option>
+                  {cooperatives.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </div>
+          <div className="mt-4 flex gap-2">
+            <button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={saving}
+              className="min-h-[40px] rounded-xl border-2 border-indigo-500 bg-indigo-600 px-5 text-sm font-black text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {saving ? '保存中…' : '保存'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowForm(false)}
+              className="min-h-[40px] rounded-xl border-2 border-slate-300 bg-white px-5 text-sm font-black text-slate-700 hover:bg-slate-50"
+            >
+              キャンセル
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mt-6">
+        <p className="text-sm font-black text-slate-700">組合（cooperative）</p>
+        {cooperatives.length === 0 ? (
+          <p className="mt-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-500">
+            登録された組合はありません
+          </p>
+        ) : (
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full min-w-[500px] border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-b-2 border-slate-200 bg-slate-50">
+                  <th className="px-3 py-2 font-black text-slate-700">組合名</th>
+                  <th className="px-3 py-2 font-black text-slate-700">所属商社数</th>
+                  <th className="px-3 py-2 font-black text-slate-700">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cooperatives.map((org) => (
+                  <tr key={org.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="px-3 py-2.5 font-bold text-slate-900">{org.name}</td>
+                    <td className="px-3 py-2.5 text-slate-700">
+                      {agents.filter((a) => a.cooperative_id === org.id).length}社
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => startEdit(org)}
+                          className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                        >
+                          編集
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDelete(org)}
+                          className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-bold text-red-800 hover:bg-red-100"
+                        >
+                          削除
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-6">
+        <p className="text-sm font-black text-slate-700">商社（agent）</p>
+        {agents.length === 0 ? (
+          <p className="mt-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-500">
+            登録された商社はありません
+          </p>
+        ) : (
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full min-w-[600px] border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-b-2 border-slate-200 bg-slate-50">
+                  <th className="px-3 py-2 font-black text-slate-700">商社名</th>
+                  <th className="px-3 py-2 font-black text-slate-700">所属組合</th>
+                  <th className="px-3 py-2 font-black text-slate-700">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {agents.map((org) => (
+                  <tr key={org.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="px-3 py-2.5 font-bold text-slate-900">{org.name}</td>
+                    <td className="px-3 py-2.5 text-slate-700">
+                      {cooperatives.find((c) => c.id === org.cooperative_id)?.name ?? '—'}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => startEdit(org)}
+                          className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                        >
+                          編集
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDelete(org)}
+                          className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-bold text-red-800 hover:bg-red-100"
+                        >
+                          削除
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function AdminLoginScreen({ onLogin }) {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [password, setPassword] = useState('');
@@ -3296,6 +3608,7 @@ export function AdminApp() {
   const [tab, setTab] = useState('monitor');
   const [activeMonitorTab, setActiveMonitorTab] = useState('orders');
   const [adminSettings, setAdminSettings] = useState({ admin_name: '', phone_number: '' });
+  const [organizations, setOrganizations] = useState([]);
   const factoryNameById = useMemo(() => Object.fromEntries(factories.map((f) => [f.id, f.name])), [factories]);
 
   const handleAdminLogin = useCallback((admin) => {
@@ -3396,6 +3709,27 @@ export function AdminApp() {
     return () => unsub();
   }, [loadAdminSettings]);
 
+  const loadOrganizations = useCallback(async () => {
+    try {
+      const orgs = await db.fetchOrganizations();
+      setOrganizations(orgs);
+    } catch (e) {
+      console.error('組織一覧取得エラー', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isAdminLoggedIn) return undefined;
+    void loadOrganizations();
+    let unsub = () => {};
+    void (async () => {
+      unsub = await db.subscribeHaishaRealtime((payload) => {
+        if (payload?.table === 'organizations') void loadOrganizations();
+      });
+    })();
+    return () => unsub();
+  }, [isAdminLoggedIn, loadOrganizations]);
+
   const tabBtn = (id, label) => (
     <button
       type="button"
@@ -3438,6 +3772,7 @@ export function AdminApp() {
             {tabBtn('adminSettings', '管理者情報設定')}
             {tabBtn('projects', '物件管理')}
             {tabBtn('tradingCompanies', '商社管理')}
+            {tabBtn('organizations', '組織管理')}
             {tabBtn('customers', '業者管理')}
             {tabBtn('inquiries', '問い合わせ対応')}
             {tabBtn('settings', '休日・稼働時間')}
@@ -3467,7 +3802,16 @@ export function AdminApp() {
         {tab === 'adminSettings' ? <AdminSettingsSection /> : null}
         {tab === 'projects' ? <ProjectsSection factories={factories} factoryNameById={factoryNameById} /> : null}
         {tab === 'tradingCompanies' ? <TradingCompaniesSection /> : null}
-        {tab === 'customers' ? <CustomersSection /> : null}
+        {tab === 'organizations' ? (
+          <OrganizationsSection
+            organizations={organizations}
+            onReload={async () => {
+              const orgs = await db.fetchOrganizations();
+              setOrganizations(orgs);
+            }}
+          />
+        ) : null}
+        {tab === 'customers' ? <CustomersSection organizations={organizations} /> : null}
         {tab === 'inquiries' ? <CustomerInquirySection /> : null}
         {tab === 'settings' ? <HolidaysAndSettingsSection /> : null}
         {tab === 'escalation' ? <AdminEscalationSection factories={factories} /> : null}

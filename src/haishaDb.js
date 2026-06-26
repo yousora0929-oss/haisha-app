@@ -1736,6 +1736,75 @@ function mapProjectRow(row) {
   };
 }
 
+function mapOrganizationRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const name = String(row.name ?? '').trim();
+  if (!name) return null;
+  return {
+    id: row.id != null ? String(row.id) : '',
+    name,
+    type: String(row.type ?? ''),
+    cooperative_id: row.cooperative_id != null ? String(row.cooperative_id) : null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export async function fetchOrganizations() {
+  const { data, error } = await supabase
+    .from('organizations')
+    .select('*')
+    .order('type', { ascending: true })
+    .order('name', { ascending: true });
+  if (error) throw error;
+  return (data || []).map(mapOrganizationRow).filter(Boolean);
+}
+
+export async function insertOrganization({ name, type, cooperative_id }) {
+  const trimmed = String(name ?? '').trim();
+  if (!trimmed) throw new Error('組織名を入力してください');
+  if (!['agent', 'cooperative'].includes(type)) throw new Error('種別が不正です');
+  const { data, error } = await supabase
+    .from('organizations')
+    .insert({
+      name: trimmed,
+      type,
+      cooperative_id: cooperative_id || null,
+    })
+    .select('*')
+    .single();
+  if (error) throw error;
+  return mapOrganizationRow(data);
+}
+
+export async function updateOrganization(id, { name, type, cooperative_id }) {
+  const orgId = sanitizeRefId(id);
+  if (!orgId) throw new Error('組織IDが必要です');
+  const trimmed = String(name ?? '').trim();
+  if (!trimmed) throw new Error('組織名を入力してください');
+  if (!['agent', 'cooperative'].includes(type)) throw new Error('種別が不正です');
+  const { data, error } = await supabase
+    .from('organizations')
+    .update({
+      name: trimmed,
+      type,
+      cooperative_id: cooperative_id || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', orgId)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return mapOrganizationRow(data);
+}
+
+export async function deleteOrganization(id) {
+  const orgId = sanitizeRefId(id);
+  if (!orgId) throw new Error('組織IDが必要です');
+  const { error } = await supabase.from('organizations').delete().eq('id', orgId);
+  if (error) throw error;
+}
+
 function mapCustomerRow(row) {
   if (!row || typeof row !== 'object') return null;
   const companyName = row.company_name != null ? String(row.company_name) : row.name != null ? String(row.name) : '';
@@ -1751,6 +1820,8 @@ function mapCustomerRow(row) {
       row.url_token != null && isValidSiteOrderUrlToken(String(row.url_token))
         ? String(row.url_token).trim()
         : '',
+    role: String(row.role ?? 'contractor'),
+    organization_id: row.organization_id != null ? String(row.organization_id) : null,
     created_at: row.created_at,
   };
 }
@@ -1877,6 +1948,8 @@ export async function addCustomer(customerData) {
     manager_name: String(customerData?.manager_name || '').trim() || null,
     phone_number: phoneNumber,
     login_password: loginPassword,
+    role: String(customerData?.role || 'contractor').trim(),
+    organization_id: customerData?.organization_id || null,
   };
   const { data, error } = await supabase.from('customers').insert(row).select('*').single();
   if (error) throw error;
@@ -1898,6 +1971,8 @@ export async function updateCustomer(id, customerData) {
     manager_name: String(customerData?.manager_name || '').trim() || null,
     phone_number: phoneNumber,
     login_password: loginPassword,
+    role: String(customerData?.role || 'contractor').trim(),
+    organization_id: customerData?.organization_id || null,
   };
   const { data, error } = await supabase.from('customers').update(row).eq('id', customerId).select('*').single();
   if (error) throw error;
