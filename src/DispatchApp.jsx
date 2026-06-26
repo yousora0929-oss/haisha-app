@@ -2333,6 +2333,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               setCustomers([customer]);
             }
             setIsLoggedIn(true);
+
+            const loginRole = customer?.role;
+            const companyName = String(customer?.company_name || '').trim();
+            if (loginRole === 'agent' && companyName) {
+              setTraderName(companyName);
+            } else if (loginRole === 'contractor' && companyName) {
+              setContractorName(companyName);
+            }
+
             setCustomerPanelSession(phone, password);
             setLoginPhone('');
             setLoginPassword('');
@@ -2385,6 +2394,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setPreferredFactoryId('');
         setLoginPassword('');
         setLoginError('');
+        setTraderName('');
+        setContractorName('');
         clearCustomerPanelSession();
         try {
           sessionStorage.removeItem(DISPATCH_AUTH_SESSION_KEY);
