@@ -1831,6 +1831,25 @@ export async function deleteOrganization(id) {
 }
 
 /**
+ * 組織と所属担当者を一括削除
+ * @param {string} orgId
+ */
+export async function deleteOrganizationWithMembers(orgId) {
+  // 担当者を先に削除（FK制約回避）
+  const { error: ce } = await supabase
+    .from('customers')
+    .delete()
+    .eq('organization_id', orgId);
+  if (ce) throw ce;
+
+  const { error: oe } = await supabase
+    .from('organizations')
+    .delete()
+    .eq('id', orgId);
+  if (oe) throw oe;
+}
+
+/**
  * 組織一覧を担当者付きで取得
  * @param {'agent'|'cooperative'} type
  * @returns Array<{
@@ -1969,6 +1988,7 @@ export async function bulkImportOrgMembers(rows, orgType, existingOrgs, existing
         .insert({
           organization_id: orgId,
           role: orgType,
+          company_name: orgName,
           manager_name: m.managerName?.trim() ?? null,
           phone_number: phone || null,
           login_password: m.password?.trim() ?? null,

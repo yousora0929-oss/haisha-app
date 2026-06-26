@@ -175,16 +175,15 @@ export function AdminOrgSection({ orgType, label }) {
   };
 
   const handleAddMember = async (organizationId) => {
+    const org = orgs.find((o) => o.id === organizationId);
     setLoading(true);
     setError('');
     try {
       const created = await db.createOrgMember({
         organizationId,
         role: orgType,
-        companyName: newMember.companyName,
-        managerName: newMember.managerName,
-        phone: newMember.phone,
-        password: newMember.password,
+        ...newMember,
+        companyName: org?.name ?? '',
       });
       setOrgs((prev) =>
         prev.map((o) =>
@@ -234,6 +233,33 @@ export function AdminOrgSection({ orgType, label }) {
       showNotice('担当者を更新しました');
     } catch (e) {
       setError(formatError(e, '担当者の更新に失敗しました'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteOrg = async (org) => {
+    const memberCount = (org.members || []).length;
+    const msg =
+      memberCount > 0
+        ? `「${org.name}」を削除します。\n所属する担当者 ${memberCount} 件も同時に削除されます。\nよろしいですか？`
+        : `「${org.name}」を削除します。よろしいですか？`;
+    if (!window.confirm(msg)) return;
+    setLoading(true);
+    setError('');
+    try {
+      await db.deleteOrganizationWithMembers(org.id);
+      setOrgs((prev) => prev.filter((o) => o.id !== org.id));
+      if (editingOrg?.id === org.id) setEditingOrg(null);
+      if (addingMemberId === org.id) setAddingMemberId(null);
+      setExpandedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(org.id);
+        return next;
+      });
+      showNotice(`「${org.name}」を削除しました`);
+    } catch (e) {
+      setError(formatError(e, '組織の削除に失敗しました'));
     } finally {
       setLoading(false);
     }
@@ -560,17 +586,27 @@ export function AdminOrgSection({ orgType, label }) {
                     </button>
                   </>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingOrg({ id: org.id, name: org.name });
-                      setError('');
-                    }}
-                    disabled={loading}
-                    className="text-sm text-indigo-600 hover:underline"
-                  >
-                    編集
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingOrg({ id: org.id, name: org.name });
+                        setError('');
+                      }}
+                      disabled={loading}
+                      className="text-sm text-indigo-600 hover:underline"
+                    >
+                      編集
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteOrg(org)}
+                      disabled={loading}
+                      className="text-red-500 hover:text-red-700 text-sm"
+                    >
+                      削除
+                    </button>
+                  </>
                 )}
               </div>
             </div>
