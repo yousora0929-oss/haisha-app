@@ -59,6 +59,7 @@ import { AdminEscalationSection } from './components/AdminEscalationSection.jsx'
 import { AdminCsvImportButton } from './components/AdminCsvImportButton.jsx';
 import { AdminCsvDownloadButton } from './components/AdminCsvDownloadButton.jsx';
 import { AdminFactoryNewsSection } from './components/AdminFactoryNewsSection.jsx';
+import { AdminOrgSection } from './components/AdminOrgSection.jsx';
 import {
   downloadCustomersExportCsv,
   downloadProjectsExportCsv,
@@ -3772,7 +3773,8 @@ export function AdminApp() {
             {tabBtn('adminSettings', '管理者情報設定')}
             {tabBtn('projects', '物件管理')}
             {tabBtn('tradingCompanies', '商社管理')}
-            {tabBtn('organizations', '組織管理')}
+            {tabBtn('agents', '商社')}
+            {tabBtn('cooperatives', '組合員')}
             {tabBtn('customers', '業者管理')}
             {tabBtn('inquiries', '問い合わせ対応')}
             {tabBtn('settings', '休日・稼働時間')}
@@ -3802,15 +3804,8 @@ export function AdminApp() {
         {tab === 'adminSettings' ? <AdminSettingsSection /> : null}
         {tab === 'projects' ? <ProjectsSection factories={factories} factoryNameById={factoryNameById} /> : null}
         {tab === 'tradingCompanies' ? <TradingCompaniesSection /> : null}
-        {tab === 'organizations' ? (
-          <OrganizationsSection
-            organizations={organizations}
-            onReload={async () => {
-              const orgs = await db.fetchOrganizations();
-              setOrganizations(orgs);
-            }}
-          />
-        ) : null}
+        {tab === 'agents' ? <AdminOrgSection orgType="agent" label="商社" /> : null}
+        {tab === 'cooperatives' ? <AdminOrgSection orgType="cooperative" label="組合員" /> : null}
         {tab === 'customers' ? <CustomersSection organizations={organizations} /> : null}
         {tab === 'inquiries' ? <CustomerInquirySection /> : null}
         {tab === 'settings' ? <HolidaysAndSettingsSection /> : null}

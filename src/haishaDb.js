@@ -1791,31 +1791,126 @@ export async function insertOrganization({ name, type, cooperative_id }) {
   return mapOrganizationRow(data);
 }
 
-export async function updateOrganization(id, { name, type, cooperative_id }) {
+export async function updateOrganization(id, nameOrOpts) {
+  if (nameOrOpts != null && typeof nameOrOpts === 'object') {
+    const orgId = sanitizeRefId(id);
+    if (!orgId) throw new Error('組織IDが必要です');
+    const { name, type, cooperative_id } = nameOrOpts;
+    const trimmed = String(name ?? '').trim();
+    if (!trimmed) throw new Error('組織名を入力してください');
+    if (!['agent', 'cooperative'].includes(type)) throw new Error('種別が不正です');
+    const { data, error } = await supabase
+      .from('organizations')
+      .update({
+        name: trimmed,
+        type,
+        cooperative_id: cooperative_id || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', orgId)
+      .select('*')
+      .single();
+    if (error) throw error;
+    return mapOrganizationRow(data);
+  }
+
   const orgId = sanitizeRefId(id);
   if (!orgId) throw new Error('組織IDが必要です');
-  const trimmed = String(name ?? '').trim();
-  if (!trimmed) throw new Error('組織名を入力してください');
-  if (!['agent', 'cooperative'].includes(type)) throw new Error('種別が不正です');
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from('organizations')
-    .update({
-      name: trimmed,
-      type,
-      cooperative_id: cooperative_id || null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', orgId)
-    .select('*')
-    .single();
+    .update({ name: String(nameOrOpts ?? '').trim(), updated_at: new Date().toISOString() })
+    .eq('id', orgId);
   if (error) throw error;
-  return mapOrganizationRow(data);
 }
 
 export async function deleteOrganization(id) {
   const orgId = sanitizeRefId(id);
   if (!orgId) throw new Error('組織IDが必要です');
   const { error } = await supabase.from('organizations').delete().eq('id', orgId);
+  if (error) throw error;
+}
+
+/**
+ * 組織一覧を担当者付きで取得
+ * @param {'agent'|'cooperative'} type
+ * @returns Array<{
+ *   id, name, type, created_at,
+ *   members: Array<{id, company_name, manager_name, phone_number, login_password}>
+ * }>
+ */
+export async function fetchOrganizationsWithMembers(type) {
+  const { data: orgs, error: oe } = await supabase
+    .from('organizations')
+    .select('id, name, type, created_at')
+    .eq('type', type)
+    .order('name');
+  if (oe) throw oe;
+
+  const orgIds = orgs.map((o) => o.id);
+  let members = [];
+  if (orgIds.length > 0) {
+    const { data, error: ce } = await supabase
+      .from('customers')
+      .select('id, company_name, manager_name, phone_number, login_password, organization_id')
+      .eq('role', type)
+      .in('organization_id', orgIds)
+      .order('manager_name');
+    if (ce) throw ce;
+    members = data ?? [];
+  }
+
+  return orgs.map((org) => ({
+    ...org,
+    members: members.filter((m) => String(m.organization_id) === String(org.id)),
+  }));
+}
+
+/** 組織を新規作成 */
+export async function createOrganization(name, type) {
+  const { data, error } = await supabase
+    .from('organizations')
+    .insert({ name: name.trim(), type })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+/** 担当者を新規作成（customers に INSERT） */
+export async function createOrgMember({ organizationId, role, companyName, managerName, phone, password }) {
+  const { data, error } = await supabase
+    .from('customers')
+    .insert({
+      organization_id: organizationId,
+      role,
+      company_name: companyName?.trim() ?? null,
+      manager_name: managerName?.trim() ?? null,
+      phone_number: phone?.trim() ?? null,
+      login_password: password?.trim() ?? null,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+/** 担当者を更新 */
+export async function updateOrgMember(id, { companyName, managerName, phone, password }) {
+  const { error } = await supabase
+    .from('customers')
+    .update({
+      company_name: companyName?.trim() ?? null,
+      manager_name: managerName?.trim() ?? null,
+      phone_number: phone?.trim() ?? null,
+      login_password: password?.trim() ?? null,
+    })
+    .eq('id', id);
+  if (error) throw error;
+}
+
+/** 担当者を削除 */
+export async function deleteOrgMember(id) {
+  const { error } = await supabase.from('customers').delete().eq('id', id);
   if (error) throw error;
 }
 
