@@ -64,10 +64,11 @@ function buildCsvPreview(rows, orgs) {
   return { groups: Object.values(grouped), importCount, skipCount };
 }
 
-function memberToForm(member) {
+function memberToForm(member, orgName = '') {
   return {
     id: member.id,
-    companyName: member.company_name ?? '',
+    organizationId: member.organization_id ?? null,
+    companyName: member.company_name || orgName || '',
     managerName: member.manager_name ?? '',
     phone: member.phone_number ?? '',
     password: member.login_password ?? '',
@@ -162,8 +163,30 @@ export function AdminOrgSection({ orgType, label }) {
     setError('');
     try {
       await db.updateOrganization(editingOrg.id, name);
+      const org = orgs.find((o) => o.id === editingOrg.id);
+      if (org?.members?.length) {
+        await Promise.all(
+          org.members.map((m) =>
+            db.updateOrgMember(m.id, {
+              organizationId: org.id,
+              companyName: name,
+              managerName: m.manager_name ?? '',
+              phone: m.phone_number ?? '',
+              password: m.login_password ?? '',
+            }),
+          ),
+        );
+      }
       setOrgs((prev) =>
-        prev.map((o) => (o.id === editingOrg.id ? { ...o, name } : o)),
+        prev.map((o) =>
+          o.id === editingOrg.id
+            ? {
+                ...o,
+                name,
+                members: (o.members || []).map((m) => ({ ...m, company_name: name })),
+              }
+            : o,
+        ),
       );
       setEditingOrg(null);
       showNotice('組織名を更新しました');
@@ -182,7 +205,9 @@ export function AdminOrgSection({ orgType, label }) {
       const created = await db.createOrgMember({
         organizationId,
         role: orgType,
-        ...newMember,
+        managerName: newMember.managerName,
+        phone: newMember.phone,
+        password: newMember.password,
         companyName: org?.name ?? '',
       });
       setOrgs((prev) =>
@@ -204,11 +229,16 @@ export function AdminOrgSection({ orgType, label }) {
 
   const handleSaveMember = async () => {
     if (!editingMember?.id) return;
+    const parentOrg = orgs.find((o) =>
+      (o.members || []).some((m) => m.id === editingMember.id),
+    );
+    const companyName = parentOrg?.name ?? editingMember.companyName ?? '';
     setLoading(true);
     setError('');
     try {
       await db.updateOrgMember(editingMember.id, {
-        companyName: editingMember.companyName,
+        organizationId: parentOrg?.id ?? editingMember.organizationId,
+        companyName,
         managerName: editingMember.managerName,
         phone: editingMember.phone,
         password: editingMember.password,
@@ -220,7 +250,7 @@ export function AdminOrgSection({ orgType, label }) {
             m.id === editingMember.id
               ? {
                   ...m,
-                  company_name: editingMember.companyName?.trim() ?? null,
+                  company_name: companyName.trim() || null,
                   manager_name: editingMember.managerName?.trim() ?? null,
                   phone_number: editingMember.phone?.trim() ?? null,
                   login_password: editingMember.password?.trim() ?? null,
@@ -628,19 +658,9 @@ export function AdminOrgSection({ orgType, label }) {
                         className="mb-3 rounded border border-indigo-100 bg-indigo-50 p-3 text-sm"
                       >
                         <div className="grid gap-2 sm:grid-cols-2">
-                          <label className="block text-xs text-gray-600">
-                            会社名
-                            <input
-                              type="text"
-                              value={editingMember.companyName}
-                              onChange={(e) =>
-                                setEditingMember((cur) =>
-                                  cur ? { ...cur, companyName: e.target.value } : cur,
-                                )
-                              }
-                              className={`${inputClass} mt-1 w-full`}
-                            />
-                          </label>
+                          <p className="text-xs text-gray-600 sm:col-span-2">
+                            会社名（組織名）: <span className="font-medium">{org.name}</span>
+                          </p>
                           <label className="block text-xs text-gray-600">
                             担当者名
                             <input
@@ -712,7 +732,7 @@ export function AdminOrgSection({ orgType, label }) {
                         {member.manager_name || '—'}
                       </span>
                       <span className="min-w-[6rem] text-gray-700">
-                        {member.company_name || '—'}
+                        {member.company_name || org.name || '—'}
                       </span>
                       <span className="min-w-[7rem] text-gray-600">
                         {member.phone_number || '—'}
@@ -721,7 +741,7 @@ export function AdminOrgSection({ orgType, label }) {
                         <button
                           type="button"
                           onClick={() => {
-                            setEditingMember(memberToForm(member));
+                            setEditingMember(memberToForm(member, org.name));
                             setAddingMemberId(null);
                             setError('');
                           }}
@@ -745,18 +765,10 @@ export function AdminOrgSection({ orgType, label }) {
 
                 {isAddingMember ? (
                   <div className="mt-3 rounded border border-indigo-100 bg-indigo-50 p-3 text-sm">
+                    <p className="mb-2 text-xs text-gray-600">
+                      会社名（組織名）: <span className="font-medium">{org.name}</span>
+                    </p>
                     <div className="grid gap-2 sm:grid-cols-2">
-                      <label className="block text-xs text-gray-600">
-                        会社名
-                        <input
-                          type="text"
-                          value={newMember.companyName}
-                          onChange={(e) =>
-                            setNewMember((m) => ({ ...m, companyName: e.target.value }))
-                          }
-                          className={`${inputClass} mt-1 w-full`}
-                        />
-                      </label>
                       <label className="block text-xs text-gray-600">
                         担当者名
                         <input

@@ -1897,12 +1897,23 @@ export async function createOrganization(name, type) {
 
 /** 担当者を新規作成（customers に INSERT） */
 export async function createOrgMember({ organizationId, role, companyName, managerName, phone, password }) {
+  let resolvedCompanyName = String(companyName ?? '').trim();
+  if (!resolvedCompanyName && organizationId) {
+    const { data: org, error: orgError } = await supabase
+      .from('organizations')
+      .select('name')
+      .eq('id', organizationId)
+      .maybeSingle();
+    if (orgError) throw orgError;
+    resolvedCompanyName = String(org?.name ?? '').trim();
+  }
+
   const { data, error } = await supabase
     .from('customers')
     .insert({
       organization_id: organizationId,
       role,
-      company_name: companyName?.trim() ?? null,
+      company_name: resolvedCompanyName || null,
       manager_name: managerName?.trim() ?? null,
       phone_number: phone?.trim() ?? null,
       login_password: password?.trim() ?? null,
@@ -1914,11 +1925,22 @@ export async function createOrgMember({ organizationId, role, companyName, manag
 }
 
 /** 担当者を更新 */
-export async function updateOrgMember(id, { companyName, managerName, phone, password }) {
+export async function updateOrgMember(id, { organizationId, companyName, managerName, phone, password }) {
+  let resolvedCompanyName = String(companyName ?? '').trim();
+  if (!resolvedCompanyName && organizationId) {
+    const { data: org, error: orgError } = await supabase
+      .from('organizations')
+      .select('name')
+      .eq('id', organizationId)
+      .maybeSingle();
+    if (orgError) throw orgError;
+    resolvedCompanyName = String(org?.name ?? '').trim();
+  }
+
   const { error } = await supabase
     .from('customers')
     .update({
-      company_name: companyName?.trim() ?? null,
+      company_name: resolvedCompanyName || null,
       manager_name: managerName?.trim() ?? null,
       phone_number: phone?.trim() ?? null,
       login_password: password?.trim() ?? null,
