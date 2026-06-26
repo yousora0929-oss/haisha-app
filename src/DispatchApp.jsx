@@ -1254,6 +1254,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [orderKind, setOrderKind] = useState('spot');
       const [selectedProjectId, setSelectedProjectId] = useState('');
       const [customerSearchText, setCustomerSearchText] = useState('');
+      const [contractorCustomerId, setContractorCustomerId] = useState('');
+      const [contractorSearchText, setContractorSearchText] = useState('');
       const [projectSearchText, setProjectSearchText] = useState('');
       const [deliveryLat, setDeliveryLat] = useState('');
       const [deliveryLng, setDeliveryLng] = useState('');
@@ -1403,6 +1405,21 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         () => (customers || []).find((c) => c && c.id === currentCustomerId) || null,
         [customers, currentCustomerId],
       );
+      const currentCustomerRole = useMemo(
+        () => currentCustomer?.role ?? 'contractor',
+        [currentCustomer],
+      );
+      const isAgentOrCooperative = useMemo(
+        () => currentCustomerRole === 'agent' || currentCustomerRole === 'cooperative',
+        [currentCustomerRole],
+      );
+      const contractorCustomer = useMemo(
+        () =>
+          isAgentOrCooperative && contractorCustomerId
+            ? (customers || []).find((c) => String(c.id) === contractorCustomerId) ?? null
+            : null,
+        [isAgentOrCooperative, contractorCustomerId, customers],
+      );
       const sessionCustomerPhone = useMemo(() => {
         if (!isLoggedIn) return '';
         try {
@@ -1432,13 +1449,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         },
         [isGuestSiteOrder, guestSiteOrderCtx, isOrderForCurrentCustomer],
       );
-      const filteredProjects = useMemo(
-        () =>
-          (projects || []).filter(
-            (p) => p && String(p.customer_id || '').trim() === String(currentCustomerId || '').trim(),
-          ),
-        [projects, currentCustomerId],
-      );
+      const filteredProjects = useMemo(() => {
+        const targetCustomerId = isAgentOrCooperative ? contractorCustomerId : currentCustomerId;
+        if (!targetCustomerId) return [];
+        return (projects || []).filter(
+          (p) => p && String(p.customer_id || '').trim() === String(targetCustomerId || '').trim(),
+        );
+      }, [projects, currentCustomerId, contractorCustomerId, isAgentOrCooperative]);
       const projectSelectionWarnings = useMemo(
         () => (selectedProject ? getProjectDataGapWarnings(selectedProject) : []),
         [selectedProject],
@@ -1726,13 +1743,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setSelectedProjectId((cur) => {
           if (!cur) return cur;
           const p = (projects || []).find((x) => x && x.id === cur);
-          const valid = p && String(p.customer_id || '').trim() === String(currentCustomerId || '').trim();
+          const targetCustomerId = isAgentOrCooperative ? contractorCustomerId : currentCustomerId;
+          const valid =
+            p && String(p.customer_id || '').trim() === String(targetCustomerId || '').trim();
           if (!valid) {
             lastAutofillProjectIdRef.current = '';
           }
           return valid ? cur : '';
         });
-      }, [currentCustomerId, projects]);
+      }, [currentCustomerId, contractorCustomerId, isAgentOrCooperative, projects]);
 
       useEffect(() => {
         consumePushRedirectForApp('customer');
@@ -1889,9 +1908,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         if (lastAutofillProjectIdRef.current === selectedProjectId) return;
         const p = (projects || []).find((x) => x && String(x.id) === String(selectedProjectId));
         if (!p) return;
-        if (String(p.customer_id || '').trim() !== String(currentCustomerId || '').trim()) return;
+        const targetCustomerId = isAgentOrCooperative ? contractorCustomerId : currentCustomerId;
+        if (String(p.customer_id || '').trim() !== String(targetCustomerId || '').trim()) return;
         applyProjectSelection(p);
-      }, [orderKind, selectedProjectId, projects, currentCustomerId, applyProjectSelection]);
+      }, [orderKind, selectedProjectId, projects, currentCustomerId, contractorCustomerId, isAgentOrCooperative, applyProjectSelection]);
 
       useEffect(() => {
         if (orderKind !== 'project' || selectedProjectId) return;
@@ -2297,7 +2317,21 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
           try {
             setCurrentCustomerId(customer.id);
-            setCustomers([customer]);
+            const role = customer.role ?? 'contractor';
+            if (role === 'agent' || role === 'cooperative') {
+              try {
+                const allCustomers = await db.fetchCustomers();
+                const contractors = allCustomers.filter(
+                  (c) => (c.role ?? 'contractor') === 'contractor',
+                );
+                setCustomers([customer, ...contractors]);
+              } catch (fetchErr) {
+                console.warn('業者一覧の取得に失敗しました', fetchErr);
+                setCustomers([customer]);
+              }
+            } else {
+              setCustomers([customer]);
+            }
             setIsLoggedIn(true);
             setCustomerPanelSession(phone, password);
             setLoginPhone('');
@@ -2344,6 +2378,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         void unregisterOneSignalUser().catch(() => {});
         setIsLoggedIn(false);
         setCurrentCustomerId('');
+        setContractorCustomerId('');
+        setContractorSearchText('');
         setCustomers([]);
         setSelectedProjectId('');
         setPreferredFactoryId('');
@@ -2528,8 +2564,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const orderFormContext = useMemo(
         () => ({
           isGuestSiteOrder,
+          isAgentOrCooperative,
           orderKind,
           currentCustomerId,
+          contractorCustomerId: isAgentOrCooperative ? contractorCustomerId : currentCustomerId,
+          agentOrganizationId: isAgentOrCooperative ? (currentCustomer?.organization_id ?? null) : null,
           currentCustomer,
           selectedProject,
           selectedProjectId,
@@ -2560,8 +2599,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         }),
         [
           isGuestSiteOrder,
+          isAgentOrCooperative,
           orderKind,
           currentCustomerId,
+          contractorCustomerId,
           currentCustomer,
           selectedProject,
           selectedProjectId,
@@ -2624,7 +2665,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setOrderedBy('');
         setHasTest(false);
         setVehicleType('large');
-      }, [today]);
+        if (isAgentOrCooperative) {
+          // agent/cooperativeは業者選択を保持する（発注ごとにリセットしない）
+          // 必要ならコメントアウトを外す:
+          // setContractorCustomerId('');
+          // setContractorSearchText('');
+        }
+      }, [today, isAgentOrCooperative]);
 
       const handleAddToCart = useCallback(
         (e) => {
@@ -3255,6 +3302,56 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
               {orderKind === 'project' && !isGuestSiteOrder ? (
                 <div className="flex flex-col gap-4">
+                  {isAgentOrCooperative ? (
+                    <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3">
+                      <p className="text-xs font-black text-amber-900">代理発注モード</p>
+                      <p className="text-xs text-amber-700 mt-0.5">
+                        {currentCustomerRole === 'agent' ? '商社' : '組合'}として発注しています。
+                        発注先の業者を選択してください。
+                      </p>
+                      <div className="mt-3">
+                        <MasterSuggestInput
+                          label="発注先業者"
+                          htmlFor="contractor-customer-select"
+                          name="contractor_customer"
+                          value={contractorSearchText}
+                          placeholder="業者名を入力して候補から選択"
+                          items={(customers || []).filter((c) => (c.role ?? 'contractor') === 'contractor')}
+                          getItemKey={(c) => String(c.id)}
+                          getItemLabel={(c) => String(c.company_name || c.name || '').trim()}
+                          getSearchTexts={(c) => [
+                            c.company_name || c.name || '',
+                            c.furigana || '',
+                            c.manager_name || '',
+                          ]}
+                          onValueChange={(text) => {
+                            setContractorSearchText(text);
+                            const hit = (customers || []).find(
+                              (c) =>
+                                (c.role ?? 'contractor') === 'contractor' &&
+                                String(c.company_name || c.name || '')
+                                  .trim()
+                                  .toLowerCase() === text.trim().toLowerCase(),
+                            );
+                            if (hit) setContractorCustomerId(String(hit.id));
+                            else setContractorCustomerId('');
+                            setSelectedProjectId('');
+                            lastAutofillProjectIdRef.current = '';
+                            applyProjectSelection(null);
+                          }}
+                          onSelect={(c) => {
+                            setContractorCustomerId(String(c.id));
+                            setContractorSearchText(String(c.company_name || c.name || '').trim());
+                            setSelectedProjectId('');
+                            lastAutofillProjectIdRef.current = '';
+                            applyProjectSelection(null);
+                          }}
+                          emptyHint="該当する業者がありません"
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+                  {!isAgentOrCooperative ? (
                   <MasterSuggestInput
                     label="業者（会社）"
                     htmlFor={orderFieldId('dispatch-customer')}
@@ -3289,13 +3386,22 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     }}
                     emptyHint="該当する業者がありません"
                   />
+                  ) : null}
                   <MasterSuggestInput
                     label="物件を選択"
                     htmlFor={orderFieldId('dispatch-project')}
                     name="regular_project_search"
                     value={projectSearchText}
-                    disabled={!hasCurrentCustomer}
-                    placeholder={hasCurrentCustomer ? '物件名を入力して候補から選択' : '先に業者を選択してください'}
+                    disabled={isAgentOrCooperative ? !contractorCustomerId : !hasCurrentCustomer}
+                    placeholder={
+                      isAgentOrCooperative
+                        ? contractorCustomerId
+                          ? '物件名・住所で検索'
+                          : '先に発注先業者を選択してください'
+                        : hasCurrentCustomer
+                          ? '物件名・住所で検索'
+                          : '先に業者を選択してください'
+                    }
                     items={filteredProjects}
                     getItemKey={(p) => String(p.id)}
                     getItemLabel={(p) => String(p.name || p.id || '').trim()}
@@ -3331,6 +3437,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   {!hasCurrentCustomer ? (
                     <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
                       ログイン中の業者情報を確認できません。再ログインするか、上の欄で業者を選択してください。
+                    </p>
+                  ) : isAgentOrCooperative && !contractorCustomerId ? (
+                    <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
+                      発注先の業者を選択してください。
                     </p>
                   ) : filteredProjects.length === 0 ? (
                     <p className="text-xs font-bold text-amber-800 dark:text-amber-200">

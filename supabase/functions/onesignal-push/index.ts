@@ -82,6 +82,8 @@ type SlimPayload = {
   event?: PushEvent | string;
   order_id?: string;
   customer_id?: string | null;
+  contractor_customer_id?: string | null;
+  agent_organization_id?: string | null;
   factory_site_id?: string | null;
   preferred_factory_id?: string | null;
   phone?: string | null;
@@ -101,6 +103,8 @@ type OrderRow = {
   order_data?: Record<string, unknown> | null;
   chat_messages?: unknown[] | null;
   customer_id?: string | null;
+  contractor_customer_id?: string | null;
+  agent_organization_id?: string | null;
   factory_site_id?: string | null;
   preferred_factory_id?: string | null;
   project_id?: string | null;
@@ -292,10 +296,87 @@ function expandOneSignalExternalIds(ids: string[]): string[] {
   return [...expanded];
 }
 
-/** カスタマー向けプッシュは customers.id のみ（電話番号エイリアスは使わない） */
+/** カスタマー向けプッシュ:
+ *  - 発注操作者（customer_id）
+ *  - 納品責任業者（contractor_customer_id）※代理発注時
+ *  - 組合担当者（agent_organization_id が cooperative タイプの場合）
+ */
 function resolveCustomerPushIds(row?: OrderRow | null, payload?: SlimPayload | null): string[] {
+  const ids = new Set<string>();
+
+  // 発注操作者（常に含める）
   const customerId = pickString(row?.customer_id, payload?.customer_id);
-  return customerId ? [onesignalCustomerExternalId(customerId)] : [];
+  if (customerId) ids.add(onesignalCustomerExternalId(customerId));
+
+  // 納品責任業者（代理発注時に追加）
+  const contractorId = pickString(
+    row?.contractor_customer_id,
+    payload?.contractor_customer_id,
+  );
+  if (contractorId && contractorId !== customerId) {
+    ids.add(onesignalCustomerExternalId(contractorId));
+  }
+
+  return [...ids];
+}
+
+/** 組合担当者向けプッシュIDを解決する
+ *  agent_organization_id が cooperative タイプの場合、
+ *  その組合に所属するcustomers（role='cooperative'）を取得して通知する
+ */
+async function resolveCooperativeMemberPushIds(
+  row?: OrderRow | null,
+  payload?: SlimPayload | null,
+): Promise<string[]> {
+  const orgId = pickString(
+    row?.agent_organization_id,
+    payload?.agent_organization_id,
+  );
+  if (!orgId) return [];
+
+  const base = Deno.env.get('SUPABASE_URL')?.replace(/\/$/, '') || '';
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  if (!base || !serviceKey) return [];
+
+  try {
+    // まずorganizationsのtypeを確認
+    const orgRes = await fetch(
+      `${base}/rest/v1/organizations?id=eq.${encodeURIComponent(orgId)}&select=type`,
+      {
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          Accept: 'application/json',
+        },
+      },
+    );
+    if (!orgRes.ok) return [];
+    const orgs = await orgRes.json();
+    const orgType = pickString(orgs?.[0]?.type);
+    if (orgType !== 'cooperative') return [];
+
+    // cooperative の場合、所属する cooperative 担当者を取得
+    const membersRes = await fetch(
+      `${base}/rest/v1/customers?organization_id=eq.${encodeURIComponent(orgId)}&role=eq.cooperative&select=id`,
+      {
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          Accept: 'application/json',
+        },
+      },
+    );
+    if (!membersRes.ok) return [];
+    const members = await membersRes.json();
+
+    return (Array.isArray(members) ? members : [])
+      .map((m: { id?: string }) => pickString(m?.id))
+      .filter(Boolean)
+      .map((id: string) => onesignalCustomerExternalId(id));
+  } catch (e) {
+    console.warn('[onesignal-push] resolveCooperativeMemberPushIds failed', e);
+    return [];
+  }
 }
 
 /** 工場向けプッシュは受注工場 → 第一希望の1件のみ（複数 alias による重複を防ぐ） */
@@ -1121,17 +1202,30 @@ async function sendToCustomerAudience(
   data: Record<string, unknown> = {},
   options: { orderId?: string; title?: string } = {},
 ): Promise<boolean> {
-  const customerIds = withoutExternalIds(
-    resolveCustomerPushIds(row, payload),
+  const baseIds = resolveCustomerPushIds(row, payload);
+  const cooperativeIds = await resolveCooperativeMemberPushIds(row, payload);
+
+  // 工場IDを除外してユニークに結合
+  const allIds = withoutExternalIds(
+    [...new Set([...baseIds, ...cooperativeIds])],
     ...resolveFactoryPushTargetIds(row, payload),
   );
-  if (!customerIds.length || !message) {
+
+  if (!allIds.length || !message) {
     console.log('[onesignal-push] skip customer audience (no recipients)', {
       orderId: pickString(row?.id, payload?.order_id),
     });
     return false;
   }
-  return sendToExternalIds(customerIds, message, data, options);
+
+  console.log('[onesignal-push] customer audience', {
+    orderId: pickString(row?.id, payload?.order_id),
+    baseIds,
+    cooperativeIds,
+    total: allIds.length,
+  });
+
+  return sendToExternalIds(allIds, message, data, options);
 }
 
 async function sendToFactoryAudience(

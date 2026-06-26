@@ -35,7 +35,7 @@ import {
 import { normalizeSalesStaffList } from './utils/salesStaff.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at';
+  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -240,6 +240,18 @@ export function normalizeOrderRow(row) {
     project_id: row.project_id != null ? String(row.project_id) : od.project_id ?? null,
     is_spot: row.is_spot === true || od.is_spot === true,
     customer_id: row.customer_id != null ? String(row.customer_id) : od.customer_id != null ? String(od.customer_id) : null,
+    contractor_customer_id:
+      row.contractor_customer_id != null
+        ? String(row.contractor_customer_id)
+        : od.contractor_customer_id != null
+          ? String(od.contractor_customer_id)
+          : null,
+    agent_organization_id:
+      row.agent_organization_id != null
+        ? String(row.agent_organization_id)
+        : od.agent_organization_id != null
+          ? String(od.agent_organization_id)
+          : null,
     customerName: od.customerName != null ? String(od.customerName) : od.customer_name != null ? String(od.customer_name) : '',
     trading_company_name:
       od.trading_company_name != null
@@ -646,6 +658,8 @@ function buildOrderInsertRow(order) {
     status: statusRaw,
     is_location_pending: isLocationPending,
     rejected_factory_ids: [],
+    contractor_customer_id: sanitizeRefId(order.contractor_customer_id) || null,
+    agent_organization_id: sanitizeRefId(order.agent_organization_id) || null,
   };
 }
 

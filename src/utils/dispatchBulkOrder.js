@@ -271,6 +271,9 @@ export function buildDispatchOrderForDate(preferredDate, context) {
     deliveryLat,
     deliveryLng,
     isLocationPending,
+    contractorCustomerId,
+    agentOrganizationId,
+    isAgentOrCooperative,
   } = context;
 
   const isSpot = orderKind === 'spot';
@@ -366,6 +369,8 @@ export function buildDispatchOrderForDate(preferredDate, context) {
     has_test: Boolean(hasTest),
     is_location_pending: locationPending,
     isLocationPending: locationPending,
+    contractor_customer_id: isAgentOrCooperative ? contractorCustomerId || null : null,
+    agent_organization_id: isAgentOrCooperative ? agentOrganizationId || null : null,
   };
 }
 
@@ -394,6 +399,9 @@ export function validateMultiDateOrderForm(context, dates, { today, isPastPrefer
   const list = (Array.isArray(dates) ? dates : []).map((d) => String(d || '').trim()).filter(Boolean);
   if (list.length === 0) missing.push('納入日（1件以上）');
   if (!String(context.currentCustomerId || '').trim()) missing.push('業者（会社）');
+  if (context.isAgentOrCooperative && !String(context.contractorCustomerId || '').trim()) {
+    missing.push('発注先業者');
+  }
   if (!isGuestSiteOrder && !String(context.contractorName || '').trim()) missing.push('業者（下請）');
   if (!String(context.sitePhone || '').trim()) missing.push('電話番号');
   if (!String(context.quantityM3 || '').trim()) missing.push('数量（m³）');
