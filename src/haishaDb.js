@@ -35,7 +35,7 @@ import {
 import { normalizeSalesStaffList } from './utils/salesStaff.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id';
+  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, is_admin_modified, is_factory_modified';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -290,6 +290,7 @@ export function normalizeOrderRow(row) {
             ? String(od.factoryResponseStatus)
             : null,
     is_admin_modified: row.is_admin_modified === true || od.is_admin_modified === true,
+    is_factory_modified: row.is_factory_modified === true || od.is_factory_modified === true,
     // 相談ステータスは専用カラムを唯一の正とする（order_data へはフォールバックしない）
     factory_consult_status:
       row.factory_consult_status != null ? String(row.factory_consult_status).trim() : '',
@@ -796,6 +797,18 @@ export async function updateOrderDetails(orderId, updatedData) {
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'chat_messages') || Object.prototype.hasOwnProperty.call(patch, 'chatMessages')) {
     updateRow.chat_messages = normalizeChatMessages(patch.chat_messages ?? patch.chatMessages);
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'is_admin_modified') ||
+    Object.prototype.hasOwnProperty.call(patch, 'isAdminModified')
+  ) {
+    updateRow.is_admin_modified = Boolean(patch.is_admin_modified ?? patch.isAdminModified);
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'is_factory_modified') ||
+    Object.prototype.hasOwnProperty.call(patch, 'isFactoryModified')
+  ) {
+    updateRow.is_factory_modified = Boolean(patch.is_factory_modified ?? patch.isFactoryModified);
   }
   const { data: updated, error: upErr } = await supabase
     .from('orders')

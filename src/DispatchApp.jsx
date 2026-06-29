@@ -873,6 +873,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     管理者変更
                   </span>
                 ) : null}
+                {order.is_factory_modified ? (
+                  <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-black text-amber-900">
+                    工場変更
+                  </span>
+                ) : null}
               </div>
 
               <div className="flex items-center gap-2">
@@ -1564,6 +1569,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               );
               if (displayOrders.some((o) => o?.is_admin_modified && !prevOrderMapForAdmin.get(o.id)?.is_admin_modified)) {
                 showDashboardNotice('⚠️ 管理者によって注文内容が変更されました。内容を確認してください。', { playSound });
+              } else if (
+                displayOrders.some((o) => o?.is_factory_modified && !prevOrderMapForAdmin.get(o.id)?.is_factory_modified)
+              ) {
+                showDashboardNotice('⚠️ 工場により注文内容が変更されました。内容を確認してください。', { playSound });
               } else {
                 const detected = detectCustomerOrderNotifications(prevOrders, displayOrders, isRelevantDashboardOrder);
                 if (!Array.isArray(detected.acceptedSiteLabels)) detected.acceptedSiteLabels = [];

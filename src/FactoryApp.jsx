@@ -350,6 +350,61 @@ function isOrderAcceptedByFactory(order, factoryId) {
   return Boolean((status === 'accepted' || responseStatus === FACTORY_RESPONSE.ACCEPTED) && isSameFactoryId(getAssignedFactoryId(order), factoryId));
 }
 
+/**
+ * 変更前の注文オブジェクト（target）と保存後のpatchを比較し、
+ * 変更されたフィールドのみ「表示名：旧値 → 新値」形式の配列を返す
+ */
+function buildOrderChangeDiffLines(before, patch) {
+  const fields = [
+    {
+      key: 'preferredDate',
+      label: '希望日',
+    },
+    {
+      key: 'timeSlotLabel',
+      label: '希望時刻',
+      patchKey: 'timeSlotLabel',
+    },
+    {
+      label: '数量',
+      before: String(before.confirmedQuantityM3 ?? before.quantityM3 ?? '').trim(),
+      after: String(patch.quantityM3 ?? '').trim(),
+      suffix: 'm³',
+    },
+    {
+      label: '配合',
+      before: String(before.confirmedMixText ?? before.mixText ?? '').trim(),
+      after: String(patch.mixText ?? '').trim(),
+    },
+    {
+      label: '現場名',
+      before: String(before.siteName ?? '').trim(),
+      after: String(patch.siteName ?? '').trim(),
+    },
+    {
+      label: '現場住所',
+      before: String(before.siteAddress ?? '').trim(),
+      after: String(patch.siteAddress ?? '').trim(),
+    },
+    {
+      label: '電話番号',
+      before: String(before.sitePhone ?? '').trim(),
+      after: String(patch.sitePhone ?? '').trim(),
+    },
+  ];
+
+  const lines = [];
+  for (const f of fields) {
+    const patchKey = f.patchKey ?? f.key;
+    const bVal = f.before !== undefined ? f.before : String(before[f.key] ?? '').trim();
+    const aVal = f.after !== undefined ? f.after : String(patch[patchKey ?? f.label] ?? '').trim();
+    if (bVal === aVal || (!bVal && !aVal)) continue;
+    const suffix = f.suffix ?? '';
+    lines.push(`・${f.label}：${bVal || '（未設定）'}${suffix} → ${aVal || '（未設定）'}${suffix}`);
+  }
+  return lines;
+}
+
 function latestChatMessage(messages) {
   const list = Array.isArray(messages) ? messages.filter(Boolean) : [];
   return list.length ? list[list.length - 1] : null;
@@ -3409,30 +3464,47 @@ function orderPartyInfo(order) {
       const handleOrderFullPatch = useCallback(
         async (orderId, patch) => {
           if (!orderId || !patch || typeof patch !== 'object') return false;
-          const target = (rawOrders || []).find((o) => o?.id === orderId) || (orders || []).find((o) => o?.id === orderId);
+          const target =
+            (rawOrders || []).find((o) => o?.id === orderId) ||
+            (orders || []).find((o) => o?.id === orderId);
           if (!isOrderAcceptedByFactory(target, activeFactoryId)) {
             window.alert('自分が受注済みの注文のみ編集できます。');
             return false;
           }
           try {
-            const updated = await db.updateOrderDetails(orderId, patch);
+            const diffLines = buildOrderChangeDiffLines(target, patch);
+
+            const updated = await db.updateOrderDetails(orderId, {
+              ...patch,
+              is_factory_modified: true,
+            });
             if (!updated) return false;
+
+            if (diffLines.length > 0) {
+              const msg = `【注文変更】工場により内容が変更されました。\n${diffLines.join('\n')}`;
+              await appendOrderChatMessage(orderId, 'system', msg);
+            }
+
             setRawOrders((prev) =>
-              Array.isArray(prev) ? prev.map((o) => (o?.id === orderId ? { ...o, ...updated } : o)) : prev,
+              Array.isArray(prev)
+                ? prev.map((o) => (o?.id === orderId ? { ...o, ...updated } : o))
+                : prev,
             );
             setOrders((prev) =>
-              Array.isArray(prev) ? prev.map((o) => (o?.id === orderId ? { ...o, ...updated } : o)) : prev,
+              Array.isArray(prev)
+                ? prev.map((o) => (o?.id === orderId ? { ...o, ...updated } : o))
+                : prev,
             );
             setActionNotice('注文内容を更新しました');
             window.setTimeout(() => setActionNotice(''), 3500);
             return true;
           } catch (e) {
-            console.error(e);
-            window.alert('注文内容の更新に失敗しました。通信状態を確認して再度お試しください。');
+            console.error('handleOrderFullPatch failed', e);
+            window.alert('注文の更新に失敗しました。通信状態を確認してください。');
             return false;
           }
         },
-        [activeFactoryId, orders, rawOrders],
+        [activeFactoryId, rawOrders, orders, appendOrderChatMessage],
       );
 
       const handleAcceptOrder = useCallback(
