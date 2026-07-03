@@ -2082,92 +2082,17 @@ export async function deleteOrgMember(id) {
   if (error) throw error;
 }
 
-function mapSiteContactRow(row) {
-  if (!row || typeof row !== 'object') return null;
-  return {
-    id: row.id != null ? String(row.id) : '',
-    organization_id: row.organization_id != null ? String(row.organization_id) : '',
-    name: row.name != null ? String(row.name) : '',
-    phone_number: row.phone_number != null ? String(row.phone_number) : '',
-    created_at: row.created_at != null ? String(row.created_at) : '',
-    updated_at: row.updated_at != null ? String(row.updated_at) : '',
-  };
-}
-
-/** 業者組織の現場担当者一覧 */
-export async function fetchSiteContacts(organizationId) {
+/** 組織に属する担当者（customers）一覧 — 現場担当者サジェスト用 */
+export async function fetchCustomersByOrganizationId(organizationId) {
   const orgId = sanitizeRefId(organizationId);
   if (!orgId) return [];
   const { data, error } = await supabase
-    .from('contractor_site_contacts')
-    .select('id, organization_id, name, phone_number, created_at, updated_at')
+    .from('customers')
+    .select('id, company_name, furigana, manager_name, phone_number, login_password, organization_id, role')
     .eq('organization_id', orgId)
-    .order('name');
+    .order('manager_name');
   if (error) throw error;
-  return (data ?? []).map(mapSiteContactRow).filter(Boolean);
-}
-
-/** 複数組織の現場担当者を一括取得（管理画面用） */
-export async function fetchSiteContactsByOrgIds(orgIds) {
-  const ids = (Array.isArray(orgIds) ? orgIds : [])
-    .map((id) => sanitizeRefId(id))
-    .filter(Boolean);
-  if (!ids.length) return [];
-  const { data, error } = await supabase
-    .from('contractor_site_contacts')
-    .select('id, organization_id, name, phone_number, created_at, updated_at')
-    .in('organization_id', ids)
-    .order('name');
-  if (error) throw error;
-  return (data ?? []).map(mapSiteContactRow).filter(Boolean);
-}
-
-export async function createSiteContact({ organizationId, name, phone }) {
-  const orgId = sanitizeRefId(organizationId);
-  if (!orgId) throw new Error('組織IDが必要です');
-  const trimmedName = String(name ?? '').trim();
-  const trimmedPhone = String(phone ?? '').trim();
-  if (!trimmedName) throw new Error('担当者名を入力してください');
-  if (!trimmedPhone) throw new Error('電話番号を入力してください');
-  const { data, error } = await supabase
-    .from('contractor_site_contacts')
-    .insert({
-      organization_id: orgId,
-      name: trimmedName,
-      phone_number: trimmedPhone,
-    })
-    .select('id, organization_id, name, phone_number, created_at, updated_at')
-    .single();
-  if (error) throw error;
-  return mapSiteContactRow(data);
-}
-
-export async function updateSiteContact(id, { name, phone }) {
-  const contactId = sanitizeRefId(id);
-  if (!contactId) throw new Error('現場担当者IDが必要です');
-  const trimmedName = String(name ?? '').trim();
-  const trimmedPhone = String(phone ?? '').trim();
-  if (!trimmedName) throw new Error('担当者名を入力してください');
-  if (!trimmedPhone) throw new Error('電話番号を入力してください');
-  const { data, error } = await supabase
-    .from('contractor_site_contacts')
-    .update({
-      name: trimmedName,
-      phone_number: trimmedPhone,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', contactId)
-    .select('id, organization_id, name, phone_number, created_at, updated_at')
-    .single();
-  if (error) throw error;
-  return mapSiteContactRow(data);
-}
-
-export async function deleteSiteContact(id) {
-  const contactId = sanitizeRefId(id);
-  if (!contactId) throw new Error('現場担当者IDが必要です');
-  const { error } = await supabase.from('contractor_site_contacts').delete().eq('id', contactId);
-  if (error) throw error;
+  return (data ?? []).map(mapCustomerRow).filter(Boolean);
 }
 
 /**

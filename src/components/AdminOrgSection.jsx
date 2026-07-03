@@ -10,11 +10,6 @@ const emptyMember = () => ({
   password: '',
 });
 
-const emptySiteContact = () => ({
-  name: '',
-  phone: '',
-});
-
 function parseCsvRows(text) {
   const lines = String(text || '')
     .split(/\r?\n/)
@@ -106,9 +101,6 @@ export function AdminOrgSection({ orgType, label }) {
   const [csvText, setCsvText] = useState('');
   const [csvPreview, setCsvPreview] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [addingSiteContactOrgId, setAddingSiteContactOrgId] = useState(null);
-  const [newSiteContact, setNewSiteContact] = useState(emptySiteContact);
-  const [editingSiteContact, setEditingSiteContact] = useState(null);
   const csvFileInputRef = useRef(null);
 
   const filteredOrgs = useMemo(() => {
@@ -116,12 +108,6 @@ export function AdminOrgSection({ orgType, label }) {
     if (!q) return orgs;
     return orgs.filter((org) => {
       if (String(org.name || '').toLowerCase().includes(q)) return true;
-      if ((org.siteContacts || []).some((c) => {
-        const text = [c.name, c.phone_number].map((v) => String(v || '')).join(' ').toLowerCase();
-        return text.includes(q);
-      })) {
-        return true;
-      }
       return (org.members || []).some((m) => {
         const text = [m.furigana, m.manager_name, m.phone_number, m.company_name]
           .map((v) => String(v || ''))
@@ -137,23 +123,7 @@ export function AdminOrgSection({ orgType, label }) {
     setError('');
     try {
       const rows = await db.fetchOrganizationsWithMembers(orgType);
-      let orgList = Array.isArray(rows) ? rows : [];
-      if (orgType === 'contractor' && orgList.length > 0) {
-        const contacts = await db.fetchSiteContactsByOrgIds(orgList.map((o) => o.id));
-        const byOrg = {};
-        for (const contact of contacts) {
-          const key = String(contact.organization_id || '');
-          if (!byOrg[key]) byOrg[key] = [];
-          byOrg[key].push(contact);
-        }
-        orgList = orgList.map((org) => ({
-          ...org,
-          siteContacts: byOrg[String(org.id)] || [],
-        }));
-      } else {
-        orgList = orgList.map((org) => ({ ...org, siteContacts: [] }));
-      }
-      setOrgs(orgList);
+      setOrgs(Array.isArray(rows) ? rows : []);
     } catch (e) {
       setError(formatError(e, `${label}一覧の取得に失敗しました`));
     } finally {
@@ -189,7 +159,7 @@ export function AdminOrgSection({ orgType, label }) {
     setError('');
     try {
       const created = await db.createOrganization(name, orgType);
-      setOrgs((prev) => [...prev, { ...created, members: [], siteContacts: [] }]);
+      setOrgs((prev) => [...prev, { ...created, members: [] }]);
       setNewOrgName('');
       setShowNewOrgForm(false);
       setExpandedIds((prev) => new Set(prev).add(created.id));
@@ -343,87 +313,6 @@ export function AdminOrgSection({ orgType, label }) {
       showNotice(`「${org.name}」を削除しました`);
     } catch (e) {
       setError(formatError(e, '組織の削除に失敗しました'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAddSiteContact = async (organizationId) => {
-    const name = String(newSiteContact.name || '').trim();
-    const phone = String(newSiteContact.phone || '').trim();
-    if (!name || !phone) {
-      setError('現場担当者の名前と電話番号を入力してください');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    try {
-      const created = await db.createSiteContact({ organizationId, name, phone });
-      setOrgs((prev) =>
-        prev.map((o) =>
-          o.id === organizationId
-            ? { ...o, siteContacts: [...(o.siteContacts || []), created] }
-            : o,
-        ),
-      );
-      setAddingSiteContactOrgId(null);
-      setNewSiteContact(emptySiteContact());
-      showNotice('現場担当者を登録しました');
-    } catch (e) {
-      setError(formatError(e, '現場担当者の登録に失敗しました'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSaveSiteContact = async () => {
-    if (!editingSiteContact?.id) return;
-    const name = String(editingSiteContact.name || '').trim();
-    const phone = String(editingSiteContact.phone || '').trim();
-    if (!name || !phone) {
-      setError('現場担当者の名前と電話番号を入力してください');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    try {
-      const updated = await db.updateSiteContact(editingSiteContact.id, { name, phone });
-      setOrgs((prev) =>
-        prev.map((o) => ({
-          ...o,
-          siteContacts: (o.siteContacts || []).map((c) => (c.id === updated.id ? updated : c)),
-        })),
-      );
-      setEditingSiteContact(null);
-      showNotice('現場担当者を更新しました');
-    } catch (e) {
-      setError(formatError(e, '現場担当者の更新に失敗しました'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDeleteSiteContact = async (organizationId, contact) => {
-    const name = contact?.name || '現場担当者';
-    if (!window.confirm(`「${name}」を削除しますか？`)) return;
-    setLoading(true);
-    setError('');
-    try {
-      await db.deleteSiteContact(contact.id);
-      setOrgs((prev) =>
-        prev.map((o) =>
-          o.id === organizationId
-            ? {
-                ...o,
-                siteContacts: (o.siteContacts || []).filter((c) => c.id !== contact.id),
-              }
-            : o,
-        ),
-      );
-      if (editingSiteContact?.id === contact.id) setEditingSiteContact(null);
-      showNotice('現場担当者を削除しました');
-    } catch (e) {
-      setError(formatError(e, '現場担当者の削除に失敗しました'));
     } finally {
       setLoading(false);
     }
@@ -1039,175 +928,6 @@ export function AdminOrgSection({ orgType, label }) {
                   </button>
                 )}
 
-                {orgType === 'contractor' ? (
-                  <div className="mt-6 border-t border-gray-200 pt-4">
-                    <p className="text-xs font-bold text-gray-500 mb-2">現場担当者:</p>
-
-                    {(org.siteContacts || []).length === 0 && addingSiteContactOrgId !== org.id ? (
-                      <p className="text-sm text-gray-400 mb-2">現場担当者が登録されていません</p>
-                    ) : null}
-
-                    {(org.siteContacts || []).map((contact) => {
-                      const isEditing = editingSiteContact?.id === contact.id;
-                      if (isEditing) {
-                        return (
-                          <div
-                            key={contact.id}
-                            className="mb-3 rounded border border-emerald-100 bg-emerald-50 p-3 text-sm"
-                          >
-                            <div className="grid gap-2 sm:grid-cols-2">
-                              <label className="block text-xs text-gray-600">
-                                名前
-                                <input
-                                  type="text"
-                                  value={editingSiteContact.name}
-                                  onChange={(e) =>
-                                    setEditingSiteContact((cur) =>
-                                      cur ? { ...cur, name: e.target.value } : cur,
-                                    )
-                                  }
-                                  className={`${inputClass} mt-1 w-full`}
-                                />
-                              </label>
-                              <label className="block text-xs text-gray-600">
-                                電話番号
-                                <input
-                                  type="tel"
-                                  value={editingSiteContact.phone}
-                                  onChange={(e) =>
-                                    setEditingSiteContact((cur) =>
-                                      cur ? { ...cur, phone: e.target.value } : cur,
-                                    )
-                                  }
-                                  className={`${inputClass} mt-1 w-full`}
-                                />
-                              </label>
-                            </div>
-                            <div className="mt-3 flex gap-2">
-                              <button
-                                type="button"
-                                onClick={() => void handleSaveSiteContact()}
-                                disabled={loading}
-                                className="bg-indigo-600 text-white px-3 py-1 rounded text-sm hover:bg-indigo-500 disabled:opacity-60"
-                              >
-                                保存
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setEditingSiteContact(null)}
-                                disabled={loading}
-                                className="text-sm text-gray-600 hover:text-gray-800"
-                              >
-                                キャンセル
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      }
-
-                      return (
-                        <div
-                          key={contact.id}
-                          className="flex flex-wrap items-center gap-3 py-2 border-b border-gray-100 text-sm"
-                        >
-                          <span className="min-w-[5rem] font-medium">{contact.name || '—'}</span>
-                          <span className="min-w-[7rem] text-gray-600">{contact.phone_number || '—'}</span>
-                          <div className="ml-auto flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingSiteContact({
-                                  id: contact.id,
-                                  organizationId: org.id,
-                                  name: contact.name ?? '',
-                                  phone: contact.phone_number ?? '',
-                                });
-                                setAddingSiteContactOrgId(null);
-                                setError('');
-                              }}
-                              disabled={loading}
-                              className="text-sm text-indigo-600 hover:underline"
-                            >
-                              編集
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void handleDeleteSiteContact(org.id, contact)}
-                              disabled={loading}
-                              className="text-red-500 hover:text-red-700 text-sm"
-                            >
-                              削除
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    {addingSiteContactOrgId === org.id ? (
-                      <div className="mt-3 rounded border border-emerald-100 bg-emerald-50 p-3 text-sm">
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          <label className="block text-xs text-gray-600">
-                            名前
-                            <input
-                              type="text"
-                              value={newSiteContact.name}
-                              onChange={(e) =>
-                                setNewSiteContact((cur) => ({ ...cur, name: e.target.value }))
-                              }
-                              className={`${inputClass} mt-1 w-full`}
-                            />
-                          </label>
-                          <label className="block text-xs text-gray-600">
-                            電話番号
-                            <input
-                              type="tel"
-                              value={newSiteContact.phone}
-                              onChange={(e) =>
-                                setNewSiteContact((cur) => ({ ...cur, phone: e.target.value }))
-                              }
-                              className={`${inputClass} mt-1 w-full`}
-                            />
-                          </label>
-                        </div>
-                        <div className="mt-3 flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void handleAddSiteContact(org.id)}
-                            disabled={loading}
-                            className="bg-indigo-600 text-white px-3 py-1 rounded text-sm hover:bg-indigo-500 disabled:opacity-60"
-                          >
-                            登録
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setAddingSiteContactOrgId(null);
-                              setNewSiteContact(emptySiteContact());
-                            }}
-                            disabled={loading}
-                            className="text-sm text-gray-600 hover:text-gray-800"
-                          >
-                            キャンセル
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setAddingSiteContactOrgId(org.id);
-                          setNewSiteContact(emptySiteContact());
-                          setEditingSiteContact(null);
-                          setError('');
-                        }}
-                        disabled={loading}
-                        className="text-emerald-700 text-sm hover:underline mt-2"
-                      >
-                        ＋ 現場担当者を追加
-                      </button>
-                    )}
-                  </div>
-                ) : null}
               </div>
             ) : null}
           </div>

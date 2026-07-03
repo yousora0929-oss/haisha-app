@@ -432,6 +432,10 @@ function ProjectForm({
     [townList],
   );
   const staffOptions = useMemo(() => normalizeSalesStaffList(salesStaffList), [salesStaffList]);
+  const contractorCustomers = useMemo(
+    () => (customers || []).filter((c) => (c?.role ?? 'contractor') === 'contractor'),
+    [customers],
+  );
 
   const handleSalesStaffChange = (staffId) => {
     const id = String(staffId || '').trim();
@@ -498,12 +502,12 @@ function ProjectForm({
       const q = String(text || '').trim().toLowerCase();
       if (!q) return null;
       return (
-        (customers || []).find(
+        contractorCustomers.find(
           (c) => String(c?.company_name || c?.name || '').trim().toLowerCase() === q,
         ) || null
       );
     },
-    [customers],
+    [contractorCustomers],
   );
 
   const handleContractorNameChange = useCallback(
@@ -660,6 +664,16 @@ function ProjectForm({
       }
     }
 
+    if (nextCustomerId) {
+      const contractorHit = contractorCustomers.find(
+        (c) => c && String(c.id) === String(nextCustomerId),
+      );
+      if (!contractorHit) {
+        setAddressError('業者（元請）は業者マスタから選択してください（商社・組合の担当者は指定できません）。');
+        return;
+      }
+    }
+
     onSave({
       name: name.trim(),
       customer_id: nextCustomerId,
@@ -702,7 +716,7 @@ function ProjectForm({
           value={contractorName}
           onValueChange={handleContractorNameChange}
           onSelect={handleContractorSelect}
-          items={customers}
+          items={contractorCustomers}
           getItemKey={(c) => String(c.id)}
           getItemLabel={(c) => String(c.company_name || c.name || c.id || '').trim()}
           getSearchTexts={customerSuggestTexts}

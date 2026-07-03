@@ -1218,7 +1218,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [representativeLng, setRepresentativeLng] = useState('');
       const [sitePhone, setSitePhone] = useState('');
       const [siteContactName, setSiteContactName] = useState('');
-      const [siteContacts, setSiteContacts] = useState([]);
+      const [siteContactCandidates, setSiteContactCandidates] = useState([]);
       const [hasTest, setHasTest] = useState(false);
       const [submitNotice, setSubmitNotice] = useState(null);
       const [submitError, setSubmitError] = useState('');
@@ -1501,23 +1501,27 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
       useEffect(() => {
         if (orderKind !== 'project') {
-          setSiteContacts([]);
+          setSiteContactCandidates([]);
           return;
         }
         const orgId = String(contractorOrgId || '').trim();
         if (!orgId) {
-          setSiteContacts([]);
+          setSiteContactCandidates([]);
           return;
         }
         let cancelled = false;
         void db
-          .fetchSiteContacts(orgId)
+          .fetchCustomersByOrganizationId(orgId)
           .then((rows) => {
-            if (!cancelled) setSiteContacts(Array.isArray(rows) ? rows : []);
+            if (cancelled) return;
+            const list = (Array.isArray(rows) ? rows : []).filter(
+              (c) => c && String(c.manager_name || '').trim(),
+            );
+            setSiteContactCandidates(list);
           })
           .catch((err) => {
-            console.warn('[DispatchApp] 現場担当者一覧の取得に失敗', err);
-            if (!cancelled) setSiteContacts([]);
+            console.warn('[DispatchApp] 現場担当者候補の取得に失敗', err);
+            if (!cancelled) setSiteContactCandidates([]);
           });
         return () => {
           cancelled = true;
@@ -4008,21 +4012,21 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       setSiteContactName(next);
                       setSubmitError('');
                     }}
-                    items={siteContacts}
+                    items={siteContactCandidates}
                     getItemKey={(c) => String(c.id)}
-                    getItemLabel={(c) => String(c.name || '').trim()}
-                    getSearchTexts={(c) => [c.name, c.phone_number]}
+                    getItemLabel={(c) => String(c.manager_name || '').trim()}
+                    getSearchTexts={(c) => [c.manager_name, c.phone_number]}
                     onSelect={(c) => {
-                      setSiteContactName(String(c?.name || '').trim());
+                      setSiteContactName(String(c?.manager_name || '').trim());
                       setSitePhone(String(c?.phone_number || '').trim());
                       setSubmitError('');
                     }}
                     placeholder="現場担当者名を入力（候補から選択可）"
-                    emptyHint="登録された現場担当者がいません（自由入力もできます）"
+                    emptyHint="登録された担当者がいません（自由入力もできます）"
                     inputClassName="min-h-[56px] rounded-xl border-2 border-slate-200 px-4 py-3 text-base"
                   />
                   <p className="text-xs leading-relaxed text-slate-500">
-                    業者に登録された現場担当者から選ぶと、電話番号が自動入力されます。
+                    業者に登録された担当者から選ぶと、電話番号が自動入力されます。
                   </p>
                 </div>
               ) : null}
