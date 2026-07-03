@@ -6,6 +6,7 @@ import {
 } from './deliveryAreas.js';
 import { looksLikeUrlText, sanitizeSiteNameValue } from './siteNameDisplay.js';
 import { normalizeFactoryRefId } from './escalationUtils.js';
+import { resolveProjectTradingCompanyName } from './projectTradingCompany.js';
 
 /** 物件マスタから工場ID（main_factory_id）を抽出 */
 export function resolveFactoryIdFromProject(project) {
@@ -136,7 +137,15 @@ export function extractOrderFormDefaultsFromHistory(row) {
     contractorName: String(item.contractorName ?? item.customerName ?? item.customer_name ?? row?.contractor ?? '').trim(),
     siteName: sanitizeSiteNameValue(item.siteName ?? item.projectName ?? item.project_name ?? row?.site ?? ''),
     sitePhone: String(item.sitePhone ?? item.phone ?? row?.phone ?? '').trim(),
-    orderedBy: String(item.ordered_by ?? item.orderedBy ?? row?.orderedBy ?? '').trim(),
+    siteContactName: String(
+      item.siteContactName ?? item.site_contact_name ?? item.orderedBy ?? item.ordered_by ?? row?.orderedBy ?? '',
+    ).trim(),
+    orderPlacerName: String(
+      item.orderPlacerName ?? item.order_placer_name ?? item.ordered_by ?? row?.orderedBy ?? '',
+    ).trim(),
+    orderedBy: String(
+      item.siteContactName ?? item.site_contact_name ?? item.orderedBy ?? item.ordered_by ?? row?.orderedBy ?? '',
+    ).trim(),
     vehicleType: item.vehicleType === 'small' || item.vehicle === '小型' ? 'small' : 'large',
     unloadDuration: String(item.unloadDuration ?? item.unloadDurationMinutes ?? item.unloadingTime ?? '30').trim(),
     hasTest: Boolean(item.has_test ?? item.hasTest),
@@ -264,7 +273,8 @@ export function buildDispatchOrderForDate(preferredDate, context) {
     siteName,
     siteAddress,
     sitePhone,
-    orderedBy,
+    orderPlacerName,
+    siteContactName,
     vehicleType,
     unloadDuration,
     hasTest,
@@ -313,6 +323,14 @@ export function buildDispatchOrderForDate(preferredDate, context) {
       ? spotLng
       : null;
 
+  const resolvedOrderPlacerName = String(
+    orderPlacerName ?? currentCustomer?.manager_name ?? '',
+  ).trim();
+  const resolvedSiteContactName = String(siteContactName ?? '').trim();
+
+  const projectTraderName = selectedProject ? resolveProjectTradingCompanyName(selectedProject) : '';
+  const resolvedTraderName = projectTraderName || String(traderName || '').trim();
+
   return {
     createdAt: new Date().toISOString(),
     is_spot: isSpot,
@@ -320,12 +338,14 @@ export function buildDispatchOrderForDate(preferredDate, context) {
     customerName: currentCustomer?.company_name || currentCustomer?.name || '',
     phone_number: currentCustomer?.phone_number || '',
     customerPhone: currentCustomer?.phone_number || '',
-    trading_company_name:
-      selectedProject?.trading_company_name || selectedProject?.trading_company || String(traderName || '').trim(),
-    projectTradingCompanyName:
-      selectedProject?.trading_company_name || selectedProject?.trading_company || String(traderName || '').trim(),
-    ordered_by: String(orderedBy || '').trim(),
-    orderedBy: String(orderedBy || '').trim(),
+    trading_company_name: resolvedTraderName,
+    projectTradingCompanyName: resolvedTraderName,
+    ordered_by: resolvedOrderPlacerName,
+    orderedBy: resolvedSiteContactName,
+    order_placer_name: resolvedOrderPlacerName,
+    orderPlacerName: resolvedOrderPlacerName,
+    site_contact_name: resolvedSiteContactName,
+    siteContactName: resolvedSiteContactName,
     project_id: !isSpot && selectedProjectId ? String(selectedProjectId) : null,
     projectName: targetProject?.name || selectedProject?.name || '',
     delivery_lat: deliveryLatValue,

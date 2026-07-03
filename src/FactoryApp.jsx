@@ -9,6 +9,7 @@ import {
   FACTORY_PANEL_PASSWORD_KEY,
 } from './supabaseClient.js';
 import { buildEscalationContext, filterOrdersForFactory, getOrderEscalationStepInfo } from './utils/escalationUtils.js';
+import { resolveProjectTradingCompanyName } from './utils/projectTradingCompany.js';
 import {
   FACTORY_SITE_ID,
   FACTORY_SITE_NAME,
@@ -666,7 +667,7 @@ function orderPartyInfo(order) {
       const customer = (customers || []).find((c) => c && String(c.id) === String(project?.customer_id || ''));
       const companyName = String(customer?.company_name || customer?.name || '').trim();
       const contractor = String(project?.contractor || '').trim() || companyName || '—';
-      const trader = String(project?.trading_company_name || project?.trading_company || '').trim() || '—';
+      const trader = resolveProjectTradingCompanyName(project) || '—';
       const phone = String(customer?.phone_number || '').trim() || '—';
       const contact = String(customer?.manager_name || '').trim();
       const pt = String(project?.url_token || '').trim();

@@ -3,6 +3,7 @@ import {
   extractProjectAddressFields,
   normalizeAllowedDeliveryAreas,
 } from './deliveryAreas.js';
+import { resolveProjectTradingCompanyName } from './projectTradingCompany.js';
 import { isValidSiteOrderUrlToken } from './urlValidation.js';
 
 /** パス /order/:token または /guest-order/:token からトークンを取得 */
@@ -43,9 +44,7 @@ export function siteOrderUrlValidationMessage(urlToken) {
 export function resolveSiteOrderPartiesFromProject(project, customer) {
   const projectName = String(project?.name ?? '').trim();
   const customerName = String(customer?.company_name ?? customer?.name ?? '').trim();
-  const traderName = String(
-    project?.trading_company_name ?? project?.trading_company ?? '',
-  ).trim();
+  const traderName = resolveProjectTradingCompanyName(project);
   return { projectName, siteName: projectName, customerName, traderName };
 }
 
@@ -58,7 +57,7 @@ function readPartyField(parties, snakeKey, camelKey) {
  * ゲスト専用発注: RPC コンテキストから確認ブロック・フォーム初期値用の確定情報を解決
  * - 業者（元請）: customers.company_name（projects.customer_id 経由）
  * - 業者（下請）: projects.sub_contractor_name（なければ contractor）
- * - 商社: projects.trading_company_name
+ * - 商社: organizations 紐付け優先、なければ trading_company_name
  */
 export function resolveGuestOrderLockedFields(siteOrderContext, allowedAreasInput) {
   const project = siteOrderContext?.project;
@@ -83,7 +82,7 @@ export function resolveGuestOrderLockedFields(siteOrderContext, allowedAreasInpu
 
   const traderNameRaw =
     readPartyField(parties, 'trading_company_name', 'tradingCompanyName') ||
-    String(project?.trading_company_name ?? project?.trading_company ?? '').trim();
+    resolveProjectTradingCompanyName(project);
 
   const projectName =
     readPartyField(parties, 'project_name', 'projectName') || String(project?.name ?? '').trim();

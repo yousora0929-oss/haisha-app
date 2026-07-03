@@ -61,12 +61,15 @@ import { AdminCsvDownloadButton } from './components/AdminCsvDownloadButton.jsx'
 import { AdminFactoryNewsSection } from './components/AdminFactoryNewsSection.jsx';
 import { AdminOrgSection } from './components/AdminOrgSection.jsx';
 import {
-  downloadCustomersExportCsv,
   downloadProjectsExportCsv,
-  parseCustomersCsvFile,
   parseProjectsCsvFile,
   stripImportMeta,
 } from './utils/adminCsvImport.js';
+import {
+  findAgentOrganizationByName,
+  isUnregisteredTradingCompanyName,
+  resolveProjectTradingCompanyName,
+} from './utils/projectTradingCompany.js';
 
 const ADMIN_AUTH_SESSION_KEY = 'concrete_link_admin_auth_v1';
 
@@ -380,11 +383,10 @@ function FactoryAvailabilitySection({ factories, schedulesByFactoryId, scheduleD
 function ProjectForm({
   factories,
   customers,
-  tradingCompanies = [],
+  agentOrganizations = [],
   allowedDeliveryAreas = [],
   deliveryPrefecture = '',
   salesStaffList = [],
-  onTradingCompanyAdded,
   initial,
   onSave,
   onCancel,
@@ -393,7 +395,10 @@ function ProjectForm({
   const [name, setName] = useState(initial?.name ?? '');
   const [customerId, setCustomerId] = useState(initial?.customer_id ?? '');
   const [contractorName, setContractorName] = useState('');
-  const [tradingCompany, setTradingCompany] = useState(initial?.trading_company_name ?? initial?.trading_company ?? '');
+  const [tradingCompany, setTradingCompany] = useState(() => resolveProjectTradingCompanyName(initial));
+  const [tradingCompanyOrganizationId, setTradingCompanyOrganizationId] = useState(
+    initial?.trading_company_organization_id ?? '',
+  );
   const [subContractor, setSubContractor] = useState(
     initial?.sub_contractor_name ?? initial?.contractor ?? '',
   );
@@ -459,7 +464,8 @@ function ProjectForm({
       setContractorName('');
       setCustomerId('');
     }
-    setTradingCompany(initial?.trading_company_name ?? initial?.trading_company ?? '');
+    setTradingCompany(resolveProjectTradingCompanyName(initial));
+    setTradingCompanyOrganizationId(initial?.trading_company_organization_id ?? '');
     setSubContractor(initial?.sub_contractor_name ?? initial?.contractor ?? '');
     setMainFactoryId(initial?.main_factory_id ?? '');
     setSubIds(new Set(initial?.sub_factory_ids ?? []));
@@ -555,28 +561,30 @@ function ProjectForm({
     };
   }, [deliveryArea, deliveryPrefecture]);
 
-  const handleTradingCompanyBlur = useCallback(async () => {
-    const trimmed = String(tradingCompany || '').trim();
-    if (!trimmed) return;
-    const exists = (tradingCompanies || []).some(
-      (t) => t && String(t.name || '').trim().toLowerCase() === trimmed.toLowerCase(),
-    );
-    if (exists) return;
-    if (
-      !window.confirm(
-        `「${trimmed}」は商社マスタに未登録です。\n商社マスタに追加しますか？`,
-      )
-    ) {
-      return;
-    }
-    try {
-      const created = await db.insertTradingCompany({ name: trimmed });
-      onTradingCompanyAdded?.(created);
-    } catch (e) {
-      console.error('商社マスタ追加エラー', e);
-      window.alert(formatSupabaseError(e, '商社マスタへの追加に失敗しました'));
-    }
-  }, [tradingCompany, tradingCompanies, onTradingCompanyAdded]);
+  const showTradingCompanyWarning = useMemo(
+    () => isUnregisteredTradingCompanyName(tradingCompany, agentOrganizations, tradingCompanyOrganizationId),
+    [tradingCompany, agentOrganizations, tradingCompanyOrganizationId],
+  );
+
+  const handleTradingCompanyChange = useCallback(
+    (text) => {
+      setTradingCompany(text);
+      const trimmed = String(text || '').trim();
+      if (!trimmed) {
+        setTradingCompanyOrganizationId('');
+        return;
+      }
+      const hit = findAgentOrganizationByName(agentOrganizations, trimmed);
+      setTradingCompanyOrganizationId(hit?.id ? String(hit.id) : '');
+    },
+    [agentOrganizations],
+  );
+
+  const handleTradingCompanySelect = useCallback((org) => {
+    if (!org?.id) return;
+    setTradingCompanyOrganizationId(String(org.id));
+    setTradingCompany(String(org.name || '').trim());
+  }, []);
 
   const resolveFactoryName = (factoryId) => {
     const id = String(factoryId || '').trim();
@@ -658,6 +666,7 @@ function ProjectForm({
       contractor_display_name: nextDisplayName,
       trading_company_name: tradingCompany.trim(),
       trading_company: tradingCompany.trim(),
+      trading_company_organization_id: tradingCompanyOrganizationId || null,
       contractor: subContractor.trim(),
       sub_contractor_name: subContractor.trim(),
       main_factory_id: mainFactoryId,
@@ -706,21 +715,27 @@ function ProjectForm({
         </p>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div onBlur={handleTradingCompanyBlur}>
+        <div>
           <MasterSuggestInput
             label="商社名（任意）"
             htmlFor="proj-trading-company"
             name="proj_trading_company"
             value={tradingCompany}
-            onValueChange={setTradingCompany}
-            items={tradingCompanies}
-            getItemKey={(t) => String(t.id)}
-            getItemLabel={(t) => t.name}
-            getSearchTexts={(t) => [t.name]}
-            onSelect={(t) => setTradingCompany(String(t?.name || '').trim())}
+            onValueChange={handleTradingCompanyChange}
+            onSelect={handleTradingCompanySelect}
+            items={agentOrganizations}
+            getItemKey={(o) => String(o.id)}
+            getItemLabel={(o) => String(o.name || '').trim()}
+            getSearchTexts={(o) => [o.name]}
             placeholder="商社名を入力（候補から選択可）"
+            emptyHint="該当する商社がありません（自由入力で保存できます）"
             inputClassName="min-h-[44px] rounded-lg border-2 border-slate-200 px-3 py-2 text-sm"
           />
+          {showTradingCompanyWarning ? (
+            <p className="mt-1 text-xs font-bold text-amber-800" role="status">
+              ⚠️ 未登録の商社名です。登録済み商社から選択することを推奨します
+            </p>
+          ) : null}
         </div>
         <div>
           <label className="text-xs font-bold text-slate-600" htmlFor="proj-contractor">業者（下請）</label>
@@ -898,7 +913,7 @@ function ProjectForm({
               urlToken={initial?.url_token}
               siteName={name || initial?.name}
               customerName={linkedCustomer?.company_name || linkedCustomer?.name}
-              traderName={tradingCompany}
+              traderName={resolveProjectTradingCompanyName(initial)}
               project={initial}
               customer={linkedCustomer}
               compact={false}
@@ -921,7 +936,7 @@ function ProjectForm({
 function ProjectsSection({ factories, factoryNameById }) {
   const [projects, setProjects] = useState([]);
   const [customers, setCustomers] = useState([]);
-  const [tradingCompanies, setTradingCompanies] = useState([]);
+  const [agentOrganizations, setAgentOrganizations] = useState([]);
   const [allowedDeliveryAreas, setAllowedDeliveryAreas] = useState([]);
   const [salesStaff, setSalesStaff] = useState([]);
   const [deliveryPrefecture, setDeliveryPrefecture] = useState('');
@@ -938,15 +953,15 @@ function ProjectsSection({ factories, factoryNameById }) {
     setLoading(true);
     setError('');
     try {
-      const [rows, customerRows, tradingRows, settings] = await Promise.all([
+      const [rows, customerRows, orgRows, settings] = await Promise.all([
         db.fetchProjects(),
         db.fetchCustomers(),
-        db.fetchTradingCompanies(),
+        db.fetchOrganizations(),
         db.fetchAdminSettings(),
       ]);
       setProjects(rows);
       setCustomers(customerRows);
-      setTradingCompanies(tradingRows);
+      setAgentOrganizations((orgRows || []).filter((o) => o && o.type === 'agent'));
       setAllowedDeliveryAreas(normalizeAllowedDeliveryAreas(settings?.allowed_delivery_areas));
       setSalesStaff(normalizeSalesStaffList(settings?.sales_staff));
       setDeliveryPrefecture(resolveDeliveryPrefecture(settings));
@@ -1012,7 +1027,7 @@ function ProjectsSection({ factories, factoryNameById }) {
     let unsub = () => {};
     void (async () => {
       unsub = await db.subscribeHaishaRealtime((payload) => {
-        if (payload?.table === 'customers' || payload?.table === 'admin_settings') {
+        if (payload?.table === 'customers' || payload?.table === 'admin_settings' || payload?.table === 'organizations') {
           if (timerId != null) window.clearTimeout(timerId);
           timerId = window.setTimeout(() => {
             timerId = null;
@@ -1026,15 +1041,6 @@ function ProjectsSection({ factories, factoryNameById }) {
       unsub();
     };
   }, [load]);
-
-  const handleTradingCompanyAdded = useCallback((created) => {
-    if (!created?.id) return;
-    setTradingCompanies((prev) => {
-      const next = [...(prev || []).filter((t) => t && t.id !== created.id), created];
-      next.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'));
-      return next;
-    });
-  }, []);
 
   const handleSave = async (payload) => {
     setSaving(true);
@@ -1087,6 +1093,7 @@ function ProjectsSection({ factories, factoryNameById }) {
                 customers,
                 mainFactoryId: defaultMainFactoryId,
                 allowedDeliveryAreas,
+                agentOrganizations,
               })
             }
             previewColumns={[
@@ -1105,8 +1112,12 @@ function ProjectsSection({ factories, factoryNameById }) {
               const payload = preview.rows.map(stripImportMeta);
               await db.bulkInsertProjects(payload);
               const skipped = preview.skipped?.length ?? 0;
+              const unregisteredWarnings = (preview.warnings || []).filter((w) =>
+                String(w).startsWith('未登録商社名:'),
+              );
+              const warningNote = unregisteredWarnings.length ? ` ${unregisteredWarnings.join(' ')}` : '';
               setImportNotice(
-                `${payload.length}件の物件を取り込みました。${skipped > 0 ? `（${skipped}行スキップ）` : ''}`,
+                `${payload.length}件の物件を取り込みました。${skipped > 0 ? `（${skipped}行スキップ）` : ''}${warningNote}`,
               );
             }}
             onComplete={() => {
@@ -1138,11 +1149,10 @@ function ProjectsSection({ factories, factoryNameById }) {
           <ProjectForm
             factories={factories}
             customers={customers}
-            tradingCompanies={tradingCompanies}
+            agentOrganizations={agentOrganizations}
             allowedDeliveryAreas={allowedDeliveryAreas}
             deliveryPrefecture={deliveryPrefecture}
             salesStaffList={salesStaff}
-            onTradingCompanyAdded={handleTradingCompanyAdded}
             initial={editing}
             onSave={handleSave}
             onCancel={() => { setFormMode(null); setEditing(null); }}
@@ -1178,7 +1188,7 @@ function ProjectsSection({ factories, factoryNameById }) {
                       || customers.find((c) => c.id === p.customer_id)?.name
                       || '—'}
                   </td>
-                  <td className="px-3 py-2.5 text-slate-700">{(p.trading_company_name || p.trading_company)?.trim() || '—'}</td>
+                  <td className="px-3 py-2.5 text-slate-700">{resolveProjectTradingCompanyName(p) || '—'}</td>
                   <td className="px-3 py-2.5 text-slate-700">{(p.sub_contractor_name || p.contractor)?.trim() || '—'}</td>
                   <td className="px-3 py-2.5">{factoryNameById[p.main_factory_id] || '—'}</td>
                   <td className="max-w-[12rem] px-3 py-2.5 text-xs text-slate-600">{(p.sub_factory_ids || []).map((id) => factoryNameById[id] || id).join('、') || '—'}</td>
@@ -1189,7 +1199,7 @@ function ProjectsSection({ factories, factoryNameById }) {
                         urlToken={p.url_token}
                         siteName={p.name}
                         customerName={customers.find((c) => c.id === p.customer_id)?.company_name || customers.find((c) => c.id === p.customer_id)?.name}
-                        traderName={p.trading_company_name || p.trading_company}
+                        traderName={resolveProjectTradingCompanyName(p)}
                         project={p}
                         customer={customers.find((c) => c.id === p.customer_id)}
                         compact
@@ -1207,376 +1217,6 @@ function ProjectsSection({ factories, factoryNameById }) {
               ))}
             </tbody>
           </table>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function CustomersSection({ organizations = [] }) {
-  const [customers, setCustomers] = useState([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [companyName, setCompanyName] = useState('');
-  const [furigana, setFurigana] = useState('');
-  const [managerName, setManagerName] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [role, setRole] = useState('contractor');
-  const [organizationId, setOrganizationId] = useState(null);
-  const [editingCustomer, setEditingCustomer] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const rows = await db.fetchCustomers();
-      setCustomers(rows);
-    } catch (e) {
-      console.error('業者一覧取得エラー', e);
-      setError(formatSupabaseError(e, '業者一覧の取得に失敗しました'));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-    let unsub = () => {};
-    void (async () => {
-      unsub = await db.subscribeHaishaRealtime((payload) => {
-        if (payload?.table === 'customers') void load();
-      });
-    })();
-    return () => unsub();
-  }, [load]);
-
-  const resetForm = () => {
-    setCompanyName('');
-    setFurigana('');
-    setManagerName('');
-    setPhoneNumber('');
-    setLoginPassword('');
-    setRole('contractor');
-    setOrganizationId(null);
-    setEditingCustomer(null);
-  };
-
-  const startEdit = (customer) => {
-    setEditingCustomer(customer);
-    setCompanyName(customer?.company_name || customer?.name || '');
-    setFurigana(customer?.furigana || '');
-    setManagerName(customer?.manager_name || '');
-    setPhoneNumber(customer?.phone_number || '');
-    setLoginPassword(customer?.login_password || '');
-    setRole(customer?.role || 'contractor');
-    setOrganizationId(customer?.organization_id ?? null);
-    setError('');
-    setNotice('');
-  };
-
-  const handleSave = async (e) => {
-    e.preventDefault();
-    const name = companyName.trim();
-    if (!name) {
-      setError('業者名（会社名）を入力してください。');
-      return;
-    }
-    if (!loginPassword.trim()) {
-      setError('ログインパスワードを入力してください。');
-      return;
-    }
-    if (!phoneNumber.trim()) {
-      setError('電話番号を入力してください。');
-      return;
-    }
-    setSaving(true);
-    setError('');
-    setNotice('');
-    try {
-      const payload = {
-        company_name: name,
-        furigana: furigana.trim(),
-        manager_name: managerName.trim(),
-        phone_number: phoneNumber.trim(),
-        login_password: loginPassword.trim(),
-        role: role || 'contractor',
-        organization_id:
-          role === 'agent' || role === 'cooperative' ? organizationId || null : null,
-      };
-      if (editingCustomer?.id) await db.updateCustomer(editingCustomer.id, payload);
-      else await db.addCustomer(payload);
-      resetForm();
-      setNotice(editingCustomer?.id ? '業者情報を更新しました。' : '業者を登録しました。');
-      await load();
-      window.setTimeout(() => setNotice(''), 3000);
-    } catch (e2) {
-      console.error('業者保存エラー', e2);
-      setError(formatSupabaseError(e2, '業者の保存に失敗しました'));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDelete = async (customer) => {
-    if (!customer?.id) return;
-    const name = customer.company_name || customer.name || 'この業者';
-    if (!window.confirm(`「${name}」を削除しますか？\n物件に紐づいている場合は削除できないことがあります。`)) return;
-    setError('');
-    setNotice('');
-    try {
-      await db.deleteCustomer(customer.id);
-      setNotice('業者を削除しました。');
-      await load();
-      window.setTimeout(() => setNotice(''), 3000);
-    } catch (e) {
-      console.error('業者削除エラー', e);
-      setError(formatSupabaseError(e, '業者の削除に失敗しました'));
-    }
-  };
-
-  const fieldClass =
-    'mt-1 min-h-[44px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200';
-  const filteredCustomers = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return customers;
-    return customers.filter((c) => {
-      const text = [c.company_name, c.name, c.furigana, c.manager_name, c.phone_number].map((v) => String(v || '')).join(' ').toLowerCase();
-      return text.includes(q);
-    });
-  }, [customers, searchQuery]);
-
-  return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-md sm:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-black text-slate-900">業者管理</h2>
-          <p className="mt-1 text-xs text-slate-500">customers テーブル · 物件管理と注文画面の業者選択に反映されます</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <AdminCsvImportButton
-            label="CSV一括取込"
-            entityLabel="件の業者"
-            parseFile={parseCustomersCsvFile}
-            previewColumns={[
-              { key: 'company_name', label: '業者名' },
-              { key: 'furigana', label: 'フリガナ' },
-              { key: 'manager_name', label: '担当者' },
-              { key: 'phone_number', label: '電話番号' },
-              { key: 'login_password', label: 'PW' },
-            ]}
-            onImport={async (preview) => {
-              const payload = preview.rows.map(stripImportMeta);
-              await db.bulkInsertCustomers(payload);
-              const skipped = preview.skipped?.length ?? 0;
-              setNotice(
-                `${payload.length}件の業者を取り込みました。${skipped > 0 ? `（${skipped}行スキップ）` : ''}`,
-              );
-            }}
-            onComplete={() => {
-              void load();
-              window.setTimeout(() => setNotice(''), 5000);
-            }}
-          />
-          <AdminCsvDownloadButton
-            disabled={loading}
-            onDownload={() => {
-              downloadCustomersExportCsv(customers);
-              setNotice(`${customers.length}件の業者をCSVでダウンロードしました。`);
-              window.setTimeout(() => setNotice(''), 4000);
-            }}
-          />
-        </div>
-      </div>
-
-      {error ? <p className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-bold text-red-800" role="alert">{error}</p> : null}
-      {notice ? <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800" role="status">{notice}</p> : null}
-
-      <form onSubmit={handleSave} className="mt-4 grid gap-3 rounded-xl border-2 border-indigo-100 bg-indigo-50/40 p-4 sm:grid-cols-5">
-        <div className="sm:col-span-5">
-          <h3 className="text-sm font-black text-slate-900">{editingCustomer ? '業者を編集' : '業者を新規登録'}</h3>
-        </div>
-        <div>
-          <label className="text-xs font-bold text-slate-600" htmlFor="customer-company-name">
-            業者名（会社名） <span className="text-red-600">*</span>
-          </label>
-          <input
-            id="customer-company-name"
-            type="text"
-            value={companyName}
-            onChange={(e) => setCompanyName(e.target.value)}
-            className={fieldClass}
-            placeholder="例: 〇〇建設"
-            required
-          />
-        </div>
-        <div>
-          <label className="text-xs font-bold text-slate-600" htmlFor="customer-furigana">フリガナ（任意）</label>
-          <input
-            id="customer-furigana"
-            type="text"
-            value={furigana}
-            onChange={(e) => setFurigana(e.target.value)}
-            className={fieldClass}
-            placeholder="例: マルマルケンセツ"
-          />
-        </div>
-        <div>
-          <label className="text-xs font-bold text-slate-600" htmlFor="customer-manager-name">代表担当者名（任意）</label>
-          <input
-            id="customer-manager-name"
-            type="text"
-            value={managerName}
-            onChange={(e) => setManagerName(e.target.value)}
-            className={fieldClass}
-            placeholder="例: 山田"
-          />
-        </div>
-        <div>
-          <label className="text-xs font-bold text-slate-600" htmlFor="customer-phone-number">
-            電話番号（ログインID） <span className="text-red-600">*</span>
-          </label>
-          <input
-            id="customer-phone-number"
-            type="tel"
-            value={phoneNumber}
-            onChange={(e) => setPhoneNumber(e.target.value)}
-            className={fieldClass}
-            placeholder="例: 090-1234-5678"
-            required
-          />
-        </div>
-        <div>
-          <label className="text-xs font-bold text-slate-600" htmlFor="customer-login-password">
-            ログインパスワード <span className="text-red-600">*</span>
-          </label>
-          <input
-            id="customer-login-password"
-            type="text"
-            value={loginPassword}
-            onChange={(e) => setLoginPassword(e.target.value)}
-            className={fieldClass}
-            placeholder="例: 1234"
-            required
-          />
-        </div>
-        <div>
-          <label className="block text-xs font-black text-slate-600">
-            ロール
-            <select
-              value={role ?? 'contractor'}
-              onChange={(e) => {
-                const next = e.target.value;
-                setRole(next);
-                if (next === 'contractor') setOrganizationId(null);
-              }}
-              className={fieldClass}
-            >
-              <option value="contractor">業者（contractor）</option>
-              <option value="agent">商社担当者（agent）</option>
-              <option value="cooperative">組合担当者（cooperative）</option>
-            </select>
-          </label>
-        </div>
-        {role === 'agent' || role === 'cooperative' ? (
-          <div>
-            <label className="block text-xs font-black text-slate-600">
-              所属組織
-              <select
-                value={organizationId ?? ''}
-                onChange={(e) => setOrganizationId(e.target.value || null)}
-                className={fieldClass}
-              >
-                <option value="">— 未設定 —</option>
-                {organizations
-                  .filter((o) => o.type === (role === 'agent' ? 'agent' : 'cooperative'))
-                  .map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.name}
-                    </option>
-                  ))}
-              </select>
-            </label>
-          </div>
-        ) : null}
-        <div className="flex flex-wrap gap-2 sm:col-span-5">
-          <button type="submit" disabled={saving} className="min-h-[44px] rounded-lg bg-indigo-600 px-4 text-sm font-black text-white shadow hover:bg-indigo-700 disabled:opacity-50">
-            {saving ? '保存中…' : editingCustomer ? '業者情報を更新' : '＋ 業者を登録'}
-          </button>
-          {editingCustomer ? (
-            <button type="button" onClick={resetForm} disabled={saving} className="min-h-[44px] rounded-lg border-2 border-slate-300 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50">
-              編集をキャンセル
-            </button>
-          ) : null}
-        </div>
-      </form>
-
-      {loading ? <p className="mt-4 text-sm text-slate-500">読み込み中…</p> : null}
-      {!loading && customers.length > 0 ? (
-        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
-          <label className="text-xs font-black text-slate-600" htmlFor="customer-search">業者検索</label>
-          <input
-            id="customer-search"
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-bold text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
-            placeholder="業者名・フリガナ・担当者名・電話番号で検索"
-          />
-        </div>
-      ) : null}
-      {!loading && customers.length === 0 ? <p className="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-600">登録された業者はありません。</p> : null}
-      {!loading && customers.length > 0 ? (
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full min-w-[800px] border-collapse text-left text-sm">
-            <thead>
-              <tr className="border-b-2 border-slate-200 bg-slate-50">
-                <th className="px-3 py-2 font-black text-slate-700">業者名（会社名）</th>
-                <th className="px-3 py-2 font-black text-slate-700">フリガナ</th>
-                <th className="px-3 py-2 font-black text-slate-700">代表担当者名</th>
-                <th className="px-3 py-2 font-black text-slate-700">電話番号</th>
-                <th className="px-3 py-2 font-black text-slate-700">ログインPW</th>
-                <th className="px-3 py-2 font-black text-slate-700">ロール</th>
-                <th className="px-3 py-2 font-black text-slate-700">所属組織</th>
-                <th className="px-3 py-2 font-black text-slate-700">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredCustomers.map((c) => (
-                <tr key={c.id} className="border-b border-slate-100 hover:bg-slate-50/80">
-                  <td className="px-3 py-2.5 font-bold text-slate-900">{c.company_name || c.name || '—'}</td>
-                  <td className="px-3 py-2.5 text-slate-700">{c.furigana?.trim() || '—'}</td>
-                  <td className="px-3 py-2.5 text-slate-700">{c.manager_name?.trim() || '—'}</td>
-                  <td className="px-3 py-2.5 text-slate-700">{c.phone_number?.trim() || '—'}</td>
-                  <td className="px-3 py-2.5 font-mono text-xs text-slate-600">{c.login_password?.trim() || '—'}</td>
-                  <td className="px-3 py-2.5 text-slate-700">
-                    {c.role === 'agent' ? '商社' : c.role === 'cooperative' ? '組合' : '業者'}
-                  </td>
-                  <td className="px-3 py-2.5 text-slate-700">
-                    {organizations.find((o) => o.id === c.organization_id)?.name ?? '—'}
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <div className="flex flex-wrap gap-1">
-                      <button type="button" onClick={() => startEdit(c)} className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50">
-                        編集
-                      </button>
-                      <button type="button" onClick={() => handleDelete(c)} className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-bold text-red-800 hover:bg-red-100">
-                        削除
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {filteredCustomers.length === 0 ? (
-            <p className="rounded-b-lg border-x border-b border-slate-200 bg-slate-50 px-4 py-5 text-center text-sm font-bold text-slate-500">
-              検索条件に一致する業者はありません。
-            </p>
-          ) : null}
         </div>
       ) : null}
     </section>
@@ -3116,7 +2756,6 @@ export function AdminApp() {
   const [tab, setTab] = useState('monitor');
   const [activeMonitorTab, setActiveMonitorTab] = useState('orders');
   const [adminSettings, setAdminSettings] = useState({ admin_name: '', phone_number: '' });
-  const [organizations, setOrganizations] = useState([]);
   const factoryNameById = useMemo(() => Object.fromEntries(factories.map((f) => [f.id, f.name])), [factories]);
 
   const handleAdminLogin = useCallback((admin) => {
@@ -3217,27 +2856,6 @@ export function AdminApp() {
     return () => unsub();
   }, [loadAdminSettings]);
 
-  const loadOrganizations = useCallback(async () => {
-    try {
-      const orgs = await db.fetchOrganizations();
-      setOrganizations(orgs);
-    } catch (e) {
-      console.error('組織一覧取得エラー', e);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!isAdminLoggedIn) return undefined;
-    void loadOrganizations();
-    let unsub = () => {};
-    void (async () => {
-      unsub = await db.subscribeHaishaRealtime((payload) => {
-        if (payload?.table === 'organizations') void loadOrganizations();
-      });
-    })();
-    return () => unsub();
-  }, [isAdminLoggedIn, loadOrganizations]);
-
   const tabBtn = (id, label) => (
     <button
       type="button"
@@ -3311,7 +2929,7 @@ export function AdminApp() {
         {tab === 'projects' ? <ProjectsSection factories={factories} factoryNameById={factoryNameById} /> : null}
         {tab === 'agents' ? <AdminOrgSection orgType="agent" label="商社" /> : null}
         {tab === 'cooperatives' ? <AdminOrgSection orgType="cooperative" label="組合員" /> : null}
-        {tab === 'customers' ? <CustomersSection organizations={organizations} /> : null}
+        {tab === 'customers' ? <AdminOrgSection orgType="contractor" label="業者" /> : null}
         {tab === 'inquiries' ? <CustomerInquirySection /> : null}
         {tab === 'settings' ? <HolidaysAndSettingsSection /> : null}
         {tab === 'escalation' ? <AdminEscalationSection factories={factories} /> : null}

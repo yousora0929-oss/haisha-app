@@ -1,4 +1,5 @@
 /** サジェスト用 — マスタ配列のリアルタイム絞り込み */
+import { resolveProjectTradingCompanyName } from './projectTradingCompany.js';
 
 export function getTextMatchRank(text, queryLower) {
   const t = String(text ?? '').trim().toLowerCase();
@@ -49,11 +50,11 @@ export function customerSuggestTexts(customer) {
 }
 
 export function projectSuggestTexts(project) {
+  const trader = resolveProjectTradingCompanyName(project);
   return [
     project?.name,
     project?.address,
-    project?.trading_company_name,
-    project?.trading_company,
+    trader,
     project?.sub_contractor_name,
     project?.id,
   ];

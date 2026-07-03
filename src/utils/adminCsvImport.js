@@ -1,4 +1,5 @@
 import { getDeliveryAreaValidationMessage } from './deliveryAreas.js';
+import { findAgentOrganizationByName, resolveProjectTradingCompanyName } from './projectTradingCompany.js';
 import { resolveUrlTokenForInsert } from './urlValidation.js';
 import {
   CUSTOMER_CSV_ALIASES,
@@ -39,7 +40,10 @@ function findCustomerIdByName(customers, name) {
  * @param {File} file
  * @returns {Promise<{ rows: object[], skipped: { line: number, reason: string }[], warnings: string[] }>}
  */
-export async function parseProjectsCsvFile(file, { customers = [], mainFactoryId = '', allowedDeliveryAreas = [] } = {}) {
+export async function parseProjectsCsvFile(
+  file,
+  { customers = [], mainFactoryId = '', allowedDeliveryAreas = [], agentOrganizations = [] } = {},
+) {
   const text = await readCsvFileAsText(file);
   const matrix = parseCsvText(text);
   if (matrix.length < 2) {
@@ -55,6 +59,7 @@ export async function parseProjectsCsvFile(file, { customers = [], mainFactoryId
   const rows = [];
   const skipped = [];
   const warnings = [];
+  const unregisteredTradingCompanies = new Set();
 
   if (!mainFactoryId) {
     throw new Error('メイン工場が未登録のため、物件の一括取込はできません。先に工場マスタを登録してください。');
@@ -88,6 +93,16 @@ export async function parseProjectsCsvFile(file, { customers = [], mainFactoryId
       warnings.push(`行${line}: 元請業者「${contractorName}」は業者マスタに未登録のため、物件のみ登録します。`);
     }
 
+    let trading_company_organization_id = null;
+    if (trading_company_name) {
+      const agentOrg = findAgentOrganizationByName(agentOrganizations, trading_company_name);
+      if (agentOrg?.id) {
+        trading_company_organization_id = agentOrg.id;
+      } else {
+        unregisteredTradingCompanies.add(trading_company_name);
+      }
+    }
+
     rows.push({
       name,
       customer_id,
@@ -95,6 +110,7 @@ export async function parseProjectsCsvFile(file, { customers = [], mainFactoryId
       sub_factory_ids: [],
       trading_company_name: trading_company_name || null,
       trading_company: trading_company_name || null,
+      trading_company_organization_id,
       contractor_display_name: contractorDisplayName || null,
       contractor: null,
       sub_contractor_name: null,
@@ -112,6 +128,11 @@ export async function parseProjectsCsvFile(file, { customers = [], mainFactoryId
 
   if (rows.length === 0) {
     throw new Error('取り込み可能な物件がありません。');
+  }
+
+  if (unregisteredTradingCompanies.size > 0) {
+    const list = [...unregisteredTradingCompanies].sort((a, b) => a.localeCompare(b, 'ja'));
+    warnings.push(`未登録商社名: ${unregisteredTradingCompanies.size}件（${list.join('、')}）`);
   }
 
   return { rows, skipped, warnings };
@@ -235,7 +256,7 @@ export function buildProjectsExportRows(projects, customers = []) {
     cleanCell(p.name),
     customerNameById.get(String(p.customer_id || '')) || '',
     cleanCell(p.contractor_display_name),
-    cleanCell(p.trading_company_name || p.trading_company),
+    cleanCell(resolveProjectTradingCompanyName(p)),
     cleanCell(p.site_address),
     cleanCell(p.delivery_area),
   ]);
@@ -272,6 +293,28 @@ export function downloadProjectsExportCsv(projects, customers) {
 export function downloadCustomersExportCsv(customers) {
   const rows = buildCustomersExportRows(customers);
   downloadCsvWithUtf8Bom(`customers_export_${exportDateSuffix()}.csv`, rows);
+}
+
+/** 組織ツリー（担当者一覧）→ 業者取込互換 CSV */
+export function buildOrgMembersExportRows(orgs) {
+  const members = [];
+  for (const org of orgs || []) {
+    for (const m of org.members || []) {
+      members.push({
+        company_name: org.name,
+        furigana: m.furigana,
+        manager_name: m.manager_name,
+        phone_number: m.phone_number,
+        login_password: m.login_password,
+      });
+    }
+  }
+  return buildCustomersExportRows(members);
+}
+
+export function downloadOrgMembersExportCsv(orgs, filenamePrefix = 'org_members') {
+  const rows = buildOrgMembersExportRows(orgs);
+  downloadCsvWithUtf8Bom(`${filenamePrefix}_export_${exportDateSuffix()}.csv`, rows);
 }
 
 export function downloadTradingCompaniesExportCsv(tradingCompanies) {

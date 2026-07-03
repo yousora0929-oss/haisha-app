@@ -7,6 +7,7 @@ import {
   rankFactoryIdsByDeliveryArea,
 } from './deliveryAreaEscalation.js';
 import { associationAssignedFactoryIds } from './associationFactoryAssignment.js';
+import { resolveProjectTradingCompanyName } from './projectTradingCompany.js';
 import {
   formatEscalationStepLabel,
   getActiveEscalationStep,
@@ -555,7 +556,7 @@ export function enrichOrderWithProject(order, projectById) {
   const pid = orderProjectId(order);
   const p = pid ? projectById[pid] : null;
   if (!p) return order;
-  const tc = (p.trading_company_name || p.trading_company || '').trim();
+  const tc = resolveProjectTradingCompanyName(p);
   const ct = (p.contractor || '').trim();
   return {
     ...order,

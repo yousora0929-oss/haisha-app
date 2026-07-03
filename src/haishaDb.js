@@ -16,6 +16,7 @@ import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/site
 import { normalizeAssociationFactorySelection } from './utils/associationFactoryAssignment.js';
 import { shouldResetOrderStatusOnFactoryReassign } from './utils/orderFactoryReassign.js';
 import { ensureOrderPreferredFactoryForInsert } from './utils/dispatchBulkOrder.js';
+import { resolveProjectTradingCompanyName } from './utils/projectTradingCompany.js';
 import {
   customerFactoryRejectionChatMessage,
   customerScheduleAutoRejectChatBody,
@@ -78,6 +79,49 @@ async function enrichProjectsWithCustomerUrlTokens(projects) {
     if (!merged || merged === String(p.url_token ?? '').trim()) return p;
     return { ...p, url_token: merged };
   });
+}
+
+async function enrichProjectsWithTradingCompanyOrgs(projects) {
+  const list = Array.isArray(projects) ? projects.filter(Boolean) : [];
+  const orgIds = [
+    ...new Set(list.map((p) => p?.trading_company_organization_id).filter(Boolean)),
+  ];
+  if (!orgIds.length) {
+    return list.map((p) => ({ ...p, trading_company_organization_name: '' }));
+  }
+
+  const { data, error } = await supabase
+    .from('organizations')
+    .select('id, name')
+    .in('id', orgIds);
+  if (error) {
+    console.warn('[fetchProjects] organizations の取得に失敗しました', error);
+    return list.map((p) => ({ ...p, trading_company_organization_name: '' }));
+  }
+
+  const nameById = new Map(
+    (data || []).map((o) => [String(o.id), o.name != null ? String(o.name) : '']),
+  );
+
+  return list.map((p) => ({
+    ...p,
+    trading_company_organization_name: p.trading_company_organization_id
+      ? nameById.get(String(p.trading_company_organization_id)) || ''
+      : '',
+  }));
+}
+
+function buildProjectTradingCompanyFields(payload) {
+  const trading_company_name =
+    String(payload.trading_company_name || payload.trading_company || '').trim() || null;
+  const trading_company =
+    String(payload.trading_company || payload.trading_company_name || '').trim() || null;
+  const trading_company_organization_id = sanitizeRefId(payload.trading_company_organization_id);
+  return {
+    trading_company_name,
+    trading_company,
+    trading_company_organization_id: trading_company_organization_id || null,
+  };
 }
 
 function normalizeChatMessages(raw) {
@@ -269,8 +313,35 @@ export function normalizeOrderRow(row) {
           : od.traderName != null
             ? String(od.traderName)
             : '',
-    ordered_by: row.ordered_by != null ? String(row.ordered_by) : od.ordered_by != null ? String(od.ordered_by) : '',
-    orderedBy: row.ordered_by != null ? String(row.ordered_by) : od.orderedBy != null ? String(od.orderedBy) : od.ordered_by != null ? String(od.ordered_by) : '',
+    ordered_by: row.ordered_by != null ? String(row.ordered_by) : od.order_placer_name != null ? String(od.order_placer_name) : od.orderPlacerName != null ? String(od.orderPlacerName) : od.ordered_by != null ? String(od.ordered_by) : '',
+    orderedBy:
+      od.siteContactName != null && String(od.siteContactName).trim()
+        ? String(od.siteContactName).trim()
+        : od.site_contact_name != null && String(od.site_contact_name).trim()
+          ? String(od.site_contact_name).trim()
+          : row.ordered_by != null
+            ? String(row.ordered_by)
+            : od.orderedBy != null
+              ? String(od.orderedBy)
+              : od.ordered_by != null
+                ? String(od.ordered_by)
+                : '',
+    orderPlacerName:
+      row.ordered_by != null
+        ? String(row.ordered_by)
+        : od.orderPlacerName != null
+          ? String(od.orderPlacerName)
+          : od.order_placer_name != null
+            ? String(od.order_placer_name)
+            : '',
+    siteContactName:
+      od.siteContactName != null
+        ? String(od.siteContactName)
+        : od.site_contact_name != null
+          ? String(od.site_contact_name)
+          : od.orderedBy != null && (od.orderPlacerName != null || od.order_placer_name != null || row.ordered_by != null)
+            ? String(od.orderedBy)
+            : '',
     delivery_lat: Number.isFinite(deliveryLat) ? deliveryLat : null,
     delivery_lng: Number.isFinite(deliveryLng) ? deliveryLng : null,
     preferred_factory_id: sanitizeRefId(
@@ -490,19 +561,11 @@ export async function fetchOrdersWithChat() {
       trading_company_name:
         o.trading_company_name ||
         o.projectTradingCompanyName ||
-        (p?.trading_company_name != null
-          ? String(p.trading_company_name)
-          : p?.trading_company != null
-            ? String(p.trading_company)
-            : ''),
+        resolveProjectTradingCompanyName(p),
       projectTradingCompanyName:
         o.projectTradingCompanyName ||
         o.trading_company_name ||
-        (p?.trading_company_name != null
-          ? String(p.trading_company_name)
-          : p?.trading_company != null
-            ? String(p.trading_company)
-            : ''),
+        resolveProjectTradingCompanyName(p),
       url_token: pickSiteUrlToken(p, c),
     };
   }
@@ -534,7 +597,24 @@ export async function upsertOrdersBatch(orders, chatThreads) {
     const hasTest = Boolean(o.has_test);
     const safeOrder = sanitizeOrderRefs(o);
     const customerId = sanitizeRefId(o.customer_id ?? safeOrder.customer_id);
-    const orderedBy = String(o.ordered_by ?? o.orderedBy ?? safeOrder.ordered_by ?? '').trim();
+    const orderPlacerName = String(
+      o.order_placer_name ??
+        o.orderPlacerName ??
+        o.ordered_by ??
+        safeOrder.order_placer_name ??
+        safeOrder.orderPlacerName ??
+        safeOrder.ordered_by ??
+        '',
+    ).trim();
+    const siteContactName = String(
+      o.site_contact_name ??
+        o.siteContactName ??
+        o.orderedBy ??
+        safeOrder.site_contact_name ??
+        safeOrder.siteContactName ??
+        safeOrder.orderedBy ??
+        '',
+    ).trim();
     const factorySiteId = sanitizeRefId(safeOrder.factory_site_id);
     const preferredFactoryId = sanitizeRefId(safeOrder.preferred_factory_id);
     const mainFactoryId = sanitizeRefId(safeOrder.main_factory_id);
@@ -559,8 +639,12 @@ export async function upsertOrdersBatch(orders, chatThreads) {
         customerName: o.customerName ?? safeOrder.customerName ?? '',
         trading_company_name: o.trading_company_name ?? o.projectTradingCompanyName ?? safeOrder.trading_company_name ?? '',
         projectTradingCompanyName: o.projectTradingCompanyName ?? o.trading_company_name ?? safeOrder.projectTradingCompanyName ?? '',
-        ordered_by: orderedBy,
-        orderedBy,
+        ordered_by: orderPlacerName,
+        orderedBy: siteContactName,
+        order_placer_name: orderPlacerName,
+        orderPlacerName,
+        site_contact_name: siteContactName,
+        siteContactName,
         rejected_factory_ids: rejectedFactoryIds,
         factory_site_id: factorySiteId,
         factorySiteId: factorySiteId,
@@ -570,7 +654,7 @@ export async function upsertOrdersBatch(orders, chatThreads) {
         mainFactoryId: mainFactoryId,
       }),
       customer_id: customerId,
-      ordered_by: orderedBy || null,
+      ordered_by: orderPlacerName || null,
       factory_site_id: factorySiteId,
       status: status || 'pending',
       rejected_factory_ids: rejectedFactoryIds,
@@ -612,7 +696,12 @@ function buildOrderInsertRow(order) {
   const isSpot = Boolean(order.is_spot);
   const projectId = !isSpot && order.project_id != null ? String(order.project_id).trim() : '';
   const customerId = sanitizeRefId(order.customer_id ?? order.customerId);
-  const orderedBy = String(order.ordered_by ?? order.orderedBy ?? '').trim();
+  const orderPlacerName = String(
+    order.order_placer_name ?? order.orderPlacerName ?? order.ordered_by ?? '',
+  ).trim();
+  const siteContactName = String(
+    order.site_contact_name ?? order.siteContactName ?? order.orderedBy ?? '',
+  ).trim();
   const isLocationPending = Boolean(order.is_location_pending ?? order.isLocationPending);
   const deliveryLat = isSpot ? parseDeliveryCoord(order.delivery_lat ?? order.deliveryLat) : null;
   const deliveryLng = isSpot ? parseDeliveryCoord(order.delivery_lng ?? order.deliveryLng) : null;
@@ -630,8 +719,12 @@ function buildOrderInsertRow(order) {
     customerName: safeOrder.customerName ?? '',
     trading_company_name: safeOrder.trading_company_name ?? safeOrder.projectTradingCompanyName ?? '',
     projectTradingCompanyName: safeOrder.projectTradingCompanyName ?? safeOrder.trading_company_name ?? '',
-    ordered_by: orderedBy,
-    orderedBy,
+    ordered_by: orderPlacerName,
+    orderedBy: siteContactName,
+    order_placer_name: orderPlacerName,
+    orderPlacerName,
+    site_contact_name: siteContactName,
+    siteContactName,
     factory_site_id: null,
     factorySiteId: null,
     preferred_factory_id: preferredFactoryId,
@@ -649,7 +742,7 @@ function buildOrderInsertRow(order) {
     order_data: nextOrder,
     chat_messages: [],
     customer_id: customerId,
-    ordered_by: orderedBy || null,
+    ordered_by: orderPlacerName || null,
     is_spot: isSpot,
     project_id: projectId || null,
     delivery_lat: deliveryLat,
@@ -717,12 +810,26 @@ export async function updateOrderDetails(orderId, updatedData) {
   const factorySiteId = sanitizeRefId(nextOrder.factory_site_id);
   const preferredFactoryId = sanitizeRefId(nextOrder.preferred_factory_id ?? nextOrder.preferredFactoryId);
   const customerId = sanitizeRefId(nextOrder.customer_id);
-  const orderedBy = String(nextOrder.ordered_by ?? nextOrder.orderedBy ?? '').trim();
+  const orderPlacerName = String(
+    nextOrder.order_placer_name ?? nextOrder.orderPlacerName ?? nextOrder.ordered_by ?? '',
+  ).trim();
+  const siteContactName = String(
+    nextOrder.site_contact_name ?? nextOrder.siteContactName ?? nextOrder.orderedBy ?? '',
+  ).trim();
+  const mergedOrderData = {
+    ...nextOrder,
+    ordered_by: orderPlacerName,
+    orderedBy: siteContactName,
+    order_placer_name: orderPlacerName,
+    orderPlacerName,
+    site_contact_name: siteContactName,
+    siteContactName,
+  };
   const updateRow = {
-    order_data: nextOrder,
+    order_data: mergedOrderData,
     has_test: hasTest,
     customer_id: customerId,
-    ordered_by: orderedBy || null,
+    ordered_by: orderPlacerName || null,
     status: status || 'pending',
   };
   if (
@@ -1735,6 +1842,11 @@ function mapProjectRow(row) {
           ? String(row.trading_company)
           : '',
     trading_company: row.trading_company != null ? String(row.trading_company) : '',
+    trading_company_organization_id:
+      row.trading_company_organization_id != null
+        ? String(row.trading_company_organization_id)
+        : null,
+    trading_company_organization_name: '',
     contractor: row.contractor != null ? String(row.contractor) : '',
     sub_contractor_name:
       row.sub_contractor_name != null
@@ -1790,7 +1902,7 @@ export async function fetchOrganizations() {
 export async function insertOrganization({ name, type, cooperative_id }) {
   const trimmed = String(name ?? '').trim();
   if (!trimmed) throw new Error('組織名を入力してください');
-  if (!['agent', 'cooperative'].includes(type)) throw new Error('種別が不正です');
+  if (!['agent', 'cooperative', 'contractor'].includes(type)) throw new Error('種別が不正です');
   const { data, error } = await supabase
     .from('organizations')
     .insert({
@@ -1811,7 +1923,7 @@ export async function updateOrganization(id, nameOrOpts) {
     const { name, type, cooperative_id } = nameOrOpts;
     const trimmed = String(name ?? '').trim();
     if (!trimmed) throw new Error('組織名を入力してください');
-    if (!['agent', 'cooperative'].includes(type)) throw new Error('種別が不正です');
+    if (!['agent', 'cooperative', 'contractor'].includes(type)) throw new Error('種別が不正です');
     const { data, error } = await supabase
       .from('organizations')
       .update({
@@ -1864,10 +1976,10 @@ export async function deleteOrganizationWithMembers(orgId) {
 
 /**
  * 組織一覧を担当者付きで取得
- * @param {'agent'|'cooperative'} type
+ * @param {'agent'|'cooperative'|'contractor'} type
  * @returns Array<{
  *   id, name, type, created_at,
- *   members: Array<{id, company_name, manager_name, phone_number, login_password}>
+ *   members: Array<{id, company_name, furigana, manager_name, phone_number, login_password}>
  * }>
  */
 export async function fetchOrganizationsWithMembers(type) {
@@ -1883,7 +1995,7 @@ export async function fetchOrganizationsWithMembers(type) {
   if (orgIds.length > 0) {
     const { data, error: ce } = await supabase
       .from('customers')
-      .select('id, company_name, manager_name, phone_number, login_password, organization_id')
+      .select('id, company_name, furigana, manager_name, phone_number, login_password, organization_id')
       .eq('role', type)
       .in('organization_id', orgIds)
       .order('manager_name');
@@ -1909,7 +2021,7 @@ export async function createOrganization(name, type) {
 }
 
 /** 担当者を新規作成（customers に INSERT） */
-export async function createOrgMember({ organizationId, role, companyName, managerName, phone, password }) {
+export async function createOrgMember({ organizationId, role, companyName, managerName, phone, password, furigana }) {
   let resolvedCompanyName = String(companyName ?? '').trim();
   if (!resolvedCompanyName && organizationId) {
     const { data: org, error: orgError } = await supabase
@@ -1927,6 +2039,7 @@ export async function createOrgMember({ organizationId, role, companyName, manag
       organization_id: organizationId,
       role,
       company_name: resolvedCompanyName || null,
+      furigana: furigana?.trim() ?? null,
       manager_name: managerName?.trim() ?? null,
       phone_number: phone?.trim() ?? null,
       login_password: password?.trim() ?? null,
@@ -1938,7 +2051,7 @@ export async function createOrgMember({ organizationId, role, companyName, manag
 }
 
 /** 担当者を更新 */
-export async function updateOrgMember(id, { organizationId, companyName, managerName, phone, password }) {
+export async function updateOrgMember(id, { organizationId, companyName, managerName, phone, password, furigana }) {
   let resolvedCompanyName = String(companyName ?? '').trim();
   if (!resolvedCompanyName && organizationId) {
     const { data: org, error: orgError } = await supabase
@@ -1954,6 +2067,7 @@ export async function updateOrgMember(id, { organizationId, companyName, manager
     .from('customers')
     .update({
       company_name: resolvedCompanyName || null,
+      furigana: furigana?.trim() ?? null,
       manager_name: managerName?.trim() ?? null,
       phone_number: phone?.trim() ?? null,
       login_password: password?.trim() ?? null,
@@ -1968,10 +2082,98 @@ export async function deleteOrgMember(id) {
   if (error) throw error;
 }
 
+function mapSiteContactRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    id: row.id != null ? String(row.id) : '',
+    organization_id: row.organization_id != null ? String(row.organization_id) : '',
+    name: row.name != null ? String(row.name) : '',
+    phone_number: row.phone_number != null ? String(row.phone_number) : '',
+    created_at: row.created_at != null ? String(row.created_at) : '',
+    updated_at: row.updated_at != null ? String(row.updated_at) : '',
+  };
+}
+
+/** 業者組織の現場担当者一覧 */
+export async function fetchSiteContacts(organizationId) {
+  const orgId = sanitizeRefId(organizationId);
+  if (!orgId) return [];
+  const { data, error } = await supabase
+    .from('contractor_site_contacts')
+    .select('id, organization_id, name, phone_number, created_at, updated_at')
+    .eq('organization_id', orgId)
+    .order('name');
+  if (error) throw error;
+  return (data ?? []).map(mapSiteContactRow).filter(Boolean);
+}
+
+/** 複数組織の現場担当者を一括取得（管理画面用） */
+export async function fetchSiteContactsByOrgIds(orgIds) {
+  const ids = (Array.isArray(orgIds) ? orgIds : [])
+    .map((id) => sanitizeRefId(id))
+    .filter(Boolean);
+  if (!ids.length) return [];
+  const { data, error } = await supabase
+    .from('contractor_site_contacts')
+    .select('id, organization_id, name, phone_number, created_at, updated_at')
+    .in('organization_id', ids)
+    .order('name');
+  if (error) throw error;
+  return (data ?? []).map(mapSiteContactRow).filter(Boolean);
+}
+
+export async function createSiteContact({ organizationId, name, phone }) {
+  const orgId = sanitizeRefId(organizationId);
+  if (!orgId) throw new Error('組織IDが必要です');
+  const trimmedName = String(name ?? '').trim();
+  const trimmedPhone = String(phone ?? '').trim();
+  if (!trimmedName) throw new Error('担当者名を入力してください');
+  if (!trimmedPhone) throw new Error('電話番号を入力してください');
+  const { data, error } = await supabase
+    .from('contractor_site_contacts')
+    .insert({
+      organization_id: orgId,
+      name: trimmedName,
+      phone_number: trimmedPhone,
+    })
+    .select('id, organization_id, name, phone_number, created_at, updated_at')
+    .single();
+  if (error) throw error;
+  return mapSiteContactRow(data);
+}
+
+export async function updateSiteContact(id, { name, phone }) {
+  const contactId = sanitizeRefId(id);
+  if (!contactId) throw new Error('現場担当者IDが必要です');
+  const trimmedName = String(name ?? '').trim();
+  const trimmedPhone = String(phone ?? '').trim();
+  if (!trimmedName) throw new Error('担当者名を入力してください');
+  if (!trimmedPhone) throw new Error('電話番号を入力してください');
+  const { data, error } = await supabase
+    .from('contractor_site_contacts')
+    .update({
+      name: trimmedName,
+      phone_number: trimmedPhone,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', contactId)
+    .select('id, organization_id, name, phone_number, created_at, updated_at')
+    .single();
+  if (error) throw error;
+  return mapSiteContactRow(data);
+}
+
+export async function deleteSiteContact(id) {
+  const contactId = sanitizeRefId(id);
+  if (!contactId) throw new Error('現場担当者IDが必要です');
+  const { error } = await supabase.from('contractor_site_contacts').delete().eq('id', contactId);
+  if (error) throw error;
+}
+
 /**
  * CSVパース結果を一括インポート
  * @param {Array<{orgName, managerName, phone, password}>} rows
- * @param {'agent'|'cooperative'} orgType
+ * @param {'agent'|'cooperative'|'contractor'} orgType
  * @param {Array<{id, name}>} existingOrgs  既存組織一覧
  * @param {Array<{phone_number}>} existingMembers 既存担当者一覧
  * @returns {{ created: number, skipped: number }}
@@ -2473,7 +2675,8 @@ export async function fetchProjects() {
   const { data, error } = await supabase.from('projects').select('*').order('name', { ascending: true });
   if (error) throw error;
   const mapped = (data || []).map(mapProjectRow).filter(Boolean);
-  return enrichProjectsWithCustomerUrlTokens(mapped);
+  const withTokens = await enrichProjectsWithCustomerUrlTokens(mapped);
+  return enrichProjectsWithTradingCompanyOrgs(withTokens);
 }
 
 export async function bulkInsertProjects(projectRows) {
@@ -2499,8 +2702,7 @@ export async function bulkInsertProjects(projectRows) {
         payload.lng != null && payload.lng !== '' && Number.isFinite(Number(payload.lng))
           ? Number(payload.lng)
           : null,
-      trading_company_name: String(payload.trading_company_name || payload.trading_company || '').trim() || null,
-      trading_company: String(payload.trading_company || payload.trading_company_name || '').trim() || null,
+      ...buildProjectTradingCompanyFields(payload),
       contractor: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
       sub_contractor_name: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
       contractor_display_name: String(payload.contractor_display_name || '').trim() || null,
@@ -2522,7 +2724,8 @@ export async function bulkInsertProjects(projectRows) {
     inserted.push(...(data || []));
   }
   const mapped = inserted.map(mapProjectRow).filter(Boolean);
-  return enrichProjectsWithCustomerUrlTokens(mapped);
+  const withTokens = await enrichProjectsWithCustomerUrlTokens(mapped);
+  return enrichProjectsWithTradingCompanyOrgs(withTokens);
 }
 
 export async function insertProject(payload) {
@@ -2538,8 +2741,7 @@ export async function insertProject(payload) {
     sub_factory_ids,
     lat: payload.lat != null && payload.lat !== '' && Number.isFinite(Number(payload.lat)) ? Number(payload.lat) : null,
     lng: payload.lng != null && payload.lng !== '' && Number.isFinite(Number(payload.lng)) ? Number(payload.lng) : null,
-    trading_company_name: String(payload.trading_company_name || payload.trading_company || '').trim() || null,
-    trading_company: String(payload.trading_company || payload.trading_company_name || '').trim() || null,
+    ...buildProjectTradingCompanyFields(payload),
     contractor: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
     sub_contractor_name: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
     contractor_display_name: String(payload.contractor_display_name || '').trim() || null,
@@ -2569,8 +2771,7 @@ export async function updateProject(projectId, payload) {
     customer_id: sanitizeRefId(payload.customer_id),
     main_factory_id,
     sub_factory_ids,
-    trading_company_name: String(payload.trading_company_name || payload.trading_company || '').trim() || null,
-    trading_company: String(payload.trading_company || payload.trading_company_name || '').trim() || null,
+    ...buildProjectTradingCompanyFields(payload),
     contractor: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
     sub_contractor_name: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
     contractor_display_name: String(payload.contractor_display_name || '').trim() || null,

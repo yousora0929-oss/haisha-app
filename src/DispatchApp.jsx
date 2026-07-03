@@ -46,6 +46,7 @@ import {
 } from './utils/dispatchBulkOrder.js';
 import { buildMapEditorUrl, rememberMapEditorReturnUrl } from './mapEditorConstants.js';
 import { combineDeliveryAddress, extractProjectAddressFields, normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
+import { resolveProjectTradingCompanyName } from './utils/projectTradingCompany.js';
 import {
   fetchTownLocationsForMunicipality,
   findTownLocation,
@@ -236,7 +237,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const contractor = String(order?.customerName ?? order?.customer_name ?? order?.contractorName ?? order?.contractor_name ?? order?.displayContractorName ?? order?.contractorName ?? '').trim();
       const contractorBase = contractor || String(order?.contractorName ?? '').trim();
       const site = resolveOrderSiteDisplayName(order);
-      const orderedBy = String(order?.ordered_by ?? order?.orderedBy ?? '').trim();
+      const orderedBy = String(
+        order?.siteContactName ??
+          order?.site_contact_name ??
+          order?.orderedBy ??
+          order?.ordered_by ??
+          '',
+      ).trim();
       const phone = String(order?.sitePhone ?? order?.phone ?? '').trim();
       return {
         contractor: tradingCompany && contractorBase ? `${contractorBase} (商社: ${tradingCompany})` : contractorBase || '—',
@@ -750,7 +757,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return buildMapEditorUrl(order.id, undefined, token ? { guestToken: token } : {});
       }, [guestToken, order?.id]);
 
-      const orderedByDisp = String(order.ordered_by ?? order.orderedBy ?? '').trim();
+      const orderedByDisp = String(
+        order.siteContactName ??
+          order.site_contact_name ??
+          order.orderedBy ??
+          order.ordered_by ??
+          '',
+      ).trim();
       const compactMeta = [
         vehicle ? `車種:${vehicle}` : '',
         trader && trader !== '—' ? `商社:${trader}` : '',
@@ -1204,7 +1217,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [representativeLat, setRepresentativeLat] = useState('');
       const [representativeLng, setRepresentativeLng] = useState('');
       const [sitePhone, setSitePhone] = useState('');
-      const [orderedBy, setOrderedBy] = useState('');
+      const [siteContactName, setSiteContactName] = useState('');
+      const [siteContacts, setSiteContacts] = useState([]);
       const [hasTest, setHasTest] = useState(false);
       const [submitNotice, setSubmitNotice] = useState(null);
       const [submitError, setSubmitError] = useState('');
@@ -1329,9 +1343,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           );
           setDeliveryArea(area);
           setSiteAddressDetail(detail);
-          if (project.trading_company_name || project.trading_company) {
-            setTraderName(String(project.trading_company_name || project.trading_company));
-          }
+          const trader = resolveProjectTradingCompanyName(project);
+          if (trader) setTraderName(trader);
           const subName = String(project.sub_contractor_name || project.contractor || '').trim();
           if (subName) setContractorName(subName);
           if (project.name) setSiteName(sanitizeSiteNameValue(project.name));
@@ -1425,6 +1438,25 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             : null,
         [isAgentOrCooperative, contractorCustomerId, customers],
       );
+      const orderPlacerName = useMemo(
+        () => String(currentCustomer?.manager_name ?? '').trim(),
+        [currentCustomer],
+      );
+      const contractorOrgId = useMemo(() => {
+        if (isGuestSiteOrder) {
+          return guestSiteOrderCtx?.customer?.organization_id ?? null;
+        }
+        if (isAgentOrCooperative) {
+          return contractorCustomer?.organization_id ?? null;
+        }
+        return currentCustomer?.organization_id ?? null;
+      }, [
+        isGuestSiteOrder,
+        guestSiteOrderCtx,
+        isAgentOrCooperative,
+        contractorCustomer,
+        currentCustomer,
+      ]);
       const sessionCustomerPhone = useMemo(() => {
         if (!isLoggedIn) return '';
         try {
@@ -1466,6 +1498,37 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         [selectedProject],
       );
       const hasCurrentCustomer = Boolean(String(currentCustomerId || '').trim());
+
+      useEffect(() => {
+        if (orderKind !== 'project') {
+          setSiteContacts([]);
+          return;
+        }
+        const orgId = String(contractorOrgId || '').trim();
+        if (!orgId) {
+          setSiteContacts([]);
+          return;
+        }
+        let cancelled = false;
+        void db
+          .fetchSiteContacts(orgId)
+          .then((rows) => {
+            if (!cancelled) setSiteContacts(Array.isArray(rows) ? rows : []);
+          })
+          .catch((err) => {
+            console.warn('[DispatchApp] 現場担当者一覧の取得に失敗', err);
+            if (!cancelled) setSiteContacts([]);
+          });
+        return () => {
+          cancelled = true;
+        };
+      }, [orderKind, contractorOrgId]);
+
+      useEffect(() => {
+        if (!isAgentOrCooperative) return;
+        setSiteContactName('');
+        setSitePhone('');
+      }, [contractorCustomerId, isAgentOrCooperative]);
 
       useEffect(() => {
         if (typeof console === 'undefined' || typeof console.log !== 'function') return;
@@ -2439,7 +2502,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           setDeliveryArea(defaults.deliveryArea || '');
           setSiteAddressDetail(defaults.siteAddressDetail || '');
           setSitePhone(defaults.sitePhone || currentCustomer?.phone_number || '');
-          setOrderedBy(defaults.orderedBy || '');
+          setSiteContactName(defaults.siteContactName || defaults.orderedBy || '');
           setVehicleType(defaults.vehicleType || 'large');
           setUnloadDuration(defaults.unloadDuration || '30');
           setHasTest(defaults.hasTest);
@@ -2464,7 +2527,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             orderFormRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
           }, 120);
         },
-        [applyProjectSelection, currentCustomer, projects, today],
+        [applyProjectSelection, currentCustomer, orderPlacerName, projects, today],
       );
 
       const confirmRepeatOrder = useCallback(
@@ -2551,8 +2614,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             siteName: defaults.siteName,
             siteAddress: defaults.siteAddress || item.siteAddress || row.siteAddress || '',
             sitePhone: defaults.sitePhone || currentCustomer?.phone_number || '',
-            ordered_by: defaults.orderedBy,
-            orderedBy: defaults.orderedBy,
+            ordered_by: orderPlacerName || defaults.orderPlacerName || '',
+            orderedBy: defaults.siteContactName || defaults.orderedBy || '',
+            order_placer_name: orderPlacerName || defaults.orderPlacerName || '',
+            orderPlacerName: orderPlacerName || defaults.orderPlacerName || '',
+            site_contact_name: defaults.siteContactName || defaults.orderedBy || '',
+            siteContactName: defaults.siteContactName || defaults.orderedBy || '',
             has_test: defaults.hasTest,
             delivery_lat: defaults.isSpot ? item.delivery_lat ?? item.deliveryLat ?? null : null,
             delivery_lng: defaults.isSpot ? item.delivery_lng ?? item.deliveryLng ?? null : null,
@@ -2578,7 +2645,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             setIsSubmittingOrder(false);
           }
         },
-        [currentCustomer, currentCustomerId, repeatPreferredDate, repeatTimeSlot, refreshDashboard],
+        [currentCustomer, currentCustomerId, orderPlacerName, repeatPreferredDate, repeatTimeSlot, refreshDashboard],
       );
 
       const orderFormContext = useMemo(
@@ -2604,7 +2671,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           siteAddressDetail,
           allowedDeliveryAreas,
           sitePhone,
-          orderedBy,
+          orderPlacerName,
+          siteContactName,
           vehicleType,
           unloadDuration,
           hasTest,
@@ -2638,7 +2706,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           siteAddressDetail,
           allowedDeliveryAreas,
           sitePhone,
-          orderedBy,
+          orderPlacerName,
+          siteContactName,
           vehicleType,
           unloadDuration,
           hasTest,
@@ -2682,7 +2751,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setRepresentativeLng('');
         lastAutofillProjectIdRef.current = '';
         setSitePhone('');
-        setOrderedBy('');
+        setSiteContactName('');
         setHasTest(false);
         setVehicleType('large');
         if (isAgentOrCooperative) {
@@ -2893,7 +2962,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         const c = guestSiteOrderCtx.customer;
         return formatSiteOrderVendorLabel({
           primeContractorName: c?.company_name || c?.name,
-          traderName: p?.trading_company_name || p?.trading_company,
+          traderName: resolveProjectTradingCompanyName(p),
         });
       }, [isGuestSiteOrder, guestSiteOrderCtx]);
       const guestSiteLabel = useMemo(() => {
@@ -3293,6 +3362,63 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </div>
               ) : null}
 
+              {isAgentOrCooperative && !isGuestSiteOrder ? (
+                <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3">
+                  <p className="text-xs font-black text-amber-900">代理発注モード</p>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    {currentCustomerRole === 'agent' ? '商社' : '組合'}として発注しています。
+                    発注先の業者を選択してください。
+                  </p>
+                  <div className="mt-3">
+                    <MasterSuggestInput
+                      label="発注先業者"
+                      htmlFor="contractor-customer-select"
+                      name="contractor_customer"
+                      value={contractorSearchText}
+                      placeholder="業者名を入力して候補から選択"
+                      items={(customers || []).filter((c) => (c.role ?? 'contractor') === 'contractor')}
+                      getItemKey={(c) => String(c.id)}
+                      getItemLabel={(c) => String(c.company_name || c.name || '').trim()}
+                      getSearchTexts={(c) => [
+                        c.company_name || c.name || '',
+                        c.furigana || '',
+                        c.manager_name || '',
+                      ]}
+                      onValueChange={(text) => {
+                        setContractorSearchText(text);
+                        const hit = (customers || []).find(
+                          (c) =>
+                            (c.role ?? 'contractor') === 'contractor' &&
+                            String(c.company_name || c.name || '')
+                              .trim()
+                              .toLowerCase() === text.trim().toLowerCase(),
+                        );
+                        if (hit) setContractorCustomerId(String(hit.id));
+                        else setContractorCustomerId('');
+                        setSelectedProjectId('');
+                        lastAutofillProjectIdRef.current = '';
+                        applyProjectSelection(null);
+                        setSubmitError('');
+                      }}
+                      onSelect={(c) => {
+                        setContractorCustomerId(String(c.id));
+                        setContractorSearchText(String(c.company_name || c.name || '').trim());
+                        setSelectedProjectId('');
+                        lastAutofillProjectIdRef.current = '';
+                        applyProjectSelection(null);
+                        setSubmitError('');
+                      }}
+                      emptyHint="該当する業者がありません"
+                    />
+                    {!contractorCustomerId ? (
+                      <p className="mt-2 text-xs font-bold text-amber-800">
+                        発注先の業者を選択してください。
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
               {isGuestSiteOrder && orderKind === 'project' ? (
                 <div className="flex flex-col gap-4 rounded-2xl border-2 border-slate-200 bg-slate-50/90 p-4 dark:border-slate-600 dark:bg-slate-800/80 lg:col-span-2">
                   <p className="text-xs font-bold leading-relaxed text-slate-500 dark:text-slate-400">
@@ -3322,55 +3448,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
               {orderKind === 'project' && !isGuestSiteOrder ? (
                 <div className="flex flex-col gap-4">
-                  {isAgentOrCooperative ? (
-                    <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3">
-                      <p className="text-xs font-black text-amber-900">代理発注モード</p>
-                      <p className="text-xs text-amber-700 mt-0.5">
-                        {currentCustomerRole === 'agent' ? '商社' : '組合'}として発注しています。
-                        発注先の業者を選択してください。
-                      </p>
-                      <div className="mt-3">
-                        <MasterSuggestInput
-                          label="発注先業者"
-                          htmlFor="contractor-customer-select"
-                          name="contractor_customer"
-                          value={contractorSearchText}
-                          placeholder="業者名を入力して候補から選択"
-                          items={(customers || []).filter((c) => (c.role ?? 'contractor') === 'contractor')}
-                          getItemKey={(c) => String(c.id)}
-                          getItemLabel={(c) => String(c.company_name || c.name || '').trim()}
-                          getSearchTexts={(c) => [
-                            c.company_name || c.name || '',
-                            c.furigana || '',
-                            c.manager_name || '',
-                          ]}
-                          onValueChange={(text) => {
-                            setContractorSearchText(text);
-                            const hit = (customers || []).find(
-                              (c) =>
-                                (c.role ?? 'contractor') === 'contractor' &&
-                                String(c.company_name || c.name || '')
-                                  .trim()
-                                  .toLowerCase() === text.trim().toLowerCase(),
-                            );
-                            if (hit) setContractorCustomerId(String(hit.id));
-                            else setContractorCustomerId('');
-                            setSelectedProjectId('');
-                            lastAutofillProjectIdRef.current = '';
-                            applyProjectSelection(null);
-                          }}
-                          onSelect={(c) => {
-                            setContractorCustomerId(String(c.id));
-                            setContractorSearchText(String(c.company_name || c.name || '').trim());
-                            setSelectedProjectId('');
-                            lastAutofillProjectIdRef.current = '';
-                            applyProjectSelection(null);
-                          }}
-                          emptyHint="該当する業者がありません"
-                        />
-                      </div>
-                    </div>
-                  ) : null}
                   {!isAgentOrCooperative ? (
                   <MasterSuggestInput
                     label="業者（会社）"
@@ -3458,10 +3535,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
                       ログイン中の業者情報を確認できません。再ログインするか、上の欄で業者を選択してください。
                     </p>
-                  ) : isAgentOrCooperative && !contractorCustomerId ? (
-                    <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
-                      発注先の業者を選択してください。
-                    </p>
                   ) : filteredProjects.length === 0 ? (
                     <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
                       この業者に紐づく物件がありません。管理画面で物件に業者（会社）を設定するか、スポット注文を選んでください。
@@ -3493,9 +3566,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           urlToken={selectedProject.url_token}
                           siteName={selectedProject.name}
                           customerName={currentCustomerDisplayName}
-                          traderName={
-                            selectedProject.trading_company_name || selectedProject.trading_company || ''
-                          }
+                          traderName={resolveProjectTradingCompanyName(selectedProject)}
                           project={selectedProject}
                           customer={currentCustomer}
                           compact
@@ -3508,6 +3579,19 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
               {orderKind === 'spot' ? (
                 <>
+                  {isAgentOrCooperative && !contractorCustomerId ? (
+                    <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
+                      先に発注先業者を選択してください。
+                    </p>
+                  ) : null}
+                  <div
+                    className={
+                      isAgentOrCooperative && !contractorCustomerId
+                        ? 'flex flex-col gap-6 pointer-events-none opacity-60'
+                        : 'flex flex-col gap-6'
+                    }
+                    aria-disabled={isAgentOrCooperative && !contractorCustomerId ? true : undefined}
+                  >
                   <div className="flex flex-col gap-3">
                     <Label htmlFor={orderFieldId('site-name')}>現場名</Label>
                     <p className="text-xs leading-relaxed text-slate-500">
@@ -3594,6 +3678,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         </span>
                       </label>
                     </div>
+                  </div>
                   </div>
                 </>
               ) : null}
@@ -3900,25 +3985,52 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </div>
 
               <div className="flex flex-col gap-3">
-                <Label htmlFor={orderFieldId('ordered-by')}>発注担当者名</Label>
-                <p className="text-xs leading-relaxed text-slate-500">当日連絡が取れる担当者名を自由入力してください（例：山田、佐藤）。</p>
-                <input
-                  id={orderFieldId('ordered-by')}
-                  name={orderFieldName('ordered_by')}
-                  type="text"
-                  autoComplete="name"
-                  placeholder="例：山田"
-                  value={orderedBy}
-                  onChange={(e) => {
-                    setOrderedBy(e.target.value);
-                    setSubmitError('');
-                  }}
-                  className="min-h-[56px] w-full rounded-xl border-2 border-slate-200 px-4 py-3 text-base font-semibold text-slate-900 placeholder:text-slate-400 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
-                />
+                <Label htmlFor={orderFieldId('order-placer')}>発注担当者</Label>
+                <p className="text-xs leading-relaxed text-slate-500">
+                  ログイン中の担当者名が自動で設定されます（代理発注の場合は商社・組合の担当者名）。
+                </p>
+                <div
+                  id={orderFieldId('order-placer')}
+                  className="min-h-[56px] w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-base font-semibold text-slate-900"
+                >
+                  {orderPlacerName || '—'}
+                </div>
               </div>
 
+              {orderKind === 'project' ? (
+                <div className="flex flex-col gap-3">
+                  <MasterSuggestInput
+                    label="現場担当者"
+                    htmlFor={orderFieldId('site-contact')}
+                    name={orderFieldName('site_contact_name')}
+                    value={siteContactName}
+                    onValueChange={(next) => {
+                      setSiteContactName(next);
+                      setSubmitError('');
+                    }}
+                    items={siteContacts}
+                    getItemKey={(c) => String(c.id)}
+                    getItemLabel={(c) => String(c.name || '').trim()}
+                    getSearchTexts={(c) => [c.name, c.phone_number]}
+                    onSelect={(c) => {
+                      setSiteContactName(String(c?.name || '').trim());
+                      setSitePhone(String(c?.phone_number || '').trim());
+                      setSubmitError('');
+                    }}
+                    placeholder="現場担当者名を入力（候補から選択可）"
+                    emptyHint="登録された現場担当者がいません（自由入力もできます）"
+                    inputClassName="min-h-[56px] rounded-xl border-2 border-slate-200 px-4 py-3 text-base"
+                  />
+                  <p className="text-xs leading-relaxed text-slate-500">
+                    業者に登録された現場担当者から選ぶと、電話番号が自動入力されます。
+                  </p>
+                </div>
+              ) : null}
+
               <div className="flex flex-col gap-3">
-                <Label htmlFor={orderFieldId('site-phone')}>電話番号</Label>
+                <Label htmlFor={orderFieldId('site-phone')}>
+                  {orderKind === 'project' ? '現場電話番号' : '電話番号'}
+                </Label>
                 <input
                   id={orderFieldId('site-phone')}
                   name={orderKind === 'spot' ? 'spot_phone' : 'phone'}
@@ -4112,7 +4224,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                             <dd className="min-w-0 flex-1 break-words text-slate-900">{row.site || '—'}</dd>
                           </div>
                           <div className="flex gap-2">
-                            <dt className="w-20 shrink-0 text-slate-400">担当者</dt>
+                            <dt className="w-20 shrink-0 text-slate-400">現場担当</dt>
                             <dd className="min-w-0 flex-1 break-words">{row.orderedBy || '—'}</dd>
                           </div>
                           <div className="flex gap-2">
