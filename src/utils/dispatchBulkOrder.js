@@ -422,7 +422,13 @@ export function validateMultiDateOrderForm(context, dates, { today, isPastPrefer
   if (context.isAgentOrCooperative && !String(context.contractorCustomerId || '').trim()) {
     missing.push('発注先業者');
   }
-  if (!isGuestSiteOrder && !String(context.contractorName || '').trim()) missing.push('業者（下請）');
+  if (!isGuestSiteOrder) {
+    if (context.orderKind === 'project') {
+      if (!String(context.contractorName || '').trim()) missing.push('業者');
+    } else if (!String(context.contractorName || '').trim()) {
+      missing.push('業者（下請）');
+    }
+  }
   if (!String(context.sitePhone || '').trim()) missing.push('電話番号');
   if (!String(context.quantityM3 || '').trim()) missing.push('数量（m³）');
   if (

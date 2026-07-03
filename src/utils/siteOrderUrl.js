@@ -4,6 +4,7 @@ import {
   normalizeAllowedDeliveryAreas,
 } from './deliveryAreas.js';
 import { resolveProjectTradingCompanyName } from './projectTradingCompany.js';
+import { resolveProjectSubContractorName } from './projectContractorLabel.js';
 import { isValidSiteOrderUrlToken } from './urlValidation.js';
 
 /** パス /order/:token または /guest-order/:token からトークンを取得 */
@@ -78,7 +79,7 @@ export function resolveGuestOrderLockedFields(siteOrderContext, allowedAreasInpu
 
   const subContractorName =
     readPartyField(parties, 'sub_contractor_name', 'subContractorName') ||
-    String(project?.sub_contractor_name ?? project?.contractor ?? '').trim();
+    resolveProjectSubContractorName(project);
 
   const traderNameRaw =
     readPartyField(parties, 'trading_company_name', 'tradingCompanyName') ||

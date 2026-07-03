@@ -48,6 +48,10 @@ import { buildMapEditorUrl, rememberMapEditorReturnUrl } from './mapEditorConsta
 import { combineDeliveryAddress, extractProjectAddressFields, normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
 import { resolveProjectTradingCompanyName } from './utils/projectTradingCompany.js';
 import {
+  resolveContractorDisplayName,
+  resolveProjectContractorLabels,
+} from './utils/projectContractorLabel.js';
+import {
   fetchTownLocationsForMunicipality,
   findTownLocation,
   resolveDeliveryPrefecture,
@@ -234,7 +238,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
     function orderPartyInfo(order) {
       const tradingCompany = String(order?.trading_company_name ?? order?.projectTradingCompanyName ?? order?.projectTradingCompany ?? order?.tradingCompanyName ?? order?.traderName ?? '').trim();
-      const contractor = String(order?.customerName ?? order?.customer_name ?? order?.contractorName ?? order?.contractor_name ?? order?.displayContractorName ?? order?.contractorName ?? '').trim();
+      const contractor = String(
+        order?.contractorName ??
+          order?.contractor_name ??
+          order?.displayContractorName ??
+          order?.customerName ??
+          order?.customer_name ??
+          '',
+      ).trim();
       const contractorBase = contractor || String(order?.contractorName ?? '').trim();
       const site = resolveOrderSiteDisplayName(order);
       const orderedBy = String(
@@ -1206,6 +1217,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [unloadDuration, setUnloadDuration] = useState('30');
       const [traderName, setTraderName] = useState('');
       const [contractorName, setContractorName] = useState('');
+      const [contractorDisplayMode, setContractorDisplayMode] = useState('prime');
+      const [contractorDisplayCustomText, setContractorDisplayCustomText] = useState('');
       const [siteName, setSiteName] = useState('');
       const [deliveryArea, setDeliveryArea] = useState('');
       const [siteAddressDetail, setSiteAddressDetail] = useState('');
@@ -1345,8 +1358,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           setSiteAddressDetail(detail);
           const trader = resolveProjectTradingCompanyName(project);
           if (trader) setTraderName(trader);
-          const subName = String(project.sub_contractor_name || project.contractor || '').trim();
-          if (subName) setContractorName(subName);
           if (project.name) setSiteName(sanitizeSiteNameValue(project.name));
           const mainFactoryId = resolveProjectMainFactoryId(project);
           if (mainFactoryId) setPreferredFactoryId(mainFactoryId);
@@ -1486,6 +1497,40 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         },
         [isGuestSiteOrder, guestSiteOrderCtx, isOrderForCurrentCustomer],
       );
+      const projectContractorLabels = useMemo(() => {
+        if (!selectedProject || isGuestSiteOrder) {
+          return { primeContractorName: '', subContractorName: '' };
+        }
+        return resolveProjectContractorLabels(selectedProject, customers, {
+          contractorCustomer: isAgentOrCooperative ? contractorCustomer : null,
+        });
+      }, [selectedProject, customers, isGuestSiteOrder, isAgentOrCooperative, contractorCustomer]);
+
+      const effectiveContractorName = useMemo(() => {
+        if (orderKind === 'project' && !isGuestSiteOrder && selectedProject) {
+          return resolveContractorDisplayName(
+            contractorDisplayMode,
+            contractorDisplayCustomText,
+            projectContractorLabels,
+          );
+        }
+        return String(contractorName || '').trim();
+      }, [
+        orderKind,
+        isGuestSiteOrder,
+        selectedProject,
+        contractorDisplayMode,
+        contractorDisplayCustomText,
+        projectContractorLabels,
+        contractorName,
+      ]);
+
+      useEffect(() => {
+        if (orderKind !== 'project' || isGuestSiteOrder) return;
+        setContractorDisplayMode('prime');
+        setContractorDisplayCustomText('');
+      }, [selectedProjectId, orderKind, isGuestSiteOrder]);
+
       const filteredProjects = useMemo(() => {
         const targetCustomerId = isAgentOrCooperative ? contractorCustomerId : currentCustomerId;
         if (!targetCustomerId) return [];
@@ -2668,7 +2713,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           preferredFactoryId,
           factories,
           traderName,
-          contractorName,
+          contractorName: effectiveContractorName,
           siteName,
           siteAddress,
           deliveryArea,
@@ -2703,7 +2748,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           preferredFactoryId,
           factories,
           traderName,
-          contractorName,
+          effectiveContractorName,
           siteName,
           siteAddress,
           deliveryArea,
@@ -2743,6 +2788,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setUnloadDuration('30');
         setTraderName('');
         setContractorName('');
+        setContractorDisplayMode('prime');
+        setContractorDisplayCustomText('');
         setMixText('');
         setSiteName('');
         setDeliveryArea('');
@@ -3558,6 +3605,79 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     </div>
                   ) : null}
                   {selectedProject ? (
+                    <div className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-600 dark:bg-slate-900/40">
+                      <p className="text-xs font-black text-slate-600 dark:text-slate-300">業者（帳票・表示用）</p>
+                      <fieldset className="mt-2 space-y-2">
+                        <legend className="sr-only">業者名の表示</legend>
+                        <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm has-[:checked]:border-indigo-500 has-[:checked]:bg-indigo-50 dark:border-slate-600 dark:has-[:checked]:bg-indigo-950/40">
+                          <input
+                            type="radio"
+                            name={orderFieldName('contractor_display_mode')}
+                            value="prime"
+                            checked={contractorDisplayMode === 'prime'}
+                            onChange={() => {
+                              setContractorDisplayMode('prime');
+                              setSubmitError('');
+                            }}
+                            className="mt-0.5"
+                          />
+                          <span>
+                            元請
+                            {projectContractorLabels.primeContractorName
+                              ? `（${projectContractorLabels.primeContractorName}）`
+                              : '（未設定）'}
+                          </span>
+                        </label>
+                        {projectContractorLabels.subContractorName ? (
+                          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm has-[:checked]:border-indigo-500 has-[:checked]:bg-indigo-50 dark:border-slate-600 dark:has-[:checked]:bg-indigo-950/40">
+                            <input
+                              type="radio"
+                              name={orderFieldName('contractor_display_mode')}
+                              value="sub"
+                              checked={contractorDisplayMode === 'sub'}
+                              onChange={() => {
+                                setContractorDisplayMode('sub');
+                                setSubmitError('');
+                              }}
+                              className="mt-0.5"
+                            />
+                            <span>下請（{projectContractorLabels.subContractorName}）</span>
+                          </label>
+                        ) : null}
+                        <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm has-[:checked]:border-indigo-500 has-[:checked]:bg-indigo-50 dark:border-slate-600 dark:has-[:checked]:bg-indigo-950/40">
+                          <input
+                            type="radio"
+                            name={orderFieldName('contractor_display_mode')}
+                            value="custom"
+                            checked={contractorDisplayMode === 'custom'}
+                            onChange={() => {
+                              setContractorDisplayMode('custom');
+                              setSubmitError('');
+                            }}
+                            className="mt-0.5"
+                          />
+                          <span>自由入力</span>
+                        </label>
+                        {contractorDisplayMode === 'custom' ? (
+                          <input
+                            type="text"
+                            name={orderFieldName('contractor_display_custom')}
+                            value={contractorDisplayCustomText}
+                            onChange={(e) => {
+                              setContractorDisplayCustomText(e.target.value);
+                              setSubmitError('');
+                            }}
+                            placeholder="表示する業者名を入力"
+                            className="min-h-[44px] w-full rounded-lg border-2 border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:border-slate-600 dark:bg-slate-900"
+                          />
+                        ) : null}
+                      </fieldset>
+                      <p className="mt-2 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                        請求・ログイン紐付けは変わりません。帳票や工場画面に表示する業者名のみ切り替えます。
+                      </p>
+                    </div>
+                  ) : null}
+                  {selectedProject ? (
                     <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                       <p className="text-xs font-black text-slate-600">物件リンク</p>
                       <div className="mt-2 grid gap-2">
@@ -3863,24 +3983,26 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     autoComplete="organization"
                   />
 
-                  <MasterSuggestInput
-                    label="業者（下請・現場名義など）"
-                    name={orderFieldName('contractor_name')}
-                    value={contractorName}
-                    onValueChange={(v) => {
-                      setContractorName(v);
-                      setSubmitError('');
-                    }}
-                    items={MASTER_CONTRACTOR_SUGGESTIONS}
-                    getItemKey={(s) => s}
-                    getItemLabel={(s) => s}
-                    onSelect={(s) => {
-                      setContractorName(s);
-                      setSubmitError('');
-                    }}
-                    placeholder="例：佐藤建設（入力すると候補が表示されます）"
-                    autoComplete="off"
-                  />
+                  {orderKind === 'spot' ? (
+                    <MasterSuggestInput
+                      label="業者（下請・現場名義など）"
+                      name={orderFieldName('contractor_name')}
+                      value={contractorName}
+                      onValueChange={(v) => {
+                        setContractorName(v);
+                        setSubmitError('');
+                      }}
+                      items={MASTER_CONTRACTOR_SUGGESTIONS}
+                      getItemKey={(s) => s}
+                      getItemLabel={(s) => s}
+                      onSelect={(s) => {
+                        setContractorName(s);
+                        setSubmitError('');
+                      }}
+                      placeholder="例：佐藤建設（入力すると候補が表示されます）"
+                      autoComplete="off"
+                    />
+                  ) : null}
                 </>
               ) : null}
 

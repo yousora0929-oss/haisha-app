@@ -426,7 +426,14 @@ function isUnreadForFactory(messages, readKey) {
 
 function orderPartyInfo(order) {
   const tradingCompany = String(order?.trading_company_name ?? order?.projectTradingCompanyName ?? order?.projectTradingCompany ?? order?.tradingCompanyName ?? order?.traderName ?? '').trim();
-  const contractor = String(order?.customerName ?? order?.customer_name ?? order?.contractorName ?? order?.contractor_name ?? order?.displayContractorName ?? '').trim();
+  const contractor = String(
+    order?.contractorName ??
+      order?.contractor_name ??
+      order?.displayContractorName ??
+      order?.customerName ??
+      order?.customer_name ??
+      '',
+  ).trim();
   const site = resolveOrderSiteDisplayName(order);
   const orderedBy = String(order?.ordered_by ?? order?.orderedBy ?? '').trim();
   const phone = String(order?.sitePhone ?? order?.phone ?? '').trim();
