@@ -3846,3 +3846,592 @@ export async function saveEscalationDistanceWeight(weight) {
     .upsert({ id: 1, distance_weight: w, updated_at: new Date().toISOString() });
   if (error) throw error;
 }
+
+function mapCharterVehicleRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    id: row.id != null ? String(row.id) : '',
+    owner_type: String(row.owner_type ?? ''),
+    owner_id: String(row.owner_id ?? ''),
+    vehicle_type: row.vehicle_type === 'small' ? 'small' : 'large',
+    vehicle_number: row.vehicle_number != null ? String(row.vehicle_number) : '',
+    door_number: row.door_number != null ? String(row.door_number) : '',
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+/** チャーター車両一覧（owner_type + owner_id で絞り込み） */
+export async function fetchCharterVehicles(ownerType, ownerId) {
+  const type = String(ownerType || '').trim();
+  const oid = String(ownerId || '').trim();
+  if (!type || !oid) return [];
+  if (!supabase?.from) {
+    console.warn('[fetchCharterVehicles] Supabase client is not ready');
+    return [];
+  }
+  try {
+    const { data, error } = await supabase
+      .from('charter_vehicles')
+      .select('id, owner_type, owner_id, vehicle_type, vehicle_number, door_number, created_at, updated_at')
+      .eq('owner_type', type)
+      .eq('owner_id', oid)
+      .order('created_at', { ascending: true });
+    if (error) {
+      console.warn('[fetchCharterVehicles] failed', error);
+      return [];
+    }
+    return (data || []).map(mapCharterVehicleRow).filter(Boolean);
+  } catch (err) {
+    console.warn('[fetchCharterVehicles] failed', err);
+    return [];
+  }
+}
+
+/** チャーター車両の登録・更新 */
+export async function saveCharterVehicle(vehicle) {
+  const v = vehicle && typeof vehicle === 'object' ? vehicle : {};
+  const ownerType = String(v.owner_type ?? v.ownerType ?? '').trim();
+  const ownerId = String(v.owner_id ?? v.ownerId ?? '').trim();
+  const vehicleType = v.vehicle_type === 'small' || v.vehicleType === 'small' ? 'small' : 'large';
+  const vehicleNumber = String(v.vehicle_number ?? v.vehicleNumber ?? '').trim() || null;
+  const doorNumber = String(v.door_number ?? v.doorNumber ?? '').trim() || null;
+
+  if (!ownerType || !ownerId) throw new Error('owner_type と owner_id が必要です');
+  if (!supabase?.from) throw new Error('Supabase クライアントが初期化されていません');
+
+  const row = {
+    owner_type: ownerType,
+    owner_id: ownerId,
+    vehicle_type: vehicleType,
+    vehicle_number: vehicleNumber,
+    door_number: doorNumber,
+    updated_at: new Date().toISOString(),
+  };
+
+  const id = sanitizeRefId(v.id);
+  if (id) {
+    const { data, error } = await supabase.from('charter_vehicles').update(row).eq('id', id).select('*').single();
+    if (error) throw error;
+    return mapCharterVehicleRow(data);
+  }
+
+  const { data, error } = await supabase.from('charter_vehicles').insert(row).select('*').single();
+  if (error) throw error;
+  return mapCharterVehicleRow(data);
+}
+
+/** チャーター車両の削除 */
+export async function deleteCharterVehicle(vehicleId) {
+  const id = sanitizeRefId(vehicleId);
+  if (!id) throw new Error('vehicleId が必要です');
+  if (!supabase?.from) throw new Error('Supabase クライアントが初期化されていません');
+  const { error } = await supabase.from('charter_vehicles').delete().eq('id', id);
+  if (error) throw error;
+}
+
+/** 個人チャーター業者ログイン */
+export async function loginCharter(charterId, password) {
+  const id = String(charterId || '').trim();
+  const pass = String(password || '').trim();
+  if (!id || !pass) return null;
+
+  const { data, error } = await supabase.rpc('login_charter', {
+    p_id: id,
+    p_password: pass,
+  });
+  if (error) throw error;
+
+  const row = typeof data === 'string' ? JSON.parse(data) : data;
+  if (!row?.id) return null;
+  return {
+    id: String(row.id),
+    company_name: String(row.company_name ?? ''),
+    contact_name: row.contact_name != null ? String(row.contact_name) : '',
+    phone: row.phone != null ? String(row.phone) : '',
+  };
+}
+
+function mapCharterRequestRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const id = sanitizeRefId(row.id);
+  if (!id) return null;
+  const desiredCount = Number(row.desired_count);
+  return {
+    id,
+    requesting_factory_id: String(row.requesting_factory_id ?? ''),
+    request_date: row.request_date != null ? String(row.request_date).slice(0, 10) : '',
+    vehicle_type: row.vehicle_type === 'small' ? 'small' : 'large',
+    desired_count: Number.isFinite(desiredCount) && desiredCount > 0 ? Math.floor(desiredCount) : 1,
+    note: row.note != null ? String(row.note) : '',
+    status: String(row.status || 'open'),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+function mapCharterNotificationPreferenceRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    id: row.id != null ? String(row.id) : '',
+    factory_id: String(row.factory_id ?? ''),
+    target_type: row.target_type === 'charter_operator' ? 'charter_operator' : 'factory',
+    target_id: String(row.target_id ?? ''),
+    priority_order: Number(row.priority_order) || 0,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export function charterNotificationTargetKey(target) {
+  const type = target?.target_type === 'charter_operator' ? 'charter_operator' : 'factory';
+  const id = String(target?.target_id ?? '').trim();
+  return `${type}:${id}`;
+}
+
+/** 自工場のチャーター募集一覧（request_date 降順） */
+export async function fetchCharterRequests(factoryId) {
+  const fid = String(factoryId || '').trim();
+  if (!fid) return [];
+  if (!supabase?.from) {
+    console.warn('[fetchCharterRequests] Supabase client is not ready');
+    return [];
+  }
+  try {
+    const { data, error } = await supabase
+      .from('charter_requests')
+      .select(
+        'id, requesting_factory_id, request_date, vehicle_type, desired_count, note, status, created_at, updated_at',
+      )
+      .eq('requesting_factory_id', fid)
+      .order('request_date', { ascending: false })
+      .order('created_at', { ascending: false });
+    if (error) {
+      console.warn('[fetchCharterRequests] failed', error);
+      return [];
+    }
+    return (data || []).map(mapCharterRequestRow).filter(Boolean);
+  } catch (err) {
+    console.warn('[fetchCharterRequests] failed', err);
+    return [];
+  }
+}
+
+/** チャーター募集の登録・更新 */
+export async function saveCharterRequest(request) {
+  const r = request && typeof request === 'object' ? request : {};
+  const factoryId = String(r.requesting_factory_id ?? r.requestingFactoryId ?? '').trim();
+  const requestDate = String(r.request_date ?? r.requestDate ?? '').trim();
+  const vehicleType = r.vehicle_type === 'small' || r.vehicleType === 'small' ? 'small' : 'large';
+  const desiredCount = Math.max(1, parseInt(r.desired_count ?? r.desiredCount, 10) || 1);
+  const note = String(r.note ?? '').trim() || null;
+
+  if (!factoryId) throw new Error('requesting_factory_id が必要です');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(requestDate)) throw new Error('request_date が不正です');
+  if (!supabase?.from) throw new Error('Supabase クライアントが初期化されていません');
+
+  const row = {
+    requesting_factory_id: factoryId,
+    request_date: requestDate,
+    vehicle_type: vehicleType,
+    desired_count: desiredCount,
+    note,
+    updated_at: new Date().toISOString(),
+  };
+
+  const id = sanitizeRefId(r.id);
+  if (id) {
+    const { data, error } = await supabase.from('charter_requests').update(row).eq('id', id).select('*').single();
+    if (error) throw error;
+    return mapCharterRequestRow(data);
+  }
+
+  const { data, error } = await supabase
+    .from('charter_requests')
+    .insert({ ...row, status: 'open' })
+    .select('*')
+    .single();
+  if (error) throw error;
+  return mapCharterRequestRow(data);
+}
+
+/** チャーター募集を取消（status: cancelled） */
+export async function cancelCharterRequest(requestId) {
+  const id = sanitizeRefId(requestId);
+  if (!id) throw new Error('requestId が必要です');
+  if (!supabase?.from) throw new Error('Supabase クライアントが初期化されていません');
+  const { data, error } = await supabase
+    .from('charter_requests')
+    .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return mapCharterRequestRow(data);
+}
+
+/** 通知優先リストの候補（他工場 + active チャーター業者） */
+export async function fetchCharterNotificationTargetsCandidates(factoryId) {
+  const fid = String(factoryId || '').trim();
+  const out = [];
+  if (!supabase?.from) {
+    console.warn('[fetchCharterNotificationTargetsCandidates] Supabase client is not ready');
+    return out;
+  }
+
+  try {
+    const { data: factoryRows, error: factoryError } = await supabase
+      .from('factories')
+      .select('id, name')
+      .order('name', { ascending: true });
+    if (factoryError) {
+      console.warn('[fetchCharterNotificationTargetsCandidates] factories failed', factoryError);
+    } else {
+      for (const row of factoryRows || []) {
+        const id = String(row?.id ?? '').trim();
+        if (!id || id === fid) continue;
+        out.push({
+          target_type: 'factory',
+          target_id: id,
+          name: String(row?.name || id).trim(),
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('[fetchCharterNotificationTargetsCandidates] factories failed', err);
+  }
+
+  try {
+    const { data: operatorRows, error: operatorError } = await supabase
+      .from('charter_operators')
+      .select('id, company_name')
+      .eq('status', 'active')
+      .order('company_name', { ascending: true });
+    if (operatorError) {
+      console.warn('[fetchCharterNotificationTargetsCandidates] charter_operators failed', operatorError);
+    } else {
+      for (const row of operatorRows || []) {
+        const id = String(row?.id ?? '').trim();
+        if (!id) continue;
+        out.push({
+          target_type: 'charter_operator',
+          target_id: id,
+          name: String(row?.company_name || id).trim(),
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('[fetchCharterNotificationTargetsCandidates] charter_operators failed', err);
+  }
+
+  return out;
+}
+
+/** 保存済みの通知優先順位（priority_order 昇順） */
+export async function fetchCharterNotificationPreferences(factoryId) {
+  const fid = String(factoryId || '').trim();
+  if (!fid) return [];
+  if (!supabase?.from) {
+    console.warn('[fetchCharterNotificationPreferences] Supabase client is not ready');
+    return [];
+  }
+  try {
+    const { data, error } = await supabase
+      .from('charter_notification_preferences')
+      .select('id, factory_id, target_type, target_id, priority_order, created_at, updated_at')
+      .eq('factory_id', fid)
+      .order('priority_order', { ascending: true });
+    if (error) {
+      console.warn('[fetchCharterNotificationPreferences] failed', error);
+      return [];
+    }
+    return (data || []).map(mapCharterNotificationPreferenceRow).filter(Boolean);
+  } catch (err) {
+    console.warn('[fetchCharterNotificationPreferences] failed', err);
+    return [];
+  }
+}
+
+/** 通知優先順位を全削除→一括 insert */
+export async function saveCharterNotificationPreferences(factoryId, orderedTargets) {
+  const fid = sanitizeRefId(factoryId);
+  if (!fid) throw new Error('factoryId が必要です');
+  if (!supabase?.from) throw new Error('Supabase クライアントが初期化されていません');
+
+  const list = Array.isArray(orderedTargets) ? orderedTargets.filter(Boolean) : [];
+
+  const { error: deleteError } = await supabase
+    .from('charter_notification_preferences')
+    .delete()
+    .eq('factory_id', fid);
+  if (deleteError) throw deleteError;
+
+  if (list.length === 0) return [];
+
+  const now = new Date().toISOString();
+  const rows = list.map((target, index) => ({
+    factory_id: fid,
+    target_type: target.target_type === 'charter_operator' ? 'charter_operator' : 'factory',
+    target_id: String(target.target_id ?? '').trim(),
+    priority_order: index,
+    updated_at: now,
+  }));
+
+  const { data, error: insertError } = await supabase
+    .from('charter_notification_preferences')
+    .insert(rows)
+    .select('id, factory_id, target_type, target_id, priority_order, created_at, updated_at');
+  if (insertError) throw insertError;
+  return (data || []).map(mapCharterNotificationPreferenceRow).filter(Boolean);
+}
+
+function mapCharterResponseRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const id = sanitizeRefId(row.id);
+  if (!id) return null;
+  const offeredCount = Number(row.offered_count);
+  return {
+    id,
+    request_id: sanitizeRefId(row.request_id) || '',
+    responder_type: row.responder_type === 'charter_operator' ? 'charter_operator' : 'factory',
+    responder_id: String(row.responder_id ?? ''),
+    offered_count: Number.isFinite(offeredCount) && offeredCount > 0 ? Math.floor(offeredCount) : 1,
+    message: row.message != null ? String(row.message) : '',
+    status: String(row.status || 'offered'),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+/** チャーター業者ID → 会社名（応答一覧表示用） */
+export async function fetchCharterOperatorCompanyNames(operatorIds) {
+  const ids = [...new Set((operatorIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length || !supabase?.from) return {};
+  try {
+    const { data, error } = await supabase
+      .from('charter_operators')
+      .select('id, company_name')
+      .in('id', ids);
+    if (error) {
+      console.warn('[fetchCharterOperatorCompanyNames] failed', error);
+      return {};
+    }
+    const out = {};
+    for (const row of data || []) {
+      const id = String(row.id ?? '').trim();
+      if (id) out[id] = String(row.company_name ?? id);
+    }
+    return out;
+  } catch (err) {
+    console.warn('[fetchCharterOperatorCompanyNames] failed', err);
+    return {};
+  }
+}
+
+/** 応答対象となる open 募集（RLS で自分宛のみ） */
+export async function fetchOpenCharterRequestsForResponder(responderType, responderId) {
+  void responderType;
+  void responderId;
+  if (!supabase?.from) {
+    console.warn('[fetchOpenCharterRequestsForResponder] Supabase client is not ready');
+    return [];
+  }
+  try {
+    const { data, error } = await supabase
+      .from('charter_requests')
+      .select(
+        'id, requesting_factory_id, request_date, vehicle_type, desired_count, note, status, created_at, updated_at',
+      )
+      .eq('status', 'open')
+      .order('request_date', { ascending: true })
+      .order('created_at', { ascending: true });
+    if (error) {
+      console.warn('[fetchOpenCharterRequestsForResponder] failed', error);
+      return [];
+    }
+    const requests = (data || []).map(mapCharterRequestRow).filter(Boolean);
+    if (!requests.length) return [];
+
+    const factories = await fetchFactories();
+    const nameById = Object.fromEntries((factories || []).map((f) => [String(f.id), String(f.name || f.id)]));
+    return requests.map((r) => ({
+      ...r,
+      requesting_factory_name: nameById[r.requesting_factory_id] || r.requesting_factory_id,
+    }));
+  } catch (err) {
+    console.warn('[fetchOpenCharterRequestsForResponder] failed', err);
+    return [];
+  }
+}
+
+/** 自分が送った応答一覧 */
+export async function fetchMyCharterResponses(responderType, responderId) {
+  const type = responderType === 'charter_operator' ? 'charter_operator' : 'factory';
+  const rid = String(responderId || '').trim();
+  if (!rid) return [];
+  if (!supabase?.from) {
+    console.warn('[fetchMyCharterResponses] Supabase client is not ready');
+    return [];
+  }
+  try {
+    const { data, error } = await supabase
+      .from('charter_responses')
+      .select(
+        'id, request_id, responder_type, responder_id, offered_count, message, status, created_at, updated_at',
+      )
+      .eq('responder_type', type)
+      .eq('responder_id', rid)
+      .order('created_at', { ascending: false });
+    if (error) {
+      console.warn('[fetchMyCharterResponses] failed', error);
+      return [];
+    }
+    return (data || []).map(mapCharterResponseRow).filter(Boolean);
+  } catch (err) {
+    console.warn('[fetchMyCharterResponses] failed', err);
+    return [];
+  }
+}
+
+/** 応答の送信（新規 or 更新） */
+export async function submitCharterResponse({ requestId, responderType, responderId, offeredCount, message }) {
+  const reqId = sanitizeRefId(requestId);
+  const type = responderType === 'charter_operator' ? 'charter_operator' : 'factory';
+  const rid = String(responderId || '').trim();
+  const count = Math.max(1, parseInt(offeredCount, 10) || 1);
+  const msg = String(message ?? '').trim() || null;
+
+  if (!reqId) throw new Error('requestId が必要です');
+  if (!rid) throw new Error('responderId が必要です');
+  if (!supabase?.from) throw new Error('Supabase クライアントが初期化されていません');
+
+  const now = new Date().toISOString();
+  const row = {
+    request_id: reqId,
+    responder_type: type,
+    responder_id: rid,
+    offered_count: count,
+    message: msg,
+    status: 'offered',
+    updated_at: now,
+  };
+
+  const { data, error } = await supabase
+    .from('charter_responses')
+    .upsert(row, { onConflict: 'request_id,responder_type,responder_id' })
+    .select(
+      'id, request_id, responder_type, responder_id, offered_count, message, status, created_at, updated_at',
+    )
+    .single();
+  if (error) throw error;
+  return mapCharterResponseRow(data);
+}
+
+/** 応答の取り下げ */
+export async function withdrawCharterResponse(responseId) {
+  const id = sanitizeRefId(responseId);
+  if (!id) throw new Error('responseId が必要です');
+  if (!supabase?.from) throw new Error('Supabase クライアントが初期化されていません');
+  const { data, error } = await supabase
+    .from('charter_responses')
+    .update({ status: 'withdrawn', updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select(
+      'id, request_id, responder_type, responder_id, offered_count, message, status, created_at, updated_at',
+    )
+    .single();
+  if (error) throw error;
+  return mapCharterResponseRow(data);
+}
+
+/** 募集元工場が自分の募集への応答一覧を閲覧 */
+export async function fetchCharterResponsesForRequest(requestId) {
+  const id = sanitizeRefId(requestId);
+  if (!id) return [];
+  if (!supabase?.from) {
+    console.warn('[fetchCharterResponsesForRequest] Supabase client is not ready');
+    return [];
+  }
+  try {
+    const { data, error } = await supabase
+      .from('charter_responses')
+      .select(
+        'id, request_id, responder_type, responder_id, offered_count, message, status, created_at, updated_at',
+      )
+      .eq('request_id', id)
+      .order('created_at', { ascending: true });
+    if (error) {
+      console.warn('[fetchCharterResponsesForRequest] failed', error);
+      return [];
+    }
+    return (data || []).map(mapCharterResponseRow).filter(Boolean);
+  } catch (err) {
+    console.warn('[fetchCharterResponsesForRequest] failed', err);
+    return [];
+  }
+}
+
+/** 募集の確定進捗（accepted 合計 / 希望台数） */
+export async function fetchCharterRequestProgress(requestId) {
+  const id = sanitizeRefId(requestId);
+  if (!id) return { acceptedTotal: 0, desiredCount: 0, remaining: 0 };
+  if (!supabase?.rpc || !supabase?.from) {
+    return { acceptedTotal: 0, desiredCount: 0, remaining: 0 };
+  }
+  try {
+    const [{ data: acceptedRaw, error: acceptedError }, { data: requestRow, error: requestError }] =
+      await Promise.all([
+        supabase.rpc('charter_request_accepted_count', { p_request_id: id }),
+        supabase.from('charter_requests').select('desired_count').eq('id', id).maybeSingle(),
+      ]);
+    if (acceptedError) throw acceptedError;
+    if (requestError) throw requestError;
+    const acceptedTotal = Math.max(0, Number(acceptedRaw) || 0);
+    const desiredCount = Math.max(0, Number(requestRow?.desired_count) || 0);
+    const remaining = Math.max(0, desiredCount - acceptedTotal);
+    return { acceptedTotal, desiredCount, remaining };
+  } catch (err) {
+    console.warn('[fetchCharterRequestProgress] failed', err);
+    return { acceptedTotal: 0, desiredCount: 0, remaining: 0 };
+  }
+}
+
+/** 募集元工場が応答を確定（confirm_charter_response RPC） */
+export async function confirmCharterResponse(responseId) {
+  const id = sanitizeRefId(responseId);
+  if (!id) throw new Error('responseId が必要です');
+  if (!supabase?.rpc) throw new Error('Supabase クライアントが初期化されていません');
+  const { data, error } = await supabase.rpc('confirm_charter_response', { p_response_id: id });
+  if (error) throw error;
+  return typeof data === 'string' ? JSON.parse(data) : data;
+}
+
+/** ID 指定でチャーター募集を取得（応答結果表示用。RLS により閲覧可能なもののみ） */
+export async function fetchCharterRequestsByIds(requestIds) {
+  const ids = [...new Set((requestIds || []).map((id) => sanitizeRefId(id)).filter(Boolean))];
+  if (!ids.length || !supabase?.from) return [];
+  try {
+    const { data, error } = await supabase
+      .from('charter_requests')
+      .select(
+        'id, requesting_factory_id, request_date, vehicle_type, desired_count, note, status, created_at, updated_at',
+      )
+      .in('id', ids)
+      .order('request_date', { ascending: false });
+    if (error) {
+      console.warn('[fetchCharterRequestsByIds] failed', error);
+      return [];
+    }
+    const requests = (data || []).map(mapCharterRequestRow).filter(Boolean);
+    if (!requests.length) return [];
+    const factories = await fetchFactories();
+    const nameById = Object.fromEntries((factories || []).map((f) => [String(f.id), String(f.name || f.id)]));
+    return requests.map((r) => ({
+      ...r,
+      requesting_factory_name: nameById[r.requesting_factory_id] || r.requesting_factory_id,
+    }));
+  } catch (err) {
+    console.warn('[fetchCharterRequestsByIds] failed', err);
+    return [];
+  }
+}

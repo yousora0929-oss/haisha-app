@@ -31,6 +31,7 @@ export default defineConfig({
         index: resolve(__dirname, 'index.html'),
         dispatch: resolve(__dirname, 'DispatchOrderPrototype.html'),
         factory: resolve(__dirname, 'FactoryTabletPrototype.html'),
+        charter: resolve(__dirname, 'CharterTabletPrototype.html'),
         admin: resolve(__dirname, 'AdminPrototype.html'),
         mapEditor: resolve(__dirname, 'MapEditor.html'),
       },

@@ -37,6 +37,8 @@ export const CUSTOMER_PANEL_PHONE_KEY = 'concrete_link_customer_phone_v1';
 export const CUSTOMER_PANEL_PASSWORD_KEY = 'concrete_link_customer_pass_v1';
 export const FACTORY_PANEL_ID_KEY = 'concrete_link_factory_id_v1';
 export const FACTORY_PANEL_PASSWORD_KEY = 'concrete_link_factory_pass_v1';
+export const CHARTER_PANEL_ID_KEY = 'concrete_link_charter_id_v1';
+export const CHARTER_PANEL_PASSWORD_KEY = 'concrete_link_charter_pass_v1';
 export const GUEST_SITE_ORDER_TOKEN_KEY = 'concrete_link_guest_site_order_token_v1';
 export const PANEL_REALTIME_TOKEN_KEY = 'concrete_link_panel_realtime_token_v1';
 
@@ -51,6 +53,8 @@ export const DISPATCH_CUSTOMER_SESSION_KEY = 'haisha_dispatch_customer_id_v1';
 export const ADMIN_AUTH_SESSION_KEY = 'concrete_link_admin_auth_v1';
 export const FACTORY_SESSION_STORAGE_KEY = 'haisha_factory_site_id_v1';
 export const FACTORY_AUTH_STORAGE_KEY = 'haisha_factory_auth_id_v1';
+export const CHARTER_SESSION_STORAGE_KEY = 'haisha_charter_operator_id_v1';
+export const CHARTER_AUTH_STORAGE_KEY = 'haisha_charter_auth_id_v1';
 
 const MAP_EDITOR_PANEL_AUTH_KEYS = [
   ADMIN_PANEL_PHONE_KEY,
@@ -306,6 +310,32 @@ export function clearFactoryPanelSession() {
   clearPanelRealtimeAuth();
 }
 
+export function setCharterPanelSession(charterId, password) {
+  if (typeof sessionStorage === 'undefined') return;
+  const id = String(charterId || '').trim();
+  const pass = String(password || '').trim();
+  if (!id || !pass) return;
+  sessionStorage.setItem(CHARTER_PANEL_ID_KEY, id);
+  sessionStorage.setItem(CHARTER_PANEL_PASSWORD_KEY, pass);
+}
+
+export function clearCharterPanelSession() {
+  if (typeof sessionStorage === 'undefined') return;
+  sessionStorage.removeItem(CHARTER_PANEL_ID_KEY);
+  sessionStorage.removeItem(CHARTER_PANEL_PASSWORD_KEY);
+}
+
+export function hasCharterPanelSession() {
+  if (typeof sessionStorage === 'undefined') return false;
+  try {
+    return Boolean(
+      sessionStorage.getItem(CHARTER_PANEL_ID_KEY) && sessionStorage.getItem(CHARTER_PANEL_PASSWORD_KEY),
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function hasFactoryPanelSession() {
   if (typeof sessionStorage === 'undefined') return false;
   try {
@@ -344,6 +374,7 @@ export function hasAnyPanelSession() {
     hasAdminPanelSession() ||
     hasCustomerPanelSession() ||
     hasFactoryPanelSession() ||
+    hasCharterPanelSession() ||
     hasGuestSiteOrderSession()
   ) {
     return true;
@@ -393,6 +424,11 @@ function detectPanelCredentials() {
     if (factoryId && factoryPassword) {
       return { panelType: 'factory', credentialA: factoryId, credentialB: factoryPassword };
     }
+    const charterId = readPanelAuthValue(CHARTER_PANEL_ID_KEY);
+    const charterPassword = readPanelAuthValue(CHARTER_PANEL_PASSWORD_KEY);
+    if (charterId && charterPassword) {
+      return { panelType: 'charter', credentialA: charterId, credentialB: charterPassword };
+    }
     const guestToken = readPanelAuthValue(GUEST_SITE_ORDER_TOKEN_KEY);
     if (guestToken) {
       return { panelType: 'guest', credentialA: guestToken, credentialB: null };
@@ -414,6 +450,8 @@ export function resolveMapEditorHomeUrl() {
       return `${origin}/DispatchOrderPrototype.html`;
     case 'factory':
       return `${origin}/FactoryTabletPrototype.html`;
+    case 'charter':
+      return `${origin}/CharterTabletPrototype.html`;
     case 'admin':
       return `${origin}/AdminPrototype.html`;
     case 'guest': {
@@ -505,6 +543,10 @@ function readPanelRequestHeaders() {
       case 'factory':
         headers['x-factory-id'] = creds.credentialA;
         headers['x-factory-password'] = creds.credentialB;
+        break;
+      case 'charter':
+        headers['x-charter-id'] = creds.credentialA;
+        headers['x-charter-password'] = creds.credentialB;
         break;
       case 'guest':
         headers['x-site-order-token'] = creds.credentialA;

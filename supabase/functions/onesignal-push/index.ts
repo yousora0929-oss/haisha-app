@@ -1,4 +1,4 @@
-/** onesignal-push v28 — 組合せ割当（association_assigned_factory_ids）対応 */
+/** onesignal-push v32 — チャーター応答確定・見送り通知対応 */
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
@@ -8,7 +8,7 @@ import {
   rankFactoryIdsForOrder,
 } from '../_shared/escalationVisibility.ts';
 
-const FUNCTION_VERSION = 30;
+const FUNCTION_VERSION = 32;
 const PUSH_NOTIFY_COOLDOWN_MS = 60_000;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 /** プレフィックス導入前の端末向けに無印 ID へも送る期間（ISO8601） */
@@ -119,6 +119,28 @@ type OrderRow = {
   association_assigned_factory_ids?: unknown;
 };
 
+type CharterRequestRow = {
+  id?: string;
+  requesting_factory_id?: string | null;
+  request_date?: string | null;
+  vehicle_type?: string | null;
+  desired_count?: number | string | null;
+  note?: string | null;
+  status?: string | null;
+};
+
+type CharterResponseRow = {
+  id?: string;
+  request_id?: string | null;
+  responder_type?: string | null;
+  responder_id?: string | null;
+  offered_count?: number | string | null;
+  message?: string | null;
+  status?: string | null;
+};
+
+type CharterResponsePushEvent = 'charter_response_accepted' | 'charter_response_rejected';
+
 type LegacyWebhookPayload = {
   type?: string;
   record?: OrderRow;
@@ -137,7 +159,9 @@ type IncomingPayload =
   | { format: 'slim'; data: SlimPayload }
   | { format: 'legacy'; data: LegacyWebhookPayload }
   | { format: 'rescued'; data: OrderRow; hint: 'chat' | 'status' | 'insert' }
-  | { format: 'chat_message'; data: ChatMessagePayload };
+  | { format: 'chat_message'; data: ChatMessagePayload }
+  | { format: 'charter_request'; data: { record: CharterRequestRow } }
+  | { format: 'charter_response'; data: { event: CharterResponsePushEvent; record: CharterResponseRow } };
 
 const ACCEPTED_STATUSES = new Set(['accepted', 'confirmed']);
 const LEGACY_MAX_BODY_BYTES = 64000;
@@ -252,7 +276,7 @@ function withoutExternalIds(ids: string[], ...exclude: unknown[]): string[] {
   return [...new Set(ids.map((id) => pickString(id)).filter((id) => id && !banned.has(id)))];
 }
 
-function withOneSignalExternalPrefix(rawId: string, prefix: 'customer_' | 'factory_' | 'admin_'): string {
+function withOneSignalExternalPrefix(rawId: string, prefix: 'customer_' | 'factory_' | 'admin_' | 'charter_'): string {
   const id = pickString(rawId);
   if (!id) return '';
   return id.startsWith(prefix) ? id : `${prefix}${id}`;
@@ -264,6 +288,10 @@ function onesignalCustomerExternalId(customerId: string): string {
 
 function onesignalFactoryExternalId(factoryId: string): string {
   return withOneSignalExternalPrefix(factoryId, 'factory_');
+}
+
+function onesignalCharterExternalId(charterOperatorId: string): string {
+  return withOneSignalExternalPrefix(charterOperatorId, 'charter_');
 }
 
 /** 移行期: プレフィックス付き + 旧無印 ID の両方へ送る */
@@ -287,6 +315,9 @@ function expandOneSignalExternalIds(ids: string[]): string[] {
     }
     if (id.startsWith('admin_')) {
       if (useLegacy) expanded.add(id.slice('admin_'.length));
+      continue;
+    }
+    if (id.startsWith('charter_')) {
       continue;
     }
 
@@ -621,6 +652,8 @@ async function shouldNotifyFullCompanyRejection(
 }
 
 function resolveIncomingOrderId(incoming: IncomingPayload): string {
+  if (incoming.format === 'charter_request') return pickString(incoming.data.record?.id);
+  if (incoming.format === 'charter_response') return pickString(incoming.data.record?.request_id);
   if (incoming.format === 'slim') return pickString(incoming.data.order_id);
   if (incoming.format === 'rescued') return pickString(incoming.data.id);
   if (incoming.format === 'chat_message') return pickString(incoming.data.order_id);
@@ -963,7 +996,34 @@ async function readWebhookPayload(req: Request): Promise<{ incoming: IncomingPay
   if (rawText) {
     const parsed = tryParseJson(rawText);
     if (parsed) {
-      if (pickString(parsed.event)) {
+      const eventName = pickString(parsed.event);
+      if (eventName === 'charter_request_created') {
+        const record = asObject(parsed.record) as CharterRequestRow;
+        if (pickString(record.id)) {
+          console.log('[onesignal-push] charter_request_created payload', {
+            requestId: pickString(record.id),
+            factoryId: pickString(record.requesting_factory_id),
+          });
+          return { incoming: { format: 'charter_request', data: { record } } };
+        }
+      }
+      if (eventName === 'charter_response_accepted' || eventName === 'charter_response_rejected') {
+        const record = asObject(parsed.record) as CharterResponseRow;
+        if (pickString(record.id)) {
+          console.log('[onesignal-push] charter response payload', {
+            event: eventName,
+            responseId: pickString(record.id),
+            requestId: pickString(record.request_id),
+          });
+          return {
+            incoming: {
+              format: 'charter_response',
+              data: { event: eventName, record },
+            },
+          };
+        }
+      }
+      if (eventName) {
         return { incoming: { format: 'slim', data: parsed as SlimPayload } };
       }
 
@@ -1579,6 +1639,173 @@ async function sendOrderAwaitingAdminNotifications(
   return [];
 }
 
+async function fetchCharterRequestRow(requestId: string): Promise<CharterRequestRow | null> {
+  const id = pickString(requestId);
+  if (!id) return null;
+
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('charter_requests')
+    .select('id, requesting_factory_id, request_date, vehicle_type, desired_count, status')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (error) {
+    console.warn('[onesignal-push] charter request fetch failed', { requestId: id, error });
+    return null;
+  }
+  return data && typeof data === 'object' ? (data as CharterRequestRow) : null;
+}
+
+function charterResponseExternalId(record: CharterResponseRow): string {
+  const responderType = pickString(record.responder_type);
+  const responderId = pickString(record.responder_id);
+  if (!responderId) return '';
+  if (responderType === 'charter_operator') return onesignalCharterExternalId(responderId);
+  return onesignalFactoryExternalId(responderId);
+}
+
+function charterRequestSummaryLine(request: CharterRequestRow | null): string {
+  if (!request) return '';
+  const dateLabel = pickString(request.request_date).replace(/-/g, '/');
+  const vehicleLabel = pickString(request.vehicle_type) === 'small' ? '小型' : '大型';
+  if (!dateLabel) return vehicleLabel;
+  return `${dateLabel}の${vehicleLabel}`;
+}
+
+async function sendCharterResponseResultNotifications(
+  event: CharterResponsePushEvent,
+  record: CharterResponseRow,
+): Promise<string[]> {
+  const responseId = pickString(record.id);
+  const requestId = pickString(record.request_id);
+  const externalId = charterResponseExternalId(record);
+  if (!responseId || !requestId || !externalId) {
+    console.log('[onesignal-push] charter response skip: missing ids', { event, responseId, requestId });
+    return [];
+  }
+
+  const request = await fetchCharterRequestRow(requestId);
+  const summary = charterRequestSummaryLine(request);
+  const summarySuffix = summary ? `（${summary}）` : '';
+
+  const isAccepted = event === 'charter_response_accepted';
+  const message = isAccepted
+    ? `あなたの応答が確定しました${summarySuffix}`
+    : `今回は別の業者に決まりました${summarySuffix}`;
+  const title = isAccepted ? '【チャーター募集】応答が確定しました' : '【チャーター募集】今回は見送りとなりました';
+  const responderType = pickString(record.responder_type);
+  const data = {
+    type: 'charter_response',
+    requestId,
+    responseId,
+    status: isAccepted ? 'accepted' : 'rejected',
+    targetApp: responderType === 'charter_operator' ? 'charter' : 'factory',
+  };
+
+  console.log('[onesignal-push] charter response notify', {
+    event,
+    responseId,
+    requestId,
+    externalId,
+  });
+
+  const ok = await sendToExternalIds([externalId], message, data, { title });
+  return ok ? [`charter:${event}`] : [];
+}
+
+async function processCharterResponsePayload(
+  event: CharterResponsePushEvent,
+  record: CharterResponseRow,
+): Promise<string[]> {
+  const responseId = pickString(record.id);
+  console.log('[onesignal-push] process start', {
+    v: FUNCTION_VERSION,
+    format: 'charter_response',
+    event,
+    responseId,
+  });
+  const sent = await sendCharterResponseResultNotifications(event, record);
+  console.log('[onesignal-push] process done', {
+    v: FUNCTION_VERSION,
+    responseId,
+    sent: sent.length ? sent : 'none',
+  });
+  return sent;
+}
+
+async function sendCharterRequestCreatedNotifications(record: CharterRequestRow): Promise<string[]> {
+  const requestId = pickString(record.id);
+  const factoryId = pickString(record.requesting_factory_id);
+  if (!requestId || !factoryId) {
+    console.log('[onesignal-push] charter_request_created skip: missing ids', { requestId, factoryId });
+    return [];
+  }
+
+  const supabase = getSupabaseClient();
+  const { data: prefs, error } = await supabase
+    .from('charter_notification_preferences')
+    .select('target_type, target_id, priority_order')
+    .eq('factory_id', factoryId)
+    .order('priority_order', { ascending: true });
+
+  if (error) {
+    console.warn('[onesignal-push] charter prefs fetch failed', error);
+    return [];
+  }
+
+  const externalIds: string[] = [];
+  for (const pref of prefs ?? []) {
+    const targetType = pickString(pref.target_type);
+    const targetId = pickString(pref.target_id);
+    if (!targetId) continue;
+    if (targetType === 'factory') {
+      externalIds.push(onesignalFactoryExternalId(targetId));
+    } else if (targetType === 'charter_operator') {
+      externalIds.push(onesignalCharterExternalId(targetId));
+    }
+  }
+
+  const uniqueIds = [...new Set(externalIds.filter(Boolean))];
+  if (!uniqueIds.length) {
+    console.log('[onesignal-push] charter_request_created skip: no notification targets', { requestId });
+    return [];
+  }
+
+  const dateLabel = pickString(record.request_date).replace(/-/g, '/');
+  const vehicleLabel = pickString(record.vehicle_type) === 'small' ? '小型' : '大型';
+  const count = Math.max(1, Number(record.desired_count) || 1);
+  const message = `${dateLabel}の${vehicleLabel}を${count}台 募集中です`;
+  const data = { type: 'charter_request', requestId };
+
+  console.log('[onesignal-push] charter_request_created notify', {
+    requestId,
+    factoryId,
+    recipientCount: uniqueIds.length,
+  });
+
+  const ok = await sendToExternalIds(uniqueIds, message, data, {
+    title: '【チャーター募集】車両のご協力をお願いします',
+  });
+  return ok ? ['charter:charter_request_created'] : [];
+}
+
+async function processCharterRequestPayload(record: CharterRequestRow): Promise<string[]> {
+  const requestId = pickString(record.id);
+  console.log('[onesignal-push] process start', {
+    v: FUNCTION_VERSION,
+    format: 'charter_request',
+    requestId,
+  });
+  const sent = await sendCharterRequestCreatedNotifications(record);
+  console.log('[onesignal-push] process done', {
+    v: FUNCTION_VERSION,
+    requestId,
+    sent: sent.length ? sent : 'none',
+  });
+  return sent;
+}
+
 async function sendNewOrderNotifications(
   row: OrderRow | null | undefined,
   payload: SlimPayload | null | undefined,
@@ -2035,7 +2262,11 @@ async function processChatMessagePayload(payload: ChatMessagePayload): Promise<s
 
 async function processIncoming(incoming: IncomingPayload): Promise<void> {
   let sent: string[] = [];
-  if (incoming.format === 'slim') {
+  if (incoming.format === 'charter_request') {
+    sent = await processCharterRequestPayload(incoming.data.record);
+  } else if (incoming.format === 'charter_response') {
+    sent = await processCharterResponsePayload(incoming.data.event, incoming.data.record);
+  } else if (incoming.format === 'slim') {
     sent = await processSlimPayload(incoming.data);
   } else if (incoming.format === 'legacy') {
     sent = await processLegacyWebhook(incoming.data);
@@ -2078,7 +2309,11 @@ Deno.serve(async (req) => {
   }
 
   const orderId = resolveIncomingOrderId(incoming);
-  const eventLabel = incoming.format === 'slim'
+  const eventLabel = incoming.format === 'charter_request'
+    ? 'charter_request_created'
+    : incoming.format === 'charter_response'
+    ? incoming.data.event
+    : incoming.format === 'slim'
     ? pickString(incoming.data.event)
     : incoming.format === 'legacy'
     ? pickString(incoming.data.type)
@@ -2086,7 +2321,12 @@ Deno.serve(async (req) => {
     ? 'chat_message'
     : incoming.hint;
 
-  if (orderId && await shouldSkipRecentPush(orderId)) {
+  if (
+    incoming.format !== 'charter_request' &&
+    incoming.format !== 'charter_response' &&
+    orderId &&
+    await shouldSkipRecentPush(orderId)
+  ) {
     return new Response(
       JSON.stringify({
         ok: true,

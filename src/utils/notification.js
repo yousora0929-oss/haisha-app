@@ -34,6 +34,10 @@ export function buildFactoryOneSignalExternalId(factoryId) {
   return withOneSignalPrefix(factoryId, 'factory_');
 }
 
+export function buildCharterOneSignalExternalId(charterOperatorId) {
+  return withOneSignalPrefix(charterOperatorId, 'charter_');
+}
+
 export function buildAdminOneSignalExternalId(adminId) {
   return withOneSignalPrefix(adminId, 'admin_');
 }
