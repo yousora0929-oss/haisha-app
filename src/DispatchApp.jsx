@@ -283,8 +283,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
     const MIX_SHORTCUTS = ['18-8-20BB', '18-12-20BB', '18-15-20N', '21-15-20N'];
 
     const MASTER_TRADER_SUGGESTIONS = ['梅田建材', '大分商事', '九州生コン販売', '共栄商事'];
-    const MASTER_CONTRACTOR_SUGGESTIONS = ['佐藤建設', '田中組', '大分土木', '九州コンクリート工業'];
-
     function preferredDateTime(dateStr, timeSlotValue) {
       const m = String(dateStr || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
       if (!m) return null;
@@ -1253,6 +1251,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [escalationStepsByFactoryId, setEscalationStepsByFactoryId] = useState({});
       const [escalationTick, setEscalationTick] = useState(0);
       const [customers, setCustomers] = useState([]);
+      const [agentOrganizations, setAgentOrganizations] = useState([]);
       const [currentCustomerId, setCurrentCustomerId] = useState(() => {
         try {
           return sessionStorage.getItem(DISPATCH_AUTH_SESSION_KEY) || sessionStorage.getItem(DISPATCH_CUSTOMER_SESSION_KEY) || '';
@@ -1280,6 +1279,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const orderFormRef = useRef(null);
       const lastAutofillProjectIdRef = useRef('');
       const guestInitCompletedTokenRef = useRef('');
+      const spotFieldDefaultsKeyRef = useRef('');
+
+      const loadAgentOrganizations = useCallback(async () => {
+        try {
+          const rows = await db.fetchOrganizations();
+          setAgentOrganizations((rows || []).filter((o) => o && o.type === 'agent'));
+        } catch (err) {
+          console.warn('[DispatchApp] 商社マスタ取得に失敗', err);
+          setAgentOrganizations([]);
+        }
+      }, []);
 
       const orderFormFieldPrefix = useMemo(() => {
         if (isGuestSiteOrder) return 'guest-order';
@@ -1420,6 +1430,33 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         () => currentCustomerRole === 'agent' || currentCustomerRole === 'cooperative',
         [currentCustomerRole],
       );
+
+      const applySpotOrderFieldDefaults = useCallback(() => {
+        if (isGuestSiteOrder) return;
+        const role = currentCustomerRole;
+        const companyName = String(currentCustomer?.company_name || currentCustomer?.name || '').trim();
+        if (role === 'contractor') {
+          if (companyName) setContractorName(companyName);
+          setTraderName('');
+          setSpotContractorOrgId('');
+        } else if (role === 'agent') {
+          if (companyName) setTraderName(companyName);
+          setContractorName('');
+          setSpotContractorOrgId('');
+        } else {
+          setTraderName('');
+          setContractorName('');
+          setSpotContractorOrgId('');
+        }
+      }, [isGuestSiteOrder, currentCustomer, currentCustomerRole]);
+      useEffect(() => {
+        if (isGuestSiteOrder || orderKind !== 'spot' || !currentCustomerId) return;
+        const key = `${currentCustomerId}:${orderKind}`;
+        if (spotFieldDefaultsKeyRef.current === key) return;
+        spotFieldDefaultsKeyRef.current = key;
+        applySpotOrderFieldDefaults();
+      }, [orderKind, currentCustomerId, isGuestSiteOrder, applySpotOrderFieldDefaults]);
+
       const contractorCustomer = useMemo(
         () =>
           isAgentOrCooperative && contractorCustomerId
@@ -1847,7 +1884,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               setAdminSettings(adminSettingRows || { admin_name: '', phone_number: '' });
               return;
             }
-            const [rows, projs, customerRows, adminSettingRows, holidayRows, opSettings, escalationSteps] = await Promise.all([
+            const [rows, projs, customerRows, adminSettingRows, holidayRows, opSettings, escalationSteps, orgRows] = await Promise.all([
               db.fetchFactories(),
               db.fetchProjects(),
               db.fetchCustomers(),
@@ -1855,11 +1892,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               db.fetchHolidays().catch(() => []),
               db.fetchSystemSettings().catch(() => ({ start_time: '08:00:00', end_time: '16:00:00' })),
               db.fetchEscalationSteps().catch(() => ({})),
+              db.fetchOrganizations().catch(() => []),
             ]);
             if (cancelled) return;
             setFactories(rows);
             setProjects(projs);
             setCustomers(customerRows);
+            setAgentOrganizations((orgRows || []).filter((o) => o && o.type === 'agent'));
             setAdminSettings(adminSettingRows || { admin_name: '', phone_number: '' });
             setHolidays(Array.isArray(holidayRows) ? holidayRows : []);
             setSystemSettings(opSettings || { start_time: '08:00:00', end_time: '16:00:00' });
@@ -2502,6 +2541,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             }
             setIsLoggedIn(true);
 
+            void loadAgentOrganizations();
+
             const loginRole = customer?.role;
             const companyName = String(customer?.company_name || '').trim();
             if (loginRole === 'agent' && companyName) {
@@ -2548,7 +2589,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             setLoginLoading(false);
           }
         },
-        [loginPhone, loginPassword],
+        [loginPhone, loginPassword, loadAgentOrganizations],
       );
 
       const handleCustomerLogout = useCallback(() => {
@@ -2833,6 +2874,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setDeliveryLng('');
         setQuantityM3('');
         setUnloadDuration('30');
+        spotFieldDefaultsKeyRef.current = '';
         setTraderName('');
         setContractorName('');
         setSpotContractorOrgId('');
@@ -2859,7 +2901,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           // setContractorCustomerId('');
           // setContractorSearchText('');
         }
-      }, [today, isAgentOrCooperative]);
+        if (orderKind === 'spot') {
+          applySpotOrderFieldDefaults();
+        }
+      }, [today, isAgentOrCooperative, orderKind, applySpotOrderFieldDefaults]);
 
       const handleAddToCart = useCallback(
         (e) => {
@@ -3838,6 +3883,72 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       </label>
                     </div>
                   </div>
+
+                  {!isGuestSiteOrder ? (
+                    <>
+                      {currentCustomerRole === 'agent' ? (
+                        <GuestLockedField
+                          label="商社名"
+                          value={traderName || currentCustomerDisplayName}
+                        />
+                      ) : (
+                        <MasterSuggestInput
+                          label="商社名（任意）"
+                          name={orderFieldName('trader_name')}
+                          value={traderName}
+                          onValueChange={(v) => {
+                            setTraderName(v);
+                            setSubmitError('');
+                          }}
+                          items={agentOrganizations}
+                          getItemKey={(o) => String(o.id)}
+                          getItemLabel={(o) => String(o.name || '').trim()}
+                          getSearchTexts={(o) => [o.name]}
+                          onSelect={(org) => {
+                            setTraderName(String(org?.name || '').trim());
+                            setSubmitError('');
+                          }}
+                          placeholder="商社名を入力（登録商社から選択、または自由入力）"
+                          emptyHint="該当する商社がありません（自由入力もできます）"
+                          autoComplete="organization"
+                        />
+                      )}
+
+                      {isAgentOrCooperative ? (
+                        <MasterSuggestInput
+                          label="業者名"
+                          name={orderFieldName('contractor_name')}
+                          value={contractorName}
+                          onValueChange={handleSpotAgentContractorChange}
+                          onSelect={handleSpotAgentContractorSelect}
+                          items={spotContractorCustomers}
+                          getItemKey={(c) => String(c.id)}
+                          getItemLabel={(c) => String(c.company_name || c.name || '').trim()}
+                          getSearchTexts={customerSuggestTexts}
+                          placeholder="発注している業者名を入力（候補から選択可）"
+                          emptyHint="該当する業者がありません（自由入力もできます）"
+                          autoComplete="off"
+                        />
+                      ) : (
+                        <div className="flex flex-col gap-3">
+                          <Label htmlFor={orderFieldId('contractor-name')}>業者名</Label>
+                          <input
+                            id={orderFieldId('contractor-name')}
+                            name={orderFieldName('contractor_name')}
+                            type="text"
+                            autoComplete="organization"
+                            placeholder="発注している業者名"
+                            value={contractorName}
+                            onChange={(e) => {
+                              setContractorName(e.target.value);
+                              setSubmitError('');
+                            }}
+                            className={CUSTOMER_FIELD_CLASS}
+                          />
+                        </div>
+                      )}
+                    </>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -3996,65 +4107,25 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </div>
               </div>
 
-              {!isGuestSiteOrder ? (
-                <>
-                  <MasterSuggestInput
-                    label="商社（任意）"
-                    name={orderFieldName('trader_name')}
-                    value={traderName}
-                    onValueChange={(v) => {
-                      setTraderName(v);
-                      setSubmitError('');
-                    }}
-                    items={MASTER_TRADER_SUGGESTIONS}
-                    getItemKey={(s) => s}
-                    getItemLabel={(s) => s}
-                    onSelect={(s) => {
-                      setTraderName(s);
-                      setSubmitError('');
-                    }}
-                    placeholder="例：梅田建材（入力すると候補が表示されます）"
-                    autoComplete="organization"
-                  />
-
-                  {orderKind === 'spot' ? (
-                    isAgentOrCooperative ? (
-                      <MasterSuggestInput
-                        label="業者名"
-                        name={orderFieldName('contractor_name')}
-                        value={contractorName}
-                        onValueChange={handleSpotAgentContractorChange}
-                        onSelect={handleSpotAgentContractorSelect}
-                        items={spotContractorCustomers}
-                        getItemKey={(c) => String(c.id)}
-                        getItemLabel={(c) => String(c.company_name || c.name || '').trim()}
-                        getSearchTexts={customerSuggestTexts}
-                        placeholder="発注している業者名を入力（候補から選択可）"
-                        emptyHint="該当する業者がありません（自由入力もできます）"
-                        autoComplete="off"
-                      />
-                    ) : (
-                      <MasterSuggestInput
-                        label="業者名"
-                        name={orderFieldName('contractor_name')}
-                        value={contractorName}
-                        onValueChange={(v) => {
-                          setContractorName(v);
-                          setSubmitError('');
-                        }}
-                        items={MASTER_CONTRACTOR_SUGGESTIONS}
-                        getItemKey={(s) => s}
-                        getItemLabel={(s) => s}
-                        onSelect={(s) => {
-                          setContractorName(s);
-                          setSubmitError('');
-                        }}
-                        placeholder="発注している業者名を入力"
-                        autoComplete="off"
-                      />
-                    )
-                  ) : null}
-                </>
+              {!isGuestSiteOrder && orderKind === 'project' ? (
+                <MasterSuggestInput
+                  label="商社（任意）"
+                  name={orderFieldName('trader_name')}
+                  value={traderName}
+                  onValueChange={(v) => {
+                    setTraderName(v);
+                    setSubmitError('');
+                  }}
+                  items={MASTER_TRADER_SUGGESTIONS}
+                  getItemKey={(s) => s}
+                  getItemLabel={(s) => s}
+                  onSelect={(s) => {
+                    setTraderName(s);
+                    setSubmitError('');
+                  }}
+                  placeholder="例：梅田建材（入力すると候補が表示されます）"
+                  autoComplete="organization"
+                />
               ) : null}
 
               <div className="flex flex-col gap-3">
