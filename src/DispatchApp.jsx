@@ -1265,6 +1265,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [customerSearchText, setCustomerSearchText] = useState('');
       const [contractorCustomerId, setContractorCustomerId] = useState('');
       const [contractorSearchText, setContractorSearchText] = useState('');
+      const [spotContractorOrgId, setSpotContractorOrgId] = useState('');
       const [projectSearchText, setProjectSearchText] = useState('');
       const [deliveryLat, setDeliveryLat] = useState('');
       const [deliveryLng, setDeliveryLng] = useState('');
@@ -1445,6 +1446,67 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         contractorCustomer,
         currentCustomer,
       ]);
+      const spotContractorCustomers = useMemo(
+        () => (customers || []).filter((c) => (c?.role ?? 'contractor') === 'contractor'),
+        [customers],
+      );
+      const siteContactOrgId = useMemo(() => {
+        if (isGuestSiteOrder) return '';
+        if (orderKind === 'spot' && isAgentOrCooperative) {
+          return String(spotContractorOrgId || '').trim();
+        }
+        return String(contractorOrgId || '').trim();
+      }, [isGuestSiteOrder, orderKind, isAgentOrCooperative, spotContractorOrgId, contractorOrgId]);
+
+      const findSpotContractorByExactName = useCallback(
+        (text) => {
+          const q = String(text || '').trim().toLowerCase();
+          if (!q) return null;
+          return (
+            spotContractorCustomers.find(
+              (c) => String(c?.company_name || c?.name || '').trim().toLowerCase() === q,
+            ) || null
+          );
+        },
+        [spotContractorCustomers],
+      );
+
+      const resetSpotContractorSiteContact = useCallback(() => {
+        setSiteContactName('');
+        setSitePhone('');
+      }, []);
+
+      const handleSpotAgentContractorChange = useCallback(
+        (text) => {
+          setContractorName(text);
+          setSubmitError('');
+          const trimmed = String(text || '').trim();
+          if (!trimmed) {
+            setSpotContractorOrgId('');
+            resetSpotContractorSiteContact();
+            return;
+          }
+          const hit = findSpotContractorByExactName(trimmed);
+          const nextOrgId = hit?.organization_id ? String(hit.organization_id) : '';
+          setSpotContractorOrgId((prev) => {
+            if (prev === nextOrgId) return prev;
+            resetSpotContractorSiteContact();
+            return nextOrgId;
+          });
+        },
+        [findSpotContractorByExactName, resetSpotContractorSiteContact],
+      );
+
+      const handleSpotAgentContractorSelect = useCallback(
+        (customer) => {
+          const name = String(customer?.company_name || customer?.name || '').trim();
+          setContractorName(name);
+          setSpotContractorOrgId(customer?.organization_id ? String(customer.organization_id) : '');
+          resetSpotContractorSiteContact();
+          setSubmitError('');
+        },
+        [resetSpotContractorSiteContact],
+      );
       const sessionCustomerPhone = useMemo(() => {
         if (!isLoggedIn) return '';
         try {
@@ -1530,11 +1592,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           setSiteContactCandidates([]);
           return;
         }
-        if (orderKind === 'spot' && isAgentOrCooperative) {
-          setSiteContactCandidates([]);
-          return;
-        }
-        const orgId = String(contractorOrgId || '').trim();
+        const orgId = siteContactOrgId;
         if (!orgId) {
           setSiteContactCandidates([]);
           return;
@@ -1556,7 +1614,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return () => {
           cancelled = true;
         };
-      }, [orderKind, contractorOrgId, isGuestSiteOrder, isAgentOrCooperative]);
+      }, [orderKind, siteContactOrgId, isGuestSiteOrder]);
+
+      useEffect(() => {
+        if (orderKind !== 'spot') setSpotContractorOrgId('');
+      }, [orderKind]);
 
       useEffect(() => {
         if (!isAgentOrCooperative || orderKind !== 'project') return;
@@ -2773,6 +2835,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setUnloadDuration('30');
         setTraderName('');
         setContractorName('');
+        setSpotContractorOrgId('');
         setContractorDisplayMode('prime');
         setContractorDisplayCustomText('');
         setMixText('');
@@ -3955,24 +4018,41 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   />
 
                   {orderKind === 'spot' ? (
-                    <MasterSuggestInput
-                      label="業者名"
-                      name={orderFieldName('contractor_name')}
-                      value={contractorName}
-                      onValueChange={(v) => {
-                        setContractorName(v);
-                        setSubmitError('');
-                      }}
-                      items={MASTER_CONTRACTOR_SUGGESTIONS}
-                      getItemKey={(s) => s}
-                      getItemLabel={(s) => s}
-                      onSelect={(s) => {
-                        setContractorName(s);
-                        setSubmitError('');
-                      }}
-                      placeholder="発注している業者名を入力"
-                      autoComplete="off"
-                    />
+                    isAgentOrCooperative ? (
+                      <MasterSuggestInput
+                        label="業者名"
+                        name={orderFieldName('contractor_name')}
+                        value={contractorName}
+                        onValueChange={handleSpotAgentContractorChange}
+                        onSelect={handleSpotAgentContractorSelect}
+                        items={spotContractorCustomers}
+                        getItemKey={(c) => String(c.id)}
+                        getItemLabel={(c) => String(c.company_name || c.name || '').trim()}
+                        getSearchTexts={customerSuggestTexts}
+                        placeholder="発注している業者名を入力（候補から選択可）"
+                        emptyHint="該当する業者がありません（自由入力もできます）"
+                        autoComplete="off"
+                      />
+                    ) : (
+                      <MasterSuggestInput
+                        label="業者名"
+                        name={orderFieldName('contractor_name')}
+                        value={contractorName}
+                        onValueChange={(v) => {
+                          setContractorName(v);
+                          setSubmitError('');
+                        }}
+                        items={MASTER_CONTRACTOR_SUGGESTIONS}
+                        getItemKey={(s) => s}
+                        getItemLabel={(s) => s}
+                        onSelect={(s) => {
+                          setContractorName(s);
+                          setSubmitError('');
+                        }}
+                        placeholder="発注している業者名を入力"
+                        autoComplete="off"
+                      />
+                    )
                   ) : null}
                 </>
               ) : null}
@@ -4103,13 +4183,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     }}
                     placeholder="現場担当者名を入力（候補から選択可）"
                     emptyHint={
-                      orderKind === 'spot' && isAgentOrCooperative
-                        ? '自由入力してください'
+                      orderKind === 'spot' && isAgentOrCooperative && !spotContractorOrgId
+                        ? '業者名をマスタから選ぶと担当者候補が表示されます（自由入力もできます）'
                         : '登録された担当者がいません（自由入力もできます）'
                     }
                     inputClassName="min-h-[56px] rounded-xl border-2 border-slate-200 px-4 py-3 text-base"
                   />
-                  {orderKind === 'project' || !isAgentOrCooperative ? (
+                  {orderKind === 'project' || !isAgentOrCooperative || spotContractorOrgId ? (
                     <p className="text-xs leading-relaxed text-slate-500">
                       業者に登録された担当者から選ぶと、電話番号が自動入力されます。
                     </p>
