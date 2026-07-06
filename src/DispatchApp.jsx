@@ -68,6 +68,7 @@ import {
   resolveCustomerDispatchWaitingLabel,
 } from './utils/customerStatusLabels.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
+import { orderPartyInfo as buildOrderPartyInfo } from './utils/orderPartyInfo.js';
 import { resolveGuestPreferredFactoryId, resolveProjectMainFactoryId, getProjectDataGapWarnings } from './utils/projectFactory.js';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
@@ -237,31 +238,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
     }
 
     function orderPartyInfo(order) {
-      const tradingCompany = String(order?.trading_company_name ?? order?.projectTradingCompanyName ?? order?.projectTradingCompany ?? order?.tradingCompanyName ?? order?.traderName ?? '').trim();
-      const contractor = String(
-        order?.contractorName ??
-          order?.contractor_name ??
-          order?.displayContractorName ??
-          order?.customerName ??
-          order?.customer_name ??
-          '',
-      ).trim();
-      const contractorBase = contractor || String(order?.contractorName ?? '').trim();
-      const site = resolveOrderSiteDisplayName(order);
-      const orderedBy = String(
-        order?.siteContactName ??
-          order?.site_contact_name ??
-          order?.orderedBy ??
-          order?.ordered_by ??
-          '',
-      ).trim();
-      const phone = String(order?.sitePhone ?? order?.phone ?? '').trim();
-      return {
-        contractor: tradingCompany && contractorBase ? `${contractorBase} (商社: ${tradingCompany})` : contractorBase || '—',
-        site: site || '—',
-        orderedBy: orderedBy || '—',
-        phone: phone || '—',
-      };
+      return buildOrderPartyInfo(order, { preferSiteContact: true });
     }
 
     function orderContactPersonName(order, fallback = '担当者') {

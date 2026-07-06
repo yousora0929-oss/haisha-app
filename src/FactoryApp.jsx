@@ -53,6 +53,7 @@ import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
 import { isValidSiteOrderUrlToken } from './utils/urlValidation.js';
 import { isLocationPendingOrder } from './utils/orderWorkflow.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
+import { orderPartyInfo } from './utils/orderPartyInfo.js';
 import { MAP_EDITOR_ORDER_SAVED_DOM_EVENT, MAP_EDITOR_ORDER_SAVED_EVENT_KEY } from './mapEditorConstants.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
@@ -422,27 +423,6 @@ function isUnreadForFactory(messages, readKey) {
   const from = String(latest.from || '');
   if (from !== 'master' && from !== 'customer' && from !== 'admin') return false;
   return chatMessageReadKey(latest) !== readKey;
-}
-
-function orderPartyInfo(order) {
-  const tradingCompany = String(order?.trading_company_name ?? order?.projectTradingCompanyName ?? order?.projectTradingCompany ?? order?.tradingCompanyName ?? order?.traderName ?? '').trim();
-  const contractor = String(
-    order?.contractorName ??
-      order?.contractor_name ??
-      order?.displayContractorName ??
-      order?.customerName ??
-      order?.customer_name ??
-      '',
-  ).trim();
-  const site = resolveOrderSiteDisplayName(order);
-  const orderedBy = String(order?.ordered_by ?? order?.orderedBy ?? '').trim();
-  const phone = String(order?.sitePhone ?? order?.phone ?? '').trim();
-  return {
-    contractor: tradingCompany && contractor ? `${contractor} (商社: ${tradingCompany})` : contractor || '—',
-    site: site || '—',
-    orderedBy: orderedBy || '—',
-    phone: phone || '—',
-  };
 }
 
     async function appendOrderChatMessage(orderId, from, body) {

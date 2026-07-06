@@ -47,6 +47,7 @@ import { customerSuggestTexts } from './utils/masterSuggest.js';
 import { fetchTownLocationsForMunicipality, resolveDeliveryPrefecture } from './utils/heartrailsGeo.js';
 import { SCHEDULE_BLOCK_IDS, normalizeDayBlockSchedule, todayLocalISODate } from './haishaConstants.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
+import { orderPartyInfo } from './utils/orderPartyInfo.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
@@ -127,20 +128,6 @@ function orderDeliveryDate(order) {
 function orderSiteName(order) {
   const name = resolveOrderSiteDisplayName(order);
   return name || '（現場名未入力）';
-}
-
-function orderPartyInfo(order) {
-  const tradingCompany = String(order?.trading_company_name ?? order?.projectTradingCompanyName ?? order?.projectTradingCompany ?? order?.tradingCompanyName ?? order?.traderName ?? '').trim();
-  const contractor = String(order?.customerName ?? order?.customer_name ?? order?.contractorName ?? order?.contractor_name ?? '').trim();
-  const site = resolveOrderSiteDisplayName(order);
-  const orderedBy = String(order?.ordered_by ?? order?.orderedBy ?? '').trim();
-  const phone = String(order?.sitePhone ?? order?.phone ?? '').trim();
-  return {
-    contractor: tradingCompany && contractor ? `${contractor} (商社: ${tradingCompany})` : contractor || '—',
-    site: site || '—',
-    orderedBy: orderedBy || '—',
-    phone: phone || '—',
-  };
 }
 
 function orderStatus(order) {
