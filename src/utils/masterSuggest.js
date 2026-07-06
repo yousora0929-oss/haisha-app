@@ -40,6 +40,10 @@ export function filterSuggestItems(items, query, getSearchTexts, limit = 80) {
     .slice(0, limit);
 }
 
+export function organizationSuggestTexts(organization) {
+  return [organization?.name, organization?.furigana, organization?.id];
+}
+
 export function customerSuggestTexts(customer) {
   return [
     customer?.company_name,

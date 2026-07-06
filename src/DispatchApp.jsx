@@ -38,7 +38,7 @@ import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
-import { customerSuggestTexts, projectSuggestTexts } from './utils/masterSuggest.js';
+import { customerSuggestTexts, organizationSuggestTexts, projectSuggestTexts } from './utils/masterSuggest.js';
 import {
   buildDispatchOrderForDate,
   validateCartLineForm,
@@ -3903,7 +3903,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           items={agentOrganizations}
                           getItemKey={(o) => String(o.id)}
                           getItemLabel={(o) => String(o.name || '').trim()}
-                          getSearchTexts={(o) => [o.name]}
+                          getSearchTexts={organizationSuggestTexts}
                           onSelect={(org) => {
                             setTraderName(String(org?.name || '').trim());
                             setSubmitError('');

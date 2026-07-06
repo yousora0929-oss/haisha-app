@@ -43,7 +43,7 @@ import {
   createSalesStaffMember,
   normalizeSalesStaffList,
 } from './utils/salesStaff.js';
-import { customerSuggestTexts } from './utils/masterSuggest.js';
+import { customerSuggestTexts, organizationSuggestTexts } from './utils/masterSuggest.js';
 import { fetchTownLocationsForMunicipality, resolveDeliveryPrefecture } from './utils/heartrailsGeo.js';
 import { SCHEDULE_BLOCK_IDS, normalizeDayBlockSchedule, todayLocalISODate } from './haishaConstants.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
@@ -727,7 +727,7 @@ function ProjectForm({
             items={agentOrganizations}
             getItemKey={(o) => String(o.id)}
             getItemLabel={(o) => String(o.name || '').trim()}
-            getSearchTexts={(o) => [o.name]}
+            getSearchTexts={organizationSuggestTexts}
             placeholder="商社名を入力（候補から選択可）"
             emptyHint="該当する商社がありません（自由入力で保存できます）"
             inputClassName="min-h-[44px] rounded-lg border-2 border-slate-200 px-3 py-2 text-sm"

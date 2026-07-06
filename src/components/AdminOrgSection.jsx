@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as db from '../haishaDb.js';
 import { downloadOrgMembersExportCsv } from '../utils/adminCsvImport.js';
+import { generateInitialMemberPassword } from '../utils/generatePassword.js';
 
 const emptyMember = () => ({
   companyName: '',
@@ -8,6 +9,11 @@ const emptyMember = () => ({
   managerName: '',
   phone: '',
   password: '',
+});
+
+const newMemberWithGeneratedPassword = () => ({
+  ...emptyMember(),
+  password: generateInitialMemberPassword(),
 });
 
 function parseCsvRows(text) {
@@ -91,6 +97,7 @@ export function AdminOrgSection({ orgType, label }) {
   const [editingOrg, setEditingOrg] = useState(null);
   const [showNewOrgForm, setShowNewOrgForm] = useState(false);
   const [newOrgName, setNewOrgName] = useState('');
+  const [newOrgFurigana, setNewOrgFurigana] = useState('');
   const [editingMember, setEditingMember] = useState(null);
   const [addingMemberId, setAddingMemberId] = useState(null);
   const [newMember, setNewMember] = useState(emptyMember);
@@ -108,6 +115,7 @@ export function AdminOrgSection({ orgType, label }) {
     if (!q) return orgs;
     return orgs.filter((org) => {
       if (String(org.name || '').toLowerCase().includes(q)) return true;
+      if (String(org.furigana || '').toLowerCase().includes(q)) return true;
       return (org.members || []).some((m) => {
         const text = [m.furigana, m.manager_name, m.phone_number, m.company_name]
           .map((v) => String(v || ''))
@@ -158,9 +166,12 @@ export function AdminOrgSection({ orgType, label }) {
     setLoading(true);
     setError('');
     try {
-      const created = await db.createOrganization(name, orgType);
+      const created = await db.createOrganization(name, orgType, {
+        furigana: newOrgFurigana,
+      });
       setOrgs((prev) => [...prev, { ...created, members: [] }]);
       setNewOrgName('');
+      setNewOrgFurigana('');
       setShowNewOrgForm(false);
       setExpandedIds((prev) => new Set(prev).add(created.id));
       showNotice(`${label}を登録しました`);
@@ -181,7 +192,10 @@ export function AdminOrgSection({ orgType, label }) {
     setLoading(true);
     setError('');
     try {
-      await db.updateOrganization(editingOrg.id, name);
+      await db.updateOrganization(editingOrg.id, {
+        name,
+        furigana: editingOrg.furigana,
+      });
       const org = orgs.find((o) => o.id === editingOrg.id);
       if (org?.members?.length) {
         await Promise.all(
@@ -203,6 +217,7 @@ export function AdminOrgSection({ orgType, label }) {
             ? {
                 ...o,
                 name,
+                furigana: String(editingOrg.furigana || '').trim() || null,
                 members: (o.members || []).map((m) => ({ ...m, company_name: name })),
               }
             : o,
@@ -552,6 +567,7 @@ export function AdminOrgSection({ orgType, label }) {
             onClick={() => {
               setShowNewOrgForm(true);
               setNewOrgName('');
+              setNewOrgFurigana('');
               setError('');
             }}
             disabled={loading}
@@ -569,6 +585,14 @@ export function AdminOrgSection({ orgType, label }) {
               className={inputClass}
               disabled={loading}
             />
+            <input
+              type="text"
+              value={newOrgFurigana}
+              onChange={(e) => setNewOrgFurigana(e.target.value)}
+              placeholder="フリガナ（任意）"
+              className={inputClass}
+              disabled={loading}
+            />
             <button
               type="button"
               onClick={() => void handleAddOrg()}
@@ -582,6 +606,7 @@ export function AdminOrgSection({ orgType, label }) {
               onClick={() => {
                 setShowNewOrgForm(false);
                 setNewOrgName('');
+                setNewOrgFurigana('');
               }}
               disabled={loading}
               className="text-sm text-gray-600 hover:text-gray-800"
@@ -635,17 +660,35 @@ export function AdminOrgSection({ orgType, label }) {
                   {expanded ? '▼' : '▶'}
                 </button>
                 {isEditingOrg ? (
-                  <input
-                    type="text"
-                    value={editingOrg.name}
-                    onChange={(e) =>
-                      setEditingOrg((cur) => (cur ? { ...cur, name: e.target.value } : cur))
-                    }
-                    className={`${inputClass} min-w-[12rem] flex-1`}
-                    disabled={loading}
-                  />
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={editingOrg.name}
+                      onChange={(e) =>
+                        setEditingOrg((cur) => (cur ? { ...cur, name: e.target.value } : cur))
+                      }
+                      placeholder="組織名"
+                      className={`${inputClass} min-w-[12rem] flex-1`}
+                      disabled={loading}
+                    />
+                    <input
+                      type="text"
+                      value={editingOrg.furigana ?? ''}
+                      onChange={(e) =>
+                        setEditingOrg((cur) => (cur ? { ...cur, furigana: e.target.value } : cur))
+                      }
+                      placeholder="フリガナ（任意）"
+                      className={`${inputClass} min-w-[10rem] flex-1`}
+                      disabled={loading}
+                    />
+                  </div>
                 ) : (
-                  <span className="font-semibold text-slate-900 truncate">{org.name}</span>
+                  <span className="font-semibold text-slate-900 truncate">
+                    {org.name}
+                    {org.furigana?.trim() ? (
+                      <span className="ml-2 text-sm font-normal text-slate-500">（{org.furigana}）</span>
+                    ) : null}
+                  </span>
                 )}
               </div>
 
@@ -674,7 +717,7 @@ export function AdminOrgSection({ orgType, label }) {
                     <button
                       type="button"
                       onClick={() => {
-                        setEditingOrg({ id: org.id, name: org.name });
+                        setEditingOrg({ id: org.id, name: org.name, furigana: org.furigana ?? '' });
                         setError('');
                       }}
                       disabled={loading}
@@ -888,6 +931,9 @@ export function AdminOrgSection({ orgType, label }) {
                           }
                           className={`${inputClass} mt-1 w-full`}
                         />
+                        <span className="mt-1 block text-[11px] leading-relaxed text-slate-500">
+                          自動生成されています。先方の希望があれば書き換えてください。
+                        </span>
                       </label>
                     </div>
                     <div className="mt-3 flex gap-2">
@@ -917,7 +963,7 @@ export function AdminOrgSection({ orgType, label }) {
                     type="button"
                     onClick={() => {
                       setAddingMemberId(org.id);
-                      setNewMember(emptyMember());
+                      setNewMember(newMemberWithGeneratedPassword());
                       setEditingMember(null);
                       setError('');
                     }}

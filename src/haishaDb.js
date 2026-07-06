@@ -1882,6 +1882,7 @@ function mapOrganizationRow(row) {
   return {
     id: row.id != null ? String(row.id) : '',
     name,
+    furigana: row.furigana != null ? String(row.furigana).trim() : '',
     type: String(row.type ?? ''),
     cooperative_id: row.cooperative_id != null ? String(row.cooperative_id) : null,
     created_at: row.created_at,
@@ -1899,7 +1900,7 @@ export async function fetchOrganizations() {
   return (data || []).map(mapOrganizationRow).filter(Boolean);
 }
 
-export async function insertOrganization({ name, type, cooperative_id }) {
+export async function insertOrganization({ name, type, cooperative_id, furigana }) {
   const trimmed = String(name ?? '').trim();
   if (!trimmed) throw new Error('組織名を入力してください');
   if (!['agent', 'cooperative', 'contractor'].includes(type)) throw new Error('種別が不正です');
@@ -1909,6 +1910,7 @@ export async function insertOrganization({ name, type, cooperative_id }) {
       name: trimmed,
       type,
       cooperative_id: cooperative_id || null,
+      furigana: String(furigana ?? '').trim() || null,
     })
     .select('*')
     .single();
@@ -1920,7 +1922,7 @@ export async function updateOrganization(id, nameOrOpts) {
   if (nameOrOpts != null && typeof nameOrOpts === 'object') {
     const orgId = sanitizeRefId(id);
     if (!orgId) throw new Error('組織IDが必要です');
-    const { name, type, cooperative_id } = nameOrOpts;
+    const { name, type, cooperative_id, furigana } = nameOrOpts;
     const trimmed = String(name ?? '').trim();
     if (!trimmed) throw new Error('組織名を入力してください');
     if (!['agent', 'cooperative', 'contractor'].includes(type)) throw new Error('種別が不正です');
@@ -1930,6 +1932,7 @@ export async function updateOrganization(id, nameOrOpts) {
         name: trimmed,
         type,
         cooperative_id: cooperative_id || null,
+        furigana: String(furigana ?? '').trim() || null,
         updated_at: new Date().toISOString(),
       })
       .eq('id', orgId)
@@ -1941,10 +1944,16 @@ export async function updateOrganization(id, nameOrOpts) {
 
   const orgId = sanitizeRefId(id);
   if (!orgId) throw new Error('組織IDが必要です');
-  const { error } = await supabase
-    .from('organizations')
-    .update({ name: String(nameOrOpts ?? '').trim(), updated_at: new Date().toISOString() })
-    .eq('id', orgId);
+  const patch =
+    nameOrOpts != null && typeof nameOrOpts === 'object'
+      ? {
+          name: String(nameOrOpts.name ?? '').trim(),
+          furigana: String(nameOrOpts.furigana ?? '').trim() || null,
+          updated_at: new Date().toISOString(),
+        }
+      : { name: String(nameOrOpts ?? '').trim(), updated_at: new Date().toISOString() };
+  if (!patch.name) throw new Error('組織名を入力してください');
+  const { error } = await supabase.from('organizations').update(patch).eq('id', orgId);
   if (error) throw error;
 }
 
@@ -1985,7 +1994,7 @@ export async function deleteOrganizationWithMembers(orgId) {
 export async function fetchOrganizationsWithMembers(type) {
   const { data: orgs, error: oe } = await supabase
     .from('organizations')
-    .select('id, name, type, created_at')
+    .select('id, name, furigana, type, created_at')
     .eq('type', type)
     .order('name');
   if (oe) throw oe;
@@ -2010,10 +2019,14 @@ export async function fetchOrganizationsWithMembers(type) {
 }
 
 /** 組織を新規作成 */
-export async function createOrganization(name, type) {
+export async function createOrganization(name, type, { furigana } = {}) {
   const { data, error } = await supabase
     .from('organizations')
-    .insert({ name: name.trim(), type })
+    .insert({
+      name: name.trim(),
+      type,
+      furigana: String(furigana ?? '').trim() || null,
+    })
     .select()
     .single();
   if (error) throw error;
