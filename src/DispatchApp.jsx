@@ -1522,7 +1522,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const hasCurrentCustomer = Boolean(String(currentCustomerId || '').trim());
 
       useEffect(() => {
-        if (orderKind !== 'project') {
+        if (isGuestSiteOrder) {
+          setSiteContactCandidates([]);
+          return;
+        }
+        if (orderKind !== 'project' && orderKind !== 'spot') {
+          setSiteContactCandidates([]);
+          return;
+        }
+        if (orderKind === 'spot' && isAgentOrCooperative) {
           setSiteContactCandidates([]);
           return;
         }
@@ -1548,13 +1556,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return () => {
           cancelled = true;
         };
-      }, [orderKind, contractorOrgId]);
+      }, [orderKind, contractorOrgId, isGuestSiteOrder, isAgentOrCooperative]);
 
       useEffect(() => {
-        if (!isAgentOrCooperative) return;
+        if (!isAgentOrCooperative || orderKind !== 'project') return;
         setSiteContactName('');
         setSitePhone('');
-      }, [contractorCustomerId, isAgentOrCooperative]);
+      }, [contractorCustomerId, isAgentOrCooperative, orderKind]);
 
       useEffect(() => {
         if (typeof console === 'undefined' || typeof console.log !== 'function') return;
@@ -3390,7 +3398,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </div>
               ) : null}
 
-              {isAgentOrCooperative && !isGuestSiteOrder ? (
+              {isAgentOrCooperative && !isGuestSiteOrder && orderKind === 'project' ? (
                 <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3">
                   <p className="text-xs font-black text-amber-900">代理発注モード</p>
                   <p className="text-xs text-amber-700 mt-0.5">
@@ -3679,20 +3687,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               ) : null}
 
               {orderKind === 'spot' ? (
-                <>
-                  {isAgentOrCooperative && !contractorCustomerId ? (
-                    <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
-                      先に発注先業者を選択してください。
-                    </p>
-                  ) : null}
-                  <div
-                    className={
-                      isAgentOrCooperative && !contractorCustomerId
-                        ? 'flex flex-col gap-6 pointer-events-none opacity-60'
-                        : 'flex flex-col gap-6'
-                    }
-                    aria-disabled={isAgentOrCooperative && !contractorCustomerId ? true : undefined}
-                  >
+                <div className="flex flex-col gap-6">
                   <div className="flex flex-col gap-3">
                     <Label htmlFor={orderFieldId('site-name')}>現場名</Label>
                     <p className="text-xs leading-relaxed text-slate-500">
@@ -3780,8 +3775,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       </label>
                     </div>
                   </div>
-                  </div>
-                </>
+                </div>
               ) : null}
 
               {orderKind === 'project' && !isGuestSiteOrder ? (
@@ -3962,7 +3956,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
                   {orderKind === 'spot' ? (
                     <MasterSuggestInput
-                      label="業者（下請・現場名義など）"
+                      label="業者名"
                       name={orderFieldName('contractor_name')}
                       value={contractorName}
                       onValueChange={(v) => {
@@ -3976,7 +3970,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         setContractorName(s);
                         setSubmitError('');
                       }}
-                      placeholder="例：佐藤建設（入力すると候補が表示されます）"
+                      placeholder="発注している業者名を入力"
                       autoComplete="off"
                     />
                   ) : null}
@@ -4087,20 +4081,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </label>
               </div>
 
-              <div className="flex flex-col gap-3">
-                <Label htmlFor={orderFieldId('order-placer')}>発注担当者</Label>
-                <p className="text-xs leading-relaxed text-slate-500">
-                  ログイン中の担当者名が自動で設定されます（代理発注の場合は商社・組合の担当者名）。
-                </p>
-                <div
-                  id={orderFieldId('order-placer')}
-                  className="min-h-[56px] w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-base font-semibold text-slate-900"
-                >
-                  {orderPlacerName || '—'}
-                </div>
-              </div>
-
-              {orderKind === 'project' ? (
+              {(orderKind === 'project' || orderKind === 'spot') && !isGuestSiteOrder ? (
                 <div className="flex flex-col gap-3">
                   <MasterSuggestInput
                     label="現場担当者"
@@ -4121,18 +4102,24 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       setSubmitError('');
                     }}
                     placeholder="現場担当者名を入力（候補から選択可）"
-                    emptyHint="登録された担当者がいません（自由入力もできます）"
+                    emptyHint={
+                      orderKind === 'spot' && isAgentOrCooperative
+                        ? '自由入力してください'
+                        : '登録された担当者がいません（自由入力もできます）'
+                    }
                     inputClassName="min-h-[56px] rounded-xl border-2 border-slate-200 px-4 py-3 text-base"
                   />
-                  <p className="text-xs leading-relaxed text-slate-500">
-                    業者に登録された担当者から選ぶと、電話番号が自動入力されます。
-                  </p>
+                  {orderKind === 'project' || !isAgentOrCooperative ? (
+                    <p className="text-xs leading-relaxed text-slate-500">
+                      業者に登録された担当者から選ぶと、電話番号が自動入力されます。
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
 
               <div className="flex flex-col gap-3">
                 <Label htmlFor={orderFieldId('site-phone')}>
-                  {orderKind === 'project' ? '現場電話番号' : '電話番号'}
+                  {orderKind === 'project' || orderKind === 'spot' ? '現場電話番号' : '電話番号'}
                 </Label>
                 <input
                   id={orderFieldId('site-phone')}
