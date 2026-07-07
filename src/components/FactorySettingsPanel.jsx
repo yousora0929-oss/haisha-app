@@ -5,6 +5,8 @@ import {
   downloadCustomersExportCsv,
   downloadProjectsExportCsv,
 } from '../utils/adminCsvImport.js';
+import { CharterVehicleRegistrationPanel } from './CharterVehicleRegistrationPanel.jsx';
+import { CharterNotificationPreferencesPanel } from './CharterNotificationPreferencesPanel.jsx';
 import {
   ALARM_SOUND_LABELS,
   ALARM_SOUND_TYPES,
@@ -21,9 +23,11 @@ const SECTION =
  * 工場画面 — 設定管理タブ
  */
 export function FactorySettingsPanel({
+  factoryId,
   projects = [],
   customers = [],
   onExportOrders,
+  onCharterNotifySaved,
   onLogout,
 }) {
   const { effective, setMode } = useTheme();
@@ -61,7 +65,7 @@ export function FactorySettingsPanel({
       <header>
         <h2 className="text-lg font-black text-slate-900 dark:text-slate-100">設定管理</h2>
         <p className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400">
-          表示・データ出力・通知音・ログアウト
+          表示・データ出力・通知音・チャーター設定・ログアウト
         </p>
       </header>
 
@@ -162,8 +166,36 @@ export function FactorySettingsPanel({
         </button>
       </section>
 
+      <section className={SECTION}>
+        <h3 className="text-sm font-black text-slate-900 dark:text-slate-100">D. チャーター設定</h3>
+        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          自工場で保有する車両の登録と、チャーター募集を出したときの通知優先順位を設定します。
+        </p>
+        <div className="mt-4 grid gap-6">
+          <div>
+            <h4 className="text-sm font-black text-slate-800 dark:text-slate-200">🛻 車両登録</h4>
+            <div className="mt-2">
+              <CharterVehicleRegistrationPanel ownerType="factory" ownerId={factoryId} title="" />
+            </div>
+          </div>
+          <hr className="border-slate-200 dark:border-slate-700" />
+          <div>
+            <h4 className="text-sm font-black text-slate-800 dark:text-slate-200">🔔 通知優先順位</h4>
+            <div className="mt-2">
+              <CharterNotificationPreferencesPanel
+                factoryId={factoryId}
+                onSaved={(msg) => {
+                  if (msg) showNotice(msg);
+                  onCharterNotifySaved?.(msg);
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section className={'border-2 border-red-300 ' + SECTION + ' dark:border-red-800'}>
-        <h3 className="text-sm font-black text-red-800 dark:text-red-300">D. ログアウト</h3>
+        <h3 className="text-sm font-black text-red-800 dark:text-red-300">E. ログアウト</h3>
         <p className="mt-1 text-xs font-medium text-slate-600 dark:text-slate-400">
           誤操作防止のため、チェック後にのみログアウトできます。
         </p>

@@ -58,9 +58,7 @@ import { MAP_EDITOR_ORDER_SAVED_DOM_EVENT, MAP_EDITOR_ORDER_SAVED_EVENT_KEY } fr
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
 import { FactorySettingsPanel } from './components/FactorySettingsPanel.jsx';
-import { CharterVehicleRegistrationPanel } from './components/CharterVehicleRegistrationPanel.jsx';
 import { CharterRequestsPanel } from './components/CharterRequestsPanel.jsx';
-import { CharterNotificationPreferencesPanel } from './components/CharterNotificationPreferencesPanel.jsx';
 import { CharterOpenRequestsPanel } from './components/CharterOpenRequestsPanel.jsx';
 import { FactoryNewsPanel } from './components/FactoryNewsPanel.jsx';
 import { countUnreadNewsForFactory } from './utils/factoryNews.js';
@@ -3920,18 +3918,17 @@ function isUnreadForFactory(messages, readKey) {
               </div>
             </div>
             <div className="flex flex-1 flex-wrap items-center justify-end gap-1.5">
-              <div className="grid min-w-full flex-1 grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800 sm:grid-cols-5 lg:grid-cols-10 sm:min-w-[52rem] sm:flex-none lg:min-w-[72rem]">
+              <div className="grid min-w-full flex-1 grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800 sm:grid-cols-5 lg:grid-cols-9 sm:min-w-[52rem] sm:flex-none lg:min-w-[64rem]">
                 {[
                   ['news', '📢 お知らせ'],
                   ['schedule', '⚙️ スケジュール'],
                   ['orders', '🚚 注文'],
                   ['assignments', '割当物件'],
-                  ['charterSettings', '⚙️ チャーター設定'],
-                  ['charter', '📣 チャーター募集'],
-                  ['charterRespond', '🚚 チャーター案件（応答）'],
                   ['calendar', '📅 カレンダー'],
                   ['history', '📋 履歴'],
                   ['settings', '⚙️ 設定'],
+                  ['charter', '📣 チャーター募集'],
+                  ['charterRespond', '🚚 応援要請'],
                 ].map(([id, label]) => {
                   const active = activeTab === id;
                   return (
@@ -4016,37 +4013,6 @@ function isUnreadForFactory(messages, readKey) {
                   onUrlCopied={handleSiteUrlCopied}
                 />
               ) : null}
-              {activeTab === 'charterSettings' ? (
-                <div className="grid gap-6 py-2 sm:py-4">
-                  <section>
-                    <h2 className="text-lg font-black text-slate-900 dark:text-slate-100">🛻 車両登録</h2>
-                    <p className="mt-1 text-sm font-medium text-slate-600 dark:text-slate-300">
-                      自工場で保有する車両を登録します。
-                    </p>
-                    <div className="mt-3">
-                      <CharterVehicleRegistrationPanel ownerType="factory" ownerId={activeFactoryId} title="" />
-                    </div>
-                  </section>
-
-                  <hr className="border-slate-200 dark:border-slate-700" />
-
-                  <section>
-                    <h2 className="text-lg font-black text-slate-900 dark:text-slate-100">🔔 通知優先順位</h2>
-                    <p className="mt-1 text-sm font-medium text-slate-600 dark:text-slate-300">
-                      チャーター募集を出したとき、優先的に通知する相手の順番を設定します。
-                    </p>
-                    <div className="mt-3">
-                      <CharterNotificationPreferencesPanel
-                        factoryId={activeFactoryId}
-                        onSaved={(msg) => {
-                          setActionNotice(msg);
-                          window.setTimeout(() => setActionNotice(''), 3000);
-                        }}
-                      />
-                    </div>
-                  </section>
-                </div>
-              ) : null}
               {activeTab === 'charter' ? (
                 <div className="py-2 sm:py-4">
                   <CharterRequestsPanel factoryId={activeFactoryId} factories={factories} />
@@ -4058,7 +4024,7 @@ function isUnreadForFactory(messages, readKey) {
                     responderType="factory"
                     responderId={activeFactoryId}
                     excludeOwnFactoryId={activeFactoryId}
-                    title="チャーター案件（応答）"
+                    title="応援要請"
                     description="他工場からのチャーター募集に、供給側として応答できます。"
                   />
                 </div>
@@ -4176,9 +4142,15 @@ function isUnreadForFactory(messages, readKey) {
               ) : null}
               {activeTab === 'settings' ? (
                 <FactorySettingsPanel
+                  factoryId={activeFactoryId}
                   projects={projects}
                   customers={customers}
                   onExportOrders={handleDownloadFactoryCsv}
+                  onCharterNotifySaved={(msg) => {
+                    if (!msg) return;
+                    setActionNotice(msg);
+                    window.setTimeout(() => setActionNotice(''), 3000);
+                  }}
                   onLogout={handleFactoryLogout}
                 />
               ) : null}

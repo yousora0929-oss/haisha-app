@@ -125,7 +125,7 @@ export function CharterNotificationPreferencesPanel({ factoryId, onSaved }) {
     <section className="rounded-2xl border-2 border-slate-200 bg-white p-4 shadow-sm sm:p-6">
       <h2 className="text-lg font-black text-slate-900">通知優先順位設定</h2>
       <p className="mt-1 text-sm font-medium text-slate-600">
-        チャーター募集時に通知する順番を設定します（上にあるほど先に通知。Phase 3 で送信予定）。
+        チャーター募集時に通知する順番を設定します（上にあるほど先に通知されます）。
       </p>
 
       {notice ? <p className="mt-3 text-sm font-bold text-emerald-700">{notice}</p> : null}
