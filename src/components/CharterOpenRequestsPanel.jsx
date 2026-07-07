@@ -1,5 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import * as db from '../haishaDb.js';
+import {
+  buildAssignedVehicleSnapshot,
+  canWithdrawCharterResponse,
+  formatAssignedVehicleBadge,
+  plateCategoryLabel,
+  sortVehiclesForRequest,
+  vehicleTypeLabel,
+} from '../utils/charterAssignedVehicles.js';
 
 const inputClass =
   'min-h-[44px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200';
@@ -11,12 +19,75 @@ const RESPONSE_STATUS_META = {
   withdrawn: { label: '取り下げ', className: 'bg-slate-100 text-slate-700 border-slate-200' },
 };
 
-function vehicleTypeLabel(type) {
-  return type === 'small' ? '小型' : '大型';
+function emptyRespondForm() {
+  return { offered_count: '1', message: '', selectedVehicleIds: [] };
 }
 
-function emptyRespondForm() {
-  return { offered_count: '1', message: '' };
+function snapshotsFromSelection(vehicles, selectedIds) {
+  const idSet = new Set(selectedIds);
+  return vehicles
+    .filter((v) => idSet.has(v.id))
+    .map((v) => buildAssignedVehicleSnapshot(v))
+    .filter(Boolean);
+}
+
+function assignedVehicleIds(assignedVehicles) {
+  return (assignedVehicles || []).map((v) => v.vehicle_id).filter(Boolean);
+}
+
+function CharterVehiclePicker({ vehicles, request, selectedIds, onToggle, disabled }) {
+  const sorted = useMemo(
+    () => sortVehiclesForRequest(vehicles, request?.vehicle_type),
+    [vehicles, request?.vehicle_type],
+  );
+
+  if (!sorted.length) {
+    return <p className="mt-2 text-xs font-medium text-slate-500">登録済みの車両がありません（未選択でも送信できます）</p>;
+  }
+
+  return (
+    <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-2">
+      {sorted.map((vehicle) => {
+        const checked = selectedIds.includes(vehicle.id);
+        return (
+          <li key={vehicle.id}>
+            <label className="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-white">
+              <input
+                type="checkbox"
+                checked={checked}
+                disabled={disabled}
+                onChange={() => onToggle(vehicle.id)}
+                className="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600"
+              />
+              <span className="text-xs font-medium text-slate-800 sm:text-sm">
+                {vehicleTypeLabel(vehicle.vehicle_type)} / {plateCategoryLabel(vehicle.plate_category)} /{' '}
+                {vehicle.vehicle_number || '—'} / ドア{vehicle.door_number || '—'}
+              </span>
+            </label>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function AssignedVehicleBadges({ assignedVehicles }) {
+  const list = assignedVehicles || [];
+  if (!list.length) {
+    return <p className="mt-1 text-xs font-medium text-slate-500">割り当て車両: 未設定</p>;
+  }
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {list.map((v, i) => (
+        <span
+          key={`${v.vehicle_id || i}-${v.vehicle_number}`}
+          className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-bold text-slate-700"
+        >
+          {formatAssignedVehicleBadge(v)}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 export function CharterOpenRequestsPanel({
@@ -27,14 +98,18 @@ export function CharterOpenRequestsPanel({
   excludeOwnFactoryId = '',
 }) {
   const rid = String(responderId || '').trim();
+  const ownerType = responderType === 'charter_operator' ? 'charter_operator' : 'factory';
   const [requests, setRequests] = useState([]);
   const [myResponses, setMyResponses] = useState([]);
+  const [ownerVehicles, setOwnerVehicles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [respondingId, setRespondingId] = useState('');
+  const [editingVehiclesResponseId, setEditingVehiclesResponseId] = useState('');
   const [form, setForm] = useState(emptyRespondForm);
+  const [vehicleEditIds, setVehicleEditIds] = useState([]);
 
   const responseByRequestId = useMemo(() => {
     const map = new Map();
@@ -54,14 +129,16 @@ export function CharterOpenRequestsPanel({
     if (!rid) {
       setRequests([]);
       setMyResponses([]);
+      setOwnerVehicles([]);
       return;
     }
     setLoading(true);
     setError('');
     try {
-      const [openRows, responseRows] = await Promise.all([
+      const [openRows, responseRows, vehicles] = await Promise.all([
         db.fetchOpenCharterRequestsForResponder(responderType, rid),
         db.fetchMyCharterResponses(responderType, rid),
+        db.fetchCharterVehicles(ownerType, rid),
       ]);
       const openList = Array.isArray(openRows) ? openRows : [];
       const responses = Array.isArray(responseRows) ? responseRows : [];
@@ -78,23 +155,44 @@ export function CharterOpenRequestsPanel({
         : [];
       setRequests([...openList, ...closedRows]);
       setMyResponses(responses);
+      setOwnerVehicles(Array.isArray(vehicles) ? vehicles : []);
     } catch (err) {
       setError(err?.message || '募集一覧の取得に失敗しました');
     } finally {
       setLoading(false);
     }
-  }, [responderType, rid]);
+  }, [responderType, rid, ownerType]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
 
+  const toggleFormVehicle = (vehicleId) => {
+    setForm((f) => {
+      const set = new Set(f.selectedVehicleIds);
+      if (set.has(vehicleId)) set.delete(vehicleId);
+      else set.add(vehicleId);
+      return { ...f, selectedVehicleIds: [...set] };
+    });
+  };
+
+  const toggleEditVehicle = (vehicleId) => {
+    setVehicleEditIds((ids) => {
+      const set = new Set(ids);
+      if (set.has(vehicleId)) set.delete(vehicleId);
+      else set.add(vehicleId);
+      return [...set];
+    });
+  };
+
   const openRespondForm = (request) => {
     const existing = responseByRequestId.get(request.id);
     setRespondingId(request.id);
+    setEditingVehiclesResponseId('');
     setForm({
       offered_count: String(existing?.offered_count || 1),
       message: String(existing?.message || ''),
+      selectedVehicleIds: assignedVehicleIds(existing?.assigned_vehicles),
     });
     setError('');
     setNotice('');
@@ -105,6 +203,19 @@ export function CharterOpenRequestsPanel({
     setForm(emptyRespondForm());
   };
 
+  const openVehicleEdit = (response) => {
+    setEditingVehiclesResponseId(response.id);
+    setRespondingId('');
+    setVehicleEditIds(assignedVehicleIds(response.assigned_vehicles));
+    setError('');
+    setNotice('');
+  };
+
+  const closeVehicleEdit = () => {
+    setEditingVehiclesResponseId('');
+    setVehicleEditIds([]);
+  };
+
   const handleSubmitResponse = async (e, request) => {
     e.preventDefault();
     if (!request?.id) return;
@@ -112,12 +223,14 @@ export function CharterOpenRequestsPanel({
     setError('');
     setNotice('');
     try {
+      const assignedVehicles = snapshotsFromSelection(ownerVehicles, form.selectedVehicleIds);
       await db.submitCharterResponse({
         requestId: request.id,
         responderType,
         responderId: rid,
         offeredCount: form.offered_count,
         message: form.message,
+        assignedVehicles,
       });
       closeRespondForm();
       await loadData();
@@ -130,8 +243,28 @@ export function CharterOpenRequestsPanel({
     }
   };
 
-  const handleWithdraw = async (response) => {
+  const handleSaveVehicles = async (response, request) => {
+    if (!response?.id) return;
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const assignedVehicles = snapshotsFromSelection(ownerVehicles, vehicleEditIds);
+      await db.updateCharterResponseVehicles(response.id, assignedVehicles);
+      closeVehicleEdit();
+      await loadData();
+      setNotice('割り当て車両を更新しました');
+      window.setTimeout(() => setNotice(''), 3000);
+    } catch (err) {
+      setError(err?.message || '割り当て車両の更新に失敗しました');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleWithdraw = async (response, request) => {
     if (!response?.id || response.status !== 'offered') return;
+    if (!canWithdrawCharterResponse(request?.request_date)) return;
     const ok = window.confirm('この応答を取り下げますか？');
     if (!ok) return;
     setSaving(true);
@@ -175,6 +308,8 @@ export function CharterOpenRequestsPanel({
                 }
               : null;
             const isFormOpen = respondingId === request.id;
+            const isVehicleEditOpen = editingVehiclesResponseId === myResponse?.id;
+            const withdrawAllowed = canWithdrawCharterResponse(request.request_date);
 
             return (
               <li key={request.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
@@ -197,28 +332,46 @@ export function CharterOpenRequestsPanel({
                         >
                           {statusMeta.label}
                         </span>
-                        {myResponse?.status === 'offered' ? (
+                        {myResponse?.status === 'offered' ||
+                        myResponse?.status === 'accepted' ||
+                        myResponse?.status === 'rejected' ? (
                           <span className="text-xs font-bold text-slate-600">
                             提供 {myResponse.offered_count}台
-                            {myResponse.message?.trim() ? ` — ${myResponse.message}` : ''}
-                          </span>
-                        ) : myResponse?.status === 'accepted' || myResponse?.status === 'rejected' ? (
-                          <span className="text-xs font-bold text-slate-600">
-                            提供 {myResponse.offered_count}台
+                            {myResponse.message?.trim() && myResponse.status === 'offered'
+                              ? ` — ${myResponse.message}`
+                              : ''}
                           </span>
                         ) : null}
                       </div>
+                    ) : null}
+                    {myResponse && myResponse.status !== 'withdrawn' ? (
+                      <AssignedVehicleBadges assignedVehicles={myResponse.assigned_vehicles} />
+                    ) : null}
+                    {myResponse?.status === 'offered' && !withdrawAllowed ? (
+                      <p className="mt-1 text-xs font-bold text-amber-700">
+                        募集日の3日前を過ぎているため取り下げできません
+                      </p>
                     ) : null}
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
                     {myResponse?.status === 'offered' ? (
                       <button
                         type="button"
-                        onClick={() => void handleWithdraw(myResponse)}
-                        disabled={saving}
-                        className="rounded-lg border border-red-300 bg-white px-3 py-2 text-xs font-black text-red-700 hover:bg-red-50 disabled:opacity-60"
+                        onClick={() => void handleWithdraw(myResponse, request)}
+                        disabled={saving || !withdrawAllowed}
+                        className="rounded-lg border border-red-300 bg-white px-3 py-2 text-xs font-black text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         取り下げ
+                      </button>
+                    ) : null}
+                    {myResponse && myResponse.status !== 'withdrawn' ? (
+                      <button
+                        type="button"
+                        onClick={() => openVehicleEdit(myResponse)}
+                        disabled={saving}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                      >
+                        割り当て車両を編集
                       </button>
                     ) : null}
                     {!myResponse || myResponse.status === 'withdrawn' ? (
@@ -272,6 +425,18 @@ export function CharterOpenRequestsPanel({
                         placeholder="到着可能時間など"
                       />
                     </label>
+                    <div className="mt-3">
+                      <p className="text-xs font-black text-slate-800">
+                        どの車両を割り当てますか？（あとで設定してもOKです）
+                      </p>
+                      <CharterVehiclePicker
+                        vehicles={ownerVehicles}
+                        request={request}
+                        selectedIds={form.selectedVehicleIds}
+                        onToggle={toggleFormVehicle}
+                        disabled={saving}
+                      />
+                    </div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <button
                         type="submit"
@@ -290,6 +455,37 @@ export function CharterOpenRequestsPanel({
                       </button>
                     </div>
                   </form>
+                ) : null}
+
+                {isVehicleEditOpen && myResponse ? (
+                  <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                    <p className="text-xs font-black text-slate-800">割り当て車両を編集</p>
+                    <CharterVehiclePicker
+                      vehicles={ownerVehicles}
+                      request={request}
+                      selectedIds={vehicleEditIds}
+                      onToggle={toggleEditVehicle}
+                      disabled={saving}
+                    />
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveVehicles(myResponse, request)}
+                        disabled={saving}
+                        className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-black text-white hover:bg-indigo-700 disabled:opacity-60"
+                      >
+                        {saving ? '保存中...' : '保存'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={closeVehicleEdit}
+                        disabled={saving}
+                        className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                      >
+                        キャンセル
+                      </button>
+                    </div>
+                  </div>
                 ) : null}
               </li>
             );

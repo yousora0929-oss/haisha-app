@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import * as db from '../haishaDb.js';
+import { formatAssignedVehicleBadge } from '../utils/charterAssignedVehicles.js';
 import { todayLocalISODate } from '../haishaConstants.js';
 
 const inputClass =
@@ -411,6 +412,20 @@ export function CharterRequestsPanel({ factoryId, factories = [] }) {
                                 {response.message?.trim() ? (
                                   <span className="text-slate-600 dark:text-slate-400">— {response.message}</span>
                                 ) : null}
+                                {(response.assigned_vehicles || []).length > 0 ? (
+                                  <span className="flex flex-wrap gap-1">
+                                    {(response.assigned_vehicles || []).map((v, i) => (
+                                      <span
+                                        key={`${response.id}-${v.vehicle_id || i}`}
+                                        className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-bold text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                                      >
+                                        {formatAssignedVehicleBadge(v)}
+                                      </span>
+                                    ))}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-500 dark:text-slate-400">車両未設定</span>
+                                )}
                                 {request.status === 'open' && response.status === 'offered' ? (
                                   <button
                                     type="button"

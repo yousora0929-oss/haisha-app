@@ -10,7 +10,7 @@ import {
 import { stripSavedSnapshotOverlay } from './utils/mapEditorOverlay.js';
 import { normalizeExternalUrl } from './utils/urlValidation.js';
 import { supabase, ensurePanelRealtimeAuth } from './supabaseClient.js';
-import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils/deliveryAreas.js';
+import { normalizeAssignedVehicles } from './utils/charterAssignedVehicles.js';
 import { isValidSiteOrderUrlToken, resolveUrlTokenForInsert } from './utils/urlValidation.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { normalizeAssociationFactorySelection } from './utils/associationFactoryAssignment.js';
@@ -3854,6 +3854,7 @@ function mapCharterVehicleRow(row) {
     owner_type: String(row.owner_type ?? ''),
     owner_id: String(row.owner_id ?? ''),
     vehicle_type: row.vehicle_type === 'small' ? 'small' : 'large',
+    plate_category: row.plate_category === 'private' ? 'private' : 'business',
     vehicle_number: row.vehicle_number != null ? String(row.vehicle_number) : '',
     door_number: row.door_number != null ? String(row.door_number) : '',
     created_at: row.created_at,
@@ -3873,7 +3874,9 @@ export async function fetchCharterVehicles(ownerType, ownerId) {
   try {
     const { data, error } = await supabase
       .from('charter_vehicles')
-      .select('id, owner_type, owner_id, vehicle_type, vehicle_number, door_number, created_at, updated_at')
+      .select(
+        'id, owner_type, owner_id, vehicle_type, plate_category, vehicle_number, door_number, created_at, updated_at',
+      )
       .eq('owner_type', type)
       .eq('owner_id', oid)
       .order('created_at', { ascending: true });
@@ -3894,6 +3897,8 @@ export async function saveCharterVehicle(vehicle) {
   const ownerType = String(v.owner_type ?? v.ownerType ?? '').trim();
   const ownerId = String(v.owner_id ?? v.ownerId ?? '').trim();
   const vehicleType = v.vehicle_type === 'small' || v.vehicleType === 'small' ? 'small' : 'large';
+  const plateCategory =
+    v.plate_category === 'private' || v.plateCategory === 'private' ? 'private' : 'business';
   const vehicleNumber = String(v.vehicle_number ?? v.vehicleNumber ?? '').trim() || null;
   const doorNumber = String(v.door_number ?? v.doorNumber ?? '').trim() || null;
 
@@ -3904,6 +3909,7 @@ export async function saveCharterVehicle(vehicle) {
     owner_type: ownerType,
     owner_id: ownerId,
     vehicle_type: vehicleType,
+    plate_category: plateCategory,
     vehicle_number: vehicleNumber,
     door_number: doorNumber,
     updated_at: new Date().toISOString(),
@@ -3928,6 +3934,31 @@ export async function deleteCharterVehicle(vehicleId) {
   if (!supabase?.from) throw new Error('Supabase クライアントが初期化されていません');
   const { error } = await supabase.from('charter_vehicles').delete().eq('id', id);
   if (error) throw error;
+}
+
+/** チャーター車両のCSV一括登録 */
+export async function bulkInsertCharterVehicles(ownerType, ownerId, rows) {
+  const type = String(ownerType || '').trim();
+  const oid = String(ownerId || '').trim();
+  const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
+  if (!type || !oid) throw new Error('owner_type と owner_id が必要です');
+  if (!list.length) throw new Error('登録する行がありません');
+  if (!supabase?.from) throw new Error('Supabase クライアントが初期化されていません');
+
+  const now = new Date().toISOString();
+  const insertRows = list.map((r) => ({
+    owner_type: type,
+    owner_id: oid,
+    vehicle_type: r.vehicleType === 'small' || r.vehicle_type === 'small' ? 'small' : 'large',
+    plate_category: r.plateCategory === 'private' || r.plate_category === 'private' ? 'private' : 'business',
+    vehicle_number: String(r.vehicleNumber ?? r.vehicle_number ?? '').trim() || null,
+    door_number: String(r.doorNumber ?? r.door_number ?? '').trim() || null,
+    updated_at: now,
+  }));
+
+  const { data, error } = await supabase.from('charter_vehicles').insert(insertRows).select('*');
+  if (error) throw error;
+  return (data || []).map(mapCharterVehicleRow).filter(Boolean);
 }
 
 /** 個人チャーター業者ログイン */
@@ -4198,10 +4229,14 @@ function mapCharterResponseRow(row) {
     offered_count: Number.isFinite(offeredCount) && offeredCount > 0 ? Math.floor(offeredCount) : 1,
     message: row.message != null ? String(row.message) : '',
     status: String(row.status || 'offered'),
+    assigned_vehicles: normalizeAssignedVehicles(row.assigned_vehicles),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
 }
+
+const CHARTER_RESPONSE_SELECT =
+  'id, request_id, responder_type, responder_id, offered_count, message, status, assigned_vehicles, created_at, updated_at';
 
 /** チャーター業者ID → 会社名（応答一覧表示用） */
 export async function fetchCharterOperatorCompanyNames(operatorIds) {
@@ -4276,9 +4311,7 @@ export async function fetchMyCharterResponses(responderType, responderId) {
   try {
     const { data, error } = await supabase
       .from('charter_responses')
-      .select(
-        'id, request_id, responder_type, responder_id, offered_count, message, status, created_at, updated_at',
-      )
+      .select(CHARTER_RESPONSE_SELECT)
       .eq('responder_type', type)
       .eq('responder_id', rid)
       .order('created_at', { ascending: false });
@@ -4294,7 +4327,14 @@ export async function fetchMyCharterResponses(responderType, responderId) {
 }
 
 /** 応答の送信（新規 or 更新） */
-export async function submitCharterResponse({ requestId, responderType, responderId, offeredCount, message }) {
+export async function submitCharterResponse({
+  requestId,
+  responderType,
+  responderId,
+  offeredCount,
+  message,
+  assignedVehicles,
+}) {
   const reqId = sanitizeRefId(requestId);
   const type = responderType === 'charter_operator' ? 'charter_operator' : 'factory';
   const rid = String(responderId || '').trim();
@@ -4315,13 +4355,32 @@ export async function submitCharterResponse({ requestId, responderType, responde
     status: 'offered',
     updated_at: now,
   };
+  if (assignedVehicles !== undefined) {
+    row.assigned_vehicles = normalizeAssignedVehicles(assignedVehicles);
+  }
 
   const { data, error } = await supabase
     .from('charter_responses')
     .upsert(row, { onConflict: 'request_id,responder_type,responder_id' })
-    .select(
-      'id, request_id, responder_type, responder_id, offered_count, message, status, created_at, updated_at',
-    )
+    .select(CHARTER_RESPONSE_SELECT)
+    .single();
+  if (error) throw error;
+  return mapCharterResponseRow(data);
+}
+
+/** 応答の割り当て車両のみ更新 */
+export async function updateCharterResponseVehicles(responseId, assignedVehicles) {
+  const id = sanitizeRefId(responseId);
+  if (!id) throw new Error('responseId が必要です');
+  if (!supabase?.from) throw new Error('Supabase クライアントが初期化されていません');
+  const { data, error } = await supabase
+    .from('charter_responses')
+    .update({
+      assigned_vehicles: normalizeAssignedVehicles(assignedVehicles),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .select(CHARTER_RESPONSE_SELECT)
     .single();
   if (error) throw error;
   return mapCharterResponseRow(data);
@@ -4336,9 +4395,7 @@ export async function withdrawCharterResponse(responseId) {
     .from('charter_responses')
     .update({ status: 'withdrawn', updated_at: new Date().toISOString() })
     .eq('id', id)
-    .select(
-      'id, request_id, responder_type, responder_id, offered_count, message, status, created_at, updated_at',
-    )
+    .select(CHARTER_RESPONSE_SELECT)
     .single();
   if (error) throw error;
   return mapCharterResponseRow(data);
@@ -4355,9 +4412,7 @@ export async function fetchCharterResponsesForRequest(requestId) {
   try {
     const { data, error } = await supabase
       .from('charter_responses')
-      .select(
-        'id, request_id, responder_type, responder_id, offered_count, message, status, created_at, updated_at',
-      )
+      .select(CHARTER_RESPONSE_SELECT)
       .eq('request_id', id)
       .order('created_at', { ascending: true });
     if (error) {
