@@ -3926,9 +3926,9 @@ function isUnreadForFactory(messages, readKey) {
                   ['assignments', '割当物件'],
                   ['calendar', '📅 カレンダー'],
                   ['history', '📋 履歴'],
-                  ['settings', '⚙️ 設定'],
                   ['charter', '📣 チャーター募集'],
                   ['charterRespond', '🚚 応援要請'],
+                  ['settings', '⚙️ 設定'],
                 ].map(([id, label]) => {
                   const active = activeTab === id;
                   return (
@@ -3958,20 +3958,22 @@ function isUnreadForFactory(messages, readKey) {
                   );
                 })}
               </div>
-            <button
-              type="button"
-              disabled={hiddenOrderIds.size === 0}
-              onClick={showAllHiddenOrders}
-              className={
-                'min-h-[36px] rounded-lg border-2 px-2 py-1 text-[11px] font-black shadow-sm sm:text-xs ' +
-                (hiddenOrderIds.size === 0
-                  ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
-                  : 'border-indigo-500 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 active:scale-95 active:bg-indigo-200')
-              }
-            >
-              非表示にした注文を一括再表示
-              {hiddenOrderIds.size > 0 ? `（${hiddenOrderIds.size}件）` : ''}
-            </button>
+            {activeTab === 'orders' ? (
+              <button
+                type="button"
+                disabled={hiddenOrderIds.size === 0}
+                onClick={showAllHiddenOrders}
+                className={
+                  'min-h-[36px] rounded-lg border-2 px-2 py-1 text-[11px] font-black shadow-sm sm:text-xs ' +
+                  (hiddenOrderIds.size === 0
+                    ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
+                    : 'border-indigo-500 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 active:scale-95 active:bg-indigo-200')
+                }
+              >
+                非表示にした注文を一括再表示
+                {hiddenOrderIds.size > 0 ? `（${hiddenOrderIds.size}件）` : ''}
+              </button>
+            ) : null}
             </div>
           </div>
           <PullToRefresh onRefresh={handleFactoryRefresh} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 py-1">
