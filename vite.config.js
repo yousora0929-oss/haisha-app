@@ -35,6 +35,9 @@ export default defineConfig({
         admin: resolve(__dirname, 'AdminPrototype.html'),
         mapEditor: resolve(__dirname, 'MapEditor.html'),
       },
+      output: {
+        manualChunks: undefined,
+      },
     },
   },
 });
