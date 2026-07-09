@@ -62,6 +62,7 @@ import { CharterRequestsPanel } from './components/CharterRequestsPanel.jsx';
 import { CharterOpenRequestsPanel } from './components/CharterOpenRequestsPanel.jsx';
 import { FactoryNewsPanel } from './components/FactoryNewsPanel.jsx';
 import { countUnreadNewsForFactory } from './utils/factoryNews.js';
+import { countPendingCharterResponses } from './utils/charterBadges.js';
 import { OrderAcceptModal } from './components/OrderAcceptModal.jsx';
 import {
   detectFactoryNotifyOrderIds,
@@ -2627,6 +2628,7 @@ function isUnreadForFactory(messages, readKey) {
       const [readChatKeys, setReadChatKeys] = useState({});
       const [activeTab, setActiveTab] = useState('orders');
       const [factoryNewsUnread, setFactoryNewsUnread] = useState(0);
+      const [charterPendingCount, setCharterPendingCount] = useState(0);
       const [focusedOrderId, setFocusedOrderId] = useState('');
       const applyFactoryPushRedirect = useCallback((payload) => {
         const id = String(payload?.orderId || '').trim();
@@ -3122,6 +3124,40 @@ function isUnreadForFactory(messages, readKey) {
         };
       }, [syncFromStorage]);
 
+      const refreshCharterPendingCount = useCallback(async () => {
+        if (!activeFactoryId) {
+          setCharterPendingCount(0);
+          return;
+        }
+        try {
+          const [openRequests, myResponses] = await Promise.all([
+            db.fetchOpenCharterRequestsForResponder('factory', activeFactoryId),
+            db.fetchMyCharterResponses('factory', activeFactoryId),
+          ]);
+          setCharterPendingCount(countPendingCharterResponses(openRequests, myResponses));
+        } catch (e) {
+          console.error('[FactoryApp] charter pending count failed', e);
+        }
+      }, [activeFactoryId]);
+
+      useEffect(() => {
+        void refreshCharterPendingCount();
+      }, [refreshCharterPendingCount]);
+
+      useEffect(() => {
+        if (activeTab === 'charterRespond') {
+          void refreshCharterPendingCount();
+        }
+      }, [activeTab, refreshCharterPendingCount]);
+
+      useEffect(() => {
+        if (!activeFactoryId) return undefined;
+        const id = window.setInterval(() => {
+          void refreshCharterPendingCount();
+        }, 60000);
+        return () => window.clearInterval(id);
+      }, [activeFactoryId, refreshCharterPendingCount]);
+
       const handleFactoryRefresh = useCallback(async () => {
         await syncFromStorage({ playSound: false });
         try {
@@ -3136,7 +3172,8 @@ function isUnreadForFactory(messages, readKey) {
           setScheduleByDate(m);
           await runScheduleAutoPipeline(m);
         }
-      }, [activeFactoryId, runScheduleAutoPipeline, syncFromStorage]);
+        await refreshCharterPendingCount();
+      }, [activeFactoryId, refreshCharterPendingCount, runScheduleAutoPipeline, syncFromStorage]);
 
       const selectedFactoryStatus = useMemo(() => {
         const selectedHoliday = (holidays || []).find((h) => String(h?.holiday_date || '').slice(0, 10) === String(selectedDate || '').slice(0, 10));
@@ -3953,6 +3990,11 @@ function isUnreadForFactory(messages, readKey) {
                             {factoryNewsUnread}
                           </span>
                         ) : null}
+                        {id === 'charterRespond' && charterPendingCount > 0 ? (
+                          <span className="ml-2 rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
+                            {charterPendingCount}
+                          </span>
+                        ) : null}
                       </span>
                     </button>
                   );
@@ -4028,6 +4070,7 @@ function isUnreadForFactory(messages, readKey) {
                     excludeOwnFactoryId={activeFactoryId}
                     title="応援要請"
                     description="他工場からのチャーター募集に、供給側として応答できます。"
+                    onResponsesChanged={refreshCharterPendingCount}
                   />
                 </div>
               ) : null}

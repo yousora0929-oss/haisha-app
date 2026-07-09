@@ -17,6 +17,7 @@ import {
 } from './utils/notification.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
+import { countPendingCharterResponses } from './utils/charterBadges.js';
 
 function readStoredCharterId() {
   try {
@@ -42,6 +43,44 @@ export function CharterApp() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [operator, setOperator] = useState(null);
   const [activeTab, setActiveTab] = useState('vehicles');
+  const [charterPendingCount, setCharterPendingCount] = useState(0);
+
+  const operatorId = operator?.id || readStoredCharterId();
+
+  const refreshCharterPendingCount = useCallback(async () => {
+    const rid = String(operator?.id || readStoredCharterId() || '').trim();
+    if (!isAuthenticated || !rid) {
+      setCharterPendingCount(0);
+      return;
+    }
+    try {
+      const [openRequests, myResponses] = await Promise.all([
+        db.fetchOpenCharterRequestsForResponder('charter_operator', rid),
+        db.fetchMyCharterResponses('charter_operator', rid),
+      ]);
+      setCharterPendingCount(countPendingCharterResponses(openRequests, myResponses));
+    } catch (e) {
+      console.error('[CharterApp] charter pending count failed', e);
+    }
+  }, [isAuthenticated, operator?.id]);
+
+  useEffect(() => {
+    void refreshCharterPendingCount();
+  }, [refreshCharterPendingCount]);
+
+  useEffect(() => {
+    if (activeTab === 'requests') {
+      void refreshCharterPendingCount();
+    }
+  }, [activeTab, refreshCharterPendingCount]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !operatorId) return undefined;
+    const id = window.setInterval(() => {
+      void refreshCharterPendingCount();
+    }, 60000);
+    return () => window.clearInterval(id);
+  }, [isAuthenticated, operatorId, refreshCharterPendingCount]);
 
   useEffect(() => {
     const stored = readStoredCharterId();
@@ -193,7 +232,6 @@ export function CharterApp() {
   }
 
   const displayName = String(operator?.company_name || '').trim() || 'チャーター業者';
-  const operatorId = operator?.id || readStoredCharterId();
 
   return (
     <div className="flex h-[100dvh] min-h-[100dvh] w-full flex-col overflow-hidden bg-slate-50">
@@ -236,7 +274,14 @@ export function CharterApp() {
                   : 'text-slate-500 hover:bg-white hover:text-slate-900')
               }
             >
-              {label}
+              <span className="inline-flex items-center justify-center">
+                {label}
+                {id === 'requests' && charterPendingCount > 0 ? (
+                  <span className="ml-2 rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
+                    {charterPendingCount}
+                  </span>
+                ) : null}
+              </span>
             </button>
           ))}
         </div>
@@ -255,6 +300,7 @@ export function CharterApp() {
             responderId={operatorId}
             title="募集案件"
             description="通知対象として登録されている工場からのチャーター募集に応答できます。"
+            onResponsesChanged={refreshCharterPendingCount}
           />
         )}
       </main>

@@ -96,6 +96,7 @@ export function CharterOpenRequestsPanel({
   title = '募集案件',
   description = '通知対象として登録されている工場からのチャーター募集に応答できます。',
   excludeOwnFactoryId = '',
+  onResponsesChanged,
 }) {
   const rid = String(responderId || '').trim();
   const ownerType = responderType === 'charter_operator' ? 'charter_operator' : 'factory';
@@ -156,12 +157,13 @@ export function CharterOpenRequestsPanel({
       setRequests([...openList, ...closedRows]);
       setMyResponses(responses);
       setOwnerVehicles(Array.isArray(vehicles) ? vehicles : []);
+      onResponsesChanged?.();
     } catch (err) {
       setError(err?.message || '募集一覧の取得に失敗しました');
     } finally {
       setLoading(false);
     }
-  }, [responderType, rid, ownerType]);
+  }, [responderType, rid, ownerType, onResponsesChanged]);
 
   useEffect(() => {
     void loadData();
