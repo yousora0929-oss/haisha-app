@@ -35,6 +35,25 @@ import {
 } from './utils/assignedProjectEscalation.js';
 import { normalizeSalesStaffList } from './utils/salesStaff.js';
 
+// --- ローカル専用: normalizeAllowedDeliveryAreas ---
+// 本番ビルドでの import 解決不具合を避けるため、
+// utils/deliveryAreas.js から複製（同期を保つこと）
+const _LOCAL_DEFAULT_ALLOWED_DELIVERY_AREAS = ['大分市', '由布市', '杵築市', '別府市', '中津市'];
+function localNormalizeAllowedDeliveryAreas(raw) {
+  if (Array.isArray(raw)) {
+    return [...new Set(raw.map((x) => String(x || '').trim()).filter(Boolean))];
+  }
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return localNormalizeAllowedDeliveryAreas(parsed);
+    } catch {
+      return raw.split(/[\n,、]+/).map((x) => x.trim()).filter(Boolean);
+    }
+  }
+  return [..._LOCAL_DEFAULT_ALLOWED_DELIVERY_AREAS];
+}
+
 const ORDER_SELECT =
   'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, is_admin_modified, is_factory_modified';
 
@@ -1493,7 +1512,7 @@ function mapFactoryRow(row) {
     phone_number: row.phone_number != null ? String(row.phone_number) : '',
     latitude,
     longitude,
-    allowed_delivery_areas: normalizeAllowedDeliveryAreas(row?.allowed_delivery_areas),
+    allowed_delivery_areas: localNormalizeAllowedDeliveryAreas(row?.allowed_delivery_areas),
     raw: row,
   };
 }
@@ -2396,7 +2415,7 @@ function mapAdminSettingsRow(row) {
     admin_name: row?.admin_name != null ? String(row.admin_name) : '',
     phone_number: row?.phone_number != null ? String(row.phone_number) : '',
     login_password: row?.login_password != null ? String(row.login_password) : '',
-    allowed_delivery_areas: normalizeAllowedDeliveryAreas(row?.allowed_delivery_areas),
+    allowed_delivery_areas: localNormalizeAllowedDeliveryAreas(row?.allowed_delivery_areas),
     spot_threshold_volume: parseSpotThresholdVolume(row?.spot_threshold_volume),
     sales_staff: normalizeSalesStaffList(row?.sales_staff),
     updated_at: row?.updated_at,
@@ -2451,7 +2470,7 @@ export async function updateAdminSettings(payload) {
     row.login_password = String(payload?.login_password || '').trim() || null;
   }
   if (Object.prototype.hasOwnProperty.call(payload || {}, 'allowed_delivery_areas')) {
-    row.allowed_delivery_areas = normalizeAllowedDeliveryAreas(payload.allowed_delivery_areas);
+    row.allowed_delivery_areas = localNormalizeAllowedDeliveryAreas(payload.allowed_delivery_areas);
   }
   if (Object.prototype.hasOwnProperty.call(payload || {}, 'spot_threshold_volume')) {
     row.spot_threshold_volume = parseSpotThresholdVolume(payload.spot_threshold_volume);
