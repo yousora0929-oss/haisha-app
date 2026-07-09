@@ -36,7 +36,11 @@ export default defineConfig({
         mapEditor: resolve(__dirname, 'MapEditor.html'),
       },
       output: {
-        manualChunks: undefined,
+        manualChunks(id) {
+          if (id.includes('src/utils/deliveryAreas.js')) {
+            return 'delivery-areas';
+          }
+        },
       },
     },
   },
