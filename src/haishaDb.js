@@ -10,7 +10,8 @@ import {
 import { stripSavedSnapshotOverlay } from './utils/mapEditorOverlay.js';
 import { normalizeExternalUrl } from './utils/urlValidation.js';
 import { supabase, ensurePanelRealtimeAuth } from './supabaseClient.js';
-import { normalizeAssignedVehicles } from './utils/charterAssignedVehicles.js';
+import { normalizeAssignedVehicles, mergeAssignedVehicleStatuses } from './utils/charterAssignedVehicles.js';
+
 import { isValidSiteOrderUrlToken, resolveUrlTokenForInsert } from './utils/urlValidation.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { normalizeAssociationFactorySelection } from './utils/associationFactoryAssignment.js';
@@ -4566,10 +4567,10 @@ export async function fetchCharterOperatorBookings(responderId) {
 
   const { data: responses, error: respErr } = await supabase
     .from('charter_responses')
-    .select('id, request_id, offered_count, assigned_vehicles')
+    .select('id, request_id, offered_count, assigned_vehicles, status')
     .eq('responder_type', 'charter_operator')
     .eq('responder_id', rid)
-    .eq('status', 'accepted');
+    .in('status', ['accepted', 'partially_accepted']);
   if (respErr) throw respErr;
   if (!responses?.length) return [];
 
@@ -4601,19 +4602,37 @@ export async function fetchCharterOperatorBookings(responderId) {
       const date = String(req.request_date || '').slice(0, 10);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
       const factoryId = String(req.requesting_factory_id || '');
+      const allVehicles = normalizeAssignedVehicles(r.assigned_vehicles);
+      const acceptedVehicles = allVehicles.filter((v) => {
+        if (v.status === 'accepted') return true;
+        if (v.status === 'rejected') return false;
+        // レガシー: 応答まるごと accepted（車両に status 未設定で normalize が offered になる）
+        return String(r.status) === 'accepted';
+      });
+      const offeredCount =
+        allVehicles.length > 0
+          ? acceptedVehicles.length
+          : String(r.status) === 'accepted'
+            ? Math.max(0, Math.floor(Number(r.offered_count)) || 0)
+            : 0;
+      if (offeredCount <= 0 && acceptedVehicles.length === 0) return null;
       return {
         responseId: String(r.id),
         date,
         factoryId,
         factoryName: factoryNameById.get(factoryId) || factoryId,
         vehicleType: req.vehicle_type === 'small' ? 'small' : 'large',
-        offeredCount: Math.max(0, Math.floor(Number(r.offered_count)) || 0),
-        assignedVehicles: normalizeAssignedVehicles(r.assigned_vehicles),
+        offeredCount,
+        assignedVehicles: acceptedVehicles,
         note: req.note != null ? String(req.note) : '',
       };
     })
     .filter(Boolean)
-    .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.factoryName).localeCompare(String(b.factoryName), 'ja'));
+    .sort(
+      (a, b) =>
+        String(a.date).localeCompare(String(b.date)) ||
+        String(a.factoryName).localeCompare(String(b.factoryName), 'ja'),
+    );
 }
 
 /** 応答の送信（新規 or 更新） */
@@ -4646,7 +4665,10 @@ export async function submitCharterResponse({
     updated_at: now,
   };
   if (assignedVehicles !== undefined) {
-    row.assigned_vehicles = normalizeAssignedVehicles(assignedVehicles);
+    row.assigned_vehicles = normalizeAssignedVehicles(assignedVehicles).map((v) => ({
+      ...v,
+      status: v.status === 'accepted' || v.status === 'rejected' ? v.status : 'offered',
+    }));
   }
 
   const { data, error } = await supabase
@@ -4663,10 +4685,23 @@ export async function updateCharterResponseVehicles(responseId, assignedVehicles
   const id = sanitizeRefId(responseId);
   if (!id) throw new Error('responseId が必要です');
   if (!supabase?.from) throw new Error('Supabase クライアントが初期化されていません');
+
+  const { data: existing, error: fetchError } = await supabase
+    .from('charter_responses')
+    .select('assigned_vehicles')
+    .eq('id', id)
+    .maybeSingle();
+  if (fetchError) throw fetchError;
+
+  const merged = mergeAssignedVehicleStatuses(
+    assignedVehicles,
+    normalizeAssignedVehicles(existing?.assigned_vehicles),
+  );
+
   const { data, error } = await supabase
     .from('charter_responses')
     .update({
-      assigned_vehicles: normalizeAssignedVehicles(assignedVehicles),
+      assigned_vehicles: merged,
       updated_at: new Date().toISOString(),
     })
     .eq('id', id)
@@ -4771,12 +4806,18 @@ export async function fetchCharterRequestProgress(requestId) {
   }
 }
 
-/** 募集元工場が応答を確定（confirm_charter_response RPC） */
-export async function confirmCharterResponse(responseId) {
+/** 募集元工場が応答を確定（confirm_charter_response RPC）。vehicleIds 指定で車両単位の部分確定 */
+export async function confirmCharterResponse(responseId, vehicleIds = null) {
   const id = sanitizeRefId(responseId);
   if (!id) throw new Error('responseId が必要です');
   if (!supabase?.rpc) throw new Error('Supabase クライアントが初期化されていません');
-  const { data, error } = await supabase.rpc('confirm_charter_response', { p_response_id: id });
+  const ids = Array.isArray(vehicleIds)
+    ? [...new Set(vehicleIds.map((v) => String(v || '').trim()).filter(Boolean))]
+    : null;
+  const { data, error } = await supabase.rpc('confirm_charter_response', {
+    p_response_id: id,
+    p_vehicle_ids: ids && ids.length > 0 ? ids : null,
+  });
   if (error) throw error;
   return typeof data === 'string' ? JSON.parse(data) : data;
 }

@@ -38,15 +38,20 @@ const RESPONSE_STATUS_META = {
     className:
       'bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200 dark:border-emerald-700',
   },
-  accepted: {
-    label: '✅ 確定',
+  partially_accepted: {
+    label: '一部確定',
     className:
-      'bg-indigo-100 text-indigo-900 border-indigo-300 dark:bg-indigo-950 dark:text-indigo-200 dark:border-indigo-700',
+      'bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950 dark:text-amber-200 dark:border-amber-700',
+  },
+  accepted: {
+    label: '確定',
+    className:
+      'bg-emerald-500 text-white border-emerald-600 dark:bg-emerald-600 dark:text-white dark:border-emerald-400',
   },
   rejected: {
     label: '見送り',
     className:
-      'bg-slate-100 text-slate-800 border-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-600',
+      'bg-slate-200 text-slate-700 border-slate-400 dark:bg-slate-700 dark:text-slate-200 dark:border-slate-500',
   },
   withdrawn: {
     label: '取り下げ',
@@ -80,6 +85,7 @@ export function CharterRequestsPanel({ factoryId, factories = [] }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [form, setForm] = useState(() => emptyRequestForm(today));
+  const [selectedVehiclesByResponse, setSelectedVehiclesByResponse] = useState({});
 
   const loadRequests = useCallback(async () => {
     const fid = String(factoryId || '').trim();
@@ -202,28 +208,46 @@ export function CharterRequestsPanel({ factoryId, factories = [] }) {
     }
   };
 
-  const handleConfirm = async (response, request) => {
-    if (!response?.id || !request?.id || request.status !== 'open' || response.status !== 'offered') return;
+  const handleConfirm = async (response, request, vehicleIds = null) => {
+    if (!response?.id || !request?.id || request.status !== 'open') return;
+    if (response.status !== 'offered' && response.status !== 'partially_accepted') return;
+
     const name = responderDisplayName(response);
     const progress = progressByRequest[request.id] || {
       acceptedTotal: 0,
       desiredCount: request.desired_count,
       remaining: request.desired_count,
     };
-    const offeredCount = Number(response.offered_count) || 0;
-    const nextTotal = progress.acceptedTotal + offeredCount;
+    const ids = Array.isArray(vehicleIds)
+      ? [...new Set(vehicleIds.map((v) => String(v || '').trim()).filter(Boolean))]
+      : null;
+    const confirmCount = ids?.length
+      ? ids.length
+      : Number(response.offered_count) || 0;
+    if (confirmCount <= 0) return;
+
+    const nextTotal = progress.acceptedTotal + confirmCount;
     const desiredCount = progress.desiredCount || request.desired_count;
     const detail =
       nextTotal >= desiredCount
         ? 'これで希望台数に達します。残りの応答は自動的に見送りになります。'
         : `確定後: ${nextTotal} / ${desiredCount} 台（残り${Math.max(0, desiredCount - nextTotal)}台）`;
-    const ok = window.confirm(`${name} の応答（${offeredCount}台）を確定しますか？\n${detail}`);
+    const ok = window.confirm(
+      ids?.length
+        ? `${name} の選択車両（${confirmCount}台）を確定しますか？\n${detail}`
+        : `${name} の応答（${confirmCount}台）を確定しますか？\n${detail}`,
+    );
     if (!ok) return;
     setSaving(true);
     setError('');
     setNotice('');
     try {
-      const result = await db.confirmCharterResponse(response.id);
+      const result = await db.confirmCharterResponse(response.id, ids);
+      setSelectedVehiclesByResponse((prev) => {
+        const next = { ...prev };
+        delete next[response.id];
+        return next;
+      });
       await loadRequests();
       const fullyMatched = result?.fully_matched === true;
       setNotice(fullyMatched ? '希望台数に達しました' : '応答を確定しました');
@@ -233,6 +257,18 @@ export function CharterRequestsPanel({ factoryId, factories = [] }) {
     } finally {
       setSaving(false);
     }
+  };
+
+  const toggleVehicleSelection = (responseId, vehicleId) => {
+    const rid = String(responseId || '');
+    const vid = String(vehicleId || '').trim();
+    if (!rid || !vid) return;
+    setSelectedVehiclesByResponse((prev) => {
+      const current = new Set(prev[rid] || []);
+      if (current.has(vid)) current.delete(vid);
+      else current.add(vid);
+      return { ...prev, [rid]: [...current] };
+    });
   };
 
   return (
@@ -385,69 +421,155 @@ export function CharterRequestsPanel({ factoryId, factories = [] }) {
                         {(() => {
                           const allResponses = responsesByRequest[request.id] || [];
                           const activeResponses = allResponses.filter((response) =>
-                            ['offered', 'accepted', 'rejected'].includes(response.status),
+                            ['offered', 'accepted', 'rejected', 'partially_accepted'].includes(
+                              response.status,
+                            ),
                           );
                           const declinedCount = allResponses.filter((r) => r.status === 'declined').length;
                           return (
                             <>
                               {activeResponses.length > 0 ? (
-                                <ul className="mt-2 space-y-2">
+                                <ul className="mt-2 space-y-3">
                                   {activeResponses.map((response) => {
                                     const rStatus = RESPONSE_STATUS_META[response.status] || {
                                       label: response.status,
                                       className:
                                         'bg-slate-100 text-slate-800 border-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-600',
                                     };
+                                    const accentBar =
+                                      response.status === 'accepted'
+                                        ? 'border-l-emerald-500'
+                                        : response.status === 'partially_accepted'
+                                          ? 'border-l-amber-400'
+                                          : response.status === 'rejected'
+                                            ? 'border-l-slate-400'
+                                            : 'border-l-indigo-400';
+                                    const typeIcon =
+                                      response.responder_type === 'factory' ? '🏭' : '🚛';
+                                    const assigned = response.assigned_vehicles || [];
+                                    const selectedIds = selectedVehiclesByResponse[response.id] || [];
+                                    const canConfirm =
+                                      request.status === 'open' &&
+                                      (response.status === 'offered' ||
+                                        response.status === 'partially_accepted');
                                     return (
                                       <li
                                         key={response.id}
-                                        className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300 sm:text-base"
+                                        className={
+                                          'rounded-xl border border-slate-200 border-l-4 bg-white p-3 shadow-sm dark:border-slate-600 dark:bg-slate-900 ' +
+                                          accentBar
+                                        }
                                       >
-                                        <span className="font-bold text-slate-900 dark:text-slate-100">
-                                          {responderDisplayName(response)}
-                                        </span>
-                                        <span className="text-slate-500 dark:text-slate-400">
-                                          ({RESPONDER_TYPE_LABEL[response.responder_type] || response.responder_type})
-                                        </span>
-                                        <span>{response.offered_count}台</span>
-                                        <span
-                                          className={`rounded-full border px-2.5 py-0.5 text-sm font-black ${rStatus.className}`}
-                                        >
-                                          {rStatus.label}
-                                        </span>
-                                        {response.message?.trim() ? (
-                                          <span className="text-slate-600 dark:text-slate-400">— {response.message}</span>
-                                        ) : null}
-                                        {(response.assigned_vehicles || []).length > 0 ? (
-                                          <div className="mt-2 flex w-full basis-full flex-col gap-1.5">
-                                            {(response.assigned_vehicles || []).map((v, i) => (
-                                              <div
-                                                key={`${response.id}-${v.vehicle_id || i}`}
-                                                className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 dark:border-slate-600 dark:bg-slate-900/60"
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <div className="flex min-w-0 items-center gap-2">
+                                            <span className="text-lg leading-none" aria-hidden="true">
+                                              {typeIcon}
+                                            </span>
+                                            <span className="truncate text-base font-black text-slate-900 dark:text-slate-100 sm:text-lg">
+                                              {responderDisplayName(response)}
+                                            </span>
+                                          </div>
+                                          <span
+                                            className={`shrink-0 rounded-full border px-2.5 py-0.5 text-sm font-black ${rStatus.className}`}
+                                          >
+                                            {rStatus.label}
+                                          </span>
+                                        </div>
+                                        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300 sm:text-base">
+                                          <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                            {RESPONDER_TYPE_LABEL[response.responder_type] ||
+                                              response.responder_type}
+                                          </span>
+                                          <span className="font-black text-slate-800 dark:text-slate-100">
+                                            {response.offered_count}台
+                                          </span>
+                                          {response.message?.trim() ? (
+                                            <span className="text-slate-600 dark:text-slate-400">
+                                              — {response.message}
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                        {assigned.length > 0 ? (
+                                          <div className="mt-2 space-y-1.5">
+                                            {assigned.map((v, i) => {
+                                              const vehicleStatus = v.status || 'offered';
+                                              const checked =
+                                                vehicleStatus === 'accepted' ||
+                                                selectedIds.includes(v.vehicle_id);
+                                              return (
+                                                <label
+                                                  key={`${response.id}-${v.vehicle_id || i}`}
+                                                  className={
+                                                    'flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 dark:border-slate-600 dark:bg-slate-900/60 ' +
+                                                    (vehicleStatus !== 'offered' || !canConfirm
+                                                      ? 'cursor-default'
+                                                      : 'cursor-pointer')
+                                                  }
+                                                >
+                                                  {canConfirm && vehicleStatus === 'offered' ? (
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={checked}
+                                                      onChange={() =>
+                                                        toggleVehicleSelection(
+                                                          response.id,
+                                                          v.vehicle_id,
+                                                        )
+                                                      }
+                                                      className="h-4 w-4 rounded border-slate-300 text-indigo-600"
+                                                    />
+                                                  ) : (
+                                                    <span className="inline-block h-4 w-4 shrink-0" />
+                                                  )}
+                                                  <PlateCategoryBadge category={v.plate_category} />
+                                                  <span className="text-sm font-bold text-slate-800 dark:text-slate-100">
+                                                    {vehicleTypeLabel(v.vehicle_type)}{' '}
+                                                    {v.vehicle_number || '—'}
+                                                    {v.door_number ? `（ドア${v.door_number}）` : ''}
+                                                  </span>
+                                                  {vehicleStatus === 'accepted' ? (
+                                                    <span className="ml-auto text-xs font-black text-emerald-700 dark:text-emerald-300">
+                                                      確定済み
+                                                    </span>
+                                                  ) : null}
+                                                  {vehicleStatus === 'rejected' ? (
+                                                    <span className="ml-auto text-xs font-black text-slate-500">
+                                                      見送り
+                                                    </span>
+                                                  ) : null}
+                                                </label>
+                                              );
+                                            })}
+                                            {canConfirm ? (
+                                              <button
+                                                type="button"
+                                                disabled={saving || selectedIds.length === 0}
+                                                onClick={() =>
+                                                  void handleConfirm(response, request, selectedIds)
+                                                }
+                                                className="mt-2 min-h-[44px] w-full rounded-lg border-2 border-indigo-600 bg-indigo-600 text-sm font-black text-white hover:bg-indigo-700 disabled:border-slate-300 disabled:bg-slate-300 disabled:text-slate-600"
                                               >
-                                                <PlateCategoryBadge category={v.plate_category} />
-                                                <span className="text-sm font-bold text-slate-800 dark:text-slate-100">
-                                                  {vehicleTypeLabel(v.vehicle_type)} {v.vehicle_number || '—'}
-                                                  {v.door_number ? `（ドア${v.door_number}）` : ''}
-                                                </span>
-                                              </div>
-                                            ))}
+                                                選択した{selectedIds.length}台を確定
+                                              </button>
+                                            ) : null}
                                           </div>
                                         ) : (
-                                          <p className="mt-2 w-full basis-full text-xs font-bold text-amber-700 dark:text-amber-300">
-                                            車両未設定（応答者に確認してください）
-                                          </p>
+                                          <>
+                                            <p className="mt-2 text-xs font-bold text-amber-700 dark:text-amber-300">
+                                              車両未設定（応答者に確認してください）
+                                            </p>
+                                            {canConfirm ? (
+                                              <button
+                                                type="button"
+                                                onClick={() => void handleConfirm(response, request, null)}
+                                                disabled={saving}
+                                                className="mt-3 min-h-[44px] rounded-lg bg-indigo-600 px-3 py-2 text-sm font-black text-white hover:bg-indigo-700 disabled:opacity-60 sm:text-base"
+                                              >
+                                                この業者に決定
+                                              </button>
+                                            ) : null}
+                                          </>
                                         )}
-                                        {request.status === 'open' && response.status === 'offered' ? (
-                                          <button
-                                            type="button"
-                                            onClick={() => void handleConfirm(response, request)}
-                                            disabled={saving}
-                                            className="min-h-[44px] rounded-lg bg-indigo-600 px-3 py-2 text-sm font-black text-white hover:bg-indigo-700 disabled:opacity-60 sm:text-base"
-                                          >
-                                            この業者に決定
-                                          </button>
-                                        ) : null}
                                       </li>
                                     );
                                   })}

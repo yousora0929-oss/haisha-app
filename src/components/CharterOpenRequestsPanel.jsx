@@ -12,11 +12,30 @@ const inputClass =
   'min-h-[44px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200';
 
 const RESPONSE_STATUS_META = {
-  offered: { label: '応答中', className: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
-  accepted: { label: '✅ 確定しました', className: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
-  rejected: { label: '今回は見送りとなりました', className: 'bg-slate-100 text-slate-700 border-slate-200' },
-  withdrawn: { label: '取り下げ', className: 'bg-slate-100 text-slate-700 border-slate-200' },
-  declined: { label: '見送り済み', className: 'bg-slate-200 text-slate-700 border-slate-300' },
+  offered: {
+    label: '応答中',
+    className: 'border-2 border-emerald-400 bg-emerald-100 text-emerald-900',
+  },
+  partially_accepted: {
+    label: '一部確定',
+    className: 'border-2 border-amber-400 bg-amber-100 text-amber-900',
+  },
+  accepted: {
+    label: '確定',
+    className: 'border-2 border-emerald-600 bg-emerald-500 text-white',
+  },
+  rejected: {
+    label: '今回は見送りとなりました',
+    className: 'border-2 border-slate-400 bg-slate-200 text-slate-700',
+  },
+  withdrawn: {
+    label: '取り下げ',
+    className: 'border-2 border-slate-300 bg-slate-100 text-slate-700',
+  },
+  declined: {
+    label: '見送り済み',
+    className: 'border-2 border-slate-300 bg-slate-200 text-slate-700',
+  },
 };
 
 function emptyRespondForm() {
@@ -91,6 +110,12 @@ function AssignedVehicleBadges({ assignedVehicles }) {
             {vehicleTypeLabel(v.vehicle_type)} {v.vehicle_number || '—'}
             {v.door_number ? `（ドア${v.door_number}）` : ''}
           </span>
+          {v.status === 'accepted' ? (
+            <span className="ml-auto text-xs font-black text-emerald-700">確定済み</span>
+          ) : null}
+          {v.status === 'rejected' ? (
+            <span className="ml-auto text-xs font-black text-slate-500">見送り</span>
+          ) : null}
         </div>
       ))}
     </div>
@@ -160,7 +185,12 @@ export function CharterOpenRequestsPanel({
       const terminalRequestIds = [
         ...new Set(
           responses
-            .filter((r) => r.status === 'accepted' || r.status === 'rejected')
+            .filter(
+              (r) =>
+                r.status === 'accepted' ||
+                r.status === 'rejected' ||
+                r.status === 'partially_accepted',
+            )
             .map((r) => r.request_id)
             .filter((id) => id && !openList.some((req) => req.id === id)),
         ),
@@ -355,7 +385,7 @@ export function CharterOpenRequestsPanel({
             return (
               <li key={request.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0 text-sm">
+                  <div className="min-w-0 flex-1 text-sm">
                     <p className="font-black text-slate-900">
                       {request.requesting_factory_name || request.requesting_factory_id}
                     </p>
@@ -366,24 +396,16 @@ export function CharterOpenRequestsPanel({
                     {request.note?.trim() ? (
                       <p className="mt-1 text-xs font-medium text-slate-600">備考: {request.note}</p>
                     ) : null}
-                    {statusMeta ? (
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <span
-                          className={`rounded-full border px-2 py-0.5 text-[11px] font-black ${statusMeta.className}`}
-                        >
-                          {statusMeta.label}
-                        </span>
-                        {myResponse?.status === 'offered' ||
-                        myResponse?.status === 'accepted' ||
-                        myResponse?.status === 'rejected' ? (
-                          <span className="text-xs font-bold text-slate-600">
-                            提供 {myResponse.offered_count}台
-                            {myResponse.message?.trim() && myResponse.status === 'offered'
-                              ? ` — ${myResponse.message}`
-                              : ''}
-                          </span>
-                        ) : null}
-                      </div>
+                    {myResponse?.status === 'offered' ||
+                    myResponse?.status === 'accepted' ||
+                    myResponse?.status === 'partially_accepted' ||
+                    myResponse?.status === 'rejected' ? (
+                      <p className="mt-2 text-xs font-bold text-slate-600">
+                        提供 {myResponse.offered_count}台
+                        {myResponse.message?.trim() && myResponse.status === 'offered'
+                          ? ` — ${myResponse.message}`
+                          : ''}
+                      </p>
                     ) : null}
                     {myResponse && myResponse.status !== 'withdrawn' && myResponse.status !== 'declined' ? (
                       <AssignedVehicleBadges assignedVehicles={myResponse.assigned_vehicles} />
@@ -394,68 +416,84 @@ export function CharterOpenRequestsPanel({
                       </p>
                     ) : null}
                   </div>
-                  <div className="flex shrink-0 flex-wrap gap-2">
-                    {myResponse?.status === 'offered' ? (
-                      <button
-                        type="button"
-                        onClick={() => void handleWithdraw(myResponse, request)}
-                        disabled={saving || !withdrawAllowed}
-                        className="rounded-lg border border-red-300 bg-white px-3 py-2 text-xs font-black text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  <div className="flex shrink-0 flex-col items-end gap-2">
+                    {statusMeta &&
+                    (myResponse?.status === 'rejected' ||
+                      myResponse?.status === 'accepted' ||
+                      myResponse?.status === 'partially_accepted' ||
+                      myResponse?.status === 'offered' ||
+                      myResponse?.status === 'declined') ? (
+                      <span
+                        className={`shrink-0 rounded-lg px-3 py-1.5 text-sm font-black ${statusMeta.className}`}
                       >
-                        取り下げ
-                      </button>
+                        {statusMeta.label}
+                      </span>
                     ) : null}
-                    {myResponse &&
-                    myResponse.status !== 'withdrawn' &&
-                    myResponse.status !== 'declined' &&
-                    (myResponse.status === 'offered' || myResponse.status === 'accepted') ? (
-                      <button
-                        type="button"
-                        onClick={() => openVehicleEdit(myResponse)}
-                        disabled={saving}
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                      >
-                        割り当て車両を編集
-                      </button>
-                    ) : null}
-                    {!myResponse || myResponse.status === 'withdrawn' ? (
-                      <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap justify-end gap-2">
+                      {myResponse?.status === 'offered' ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleWithdraw(myResponse, request)}
+                          disabled={saving || !withdrawAllowed}
+                          className="rounded-lg border border-red-300 bg-white px-3 py-2 text-xs font-black text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          取り下げ
+                        </button>
+                      ) : null}
+                      {myResponse &&
+                      myResponse.status !== 'withdrawn' &&
+                      myResponse.status !== 'declined' &&
+                      (myResponse.status === 'offered' ||
+                        myResponse.status === 'accepted' ||
+                        myResponse.status === 'partially_accepted') ? (
+                        <button
+                          type="button"
+                          onClick={() => openVehicleEdit(myResponse)}
+                          disabled={saving}
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                        >
+                          割り当て車両を編集
+                        </button>
+                      ) : null}
+                      {!myResponse || myResponse.status === 'withdrawn' ? (
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openRespondForm(request)}
+                            disabled={saving}
+                            className="min-h-[44px] rounded-lg border-2 border-indigo-600 bg-indigo-600 px-3 py-2 text-xs font-black text-white shadow-sm hover:bg-indigo-700 active:scale-[0.99] disabled:opacity-60"
+                          >
+                            応答する
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDecline(request)}
+                            disabled={saving}
+                            className="min-h-[44px] rounded-lg border-2 border-slate-300 bg-white px-4 py-2 text-xs font-black text-slate-600 hover:bg-slate-50 active:scale-[0.99] disabled:opacity-60"
+                          >
+                            見送る
+                          </button>
+                        </div>
+                      ) : myResponse.status === 'declined' ? (
                         <button
                           type="button"
                           onClick={() => openRespondForm(request)}
                           disabled={saving}
                           className="min-h-[44px] rounded-lg border-2 border-indigo-600 bg-indigo-600 px-3 py-2 text-xs font-black text-white shadow-sm hover:bg-indigo-700 active:scale-[0.99] disabled:opacity-60"
                         >
-                          応答する
+                          見送りを取り消して応答する
                         </button>
+                      ) : myResponse.status === 'offered' ? (
                         <button
                           type="button"
-                          onClick={() => void handleDecline(request)}
+                          onClick={() => openRespondForm(request)}
                           disabled={saving}
-                          className="min-h-[44px] rounded-lg border-2 border-slate-300 bg-white px-4 py-2 text-xs font-black text-slate-600 hover:bg-slate-50 active:scale-[0.99] disabled:opacity-60"
+                          className="rounded-lg border border-indigo-300 bg-white px-3 py-2 text-xs font-black text-indigo-700 hover:bg-indigo-50 disabled:opacity-60"
                         >
-                          見送る
+                          応答を変更
                         </button>
-                      </div>
-                    ) : myResponse.status === 'declined' ? (
-                      <button
-                        type="button"
-                        onClick={() => openRespondForm(request)}
-                        disabled={saving}
-                        className="min-h-[44px] rounded-lg border-2 border-indigo-600 bg-indigo-600 px-3 py-2 text-xs font-black text-white shadow-sm hover:bg-indigo-700 active:scale-[0.99] disabled:opacity-60"
-                      >
-                        見送りを取り消して応答する
-                      </button>
-                    ) : myResponse.status === 'offered' ? (
-                      <button
-                        type="button"
-                        onClick={() => openRespondForm(request)}
-                        disabled={saving}
-                        className="rounded-lg border border-indigo-300 bg-white px-3 py-2 text-xs font-black text-indigo-700 hover:bg-indigo-50 disabled:opacity-60"
-                      >
-                        応答を変更
-                      </button>
-                    ) : null}
+                      ) : null}
+                    </div>
                   </div>
                 </div>
 

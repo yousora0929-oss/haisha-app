@@ -7,12 +7,18 @@ export function normalizeAssignedVehicles(raw) {
       let plate_category = '';
       if (rawCategory === 'private') plate_category = 'private';
       else if (rawCategory === 'business') plate_category = 'business';
+      const rawStatus = String(v.status || '').trim();
+      let status = 'offered';
+      if (rawStatus === 'accepted' || rawStatus === 'rejected' || rawStatus === 'offered') {
+        status = rawStatus;
+      }
       return {
         vehicle_id: String(v.vehicle_id ?? v.vehicleId ?? '').trim(),
         vehicle_type: v.vehicle_type === 'small' || v.vehicleType === 'small' ? 'small' : 'large',
         plate_category,
         vehicle_number: String(v.vehicle_number ?? v.vehicleNumber ?? '').trim(),
         door_number: String(v.door_number ?? v.doorNumber ?? '').trim(),
+        status,
       };
     });
 }
@@ -25,6 +31,7 @@ export function buildAssignedVehicleSnapshot(vehicle) {
     plate_category: vehicle.plate_category === 'private' ? 'private' : 'business',
     vehicle_number: String(vehicle.vehicle_number ?? '').trim(),
     door_number: String(vehicle.door_number ?? '').trim(),
+    status: 'offered',
   };
 }
 
@@ -63,5 +70,21 @@ export function sortVehiclesForRequest(vehicles, requestVehicleType) {
     const bMatch = b.vehicle_type === preferred ? 0 : 1;
     if (aMatch !== bMatch) return aMatch - bMatch;
     return String(a.vehicle_number || '').localeCompare(String(b.vehicle_number || ''), 'ja');
+  });
+}
+
+/** 編集時に既存の accepted / rejected を保持してマージ */
+export function mergeAssignedVehicleStatuses(nextVehicles, previousVehicles) {
+  const prevById = new Map(
+    (previousVehicles || [])
+      .filter((v) => v?.vehicle_id)
+      .map((v) => [String(v.vehicle_id), v]),
+  );
+  return normalizeAssignedVehicles(nextVehicles).map((v) => {
+    const prev = prevById.get(v.vehicle_id);
+    if (prev?.status === 'accepted' || prev?.status === 'rejected') {
+      return { ...v, status: prev.status };
+    }
+    return { ...v, status: 'offered' };
   });
 }
