@@ -361,8 +361,8 @@ export function normalizeOrderRow(row) {
           : od.factoryResponseStatus != null
             ? String(od.factoryResponseStatus)
             : null,
-    is_admin_modified: row.is_admin_modified === true || od.is_admin_modified === true,
-    is_factory_modified: row.is_factory_modified === true || od.is_factory_modified === true,
+    is_admin_modified: row.is_admin_modified === true,
+    is_factory_modified: row.is_factory_modified === true,
     // 相談ステータスは専用カラムを唯一の正とする（order_data へはフォールバックしない）
     factory_consult_status:
       row.factory_consult_status != null ? String(row.factory_consult_status).trim() : '',
@@ -938,7 +938,7 @@ export async function adminUpdateOrder(orderId, updatedData) {
   return updateOrderDetails(id, { ...patch, is_admin_modified: true });
 }
 
-/** 管理者変更通知を表示済みにした後、DB側フラグを下ろす */
+/** 管理者変更通知を表示済みにした後、DB側フラグを下ろす（カラム＋order_data の両方） */
 export async function clearOrderAdminModifiedFlag(orderId) {
   const id = String(orderId || '').trim();
   if (!id) return null;
@@ -946,17 +946,36 @@ export async function clearOrderAdminModifiedFlag(orderId) {
     console.warn('[haisha] is_admin_modified クリア失敗: Supabase client is not ready');
     return null;
   }
-  const { data, error } = await supabase
-    .from('orders')
-    .update({ is_admin_modified: false })
-    .eq('id', id)
-    .select(ORDER_SELECT)
-    .maybeSingle();
-  if (error) {
-    console.warn('[haisha] is_admin_modified クリア失敗', error);
+  try {
+    const { data: row, error: selErr } = await supabase
+      .from('orders')
+      .select(ORDER_SELECT)
+      .eq('id', id)
+      .maybeSingle();
+    if (selErr) {
+      console.warn('[haisha] is_admin_modified クリア失敗', selErr);
+      return null;
+    }
+    if (!row) return null;
+    const od =
+      row.order_data && typeof row.order_data === 'object' && !Array.isArray(row.order_data)
+        ? { ...row.order_data, is_admin_modified: false }
+        : { is_admin_modified: false };
+    const { data, error } = await supabase
+      .from('orders')
+      .update({ is_admin_modified: false, order_data: od })
+      .eq('id', id)
+      .select(ORDER_SELECT)
+      .maybeSingle();
+    if (error) {
+      console.warn('[haisha] is_admin_modified クリア失敗', error);
+      return null;
+    }
+    return data ? normalizeOrderRow(data) : null;
+  } catch (err) {
+    console.warn('[haisha] is_admin_modified クリア失敗', err);
     return null;
   }
-  return data ? normalizeOrderRow(data) : null;
 }
 
 export async function adminDeleteOrder(orderId) {

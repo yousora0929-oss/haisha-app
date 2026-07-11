@@ -3071,7 +3071,10 @@ function isUnreadForFactory(messages, readKey) {
           });
           if (r.changed) {
             setChatThreads(r.chatThreads);
-            applyIncomingOrders(r.orders, { playSound: false });
+            applyIncomingOrders(r.orders, {
+              playSound: false,
+              muteExisting: Boolean(options?.muteExisting),
+            });
           }
         },
         [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById, factories, projects, escalationSettings, holidays, enrichOrdersWithProjectFactory, escalationStepsByFactoryId],
@@ -3088,7 +3091,8 @@ function isUnreadForFactory(messages, readKey) {
 
       useEffect(() => {
         if (!activeFactoryId) return undefined;
-        void syncFromStorage({ playSound: false });
+        // マスタ再取得などに伴う再同期は既存注文の通知を出さない
+        void syncFromStorage({ playSound: false, muteExisting: true });
         return undefined;
       }, [activeFactoryId, factories, projects, holidays, escalationSettings, escalationStepsByFactoryId, syncFromStorage]);
 
