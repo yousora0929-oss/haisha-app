@@ -2902,10 +2902,10 @@ export function AdminApp() {
             {tabBtn('agents', '商社')}
             {tabBtn('cooperatives', '組合員')}
             {tabBtn('customers', '業者管理')}
-            {tabBtn('charter', '🚛 チャーター業務')}
+            {tabBtn('charter', 'チャーター業務')}
             {tabBtn('inquiries', '問い合わせ対応')}
             {tabBtn('settings', '休日・稼働時間')}
-            {tabBtn('escalation', '🚨 エスカレーション設定')}
+            {tabBtn('escalation', 'エスカレーション設定')}
           </div>
         </div>
         {tab === 'monitor' ? (

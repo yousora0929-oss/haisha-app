@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import * as db from '../haishaDb.js';
+import { PlateCategoryBadge } from './PlateCategoryBadge.jsx';
 
 const inputClass =
   'min-h-[40px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100';
@@ -118,6 +119,9 @@ function FactoryOverviewPanel() {
   const [overview, setOverview] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [expandedFactoryId, setExpandedFactoryId] = useState('');
+  const [vehiclesByFactory, setVehiclesByFactory] = useState({});
+  const [vehiclesLoadingId, setVehiclesLoadingId] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -135,6 +139,27 @@ function FactoryOverviewPanel() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const toggleFactoryDetail = async (factoryId) => {
+    const fid = String(factoryId || '').trim();
+    if (!fid) return;
+    if (expandedFactoryId === fid) {
+      setExpandedFactoryId('');
+      return;
+    }
+    setExpandedFactoryId(fid);
+    setVehiclesLoadingId(fid);
+    setError('');
+    try {
+      const rows = await db.fetchCharterVehicles('factory', fid);
+      setVehiclesByFactory((prev) => ({ ...prev, [fid]: Array.isArray(rows) ? rows : [] }));
+    } catch (e) {
+      setError(formatError(e, '車両一覧の取得に失敗しました'));
+      setVehiclesByFactory((prev) => ({ ...prev, [fid]: [] }));
+    } finally {
+      setVehiclesLoadingId('');
+    }
+  };
 
   return (
     <div>
@@ -162,31 +187,72 @@ function FactoryOverviewPanel() {
                 <th className="px-3 py-2">工場名</th>
                 <th className="px-3 py-2">車両登録数</th>
                 <th className="px-3 py-2">通知優先リスト件数</th>
+                <th className="px-3 py-2">詳細</th>
               </tr>
             </thead>
             <tbody>
-              {overview.map((row) => (
-                <tr
-                  key={row.factoryId}
-                  className="border-t border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
-                >
-                  <td className="px-3 py-2.5 font-bold text-slate-900 dark:text-slate-100">{row.factoryName}</td>
-                  <td className="px-3 py-2.5 font-semibold text-slate-800 dark:text-slate-200">
-                    {row.vehicleCount}台
-                  </td>
-                  <td className="px-3 py-2.5 font-semibold text-slate-800 dark:text-slate-200">
-                    {row.notificationTargetCount}件
-                    {row.notificationTargetCount === 0 ? (
-                      <span className="ml-2 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-black text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
-                        未設定
-                      </span>
+              {overview.map((row) => {
+                const expanded = expandedFactoryId === row.factoryId;
+                const vehicles = vehiclesByFactory[row.factoryId] || [];
+                const vehiclesLoading = vehiclesLoadingId === row.factoryId;
+                return (
+                  <React.Fragment key={row.factoryId}>
+                    <tr className="border-t border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+                      <td className="px-3 py-2.5 font-bold text-slate-900 dark:text-slate-100">{row.factoryName}</td>
+                      <td className="px-3 py-2.5 font-semibold text-slate-800 dark:text-slate-200">
+                        {row.vehicleCount}台
+                      </td>
+                      <td className="px-3 py-2.5 font-semibold text-slate-800 dark:text-slate-200">
+                        {row.notificationTargetCount}件
+                        {row.notificationTargetCount === 0 ? (
+                          <span className="ml-2 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-black text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+                            未設定
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <button
+                          type="button"
+                          onClick={() => void toggleFactoryDetail(row.factoryId)}
+                          className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                        >
+                          {expanded ? '▼ 閉じる' : '▶ 詳細'}
+                        </button>
+                      </td>
+                    </tr>
+                    {expanded ? (
+                      <tr className="border-t border-slate-100 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/40">
+                        <td colSpan={4} className="px-3 py-3">
+                          <p className="text-xs font-black text-slate-600 dark:text-slate-300">登録車両</p>
+                          {vehiclesLoading ? (
+                            <p className="mt-2 text-sm text-slate-500">読み込み中…</p>
+                          ) : vehicles.length === 0 ? (
+                            <p className="mt-2 text-sm text-slate-500">登録車両はありません</p>
+                          ) : (
+                            <ul className="mt-2 space-y-1">
+                              {vehicles.map((v) => (
+                                <li
+                                  key={v.id}
+                                  className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-900"
+                                >
+                                  <PlateCategoryBadge category={v.plate_category} />
+                                  <span className="font-bold text-slate-800 dark:text-slate-100">
+                                    {v.vehicle_type === 'large' ? '大型' : '小型'} {v.vehicle_number || '—'}
+                                    {v.door_number ? `（ドア${v.door_number}）` : ''}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </td>
+                      </tr>
                     ) : null}
-                  </td>
-                </tr>
-              ))}
+                  </React.Fragment>
+                );
+              })}
               {overview.length === 0 && !loading ? (
                 <tr>
-                  <td colSpan={3} className="px-3 py-8 text-center text-sm text-slate-500">
+                  <td colSpan={4} className="px-3 py-8 text-center text-sm text-slate-500">
                     工場がありません
                   </td>
                 </tr>
@@ -221,7 +287,7 @@ function CharterOperatorsPanel() {
       const rows = await db.fetchCharterOperators();
       setOperators(Array.isArray(rows) ? rows : []);
     } catch (e) {
-      setError(formatError(e, '個人チャーター一覧の取得に失敗しました'));
+      setError(formatError(e, 'チャーター業者一覧の取得に失敗しました'));
     } finally {
       setLoading(false);
     }
@@ -250,7 +316,7 @@ function CharterOperatorsPanel() {
         loginId: created.id,
         password: created.login_password,
       });
-      showNotice('個人チャーター業者を登録しました');
+      showNotice('チャーター業者を登録しました');
     } catch (err) {
       setError(formatError(err, '登録に失敗しました'));
     } finally {
@@ -328,7 +394,7 @@ function CharterOperatorsPanel() {
     <div>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-medium text-slate-600 dark:text-slate-300">
-          個人チャーター業者の登録・停止・パスワード再発行
+          チャーター業者の登録・停止・パスワード再発行
         </p>
         <div className="flex flex-wrap gap-2">
           <button
@@ -360,7 +426,7 @@ function CharterOperatorsPanel() {
           onSubmit={(e) => void handleCreate(e)}
           className="mb-4 rounded-xl border-2 border-indigo-200 bg-indigo-50/60 p-4 dark:border-indigo-800 dark:bg-indigo-950/30"
         >
-          <p className="text-sm font-black text-indigo-900 dark:text-indigo-200">新規個人チャーター登録</p>
+          <p className="text-sm font-black text-indigo-900 dark:text-indigo-200">新規チャーター業者登録</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-3">
             <label className="block text-xs font-bold text-slate-600 dark:text-slate-300">
               会社名 *
@@ -535,7 +601,7 @@ function CharterOperatorsPanel() {
               {operators.length === 0 && !loading ? (
                 <tr>
                   <td colSpan={6} className="px-3 py-8 text-center text-sm text-slate-500">
-                    登録された個人チャーター業者はありません
+                    登録されたチャーター業者はありません
                   </td>
                 </tr>
               ) : null}
@@ -562,16 +628,16 @@ export function AdminCharterSection() {
   return (
     <section className="rounded-2xl border-2 border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:p-6">
       <header className="mb-4">
-        <h2 className="text-xl font-black text-slate-900 dark:text-slate-100">🚛 チャーター業務</h2>
+        <h2 className="text-xl font-black text-slate-900 dark:text-slate-100">チャーター業務</h2>
         <p className="mt-1 text-sm font-medium text-slate-600 dark:text-slate-300">
-          工場のチャーター設定状況の確認と、個人チャーター業者の管理
+          工場のチャーター設定状況の確認と、チャーター業者の管理
         </p>
       </header>
 
       <div className="mb-4 flex gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
         {[
           ['factories', '🏭 工場'],
-          ['operators', '👤 個人チャーター'],
+          ['operators', '👤 チャーター業者'],
         ].map(([id, label]) => (
           <button
             key={id}

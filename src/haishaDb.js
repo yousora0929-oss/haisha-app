@@ -4003,7 +4003,7 @@ export async function bulkInsertCharterVehicles(ownerType, ownerId, rows) {
   return (data || []).map(mapCharterVehicleRow).filter(Boolean);
 }
 
-/** 個人チャーター業者ログイン */
+/** チャーター業者ログイン */
 export async function loginCharter(charterId, password) {
   const id = String(charterId || '').trim();
   const pass = String(password || '').trim();
@@ -4044,7 +4044,7 @@ function mapCharterOperatorRow(row) {
 const CHARTER_OPERATOR_SELECT =
   'id, company_name, contact_name, phone, login_password, status, created_at, updated_at';
 
-/** 個人チャーター業者一覧（管理者） */
+/** チャーター業者一覧（管理者） */
 export async function fetchCharterOperators() {
   if (!supabase?.from) {
     console.warn('[fetchCharterOperators] Supabase client is not ready');
@@ -4058,7 +4058,7 @@ export async function fetchCharterOperators() {
   return (data || []).map(mapCharterOperatorRow).filter(Boolean);
 }
 
-/** 個人チャーター業者を新規登録（初期パスワード自動生成） */
+/** チャーター業者を新規登録（初期パスワード自動生成） */
 export async function createCharterOperator({ companyName, contactName, phone }) {
   const company_name = String(companyName || '').trim();
   if (!company_name) throw new Error('会社名を入力してください');
@@ -4086,7 +4086,7 @@ export async function createCharterOperator({ companyName, contactName, phone })
   return { ...mapped, login_password };
 }
 
-/** 個人チャーター業者の基本情報を更新 */
+/** チャーター業者の基本情報を更新 */
 export async function updateCharterOperator(id, { companyName, contactName, phone }) {
   const oid = String(id || '').trim();
   if (!oid) throw new Error('id が必要です');
@@ -4109,7 +4109,7 @@ export async function updateCharterOperator(id, { companyName, contactName, phon
   return mapCharterOperatorRow(data);
 }
 
-/** 個人チャーター業者の稼働状態を更新 */
+/** チャーター業者の稼働状態を更新 */
 export async function setCharterOperatorStatus(id, status) {
   const oid = String(id || '').trim();
   if (!oid) throw new Error('id が必要です');
@@ -4126,7 +4126,7 @@ export async function setCharterOperatorStatus(id, status) {
   return mapCharterOperatorRow(data);
 }
 
-/** 個人チャーター業者のパスワードを再発行 */
+/** チャーター業者のパスワードを再発行 */
 export async function resetCharterOperatorPassword(id) {
   const oid = String(id || '').trim();
   if (!oid) throw new Error('id が必要です');

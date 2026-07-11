@@ -35,7 +35,7 @@ function emptyVehicleForm() {
 }
 
 /**
- * チャーター車両登録（工場・個人チャーター共通）
+ * チャーター車両登録（工場・チャーター業者共通）
  * @param {{ ownerType: 'factory'|'charter_operator', ownerId: string, title?: string }} props
  */
 export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '車両登録' }) {

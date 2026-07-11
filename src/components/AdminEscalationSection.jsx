@@ -355,7 +355,7 @@ export function AdminEscalationSection({ factories = [] }) {
         <>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-black text-gray-900 dark:text-white">🚨 工場別・多段階エスカレーション設定</h2>
+          <h2 className="text-lg font-black text-gray-900 dark:text-white">工場別・多段階エスカレーション設定</h2>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
             注文から経過した分数ごとに通知工場数を設定します（管理者のみ）。
           </p>
