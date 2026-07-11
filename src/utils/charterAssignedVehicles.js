@@ -2,13 +2,19 @@ export function normalizeAssignedVehicles(raw) {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((v) => v && typeof v === 'object')
-    .map((v) => ({
-      vehicle_id: String(v.vehicle_id ?? v.vehicleId ?? '').trim(),
-      vehicle_type: v.vehicle_type === 'small' || v.vehicleType === 'small' ? 'small' : 'large',
-      plate_category: v.plate_category === 'private' || v.plateCategory === 'private' ? 'private' : 'business',
-      vehicle_number: String(v.vehicle_number ?? v.vehicleNumber ?? '').trim(),
-      door_number: String(v.door_number ?? v.doorNumber ?? '').trim(),
-    }));
+    .map((v) => {
+      const rawCategory = v.plate_category ?? v.plateCategory;
+      let plate_category = '';
+      if (rawCategory === 'private') plate_category = 'private';
+      else if (rawCategory === 'business') plate_category = 'business';
+      return {
+        vehicle_id: String(v.vehicle_id ?? v.vehicleId ?? '').trim(),
+        vehicle_type: v.vehicle_type === 'small' || v.vehicleType === 'small' ? 'small' : 'large',
+        plate_category,
+        vehicle_number: String(v.vehicle_number ?? v.vehicleNumber ?? '').trim(),
+        door_number: String(v.door_number ?? v.doorNumber ?? '').trim(),
+      };
+    });
 }
 
 export function buildAssignedVehicleSnapshot(vehicle) {

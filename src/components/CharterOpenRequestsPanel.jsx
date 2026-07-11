@@ -3,11 +3,10 @@ import * as db from '../haishaDb.js';
 import {
   buildAssignedVehicleSnapshot,
   canWithdrawCharterResponse,
-  formatAssignedVehicleBadge,
-  plateCategoryLabel,
   sortVehiclesForRequest,
   vehicleTypeLabel,
 } from '../utils/charterAssignedVehicles.js';
+import { PlateCategoryBadge } from './PlateCategoryBadge.jsx';
 
 const inputClass =
   'min-h-[44px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200';
@@ -57,11 +56,14 @@ function CharterVehiclePicker({ vehicles, request, selectedIds, onToggle, disabl
                 checked={checked}
                 disabled={disabled}
                 onChange={() => onToggle(vehicle.id)}
-                className="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600"
+                className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600"
               />
-              <span className="text-xs font-medium text-slate-800 sm:text-sm">
-                {vehicleTypeLabel(vehicle.vehicle_type)} / {plateCategoryLabel(vehicle.plate_category)} /{' '}
-                {vehicle.vehicle_number || '—'} / ドア{vehicle.door_number || '—'}
+              <span className="flex min-w-0 flex-wrap items-center gap-2">
+                <PlateCategoryBadge category={vehicle.plate_category} />
+                <span className="text-xs font-medium text-slate-800 sm:text-sm">
+                  {vehicleTypeLabel(vehicle.vehicle_type)} {vehicle.vehicle_number || '—'}
+                  {vehicle.door_number ? `（ドア${vehicle.door_number}）` : ''}
+                </span>
               </span>
             </label>
           </li>
@@ -74,17 +76,21 @@ function CharterVehiclePicker({ vehicles, request, selectedIds, onToggle, disabl
 function AssignedVehicleBadges({ assignedVehicles }) {
   const list = assignedVehicles || [];
   if (!list.length) {
-    return <p className="mt-1 text-xs font-medium text-slate-500">割り当て車両: 未設定</p>;
+    return <p className="mt-1 text-xs font-bold text-amber-700">車両未設定（応答者に確認してください）</p>;
   }
   return (
-    <div className="mt-1 flex flex-wrap gap-1">
+    <div className="mt-1 flex flex-col gap-1.5">
       {list.map((v, i) => (
-        <span
+        <div
           key={`${v.vehicle_id || i}-${v.vehicle_number}`}
-          className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-bold text-slate-700"
+          className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5"
         >
-          {formatAssignedVehicleBadge(v)}
-        </span>
+          <PlateCategoryBadge category={v.plate_category} />
+          <span className="text-sm font-bold text-slate-800">
+            {vehicleTypeLabel(v.vehicle_type)} {v.vehicle_number || '—'}
+            {v.door_number ? `（ドア${v.door_number}）` : ''}
+          </span>
+        </div>
       ))}
     </div>
   );

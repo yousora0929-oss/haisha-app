@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import * as db from '../haishaDb.js';
-import { formatAssignedVehicleBadge } from '../utils/charterAssignedVehicles.js';
+import { vehicleTypeLabel } from '../utils/charterAssignedVehicles.js';
+import { PlateCategoryBadge } from './PlateCategoryBadge.jsx';
 import { todayLocalISODate } from '../haishaConstants.js';
 
 const inputClass =
@@ -58,10 +59,6 @@ const RESPONDER_TYPE_LABEL = {
   factory: '工場',
   charter_operator: 'チャーター業者',
 };
-
-function vehicleTypeLabel(type) {
-  return type === 'small' ? '小型' : '大型';
-}
 
 function emptyRequestForm(today) {
   return {
@@ -413,18 +410,24 @@ export function CharterRequestsPanel({ factoryId, factories = [] }) {
                                   <span className="text-slate-600 dark:text-slate-400">— {response.message}</span>
                                 ) : null}
                                 {(response.assigned_vehicles || []).length > 0 ? (
-                                  <span className="flex flex-wrap gap-1">
+                                  <div className="mt-2 w-full basis-full flex flex-col gap-1.5">
                                     {(response.assigned_vehicles || []).map((v, i) => (
-                                      <span
+                                      <div
                                         key={`${response.id}-${v.vehicle_id || i}`}
-                                        className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-bold text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                                        className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 dark:border-slate-600 dark:bg-slate-900/60"
                                       >
-                                        {formatAssignedVehicleBadge(v)}
-                                      </span>
+                                        <PlateCategoryBadge category={v.plate_category} />
+                                        <span className="text-sm font-bold text-slate-800 dark:text-slate-100">
+                                          {vehicleTypeLabel(v.vehicle_type)} {v.vehicle_number || '—'}
+                                          {v.door_number ? `（ドア${v.door_number}）` : ''}
+                                        </span>
+                                      </div>
                                     ))}
-                                  </span>
+                                  </div>
                                 ) : (
-                                  <span className="text-slate-500 dark:text-slate-400">車両未設定</span>
+                                  <p className="mt-2 w-full basis-full text-xs font-bold text-amber-700 dark:text-amber-300">
+                                    車両未設定（応答者に確認してください）
+                                  </p>
                                 )}
                                 {request.status === 'open' && response.status === 'offered' ? (
                                   <button
