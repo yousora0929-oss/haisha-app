@@ -3955,8 +3955,9 @@ function isUnreadForFactory(messages, readKey) {
               ⚠️警告: 工場ID【{activeFactoryId}】はデータベースに存在しません
             </div>
           ) : null}
-          <div className="flex shrink-0 flex-wrap items-center justify-between gap-1.5 border-b border-slate-200 bg-white px-2 py-1 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-            <div className="flex min-w-0 items-center gap-2">
+          <div className="flex shrink-0 flex-col gap-1.5 border-b border-slate-200 bg-white px-2 py-1 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+            <div className="flex min-w-0 items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
               <a href="/" className="inline-flex w-fit shrink-0 items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label={APP_BRAND_HOME_LABEL}>
                 <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-7 w-auto sm:h-8" />
               </a>
@@ -3964,9 +3965,10 @@ function isUnreadForFactory(messages, readKey) {
                 <p className="truncate text-xs font-black text-slate-900 sm:text-sm">工場画面</p>
                 <p className="truncate text-[10px] font-bold leading-tight text-slate-500 sm:text-xs">{activeFactoryName}</p>
               </div>
+              </div>
             </div>
-            <div className="flex flex-1 flex-wrap items-center justify-end gap-1.5">
-              <div className="grid min-w-full flex-1 grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800 sm:grid-cols-5 lg:grid-cols-9 sm:min-w-[52rem] sm:flex-none lg:min-w-[64rem]">
+            <div className="flex min-w-0 w-full flex-col gap-1.5">
+              <div className="flex min-w-0 w-full gap-1 overflow-x-auto overscroll-x-contain rounded-xl bg-slate-100 p-1 dark:bg-slate-800 [scrollbar-width:thin]">
                 {[
                   ['news', '📢 お知らせ'],
                   ['schedule', '⚙️ スケジュール'],
@@ -3985,24 +3987,26 @@ function isUnreadForFactory(messages, readKey) {
                       type="button"
                       onClick={() => setActiveTab(id)}
                       className={
-                        'min-h-[36px] rounded-lg px-2 py-1.5 text-[11px] font-black transition sm:min-h-[40px] sm:px-4 sm:text-xs lg:text-sm ' +
-                        (active ? 'bg-indigo-600 text-white shadow ring-2 ring-indigo-200' : 'text-slate-500 hover:bg-white hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white')
+                        'min-h-[40px] shrink-0 rounded-lg px-3 py-1.5 text-xs font-black transition whitespace-nowrap sm:min-h-[40px] sm:px-4 sm:text-sm ' +
+                        (active
+                          ? 'bg-indigo-600 text-white shadow ring-2 ring-indigo-200'
+                          : 'text-slate-500 hover:bg-white hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white')
                       }
                     >
-                      <span className="inline-flex items-center justify-center">
+                      <span className="inline-flex items-center justify-center gap-1.5">
                         {label}
                         {id === 'orders' && newOrdersCount > 0 ? (
-                          <span className="ml-2 rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
+                          <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
                             {newOrdersCount}
                           </span>
                         ) : null}
                         {id === 'news' && factoryNewsUnread > 0 ? (
-                          <span className="ml-2 rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm">
+                          <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm">
                             {factoryNewsUnread}
                           </span>
                         ) : null}
                         {id === 'charterRespond' && charterPendingCount > 0 ? (
-                          <span className="ml-2 rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
+                          <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
                             {charterPendingCount}
                           </span>
                         ) : null}
