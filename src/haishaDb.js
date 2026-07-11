@@ -938,6 +938,27 @@ export async function adminUpdateOrder(orderId, updatedData) {
   return updateOrderDetails(id, { ...patch, is_admin_modified: true });
 }
 
+/** 管理者変更通知を表示済みにした後、DB側フラグを下ろす */
+export async function clearOrderAdminModifiedFlag(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id) return null;
+  if (!supabase?.from) {
+    console.warn('[haisha] is_admin_modified クリア失敗: Supabase client is not ready');
+    return null;
+  }
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ is_admin_modified: false })
+    .eq('id', id)
+    .select(ORDER_SELECT)
+    .maybeSingle();
+  if (error) {
+    console.warn('[haisha] is_admin_modified クリア失敗', error);
+    return null;
+  }
+  return data ? normalizeOrderRow(data) : null;
+}
+
 export async function adminDeleteOrder(orderId) {
   const id = String(orderId || '').trim();
   if (!id) throw new Error('orderId が必要です');

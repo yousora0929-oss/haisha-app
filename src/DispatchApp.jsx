@@ -1753,7 +1753,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   : newThreads;
             }
             newOrders = newOrders.filter((o) => o && o.status !== 'deleted');
-            const displayOrders =
+            let displayOrders =
               isGuestSiteOrder || String(currentCustomerId || '').trim()
                 ? newOrders.filter((o) => o && isRelevantDashboardOrder(o))
                 : newOrders;
@@ -1765,6 +1765,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               );
               if (displayOrders.some((o) => o?.is_admin_modified && !prevOrderMapForAdmin.get(o.id)?.is_admin_modified)) {
                 showDashboardNotice('⚠️ 管理者によって注文内容が変更されました。内容を確認してください。', { playSound });
+                const modifiedOrders = displayOrders.filter(
+                  (o) => o?.is_admin_modified && !prevOrderMapForAdmin.get(o.id)?.is_admin_modified,
+                );
+                const modifiedIds = new Set(modifiedOrders.map((o) => o.id).filter(Boolean));
+                void Promise.all(modifiedOrders.map((o) => db.clearOrderAdminModifiedFlag(o.id))).catch((e) =>
+                  console.warn('[DispatchApp] is_admin_modified クリア失敗', e),
+                );
+                const clearAdminFlag = (o) =>
+                  o?.id && modifiedIds.has(o.id) ? { ...o, is_admin_modified: false } : o;
+                newOrders = newOrders.map(clearAdminFlag);
+                displayOrders = displayOrders.map(clearAdminFlag);
               } else if (
                 displayOrders.some((o) => o?.is_factory_modified && !prevOrderMapForAdmin.get(o.id)?.is_factory_modified)
               ) {

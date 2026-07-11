@@ -2905,6 +2905,13 @@ function isUnreadForFactory(messages, readKey) {
             notifiedAdminModifiedOrderIds.current.add(adminModified.id);
             setActionNotice('⚠️ 管理者によって注文内容が変更されました。内容を確認してください。');
             window.setTimeout(() => setActionNotice(''), 6000);
+            void db.clearOrderAdminModifiedFlag(adminModified.id).then((updated) => {
+              if (!updated) return;
+              const patchOrder = (o) =>
+                o?.id === updated.id ? { ...o, ...updated, is_admin_modified: false } : o;
+              setRawOrders((prev) => (Array.isArray(prev) ? prev.map(patchOrder) : prev));
+              setOrders((prev) => (Array.isArray(prev) ? prev.map(patchOrder) : prev));
+            });
           }
           const isNotifyCandidate = (o) => {
             if (!o?.id) return false;
