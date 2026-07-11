@@ -382,67 +382,85 @@ export function CharterRequestsPanel({ factoryId, factories = [] }) {
                     {(responsesByRequest[request.id] || []).length > 0 ? (
                       <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-600 dark:bg-slate-800/60">
                         <p className="text-sm font-black text-slate-800 dark:text-slate-200">応答一覧</p>
-                        <ul className="mt-2 space-y-2">
-                          {(responsesByRequest[request.id] || []).map((response) => {
-                            const rStatus = RESPONSE_STATUS_META[response.status] || {
-                              label: response.status,
-                              className:
-                                'bg-slate-100 text-slate-800 border-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-600',
-                            };
-                            return (
-                              <li
-                                key={response.id}
-                                className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300 sm:text-base"
-                              >
-                                <span className="font-bold text-slate-900 dark:text-slate-100">
-                                  {responderDisplayName(response)}
-                                </span>
-                                <span className="text-slate-500 dark:text-slate-400">
-                                  ({RESPONDER_TYPE_LABEL[response.responder_type] || response.responder_type})
-                                </span>
-                                <span>{response.offered_count}台</span>
-                                <span
-                                  className={`rounded-full border px-2.5 py-0.5 text-sm font-black ${rStatus.className}`}
-                                >
-                                  {rStatus.label}
-                                </span>
-                                {response.message?.trim() ? (
-                                  <span className="text-slate-600 dark:text-slate-400">— {response.message}</span>
-                                ) : null}
-                                {(response.assigned_vehicles || []).length > 0 ? (
-                                  <div className="mt-2 w-full basis-full flex flex-col gap-1.5">
-                                    {(response.assigned_vehicles || []).map((v, i) => (
-                                      <div
-                                        key={`${response.id}-${v.vehicle_id || i}`}
-                                        className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 dark:border-slate-600 dark:bg-slate-900/60"
+                        {(() => {
+                          const allResponses = responsesByRequest[request.id] || [];
+                          const activeResponses = allResponses.filter((response) =>
+                            ['offered', 'accepted', 'rejected'].includes(response.status),
+                          );
+                          const declinedCount = allResponses.filter((r) => r.status === 'declined').length;
+                          return (
+                            <>
+                              {activeResponses.length > 0 ? (
+                                <ul className="mt-2 space-y-2">
+                                  {activeResponses.map((response) => {
+                                    const rStatus = RESPONSE_STATUS_META[response.status] || {
+                                      label: response.status,
+                                      className:
+                                        'bg-slate-100 text-slate-800 border-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-600',
+                                    };
+                                    return (
+                                      <li
+                                        key={response.id}
+                                        className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300 sm:text-base"
                                       >
-                                        <PlateCategoryBadge category={v.plate_category} />
-                                        <span className="text-sm font-bold text-slate-800 dark:text-slate-100">
-                                          {vehicleTypeLabel(v.vehicle_type)} {v.vehicle_number || '—'}
-                                          {v.door_number ? `（ドア${v.door_number}）` : ''}
+                                        <span className="font-bold text-slate-900 dark:text-slate-100">
+                                          {responderDisplayName(response)}
                                         </span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <p className="mt-2 w-full basis-full text-xs font-bold text-amber-700 dark:text-amber-300">
-                                    車両未設定（応答者に確認してください）
-                                  </p>
-                                )}
-                                {request.status === 'open' && response.status === 'offered' ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => void handleConfirm(response, request)}
-                                    disabled={saving}
-                                    className="min-h-[44px] rounded-lg bg-indigo-600 px-3 py-2 text-sm font-black text-white hover:bg-indigo-700 disabled:opacity-60 sm:text-base"
-                                  >
-                                    この業者に決定
-                                  </button>
-                                ) : null}
-                              </li>
-                            );
-                          })}
-                        </ul>
+                                        <span className="text-slate-500 dark:text-slate-400">
+                                          ({RESPONDER_TYPE_LABEL[response.responder_type] || response.responder_type})
+                                        </span>
+                                        <span>{response.offered_count}台</span>
+                                        <span
+                                          className={`rounded-full border px-2.5 py-0.5 text-sm font-black ${rStatus.className}`}
+                                        >
+                                          {rStatus.label}
+                                        </span>
+                                        {response.message?.trim() ? (
+                                          <span className="text-slate-600 dark:text-slate-400">— {response.message}</span>
+                                        ) : null}
+                                        {(response.assigned_vehicles || []).length > 0 ? (
+                                          <div className="mt-2 flex w-full basis-full flex-col gap-1.5">
+                                            {(response.assigned_vehicles || []).map((v, i) => (
+                                              <div
+                                                key={`${response.id}-${v.vehicle_id || i}`}
+                                                className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 dark:border-slate-600 dark:bg-slate-900/60"
+                                              >
+                                                <PlateCategoryBadge category={v.plate_category} />
+                                                <span className="text-sm font-bold text-slate-800 dark:text-slate-100">
+                                                  {vehicleTypeLabel(v.vehicle_type)} {v.vehicle_number || '—'}
+                                                  {v.door_number ? `（ドア${v.door_number}）` : ''}
+                                                </span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        ) : (
+                                          <p className="mt-2 w-full basis-full text-xs font-bold text-amber-700 dark:text-amber-300">
+                                            車両未設定（応答者に確認してください）
+                                          </p>
+                                        )}
+                                        {request.status === 'open' && response.status === 'offered' ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => void handleConfirm(response, request)}
+                                            disabled={saving}
+                                            className="min-h-[44px] rounded-lg bg-indigo-600 px-3 py-2 text-sm font-black text-white hover:bg-indigo-700 disabled:opacity-60 sm:text-base"
+                                          >
+                                            この業者に決定
+                                          </button>
+                                        ) : null}
+                                      </li>
+                                    );
+                                  })}
+                                </ul>
+                              ) : null}
+                              {declinedCount > 0 ? (
+                                <p className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400">
+                                  見送り: {declinedCount}件
+                                </p>
+                              ) : null}
+                            </>
+                          );
+                        })()}
                       </div>
                     ) : request.status === 'open' ? (
                       <p className="mt-2 text-sm font-medium text-slate-500 dark:text-slate-400 sm:text-base">応答はまだありません</p>

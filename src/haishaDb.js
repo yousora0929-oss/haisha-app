@@ -4221,15 +4221,22 @@ function mapCharterResponseRow(row) {
   if (!row || typeof row !== 'object') return null;
   const id = sanitizeRefId(row.id);
   if (!id) return null;
+  const status = String(row.status || 'offered');
   const offeredCount = Number(row.offered_count);
+  let offered_count = 1;
+  if (Number.isFinite(offeredCount) && offeredCount > 0) {
+    offered_count = Math.floor(offeredCount);
+  } else if (status === 'declined') {
+    offered_count = 0;
+  }
   return {
     id,
     request_id: sanitizeRefId(row.request_id) || '',
     responder_type: row.responder_type === 'charter_operator' ? 'charter_operator' : 'factory',
     responder_id: String(row.responder_id ?? ''),
-    offered_count: Number.isFinite(offeredCount) && offeredCount > 0 ? Math.floor(offeredCount) : 1,
+    offered_count,
     message: row.message != null ? String(row.message) : '',
-    status: String(row.status || 'offered'),
+    status,
     assigned_vehicles: normalizeAssignedVehicles(row.assigned_vehicles),
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -4396,6 +4403,36 @@ export async function withdrawCharterResponse(responseId) {
     .from('charter_responses')
     .update({ status: 'withdrawn', updated_at: new Date().toISOString() })
     .eq('id', id)
+    .select(CHARTER_RESPONSE_SELECT)
+    .single();
+  if (error) throw error;
+  return mapCharterResponseRow(data);
+}
+
+/** 募集を見送る（台数申し出なし） */
+export async function declineCharterRequest(requestId, responderType, responderId) {
+  const reqId = sanitizeRefId(requestId);
+  const type = responderType === 'charter_operator' ? 'charter_operator' : 'factory';
+  const rid = String(responderId || '').trim();
+  if (!reqId) throw new Error('requestId が必要です');
+  if (!rid) throw new Error('responderId が必要です');
+  if (!supabase?.from) throw new Error('Supabase クライアントが初期化されていません');
+
+  const now = new Date().toISOString();
+  const row = {
+    request_id: reqId,
+    responder_type: type,
+    responder_id: rid,
+    offered_count: 0,
+    message: null,
+    status: 'declined',
+    assigned_vehicles: [],
+    updated_at: now,
+  };
+
+  const { data, error } = await supabase
+    .from('charter_responses')
+    .upsert(row, { onConflict: 'request_id,responder_type,responder_id' })
     .select(CHARTER_RESPONSE_SELECT)
     .single();
   if (error) throw error;

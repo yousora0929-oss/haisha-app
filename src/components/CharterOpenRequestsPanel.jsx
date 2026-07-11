@@ -16,6 +16,7 @@ const RESPONSE_STATUS_META = {
   accepted: { label: '✅ 確定しました', className: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
   rejected: { label: '今回は見送りとなりました', className: 'bg-slate-100 text-slate-700 border-slate-200' },
   withdrawn: { label: '取り下げ', className: 'bg-slate-100 text-slate-700 border-slate-200' },
+  declined: { label: '見送り済み', className: 'bg-slate-200 text-slate-700 border-slate-300' },
 };
 
 function emptyRespondForm() {
@@ -128,9 +129,16 @@ export function CharterOpenRequestsPanel({
 
   const visibleRequests = useMemo(() => {
     const exclude = String(excludeOwnFactoryId || '').trim();
-    if (!exclude || responderType !== 'factory') return requests;
-    return requests.filter((r) => r.requesting_factory_id !== exclude);
-  }, [requests, excludeOwnFactoryId, responderType]);
+    const base =
+      !exclude || responderType !== 'factory'
+        ? requests
+        : requests.filter((r) => r.requesting_factory_id !== exclude);
+    return [...base].sort((a, b) => {
+      const aDeclined = responseByRequestId.get(a.id)?.status === 'declined' ? 1 : 0;
+      const bDeclined = responseByRequestId.get(b.id)?.status === 'declined' ? 1 : 0;
+      return aDeclined - bDeclined;
+    });
+  }, [requests, excludeOwnFactoryId, responderType, responseByRequestId]);
 
   const loadData = useCallback(async () => {
     if (!rid) {
@@ -195,12 +203,17 @@ export function CharterOpenRequestsPanel({
 
   const openRespondForm = (request) => {
     const existing = responseByRequestId.get(request.id);
+    const priorCount =
+      existing && existing.status !== 'declined' && existing.offered_count > 0
+        ? existing.offered_count
+        : 1;
     setRespondingId(request.id);
     setEditingVehiclesResponseId('');
     setForm({
-      offered_count: String(existing?.offered_count || 1),
-      message: String(existing?.message || ''),
-      selectedVehicleIds: assignedVehicleIds(existing?.assigned_vehicles),
+      offered_count: String(priorCount),
+      message: existing?.status === 'declined' ? '' : String(existing?.message || ''),
+      selectedVehicleIds:
+        existing?.status === 'declined' ? [] : assignedVehicleIds(existing?.assigned_vehicles),
     });
     setError('');
     setNotice('');
@@ -290,6 +303,26 @@ export function CharterOpenRequestsPanel({
     }
   };
 
+  const handleDecline = async (request) => {
+    if (!request?.id) return;
+    const ok = window.confirm('この募集を見送りますか？');
+    if (!ok) return;
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      await db.declineCharterRequest(request.id, responderType, rid);
+      closeRespondForm();
+      await loadData();
+      setNotice('見送りました');
+      window.setTimeout(() => setNotice(''), 3000);
+    } catch (err) {
+      setError(err?.message || '見送りに失敗しました');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <section className="rounded-2xl border-2 border-slate-200 bg-white p-4 shadow-sm sm:p-6">
       <h2 className="text-lg font-black text-slate-900">{title}</h2>
@@ -352,7 +385,7 @@ export function CharterOpenRequestsPanel({
                         ) : null}
                       </div>
                     ) : null}
-                    {myResponse && myResponse.status !== 'withdrawn' ? (
+                    {myResponse && myResponse.status !== 'withdrawn' && myResponse.status !== 'declined' ? (
                       <AssignedVehicleBadges assignedVehicles={myResponse.assigned_vehicles} />
                     ) : null}
                     {myResponse?.status === 'offered' && !withdrawAllowed ? (
@@ -372,7 +405,10 @@ export function CharterOpenRequestsPanel({
                         取り下げ
                       </button>
                     ) : null}
-                    {myResponse && myResponse.status !== 'withdrawn' ? (
+                    {myResponse &&
+                    myResponse.status !== 'withdrawn' &&
+                    myResponse.status !== 'declined' &&
+                    (myResponse.status === 'offered' || myResponse.status === 'accepted') ? (
                       <button
                         type="button"
                         onClick={() => openVehicleEdit(myResponse)}
@@ -383,13 +419,32 @@ export function CharterOpenRequestsPanel({
                       </button>
                     ) : null}
                     {!myResponse || myResponse.status === 'withdrawn' ? (
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openRespondForm(request)}
+                          disabled={saving}
+                          className="min-h-[44px] rounded-lg border-2 border-indigo-600 bg-indigo-600 px-3 py-2 text-xs font-black text-white shadow-sm hover:bg-indigo-700 active:scale-[0.99] disabled:opacity-60"
+                        >
+                          応答する
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDecline(request)}
+                          disabled={saving}
+                          className="min-h-[44px] rounded-lg border-2 border-slate-300 bg-white px-4 py-2 text-xs font-black text-slate-600 hover:bg-slate-50 active:scale-[0.99] disabled:opacity-60"
+                        >
+                          見送る
+                        </button>
+                      </div>
+                    ) : myResponse.status === 'declined' ? (
                       <button
                         type="button"
                         onClick={() => openRespondForm(request)}
                         disabled={saving}
-                        className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-black text-white hover:bg-indigo-700 disabled:opacity-60"
+                        className="min-h-[44px] rounded-lg border-2 border-indigo-600 bg-indigo-600 px-3 py-2 text-xs font-black text-white shadow-sm hover:bg-indigo-700 active:scale-[0.99] disabled:opacity-60"
                       >
-                        応答する
+                        見送りを取り消して応答する
                       </button>
                     ) : myResponse.status === 'offered' ? (
                       <button
