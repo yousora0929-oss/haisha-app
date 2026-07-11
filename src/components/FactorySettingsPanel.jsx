@@ -61,7 +61,7 @@ export function FactorySettingsPanel({
   };
 
   return (
-    <div className="mx-auto max-w-2xl space-y-4 pb-8">
+    <div className="w-full space-y-4 pb-8">
       <header>
         <h2 className="text-lg font-black text-slate-900 dark:text-slate-100">設定管理</h2>
         <p className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400">

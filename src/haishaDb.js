@@ -4058,15 +4058,27 @@ export async function fetchCharterOperators() {
   return (data || []).map(mapCharterOperatorRow).filter(Boolean);
 }
 
-/** チャーター業者を新規登録（初期パスワード自動生成） */
+/** チャーター業者を新規登録（初期パスワード自動生成・CHARTER_01 形式の ID） */
 export async function createCharterOperator({ companyName, contactName, phone }) {
   const company_name = String(companyName || '').trim();
   if (!company_name) throw new Error('会社名を入力してください');
   if (!supabase?.from) throw new Error('Supabase クライアントが初期化されていません');
 
+  const { data: existing, error: fetchErr } = await supabase.from('charter_operators').select('id');
+  if (fetchErr) throw fetchErr;
+
+  const nums = (existing || [])
+    .map((r) => /^CHARTER_(\d+)$/.exec(String(r.id || '')))
+    .filter(Boolean)
+    .map((m) => parseInt(m[1], 10))
+    .filter((n) => Number.isFinite(n));
+  const nextNum = nums.length > 0 ? Math.max(...nums) + 1 : 1;
+  const newId = `CHARTER_${String(nextNum).padStart(2, '0')}`;
+
   const login_password = generateInitialPassword();
   const now = new Date().toISOString();
   const row = {
+    id: newId,
     company_name,
     contact_name: String(contactName || '').trim() || null,
     phone: String(phone || '').trim() || null,
@@ -4541,6 +4553,67 @@ export async function fetchMyCharterResponses(responderType, responderId) {
     console.warn('[fetchMyCharterResponses] failed', err);
     return [];
   }
+}
+
+/** チャーター業者の確定済み（accepted）予約一覧（カレンダー用） */
+export async function fetchCharterOperatorBookings(responderId) {
+  const rid = String(responderId || '').trim();
+  if (!rid) return [];
+  if (!supabase?.from) {
+    console.warn('[fetchCharterOperatorBookings] Supabase client is not ready');
+    return [];
+  }
+
+  const { data: responses, error: respErr } = await supabase
+    .from('charter_responses')
+    .select('id, request_id, offered_count, assigned_vehicles')
+    .eq('responder_type', 'charter_operator')
+    .eq('responder_id', rid)
+    .eq('status', 'accepted');
+  if (respErr) throw respErr;
+  if (!responses?.length) return [];
+
+  const requestIds = [...new Set(responses.map((r) => r.request_id).filter(Boolean))];
+  const { data: requests, error: reqErr } = await supabase
+    .from('charter_requests')
+    .select('id, request_date, requesting_factory_id, vehicle_type, note')
+    .in('id', requestIds);
+  if (reqErr) throw reqErr;
+  const requestById = new Map((requests || []).map((r) => [r.id, r]));
+
+  const factoryIds = [
+    ...new Set((requests || []).map((r) => r.requesting_factory_id).filter(Boolean)),
+  ];
+  let factoryNameById = new Map();
+  if (factoryIds.length) {
+    const { data: factories, error: facErr } = await supabase
+      .from('factories')
+      .select('id, name')
+      .in('id', factoryIds);
+    if (facErr) throw facErr;
+    factoryNameById = new Map((factories || []).map((f) => [f.id, f.name]));
+  }
+
+  return responses
+    .map((r) => {
+      const req = requestById.get(r.request_id);
+      if (!req) return null;
+      const date = String(req.request_date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+      const factoryId = String(req.requesting_factory_id || '');
+      return {
+        responseId: String(r.id),
+        date,
+        factoryId,
+        factoryName: factoryNameById.get(factoryId) || factoryId,
+        vehicleType: req.vehicle_type === 'small' ? 'small' : 'large',
+        offeredCount: Math.max(0, Math.floor(Number(r.offered_count)) || 0),
+        assignedVehicles: normalizeAssignedVehicles(r.assigned_vehicles),
+        note: req.note != null ? String(req.note) : '',
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.factoryName).localeCompare(String(b.factoryName), 'ja'));
 }
 
 /** 応答の送信（新規 or 更新） */
