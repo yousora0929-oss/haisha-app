@@ -35,6 +35,7 @@ import {
 } from './utils/assignedProjectEscalation.js';
 import { normalizeSalesStaffList } from './utils/salesStaff.js';
 import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils/deliveryAreas.js';
+import { generateInitialPassword } from './utils/initialPassword.js';
 
 const ORDER_SELECT =
   'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, is_admin_modified, is_factory_modified';
@@ -4022,6 +4023,170 @@ export async function loginCharter(charterId, password) {
     contact_name: row.contact_name != null ? String(row.contact_name) : '',
     phone: row.phone != null ? String(row.phone) : '',
   };
+}
+
+function mapCharterOperatorRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const id = String(row.id ?? '').trim();
+  if (!id) return null;
+  return {
+    id,
+    company_name: String(row.company_name ?? ''),
+    contact_name: row.contact_name != null ? String(row.contact_name) : '',
+    phone: row.phone != null ? String(row.phone) : '',
+    login_password: row.login_password != null ? String(row.login_password) : '',
+    status: row.status === 'suspended' ? 'suspended' : 'active',
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+const CHARTER_OPERATOR_SELECT =
+  'id, company_name, contact_name, phone, login_password, status, created_at, updated_at';
+
+/** 個人チャーター業者一覧（管理者） */
+export async function fetchCharterOperators() {
+  if (!supabase?.from) {
+    console.warn('[fetchCharterOperators] Supabase client is not ready');
+    return [];
+  }
+  const { data, error } = await supabase
+    .from('charter_operators')
+    .select(CHARTER_OPERATOR_SELECT)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(mapCharterOperatorRow).filter(Boolean);
+}
+
+/** 個人チャーター業者を新規登録（初期パスワード自動生成） */
+export async function createCharterOperator({ companyName, contactName, phone }) {
+  const company_name = String(companyName || '').trim();
+  if (!company_name) throw new Error('会社名を入力してください');
+  if (!supabase?.from) throw new Error('Supabase クライアントが初期化されていません');
+
+  const login_password = generateInitialPassword();
+  const now = new Date().toISOString();
+  const row = {
+    company_name,
+    contact_name: String(contactName || '').trim() || null,
+    phone: String(phone || '').trim() || null,
+    login_password,
+    status: 'active',
+    created_at: now,
+    updated_at: now,
+  };
+
+  const { data, error } = await supabase
+    .from('charter_operators')
+    .insert(row)
+    .select(CHARTER_OPERATOR_SELECT)
+    .single();
+  if (error) throw error;
+  const mapped = mapCharterOperatorRow(data);
+  return { ...mapped, login_password };
+}
+
+/** 個人チャーター業者の基本情報を更新 */
+export async function updateCharterOperator(id, { companyName, contactName, phone }) {
+  const oid = String(id || '').trim();
+  if (!oid) throw new Error('id が必要です');
+  const company_name = String(companyName || '').trim();
+  if (!company_name) throw new Error('会社名を入力してください');
+  if (!supabase?.from) throw new Error('Supabase クライアントが初期化されていません');
+
+  const { data, error } = await supabase
+    .from('charter_operators')
+    .update({
+      company_name,
+      contact_name: String(contactName || '').trim() || null,
+      phone: String(phone || '').trim() || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', oid)
+    .select(CHARTER_OPERATOR_SELECT)
+    .single();
+  if (error) throw error;
+  return mapCharterOperatorRow(data);
+}
+
+/** 個人チャーター業者の稼働状態を更新 */
+export async function setCharterOperatorStatus(id, status) {
+  const oid = String(id || '').trim();
+  if (!oid) throw new Error('id が必要です');
+  const next = status === 'suspended' ? 'suspended' : 'active';
+  if (!supabase?.from) throw new Error('Supabase クライアントが初期化されていません');
+
+  const { data, error } = await supabase
+    .from('charter_operators')
+    .update({ status: next, updated_at: new Date().toISOString() })
+    .eq('id', oid)
+    .select(CHARTER_OPERATOR_SELECT)
+    .single();
+  if (error) throw error;
+  return mapCharterOperatorRow(data);
+}
+
+/** 個人チャーター業者のパスワードを再発行 */
+export async function resetCharterOperatorPassword(id) {
+  const oid = String(id || '').trim();
+  if (!oid) throw new Error('id が必要です');
+  if (!supabase?.from) throw new Error('Supabase クライアントが初期化されていません');
+
+  const login_password = generateInitialPassword();
+  const { data, error } = await supabase
+    .from('charter_operators')
+    .update({ login_password, updated_at: new Date().toISOString() })
+    .eq('id', oid)
+    .select(CHARTER_OPERATOR_SELECT)
+    .single();
+  if (error) throw error;
+  const mapped = mapCharterOperatorRow(data);
+  return { ...mapped, login_password };
+}
+
+/**
+ * 工場ごとのチャーター対応状況（車両数・通知先件数）
+ * @returns {Promise<Array<{ factoryId: string, factoryName: string, vehicleCount: number, notificationTargetCount: number }>>}
+ */
+export async function fetchFactoryCharterOverview() {
+  if (!supabase?.from) {
+    console.warn('[fetchFactoryCharterOverview] Supabase client is not ready');
+    return [];
+  }
+  const [factories, vehiclesRes, prefsRes] = await Promise.all([
+    fetchFactories(),
+    supabase.from('charter_vehicles').select('owner_id').eq('owner_type', 'factory'),
+    supabase.from('charter_notification_preferences').select('factory_id'),
+  ]);
+  if (vehiclesRes.error) throw vehiclesRes.error;
+  if (prefsRes.error) throw prefsRes.error;
+
+  const vehicleCountByFactory = new Map();
+  for (const row of vehiclesRes.data || []) {
+    const fid = String(row.owner_id || '').trim();
+    if (!fid) continue;
+    vehicleCountByFactory.set(fid, (vehicleCountByFactory.get(fid) || 0) + 1);
+  }
+  const prefCountByFactory = new Map();
+  for (const row of prefsRes.data || []) {
+    const fid = String(row.factory_id || '').trim();
+    if (!fid) continue;
+    prefCountByFactory.set(fid, (prefCountByFactory.get(fid) || 0) + 1);
+  }
+
+  return (factories || [])
+    .map((f) => {
+      const factoryId = String(f?.id || '').trim();
+      if (!factoryId) return null;
+      return {
+        factoryId,
+        factoryName: String(f?.name || factoryId),
+        vehicleCount: vehicleCountByFactory.get(factoryId) || 0,
+        notificationTargetCount: prefCountByFactory.get(factoryId) || 0,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.factoryName.localeCompare(b.factoryName, 'ja'));
 }
 
 function mapCharterRequestRow(row) {

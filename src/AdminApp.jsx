@@ -61,6 +61,7 @@ import { AdminCsvImportButton } from './components/AdminCsvImportButton.jsx';
 import { AdminCsvDownloadButton } from './components/AdminCsvDownloadButton.jsx';
 import { AdminFactoryNewsSection } from './components/AdminFactoryNewsSection.jsx';
 import { AdminOrgSection } from './components/AdminOrgSection.jsx';
+import { AdminCharterSection } from './components/AdminCharterSection.jsx';
 import {
   downloadProjectsExportCsv,
   parseProjectsCsvFile,
@@ -2901,6 +2902,7 @@ export function AdminApp() {
             {tabBtn('agents', '商社')}
             {tabBtn('cooperatives', '組合員')}
             {tabBtn('customers', '業者管理')}
+            {tabBtn('charter', '🚛 チャーター業務')}
             {tabBtn('inquiries', '問い合わせ対応')}
             {tabBtn('settings', '休日・稼働時間')}
             {tabBtn('escalation', '🚨 エスカレーション設定')}
@@ -2931,6 +2933,7 @@ export function AdminApp() {
         {tab === 'agents' ? <AdminOrgSection orgType="agent" label="商社" /> : null}
         {tab === 'cooperatives' ? <AdminOrgSection orgType="cooperative" label="組合員" /> : null}
         {tab === 'customers' ? <AdminOrgSection orgType="contractor" label="業者" /> : null}
+        {tab === 'charter' ? <AdminCharterSection /> : null}
         {tab === 'inquiries' ? <CustomerInquirySection /> : null}
         {tab === 'settings' ? <HolidaysAndSettingsSection /> : null}
         {tab === 'escalation' ? <AdminEscalationSection factories={factories} /> : null}
