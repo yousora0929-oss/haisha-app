@@ -4292,10 +4292,10 @@ export async function fetchCharterOperatorCompanyNames(operatorIds) {
   }
 }
 
-/** 応答対象となる open 募集（RLS で自分宛のみ） */
+/** 応答対象となる open 募集（RLS で自分宛＋自工場募集も見える） */
 export async function fetchOpenCharterRequestsForResponder(responderType, responderId) {
-  void responderType;
-  void responderId;
+  const type = responderType === 'charter_operator' ? 'charter_operator' : 'factory';
+  const rid = String(responderId || '').trim();
   if (!supabase?.from) {
     console.warn('[fetchOpenCharterRequestsForResponder] Supabase client is not ready');
     return [];
@@ -4313,7 +4313,11 @@ export async function fetchOpenCharterRequestsForResponder(responderType, respon
       console.warn('[fetchOpenCharterRequestsForResponder] failed', error);
       return [];
     }
-    const requests = (data || []).map(mapCharterRequestRow).filter(Boolean);
+    let requests = (data || []).map(mapCharterRequestRow).filter(Boolean);
+    // 工場パネルは RLS で自工場の募集も見えるが、バッジ／応答対象からは除外する
+    if (type === 'factory' && rid) {
+      requests = requests.filter((r) => String(r.requesting_factory_id || '') !== rid);
+    }
     if (!requests.length) return [];
 
     const factories = await fetchFactories();
