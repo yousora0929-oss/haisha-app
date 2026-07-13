@@ -3911,27 +3911,18 @@ export async function fetchCharterVehicles(ownerType, ownerId) {
   const oid = String(ownerId || '').trim();
   if (!type || !oid) return [];
   if (!supabase?.from) {
-    console.warn('[fetchCharterVehicles] Supabase client is not ready');
-    return [];
+    throw new Error('Supabase クライアントが初期化されていません');
   }
-  try {
-    const { data, error } = await supabase
-      .from('charter_vehicles')
-      .select(
-        'id, owner_type, owner_id, vehicle_type, plate_category, vehicle_number, door_number, created_at, updated_at',
-      )
-      .eq('owner_type', type)
-      .eq('owner_id', oid)
-      .order('created_at', { ascending: true });
-    if (error) {
-      console.warn('[fetchCharterVehicles] failed', error);
-      return [];
-    }
-    return (data || []).map(mapCharterVehicleRow).filter(Boolean);
-  } catch (err) {
-    console.warn('[fetchCharterVehicles] failed', err);
-    return [];
-  }
+  const { data, error } = await supabase
+    .from('charter_vehicles')
+    .select(
+      'id, owner_type, owner_id, vehicle_type, plate_category, vehicle_number, door_number, created_at, updated_at',
+    )
+    .eq('owner_type', type)
+    .eq('owner_id', oid)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data || []).map(mapCharterVehicleRow).filter(Boolean);
 }
 
 /** チャーター車両の登録・更新 */

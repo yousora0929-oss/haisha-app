@@ -175,11 +175,16 @@ export function CharterOpenRequestsPanel({
     setLoading(true);
     setError('');
     try {
-      const [openRows, responseRows, vehicles] = await Promise.all([
+      const [openRows, responseRows] = await Promise.all([
         db.fetchOpenCharterRequestsForResponder(responderType, rid),
         db.fetchMyCharterResponses(responderType, rid),
-        db.fetchCharterVehicles(ownerType, rid),
       ]);
+      let vehicles = [];
+      try {
+        vehicles = await db.fetchCharterVehicles(ownerType, rid);
+      } catch (vehicleErr) {
+        console.warn('[CharterOpenRequestsPanel] vehicles fetch failed', vehicleErr);
+      }
       const openList = Array.isArray(openRows) ? openRows : [];
       const responses = Array.isArray(responseRows) ? responseRows : [];
       const terminalRequestIds = [

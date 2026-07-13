@@ -43,10 +43,12 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [listError, setListError] = useState('');
   const [notice, setNotice] = useState('');
   const [form, setForm] = useState(emptyVehicleForm);
   const [csvPreview, setCsvPreview] = useState(null);
   const csvInputRef = useRef(null);
+  const noticeTimerRef = useRef(0);
 
   const summary = useMemo(() => {
     const large = vehicles.filter((v) => v.vehicle_type === 'large').length;
@@ -54,27 +56,44 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
     return { large, small, total: large + small };
   }, [vehicles]);
 
+  const showNotice = useCallback((msg, ms = 3000) => {
+    setNotice(msg);
+    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = window.setTimeout(() => setNotice(''), ms);
+  }, []);
+
   const loadVehicles = useCallback(async () => {
     const oid = String(ownerId || '').trim();
     if (!oid) {
       setVehicles([]);
+      setListError('');
       return;
     }
     setLoading(true);
-    setError('');
+    setListError('');
     try {
       const rows = await db.fetchCharterVehicles(ownerType, oid);
       setVehicles(Array.isArray(rows) ? rows : []);
     } catch (err) {
-      setError(err?.message || '車両一覧の取得に失敗しました');
+      setListError(err?.message || '車両一覧の取得に失敗しました');
+      throw err;
     } finally {
       setLoading(false);
     }
   }, [ownerType, ownerId]);
 
   useEffect(() => {
-    void loadVehicles();
+    void loadVehicles().catch(() => {
+      /* listError に反映済み */
+    });
   }, [loadVehicles]);
+
+  useEffect(
+    () => () => {
+      if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+    },
+    [],
+  );
 
   const resetForm = () => {
     setForm(emptyVehicleForm());
@@ -99,6 +118,7 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
       setError('オーナーIDが未設定です');
       return;
     }
+    const wasEdit = Boolean(form.id);
     setSaving(true);
     setError('');
     setNotice('');
@@ -112,12 +132,24 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
         vehicle_number: form.vehicle_number,
         door_number: form.door_number,
       });
-      await loadVehicles();
-      resetForm();
-      setNotice(form.id ? '車両を更新しました' : '車両を登録しました');
-      window.setTimeout(() => setNotice(''), 3000);
     } catch (err) {
       setError(err?.message || '保存に失敗しました');
+      setSaving(false);
+      return;
+    }
+
+    resetForm();
+    const successMsg = wasEdit ? '車両を更新しました' : '車両を登録しました';
+    showNotice(successMsg);
+
+    try {
+      await loadVehicles();
+    } catch (err) {
+      console.warn('[CharterVehicleRegistrationPanel] 一覧再取得に失敗', err);
+      showNotice(
+        `${successMsg}（一覧の表示が最新でない可能性があります。再読み込みしてください）`,
+        5000,
+      );
     } finally {
       setSaving(false);
     }
@@ -132,12 +164,24 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
     setNotice('');
     try {
       await db.deleteCharterVehicle(vehicle.id);
-      if (form.id === vehicle.id) resetForm();
-      await loadVehicles();
-      setNotice('車両を削除しました');
-      window.setTimeout(() => setNotice(''), 3000);
     } catch (err) {
       setError(err?.message || '削除に失敗しました');
+      setSaving(false);
+      return;
+    }
+
+    if (form.id === vehicle.id) resetForm();
+    const successMsg = '車両を削除しました';
+    showNotice(successMsg);
+
+    try {
+      await loadVehicles();
+    } catch (err) {
+      console.warn('[CharterVehicleRegistrationPanel] 一覧再取得に失敗', err);
+      showNotice(
+        `${successMsg}（一覧の表示が最新でない可能性があります。再読み込みしてください）`,
+        5000,
+      );
     } finally {
       setSaving(false);
     }
@@ -173,14 +217,28 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
     setSaving(true);
     setError('');
     setNotice('');
+    let insertedCount = 0;
     try {
       const inserted = await db.bulkInsertCharterVehicles(ownerType, oid, csvPreview.rows);
+      insertedCount = inserted.length;
       setCsvPreview(null);
-      await loadVehicles();
-      setNotice(`${inserted.length}件の車両を一括登録しました`);
-      window.setTimeout(() => setNotice(''), 3000);
     } catch (err) {
       setError(err?.message || '一括登録に失敗しました');
+      setSaving(false);
+      return;
+    }
+
+    const successMsg = `${insertedCount}件の車両を一括登録しました`;
+    showNotice(successMsg);
+
+    try {
+      await loadVehicles();
+    } catch (err) {
+      console.warn('[CharterVehicleRegistrationPanel] 一覧再取得に失敗', err);
+      showNotice(
+        `${successMsg}（一覧の表示が最新でない可能性があります。再読み込みしてください）`,
+        5000,
+      );
     } finally {
       setSaving(false);
     }
@@ -195,6 +253,11 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
 
       {notice ? <p className="mt-3 text-sm font-bold text-emerald-700">{notice}</p> : null}
       {error ? <p className="mt-3 whitespace-pre-line text-sm font-bold text-red-700">{error}</p> : null}
+      {listError ? (
+        <p className="mt-3 whitespace-pre-line text-sm font-bold text-amber-700" role="alert">
+          {listError}
+        </p>
+      ) : null}
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <button
