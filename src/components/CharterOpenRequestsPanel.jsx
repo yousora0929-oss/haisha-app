@@ -183,7 +183,8 @@ export function CharterOpenRequestsPanel({
       try {
         vehicles = await db.fetchCharterVehicles(ownerType, rid);
       } catch (vehicleErr) {
-        console.warn('[CharterOpenRequestsPanel] vehicles fetch failed', vehicleErr);
+        console.warn('[CharterOpenRequestsPanel] 自分の車両一覧の取得に失敗', vehicleErr);
+        vehicles = [];
       }
       const openList = Array.isArray(openRows) ? openRows : [];
       const responses = Array.isArray(responseRows) ? responseRows : [];

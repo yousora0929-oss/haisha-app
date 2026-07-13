@@ -122,6 +122,7 @@ function FactoryOverviewPanel() {
   const [expandedFactoryId, setExpandedFactoryId] = useState('');
   const [vehiclesByFactory, setVehiclesByFactory] = useState({});
   const [vehiclesLoadingId, setVehiclesLoadingId] = useState('');
+  const [vehiclesErrorByFactory, setVehiclesErrorByFactory] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -149,12 +150,20 @@ function FactoryOverviewPanel() {
     }
     setExpandedFactoryId(fid);
     setVehiclesLoadingId(fid);
-    setError('');
+    setVehiclesErrorByFactory((prev) => {
+      const next = { ...prev };
+      delete next[fid];
+      return next;
+    });
     try {
       const rows = await db.fetchCharterVehicles('factory', fid);
       setVehiclesByFactory((prev) => ({ ...prev, [fid]: Array.isArray(rows) ? rows : [] }));
-    } catch (e) {
-      setError(formatError(e, '車両一覧の取得に失敗しました'));
+    } catch (err) {
+      console.warn('[AdminCharterSection] 車両一覧の取得に失敗', err);
+      setVehiclesErrorByFactory((prev) => ({
+        ...prev,
+        [fid]: '車両情報の取得に失敗しました',
+      }));
       setVehiclesByFactory((prev) => ({ ...prev, [fid]: [] }));
     } finally {
       setVehiclesLoadingId('');
@@ -195,6 +204,7 @@ function FactoryOverviewPanel() {
                 const expanded = expandedFactoryId === row.factoryId;
                 const vehicles = vehiclesByFactory[row.factoryId] || [];
                 const vehiclesLoading = vehiclesLoadingId === row.factoryId;
+                const vehiclesError = vehiclesErrorByFactory[row.factoryId] || '';
                 return (
                   <React.Fragment key={row.factoryId}>
                     <tr className="border-t border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
@@ -226,6 +236,10 @@ function FactoryOverviewPanel() {
                           <p className="text-xs font-black text-slate-600 dark:text-slate-300">登録車両</p>
                           {vehiclesLoading ? (
                             <p className="mt-2 text-sm text-slate-500">読み込み中…</p>
+                          ) : vehiclesError ? (
+                            <p className="mt-2 text-sm font-bold text-amber-700 dark:text-amber-300">
+                              {vehiclesError}
+                            </p>
                           ) : vehicles.length === 0 ? (
                             <p className="mt-2 text-sm text-slate-500">登録車両はありません</p>
                           ) : (

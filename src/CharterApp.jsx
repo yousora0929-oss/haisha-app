@@ -342,8 +342,8 @@ export function CharterApp() {
           {[
             ['vehicles', '車両登録'],
             ['requests', '募集案件'],
-            ['bookings', '📅 予約カレンダー'],
-            ['settings', '⚙️ 設定'],
+            ['bookings', '予約カレンダー'],
+            ['settings', '設定'],
           ].map(([id, label]) => (
             <button
               key={id}
