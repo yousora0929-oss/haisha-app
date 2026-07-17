@@ -1533,20 +1533,22 @@ function isUnreadForFactory(messages, readKey) {
                 ) : (
                   <dl
                     className={
-                      'grid grid-cols-2 gap-y-2 ' +
-                      (orderedByIsProxy ? 'sm:grid-cols-4' : 'sm:grid-cols-3')
+                      'grid grid-cols-2 items-start gap-y-3 ' +
+                      (orderedByIsProxy
+                        ? 'lg:grid-cols-[3fr_3fr_2fr_3fr]'
+                        : 'lg:grid-cols-[3fr_3fr_2fr]')
                     }
                   >
                     <div className="min-w-0 pr-2">
-                      <dt className="text-xs font-bold text-slate-500">業者（元請）</dt>
-                      <dd className="mt-0.5 break-words text-sm font-bold text-slate-900">
+                      <dt className="text-sm font-bold text-slate-500">業者（元請）</dt>
+                      <dd className="mt-0.5 break-words text-base font-bold text-slate-900 dark:text-slate-100 sm:text-lg">
                         {displayPrime}
                         {billOnPrime ? <BillingMark /> : null}
                       </dd>
                     </div>
                     <div className="min-w-0 border-l border-slate-200 px-2">
-                      <dt className="text-xs font-bold text-slate-500">下請</dt>
-                      <dd className="mt-0.5 break-words text-sm font-bold text-slate-900">
+                      <dt className="text-sm font-bold text-slate-500">下請</dt>
+                      <dd className="mt-0.5 break-words text-base font-bold text-slate-900 dark:text-slate-100 sm:text-lg">
                         {displaySub}
                         {billOnSub && displaySub !== '—' ? <BillingMark /> : null}
                         {missingBillingSub ? (
@@ -1557,17 +1559,17 @@ function isUnreadForFactory(messages, readKey) {
                       </dd>
                     </div>
                     <div className="min-w-0 border-l border-slate-200 px-2">
-                      <dt className="text-xs font-bold text-slate-500">商社</dt>
-                      <dd className="mt-0.5 break-words text-sm font-bold text-slate-900">
+                      <dt className="text-sm font-bold text-slate-500">商社</dt>
+                      <dd className="mt-0.5 break-words text-base font-bold text-slate-900 dark:text-slate-100 sm:text-lg">
                         {displayTrader}
                       </dd>
                     </div>
                     {orderedByIsProxy ? (
                       <div className="min-w-0 border-l border-slate-200 pl-2">
-                        <dt className="text-xs font-bold text-slate-500">発注</dt>
-                        <dd className="mt-0.5 break-words text-sm font-bold text-slate-900">
+                        <dt className="text-sm font-bold text-slate-500">発注</dt>
+                        <dd className="mt-0.5 break-words text-base font-bold text-slate-900 dark:text-slate-100 sm:text-lg">
                           {orderedByLabel}
-                          <span className="ml-1 rounded bg-sky-100 px-1 text-[10px] font-black text-sky-800">
+                          <span className="ml-1 inline-block rounded bg-sky-100 px-1 align-middle text-[10px] font-black text-sky-800">
                             代理
                           </span>
                         </dd>
@@ -1663,51 +1665,6 @@ function isUnreadForFactory(messages, readKey) {
 
       const renderDetailBody = () => (
         <>
-          {linkedProject ? (
-            <dl
-              className={
-                'mb-3 grid min-w-0 grid-cols-2 gap-2 rounded-xl border border-slate-200/90 bg-white px-3 py-3 ' +
-                (orderedByIsProxy ? 'sm:grid-cols-4' : 'sm:grid-cols-3')
-              }
-            >
-              <div className="min-w-0">
-                <dt className="text-xs font-bold text-slate-500 sm:text-sm">業者（元請）</dt>
-                <dd className="mt-1 break-words font-black text-slate-900">
-                  {displayPrime}
-                  {billOnPrime ? <BillingMark /> : null}
-                </dd>
-              </div>
-              <div className="min-w-0 sm:border-l sm:border-slate-200 sm:pl-4">
-                <dt className="text-xs font-bold text-slate-500 sm:text-sm">下請</dt>
-                <dd className="mt-1 break-words font-black text-slate-900">
-                  {displaySub}
-                  {billOnSub && displaySub !== '—' ? <BillingMark /> : null}
-                  {missingBillingSub ? (
-                    <span className="mt-0.5 block text-[10px] font-bold text-red-600">
-                      ⚠請求先(下請)未設定
-                    </span>
-                  ) : null}
-                </dd>
-              </div>
-              <div className="min-w-0 sm:border-l sm:border-slate-200 sm:pl-4">
-                <dt className="text-xs font-bold text-slate-500 sm:text-sm">商社</dt>
-                <dd className="mt-1 break-words font-black text-slate-900">
-                  {displayTrader}
-                </dd>
-              </div>
-              {orderedByIsProxy ? (
-                <div className="min-w-0 sm:border-l sm:border-slate-200 sm:pl-4">
-                  <dt className="text-xs font-bold text-slate-500 sm:text-sm">発注</dt>
-                  <dd className="mt-1 break-words font-black text-slate-900">
-                    {orderedByLabel}
-                    <span className="ml-1 rounded bg-sky-100 px-1 text-[10px] font-black text-sky-800">
-                      代理
-                    </span>
-                  </dd>
-                </div>
-              ) : null}
-            </dl>
-          ) : null}
           <div className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border border-slate-200/90 bg-white px-3 py-3 sm:grid-cols-3">
             <div className="min-w-0">
               <p className="text-xs font-bold uppercase tracking-wider text-slate-500 sm:text-sm">配合</p>

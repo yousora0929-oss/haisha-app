@@ -47,6 +47,7 @@ import {
 import { buildMapEditorUrl, rememberMapEditorReturnUrl } from './mapEditorConstants.js';
 import { combineDeliveryAddress, extractProjectAddressFields, normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
 import { resolveProjectTradingCompanyName } from './utils/projectTradingCompany.js';
+import { projectMatchRole } from './utils/projectCustomerMatch.js';
 import {
   resolveContractorDisplayName,
   resolveProjectContractorLabels,
@@ -1607,13 +1608,20 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setContractorDisplayCustomText('');
       }, [selectedProjectId, orderKind, isGuestSiteOrder]);
 
+      const targetProjectCustomer = isAgentOrCooperative
+        ? contractorCustomer
+        : currentCustomer;
       const filteredProjects = useMemo(() => {
-        const targetCustomerId = isAgentOrCooperative ? contractorCustomerId : currentCustomerId;
-        if (!targetCustomerId) return [];
-        return (projects || []).filter(
-          (p) => p && String(p.customer_id || '').trim() === String(targetCustomerId || '').trim(),
-        );
-      }, [projects, currentCustomerId, contractorCustomerId, isAgentOrCooperative]);
+        if (!targetProjectCustomer) return [];
+        const roleOrder = { main: 0, sub: 1 };
+        return (projects || [])
+          .filter((project) => projectMatchRole(project, targetProjectCustomer) !== null)
+          .sort(
+            (a, b) =>
+              roleOrder[projectMatchRole(a, targetProjectCustomer)] -
+              roleOrder[projectMatchRole(b, targetProjectCustomer)],
+          );
+      }, [projects, targetProjectCustomer]);
       const projectSelectionWarnings = useMemo(
         () => (selectedProject ? getProjectDataGapWarnings(selectedProject) : []),
         [selectedProject],
@@ -1665,21 +1673,20 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
       useEffect(() => {
         if (typeof console === 'undefined' || typeof console.log !== 'function') return;
-        const cid = String(currentCustomerId || '').trim();
         console.log('[ProjectDropdown] all projects:', (projects || []).length);
-        console.log('[ProjectDropdown] currentCustomerId:', cid);
+        console.log('[ProjectDropdown] targetCustomerId:', String(targetProjectCustomer?.id || '').trim());
         console.log('[ProjectDropdown] filtered:', filteredProjects.length);
         console.log(
           '[ProjectDropdown] filter reasons:',
           (projects || []).map((p) => ({
             id: p?.id,
             name: p?.name,
-            customer_id_match: String(p?.customer_id || '').trim() === cid,
+            match_role: projectMatchRole(p, targetProjectCustomer),
             has_main: Boolean(resolveProjectMainFactoryId(p)),
             has_coords: Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lng)),
           })),
         );
-      }, [projects, currentCustomerId, filteredProjects]);
+      }, [projects, targetProjectCustomer, filteredProjects]);
 
       useEffect(() => {
         setCustomerSearchText(currentCustomerDisplayName);
@@ -1961,15 +1968,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setSelectedProjectId((cur) => {
           if (!cur) return cur;
           const p = (projects || []).find((x) => x && x.id === cur);
-          const targetCustomerId = isAgentOrCooperative ? contractorCustomerId : currentCustomerId;
-          const valid =
-            p && String(p.customer_id || '').trim() === String(targetCustomerId || '').trim();
+          const valid = projectMatchRole(p, targetProjectCustomer) !== null;
           if (!valid) {
             lastAutofillProjectIdRef.current = '';
           }
           return valid ? cur : '';
         });
-      }, [currentCustomerId, contractorCustomerId, isAgentOrCooperative, projects]);
+      }, [currentCustomerId, targetProjectCustomer, projects]);
 
       useEffect(() => {
         consumePushRedirectForApp('customer');
@@ -2126,10 +2131,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         if (lastAutofillProjectIdRef.current === selectedProjectId) return;
         const p = (projects || []).find((x) => x && String(x.id) === String(selectedProjectId));
         if (!p) return;
-        const targetCustomerId = isAgentOrCooperative ? contractorCustomerId : currentCustomerId;
-        if (String(p.customer_id || '').trim() !== String(targetCustomerId || '').trim()) return;
+        if (projectMatchRole(p, targetProjectCustomer) === null) return;
         applyProjectSelection(p);
-      }, [orderKind, selectedProjectId, projects, currentCustomerId, contractorCustomerId, isAgentOrCooperative, applyProjectSelection]);
+      }, [orderKind, selectedProjectId, projects, targetProjectCustomer, applyProjectSelection]);
 
       useEffect(() => {
         if (orderKind !== 'project' || selectedProjectId) return;
@@ -3656,13 +3660,24 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     }
                     items={filteredProjects}
                     getItemKey={(p) => String(p.id)}
-                    getItemLabel={(p) => String(p.name || p.id || '').trim()}
+                    getItemLabel={(p) => {
+                      const name = String(p.name || p.id || '').trim();
+                      return projectMatchRole(p, targetProjectCustomer) === 'sub'
+                        ? `${name}（下請）`
+                        : name;
+                    }}
                     getSearchTexts={projectSuggestTexts}
                     onValueChange={(text) => {
                       setProjectSearchText(text);
                       setSubmitError('');
+                      const projectNameText = String(text)
+                        .trim()
+                        .replace(/（下請）$/, '')
+                        .trim();
                       const hit = (filteredProjects || []).find(
-                        (p) => String(p.name || '').trim().toLowerCase() === String(text).trim().toLowerCase(),
+                        (p) =>
+                          String(p.name || '').trim().toLowerCase() ===
+                          projectNameText.toLowerCase(),
                       );
                       if (hit) {
                         setSelectedProjectId(String(hit.id));
