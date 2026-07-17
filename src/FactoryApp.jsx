@@ -1313,22 +1313,22 @@ function isUnreadForFactory(messages, readKey) {
       const projectPartyDisplay = linkedProject
         ? resolveProjectPartyDisplay(linkedProject, linkedCustomer)
         : null;
-      const partyDisplay = resolveOrderPartyDisplay(order, {
-        project: linkedProject,
-        customer: linkedCustomer,
-      });
-      const trader = partyDisplay.trader !== '—' ? partyDisplay.trader : '';
-      const contractor = partyDisplay.prime !== '—' ? partyDisplay.prime : '';
-      const compactContractor =
-        String(
-          order?.contractorName ??
-            order?.contractor_name ??
-            order?.displayContractorName ??
-            '',
-        ).trim() ||
-        contractor ||
-        '—';
+      const orderCustomerId = String(
+        order?.customer_id ?? order?.customerId ?? '',
+      ).trim();
+      const prime = String(
+        (orderCustomerId ? customerById?.[orderCustomerId]?.company_name : '') || '',
+      ).trim();
+      const sub = String(order?.contractorName ?? order?.contractor_name ?? '').trim();
+      const trader = String(order?.traderName ?? order?.trader_name ?? '').trim();
       const projectBillingIsSub = linkedProject?.billing_target === 'sub';
+      const showBillingMark = Boolean(linkedProject);
+      const primaryPartyName = prime || sub || '—';
+      const markPrimaryParty =
+        showBillingMark && (!projectBillingIsSub || (!prime && Boolean(sub)));
+      const showSubParty = Boolean(sub && sub !== prime);
+      const missingBillingSub =
+        showBillingMark && projectBillingIsSub && !sub;
       const isSpotOrder = Boolean(order.is_spot);
       const isLarge = vehicle === '大型';
       const unloadDurationText = factoryUnloadDurationLabel(order);
@@ -1497,25 +1497,28 @@ function isUnreadForFactory(messages, readKey) {
             </div>
             </div>
             <div className={ORDER_GRID_META_2X2 + ' border-t border-slate-200/80 pt-2.5 dark:border-slate-600/80'}>
-              <div className="min-w-0 text-left">
-                <p className={primaryFieldLabel}>業者</p>
-                <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                  <p
-                    className={'break-words ' + primaryFieldValue + ' ' + (isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg')}
-                    title={compactContractor}
-                  >
-                    {compactContractor}
-                    {!isToast && projectBillingIsSub ? <BillingMark /> : null}
-                  </p>
-                </div>
-              </div>
-              <div className="min-w-0 border-l border-slate-200/70 pl-2 text-left dark:border-slate-600/70">
-                <p className={primaryFieldLabel}>商社</p>
-                <p
-                  className={'mt-0.5 break-words ' + primaryFieldValue + ' ' + (isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg')}
-                  title={trader || '—'}
-                >
-                  {trader || '—'}
+              <div className="col-span-2 min-w-0 text-left">
+                <p className="flex flex-wrap items-center gap-x-1.5 text-xs font-bold text-slate-700 dark:text-slate-200">
+                  <span>
+                    業者: {primaryPartyName}
+                    {markPrimaryParty ? <BillingMark /> : null}
+                  </span>
+                  {showSubParty && prime ? (
+                    <span className="text-slate-500 dark:text-slate-300">
+                      ／ 下請: {sub}
+                      {showBillingMark && projectBillingIsSub ? <BillingMark /> : null}
+                    </span>
+                  ) : null}
+                  {trader ? (
+                    <span className="text-slate-500 dark:text-slate-300">
+                      ／ 商社: {trader}
+                    </span>
+                  ) : null}
+                  {missingBillingSub ? (
+                    <span className="text-[10px] font-bold text-red-600">
+                      ⚠請求先(下請)未設定
+                    </span>
+                  ) : null}
                 </p>
               </div>
               <div className="min-w-0 border-t border-slate-200/60 pt-1.5 text-left dark:border-slate-600/60">
@@ -1525,7 +1528,7 @@ function isUnreadForFactory(messages, readKey) {
                     <SiteOrderUrlActions
                       urlToken={resolveSiteUrlToken(order, projectById, customerById)}
                       siteName={party.site !== '—' ? party.site : siteNm}
-                      customerName={contractor}
+                      customerName={prime || sub}
                       traderName={trader}
                       project={projectById?.[String(order?.project_id ?? order?.projectId ?? '')]}
                       customer={customerById?.[String(order?.customer_id ?? order?.customerId ?? '')]}
