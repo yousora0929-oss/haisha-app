@@ -349,7 +349,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       return {
         key: 'active',
         label: resolveCustomerDispatchWaitingLabel(order, escalationCtx),
-        className: 'bg-amber-400 text-amber-950 border-amber-500',
+        className: 'bg-amber-500 text-amber-950 border-amber-500',
       };
     }
 
@@ -430,7 +430,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           );
         }
         return (
-          <span className="inline-flex rounded-full border-2 border-amber-400 bg-amber-100 px-3 py-1 text-xs font-black text-amber-950 shadow-sm">
+          <span className="inline-flex rounded-full border-2 border-amber-400 bg-amber-100 px-3 py-1 text-xs font-black text-amber-900 shadow-sm dark:bg-amber-950/40 dark:text-amber-100">
             {dispatchLabel}
           </span>
         );
@@ -443,7 +443,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         );
       }
       return (
-        <span className="inline-flex rounded-full border-2 border-amber-400 bg-amber-100 px-3 py-1 text-xs font-black text-amber-950 shadow-sm">
+        <span className="inline-flex rounded-full border-2 border-amber-400 bg-amber-100 px-3 py-1 text-xs font-black text-amber-900 shadow-sm dark:bg-amber-950/40 dark:text-amber-100">
           {dispatchLabel}
         </span>
       );
@@ -989,7 +989,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
           {order.factoryUnlockRequested ? (
             <div className="border-t border-indigo-100 bg-indigo-50 px-4 py-3">
-              <p className="text-xs font-black text-indigo-950">工場からステータス変更のロック解除が依頼されています。</p>
+              <p className="text-xs font-black text-indigo-900 dark:text-indigo-100">工場からステータス変更のロック解除が依頼されています。</p>
               {typeof onAllowStatusReset === 'function' ? (
                 <button
                   type="button"
@@ -1049,7 +1049,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         if (meta.key === 'completed') return 'bg-slate-500 text-white';
         if (meta.key === 'cancelled') return 'bg-red-500 text-white';
         if (meta.label === '受注') return 'bg-emerald-600 text-white';
-        return 'bg-amber-400 text-amber-950';
+        return 'bg-amber-500 text-amber-950';
       };
       const toggleStatusCard = (orderId) => {
         const id = String(orderId || '').trim();
@@ -3874,7 +3874,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   <div className="flex flex-col gap-2">
                     <span className="text-sm font-semibold text-slate-700">現場地図の扱い</span>
                     <div className="grid gap-2 sm:grid-cols-2">
-                      <label className="flex cursor-pointer items-start gap-3 rounded-xl border-2 border-amber-200 bg-amber-50/80 p-4">
+                      <label className="flex cursor-pointer items-start gap-3 rounded-xl border-2 border-amber-200 bg-amber-50 p-4 dark:bg-amber-950/40">
                         <input
                           type="radio"
                           name="spot-map-flow"
@@ -3889,9 +3889,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           }}
                           className="mt-1 h-5 w-5 shrink-0 rounded border-amber-400 text-amber-600"
                         />
-                        <span className="text-sm font-bold leading-relaxed text-amber-950">
+                        <span className="text-sm font-bold leading-relaxed text-amber-900 dark:text-amber-100">
                           あとから地図を送る
-                          <span className="mt-1 block text-xs font-medium text-amber-900/90">
+                          <span className="mt-1 block text-xs font-medium text-amber-900 dark:text-amber-100">
                             発注確定後は「進行中」タブの現場地図URLから送付できます（自動で開きません）。
                           </span>
                         </span>
@@ -4542,7 +4542,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         </dl>
 
                         <div className="mx-4 mt-4 flex flex-wrap gap-2">
-                          <span className="break-all rounded-xl border-2 border-indigo-200 bg-indigo-50 px-3 py-2 text-lg font-black text-indigo-950">
+                          <span className="break-all rounded-xl border-2 border-indigo-200 bg-indigo-50 px-3 py-2 text-lg font-black text-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-100">
                             {row.mix || '配合未入力'}
                           </span>
                           <span className="break-words rounded-xl border-2 border-orange-200 bg-orange-50 px-3 py-2 text-lg font-black text-orange-950">

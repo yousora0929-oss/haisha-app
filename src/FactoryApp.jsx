@@ -1812,7 +1812,7 @@ function isUnreadForFactory(messages, readKey) {
                     'min-h-[48px] rounded-lg border-2 px-2 py-2.5 text-sm font-black shadow-sm transition sm:min-h-[52px] sm:text-base ' +
                     (terminalLocked ? 'cursor-not-allowed opacity-45 ' : '') +
                     (responseStatus === FACTORY_RESPONSE.PENDING
-                      ? 'border-amber-500 bg-amber-400 text-amber-950 ring-1 ring-amber-200'
+                      ? 'border-amber-500 bg-amber-500 text-amber-950 ring-1 ring-amber-200'
                       : 'border-amber-400 bg-amber-50 text-amber-950 hover:bg-amber-100 active:scale-[0.99]')
                   }
                 >
@@ -2068,7 +2068,7 @@ function isUnreadForFactory(messages, readKey) {
               ) : null}
             </div>
           ) : stateBanner ? (
-            <div className={'border-t px-3 py-3 text-center text-sm font-black sm:text-base ' + (isAcceptedByOther ? 'border-slate-300 bg-slate-200 text-slate-800' : isAcceptedByMe ? 'border-emerald-200 bg-emerald-100 text-emerald-900' : 'border-slate-200 bg-slate-100 text-slate-700')}>
+            <div className={'border-t px-3 py-3 text-center text-sm font-black sm:text-base ' + (isAcceptedByOther ? 'border-slate-300 bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-100' : isAcceptedByMe ? 'border-emerald-200 bg-emerald-100 text-emerald-900' : 'border-slate-200 bg-slate-100 text-slate-700')}>
               {stateBanner.label}
             </div>
           ) : null}
