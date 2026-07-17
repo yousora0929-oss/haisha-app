@@ -185,7 +185,7 @@ function FactoryOverviewPanel() {
           再読込
         </button>
       </div>
-      {error ? <p className="mb-3 text-sm font-bold text-red-700">{error}</p> : null}
+      {error ? <p className="mb-3 text-sm font-bold text-red-700 dark:text-red-300">{error}</p> : null}
       {loading && overview.length === 0 ? (
         <p className="text-sm text-slate-500">読み込み中…</p>
       ) : (
@@ -432,8 +432,8 @@ function CharterOperatorsPanel() {
         </div>
       </div>
 
-      {notice ? <p className="mb-3 text-sm font-bold text-emerald-700">{notice}</p> : null}
-      {error ? <p className="mb-3 text-sm font-bold text-red-700">{error}</p> : null}
+      {notice ? <p className="mb-3 text-sm font-bold text-emerald-700 dark:text-emerald-300">{notice}</p> : null}
+      {error ? <p className="mb-3 text-sm font-bold text-red-700 dark:text-red-300">{error}</p> : null}
 
       {showNewForm ? (
         <form
@@ -504,7 +504,7 @@ function CharterOperatorsPanel() {
                     {isEditing ? (
                       <td colSpan={6} className="px-3 py-3">
                         <form onSubmit={(e) => void handleSaveEdit(e)} className="grid gap-3 sm:grid-cols-4">
-                          <label className="block text-xs font-bold text-slate-600">
+                          <label className="block text-xs font-bold text-slate-600 dark:text-slate-300">
                             会社名
                             <input
                               required
@@ -513,7 +513,7 @@ function CharterOperatorsPanel() {
                               className={`${inputClass} mt-1`}
                             />
                           </label>
-                          <label className="block text-xs font-bold text-slate-600">
+                          <label className="block text-xs font-bold text-slate-600 dark:text-slate-300">
                             担当者
                             <input
                               value={editForm.contactName}
@@ -521,7 +521,7 @@ function CharterOperatorsPanel() {
                               className={`${inputClass} mt-1`}
                             />
                           </label>
-                          <label className="block text-xs font-bold text-slate-600">
+                          <label className="block text-xs font-bold text-slate-600 dark:text-slate-300">
                             電話
                             <input
                               value={editForm.phone}

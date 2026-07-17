@@ -863,12 +863,12 @@ function isUnreadForFactory(messages, readKey) {
 
       return (
         <div className="grid gap-3">
-          <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 px-3 py-2.5 sm:px-4">
-            <p className="text-sm font-black text-indigo-950 sm:text-base">割当物件一覧</p>
-            <p className="mt-0.5 text-xs font-medium text-indigo-900/80 sm:text-sm">
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2.5 dark:bg-indigo-950/40 sm:px-4">
+            <p className="text-sm font-black text-indigo-900 dark:text-indigo-100 sm:text-base">割当物件一覧</p>
+            <p className="mt-0.5 text-xs font-medium text-indigo-900 dark:text-indigo-100 sm:text-sm">
               ログイン中の工場がメイン（主担当）またはサブ（応援）として登録されている現場です。専用URLを現場担当者へ共有できます。
             </p>
-            <p className="mt-1 text-xs font-bold text-indigo-800">全 {totalCount} 件（メイン {mainProjects.length} / サブ {subProjects.length}）</p>
+            <p className="mt-1 text-xs font-bold text-indigo-800 dark:text-indigo-100">全 {totalCount} 件（メイン {mainProjects.length} / サブ {subProjects.length}）</p>
           </div>
           <FactoryAssignedProjectsSection
             title="メイン割当物件"
@@ -994,7 +994,7 @@ function isUnreadForFactory(messages, readKey) {
       const projectPartyDisplay = linkedProject
         ? resolveProjectPartyDisplay(linkedProject, linkedCustomer)
         : null;
-      const fieldLabel = 'mb-1 block text-sm font-bold text-slate-600 sm:text-base';
+      const fieldLabel = 'mb-1 block text-sm font-bold text-slate-600 dark:text-slate-300 sm:text-base';
       const fieldInput =
         'mt-1 min-h-[48px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 sm:text-lg';
       const handleInputChange = (e) => {
@@ -1067,7 +1067,7 @@ function isUnreadForFactory(messages, readKey) {
             </div>
             <form className="flex min-h-0 flex-1 flex-col" onSubmit={handleSubmit}>
               <div className="min-h-0 flex-1 overflow-y-auto pr-2 px-4 py-4">
-                <section className="space-y-4 rounded-xl border-2 border-indigo-300 bg-indigo-50/80 p-3 shadow-inner">
+                <section className="space-y-4 rounded-xl border-2 border-indigo-300 bg-indigo-50 p-3 shadow-inner dark:bg-indigo-950/40">
                   <div>
                     <label className={fieldLabel} htmlFor="foe-date">日付（納入日）</label>
                     <input id="foe-date" name="preferredDate" type="date" value={editData.preferredDate} onChange={handleInputChange} className={fieldInput} required />

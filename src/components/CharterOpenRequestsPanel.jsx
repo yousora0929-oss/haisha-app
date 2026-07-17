@@ -14,27 +14,33 @@ const inputClass =
 const RESPONSE_STATUS_META = {
   offered: {
     label: '応答中',
-    className: 'border-2 border-emerald-400 bg-emerald-100 text-emerald-900',
+    className:
+      'border-2 border-emerald-300 bg-emerald-100 text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-200',
   },
   partially_accepted: {
     label: '一部確定',
-    className: 'border-2 border-amber-400 bg-amber-100 text-amber-900',
+    className:
+      'border-2 border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200',
   },
   accepted: {
     label: '確定',
-    className: 'border-2 border-emerald-600 bg-emerald-500 text-white',
+    className:
+      'border-2 border-emerald-600 bg-emerald-500 text-white dark:border-emerald-400 dark:bg-emerald-600 dark:text-white',
   },
   rejected: {
     label: '今回は見送りとなりました',
-    className: 'border-2 border-slate-400 bg-slate-200 text-slate-700',
+    className:
+      'border-2 border-slate-400 bg-slate-200 text-slate-700 dark:border-slate-500 dark:bg-slate-700 dark:text-slate-200',
   },
   withdrawn: {
     label: '取り下げ',
-    className: 'border-2 border-slate-300 bg-slate-100 text-slate-700',
+    className:
+      'border-2 border-slate-300 bg-slate-100 text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200',
   },
   declined: {
     label: '見送り済み',
-    className: 'border-2 border-slate-300 bg-slate-200 text-slate-700',
+    className:
+      'border-2 border-slate-400 bg-slate-200 text-slate-700 dark:border-slate-500 dark:bg-slate-700 dark:text-slate-200',
   },
 };
 

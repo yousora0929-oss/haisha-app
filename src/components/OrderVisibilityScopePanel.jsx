@@ -10,8 +10,8 @@ function chipClassForRole(role) {
   if (role === 'association') return CHIP_CLASS + ' border-violet-500 bg-violet-100 text-violet-950';
   if (role === 'assigned') return CHIP_CLASS + ' border-emerald-500 bg-emerald-100 text-emerald-950';
   if (role === 'preferred') return CHIP_CLASS + ' border-sky-500 bg-sky-100 text-sky-950';
-  if (role === 'main') return CHIP_CLASS + ' border-indigo-400 bg-indigo-100 text-indigo-950';
-  if (role === 'sub') return CHIP_CLASS + ' border-amber-400 bg-amber-100 text-amber-950';
+  if (role === 'main') return CHIP_CLASS + ' border-indigo-400 bg-indigo-100 text-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-100';
+  if (role === 'sub') return CHIP_CLASS + ' border-amber-400 bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-100';
   return CHIP_CLASS + ' border-slate-300 bg-slate-100 text-slate-800';
 }
 

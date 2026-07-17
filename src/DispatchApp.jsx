@@ -3897,7 +3897,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         </span>
                       </label>
 
-                      <label className="flex cursor-pointer items-start gap-3 rounded-xl border-2 border-indigo-200 bg-indigo-50/80 p-4">
+                      <label className="flex cursor-pointer items-start gap-3 rounded-xl border-2 border-indigo-200 bg-indigo-50 p-4 dark:bg-indigo-950/40">
                         <input
                           type="radio"
                           name="spot-map-flow"
@@ -3912,9 +3912,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           }}
                           className="mt-1 h-5 w-5 shrink-0 rounded border-indigo-400 text-indigo-600"
                         />
-                        <span className="text-sm font-bold leading-relaxed text-indigo-950">
+                        <span className="text-sm font-bold leading-relaxed text-indigo-900 dark:text-indigo-100">
                           現場地図を作成する
-                          <span className="mt-1 block text-xs font-medium text-indigo-900/90">
+                          <span className="mt-1 block text-xs font-medium text-indigo-900 dark:text-indigo-100">
                             確定直後に地図エディタ（別タブ）が開き、すぐにスタンプ作成できます。
                           </span>
                         </span>
