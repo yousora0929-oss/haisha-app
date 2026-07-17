@@ -2518,7 +2518,7 @@ function OrdersMonitorSection({
                 <th className="px-3 py-2 font-black text-slate-700">希望日時</th>
                 <th className="px-3 py-2 font-black text-slate-700">業者</th>
                 <th className="px-3 py-2 font-black text-slate-700">現場名</th>
-                <th className="px-3 py-2 font-black text-slate-700">担当者</th>
+                <th className="px-3 py-2 font-black text-slate-700">現場担当者</th>
                 <th className="px-3 py-2 font-black text-slate-700">連絡先</th>
                 <th className="px-3 py-2 font-black text-slate-700">公開範囲</th>
                 <th className="px-3 py-2 font-black text-slate-700">status</th>

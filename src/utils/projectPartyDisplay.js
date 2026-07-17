@@ -27,14 +27,19 @@ export function resolveProjectPartyDisplay(project, customer) {
 }
 
 /**
- * 注文カード・モーダル用の当事者表示（明示スナップショット > 物件 > 顧客）
+ * 注文カード・モーダル用の当事者表示
+ *
+ * 優先順位:
+ * - 物件がある注文は、発注者に関係なく元請・下請・商社・請求先を必ず物件基準で確定する
+ * - 物件がない注文だけ、発注先業者（contractor_customer_id）から注文スナップショットへフォールバックする
+ * - 発注者表示は当事者表示と独立して、代理組織または注文の customer_id に対応する顧客から解決する
  * @param {object} order
  * @param {{
  *   project?: object|null,
  *   customer?: object|null,
+ *   contractorCustomer?: object|null,
  *   orderingCustomer?: object|null,
- *   organizationById?: Record<string, object>,
- *   primeForOrderedBy?: string
+ *   organizationById?: Record<string, object>
  * }} [options]
  */
 export function resolveOrderPartyDisplay(
@@ -42,9 +47,9 @@ export function resolveOrderPartyDisplay(
   {
     project = null,
     customer = null,
+    contractorCustomer = null,
     orderingCustomer = null,
     organizationById = {},
-    primeForOrderedBy = '',
   } = {},
 ) {
   const explicitTrader = String(order?.traderName ?? order?.trader_name ?? '').trim();
@@ -74,7 +79,7 @@ export function resolveOrderPartyDisplay(
 
   const withOrderedBy = (party) => {
     const comparisonPrime = String(
-      primeForOrderedBy || (party.prime !== '—' ? party.prime : ''),
+      party.prime !== '—' ? party.prime : '',
     ).trim();
     return {
       ...party,
@@ -89,25 +94,14 @@ export function resolveOrderPartyDisplay(
 
   if (project && typeof project === 'object') {
     const party = resolveProjectPartyDisplay(project, customer);
-    const prime =
-      explicitContractor ||
-      (party.prime !== '—' ? party.prime : '') ||
-      customerFallback;
-    const trader =
-      explicitTrader ||
-      (party.trader !== '—' ? party.trader : '') ||
-      String(order?.displayTraderName ?? '').trim();
-    return withOrderedBy({
-      prime: prime || '—',
-      sub: party.sub,
-      trader: trader || '—',
-      billingIsSub: party.billingIsSub,
-      billOnPrime: party.billOnPrime,
-      billOnSub: party.billOnSub,
-    });
+    return withOrderedBy(party);
   }
 
+  const contractorCustomerName = String(
+    contractorCustomer?.company_name || contractorCustomer?.name || '',
+  ).trim();
   const prime =
+    contractorCustomerName ||
     explicitContractor ||
     String(order?.displayContractorName ?? customerFallback).trim();
   const trader =

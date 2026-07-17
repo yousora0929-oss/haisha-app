@@ -552,15 +552,12 @@ export function rankFactoryIdsByDistance(
   return ids;
 }
 
-function resolveCustomerForOrderParty(order, project, customerById) {
-  const cid = String(
-    order?.customer_id ?? order?.customerId ?? project?.customer_id ?? '',
-  ).trim();
+function resolveCustomerForOrderParty(project, customerById) {
+  const cid = String(project?.customer_id ?? '').trim();
   if (cid && customerById && typeof customerById === 'object' && customerById[cid]) {
     return customerById[cid];
   }
-  const name = String(order?.customerName ?? order?.customer_name ?? '').trim();
-  return name ? { company_name: name } : null;
+  return null;
 }
 
 export function enrichOrderWithProject(order, projectById, customerById = {}) {
@@ -569,7 +566,7 @@ export function enrichOrderWithProject(order, projectById, customerById = {}) {
   const p = pid ? projectById[pid] : null;
   if (!p) return order;
   const tc = resolveProjectTradingCompanyName(p);
-  const customer = resolveCustomerForOrderParty(order, p, customerById);
+  const customer = resolveCustomerForOrderParty(p, customerById);
   const party = resolveOrderPartyDisplay(order, { project: p, customer });
   const prime = party.prime !== '—' ? party.prime : '';
   const trader = party.trader !== '—' ? party.trader : '';

@@ -892,9 +892,15 @@ function isUnreadForFactory(messages, readKey) {
         ).trim();
         const linkedCustomer =
           (linkedCustomerId ? customerById?.[linkedCustomerId] : null) ?? null;
+        const contractorCustomerId = String(
+          order?.contractor_customer_id ?? order?.contractorCustomerId ?? '',
+        ).trim();
+        const contractorCustomer =
+          (contractorCustomerId ? customerById?.[contractorCustomerId] : null) ?? null;
         const partyDisplay = resolveOrderPartyDisplay(order, {
           project: linkedProject,
           customer: linkedCustomer,
+          contractorCustomer,
         });
         const explicitTrader = order.traderName != null ? String(order.traderName).trim() : '';
         const explicitContractor =
@@ -1316,9 +1322,15 @@ function isUnreadForFactory(messages, readKey) {
       ).trim();
       const orderCustomer =
         (orderCustomerId ? customerById?.[orderCustomerId] : null) ?? null;
+      const contractorCustomerId = String(
+        order?.contractor_customer_id ?? order?.contractorCustomerId ?? '',
+      ).trim();
+      const contractorCustomer =
+        (contractorCustomerId ? customerById?.[contractorCustomerId] : null) ?? null;
       const orderPartyDisplay = resolveOrderPartyDisplay(order, {
         project: linkedProject,
         customer: linkedCustomer,
+        contractorCustomer,
         orderingCustomer: orderCustomer,
         organizationById: organizationById || {},
       });
@@ -1671,7 +1683,7 @@ function isUnreadForFactory(messages, readKey) {
               <p className={'mt-1 break-all font-mono font-black leading-tight text-slate-900 ' + mixSize}>{mix}</p>
             </div>
             <div className="min-w-0 sm:border-l sm:border-slate-200 sm:pl-4">
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 sm:text-sm">担当者</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 sm:text-sm">現場担当者</p>
               <p className="mt-1 break-words text-base font-black text-slate-900 sm:text-lg">{party.orderedBy || '—'}</p>
             </div>
             <div className="min-w-0 sm:border-l sm:border-slate-200 sm:pl-4">
