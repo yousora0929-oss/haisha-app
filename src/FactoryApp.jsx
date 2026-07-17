@@ -1166,6 +1166,7 @@ function isUnreadForFactory(messages, readKey) {
       forceExpanded,
       projectById,
       customerById,
+      organizationById,
       onSiteUrlCopied,
     }) {
       const isToast = variant === 'toast';
@@ -1316,11 +1317,23 @@ function isUnreadForFactory(messages, readKey) {
       const orderCustomerId = String(
         order?.customer_id ?? order?.customerId ?? '',
       ).trim();
+      const orderCustomer =
+        (orderCustomerId ? customerById?.[orderCustomerId] : null) ?? null;
       const prime = String(
-        (orderCustomerId ? customerById?.[orderCustomerId]?.company_name : '') || '',
+        orderCustomer?.company_name || '',
       ).trim();
       const sub = String(order?.contractorName ?? order?.contractor_name ?? '').trim();
       const trader = String(order?.traderName ?? order?.trader_name ?? '').trim();
+      const orderPartyDisplay = resolveOrderPartyDisplay(order, {
+        project: linkedProject,
+        customer: linkedCustomer,
+        orderingCustomer: orderCustomer,
+        organizationById,
+        primeForOrderedBy:
+          projectPartyDisplay?.prime && projectPartyDisplay.prime !== '—'
+            ? projectPartyDisplay.prime
+            : prime,
+      });
       const projectBillingIsSub = linkedProject?.billing_target === 'sub';
       const showBillingMark = Boolean(linkedProject);
       const primaryPartyName = prime || sub || '—';
@@ -1329,6 +1342,8 @@ function isUnreadForFactory(messages, readKey) {
       const showSubParty = Boolean(sub && sub !== prime);
       const missingBillingSub =
         showBillingMark && projectBillingIsSub && !sub;
+      const orderedByLabel = orderPartyDisplay.orderedByLabel;
+      const orderedByIsProxy = orderPartyDisplay.orderedByIsProxy;
       const isSpotOrder = Boolean(order.is_spot);
       const isLarge = vehicle === '大型';
       const unloadDurationText = factoryUnloadDurationLabel(order);
@@ -1498,28 +1513,78 @@ function isUnreadForFactory(messages, readKey) {
             </div>
             <div className={ORDER_GRID_META_2X2 + ' border-t border-slate-200/80 pt-2.5 dark:border-slate-600/80'}>
               <div className="col-span-2 min-w-0 text-left">
-                <p className="flex flex-wrap items-center gap-x-1.5 text-xs font-bold text-slate-700 dark:text-slate-200">
-                  <span>
-                    業者: {primaryPartyName}
-                    {markPrimaryParty ? <BillingMark /> : null}
-                  </span>
-                  {showSubParty && prime ? (
-                    <span className="text-slate-500 dark:text-slate-300">
-                      ／ 下請: {sub}
-                      {showBillingMark && projectBillingIsSub ? <BillingMark /> : null}
+                {isToast ? (
+                  <p className="flex flex-wrap items-center gap-x-1.5 text-xs font-bold text-slate-700 dark:text-slate-200">
+                    <span>
+                      業者: {primaryPartyName}
+                      {markPrimaryParty ? <BillingMark /> : null}
                     </span>
-                  ) : null}
-                  {trader ? (
-                    <span className="text-slate-500 dark:text-slate-300">
-                      ／ 商社: {trader}
-                    </span>
-                  ) : null}
-                  {missingBillingSub ? (
-                    <span className="text-[10px] font-bold text-red-600">
-                      ⚠請求先(下請)未設定
-                    </span>
-                  ) : null}
-                </p>
+                    {showSubParty && prime ? (
+                      <span className="text-slate-500 dark:text-slate-300">
+                        ／ 下請: {sub}
+                        {showBillingMark && projectBillingIsSub ? <BillingMark /> : null}
+                      </span>
+                    ) : null}
+                    {trader ? (
+                      <span className="text-slate-500 dark:text-slate-300">
+                        ／ 商社: {trader}
+                      </span>
+                    ) : null}
+                    {orderedByIsProxy ? (
+                      <span className="text-slate-500 dark:text-slate-300">
+                        ／ 発注: {orderedByLabel}
+                      </span>
+                    ) : null}
+                    {missingBillingSub ? (
+                      <span className="text-[10px] font-bold text-red-600">
+                        ⚠請求先(下請)未設定
+                      </span>
+                    ) : null}
+                  </p>
+                ) : (
+                  <dl
+                    className={
+                      'grid grid-cols-2 gap-y-2 ' +
+                      (orderedByIsProxy ? 'sm:grid-cols-4' : 'sm:grid-cols-3')
+                    }
+                  >
+                    <div className="min-w-0 pr-2">
+                      <dt className="text-xs font-bold text-slate-500">業者（元請）</dt>
+                      <dd className="mt-0.5 break-words text-sm font-bold text-slate-900">
+                        {primaryPartyName}
+                        {markPrimaryParty ? <BillingMark /> : null}
+                      </dd>
+                    </div>
+                    <div className="min-w-0 border-l border-slate-200 px-2">
+                      <dt className="text-xs font-bold text-slate-500">下請</dt>
+                      <dd className="mt-0.5 break-words text-sm font-bold text-slate-900">
+                        {showSubParty && prime ? sub : '—'}
+                        {showSubParty && prime && showBillingMark && projectBillingIsSub ? (
+                          <BillingMark />
+                        ) : null}
+                        {missingBillingSub ? (
+                          <span className="mt-0.5 block text-[10px] font-bold text-red-600">
+                            ⚠請求先(下請)未設定
+                          </span>
+                        ) : null}
+                      </dd>
+                    </div>
+                    <div className="min-w-0 border-l border-slate-200 px-2">
+                      <dt className="text-xs font-bold text-slate-500">商社</dt>
+                      <dd className="mt-0.5 break-words text-sm font-bold text-slate-900">
+                        {trader || '—'}
+                      </dd>
+                    </div>
+                    {orderedByIsProxy ? (
+                      <div className="min-w-0 border-l border-slate-200 pl-2">
+                        <dt className="text-xs font-bold text-slate-500">発注</dt>
+                        <dd className="mt-0.5 break-words text-sm font-bold text-slate-900">
+                          {orderedByLabel}
+                        </dd>
+                      </div>
+                    ) : null}
+                  </dl>
+                )}
               </div>
               <div className="min-w-0 border-t border-slate-200/60 pt-1.5 text-left dark:border-slate-600/60">
                 <div className="flex flex-wrap items-start justify-between gap-2">
@@ -1609,7 +1674,12 @@ function isUnreadForFactory(messages, readKey) {
       const renderDetailBody = () => (
         <>
           {projectPartyDisplay ? (
-            <dl className="mb-3 grid min-w-0 grid-cols-1 gap-2 rounded-xl border border-slate-200/90 bg-white px-3 py-3 sm:grid-cols-3">
+            <dl
+              className={
+                'mb-3 grid min-w-0 grid-cols-2 gap-2 rounded-xl border border-slate-200/90 bg-white px-3 py-3 ' +
+                (orderedByIsProxy ? 'sm:grid-cols-4' : 'sm:grid-cols-3')
+              }
+            >
               <div className="min-w-0">
                 <dt className="text-xs font-bold text-slate-500 sm:text-sm">業者（元請）</dt>
                 <dd className="mt-1 break-words font-black text-slate-900">
@@ -1630,6 +1700,17 @@ function isUnreadForFactory(messages, readKey) {
                   {projectPartyDisplay.trader}
                 </dd>
               </div>
+              {orderedByIsProxy ? (
+                <div className="min-w-0 sm:border-l sm:border-slate-200 sm:pl-4">
+                  <dt className="text-xs font-bold text-slate-500 sm:text-sm">発注</dt>
+                  <dd className="mt-1 break-words font-black text-slate-900">
+                    {orderedByLabel}
+                    <span className="ml-1 rounded bg-sky-100 px-1 text-[10px] font-black text-sky-800">
+                      代理
+                    </span>
+                  </dd>
+                </div>
+              ) : null}
             </dl>
           ) : null}
           <div className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border border-slate-200/90 bg-white px-3 py-3 sm:grid-cols-3">
@@ -2011,6 +2092,7 @@ function isUnreadForFactory(messages, readKey) {
       focusedOrderId,
       projectById,
       customerById,
+      organizationById,
       onSiteUrlCopied,
     }) {
       const [searchQuery, setSearchQuery] = useState('');
@@ -2080,6 +2162,7 @@ function isUnreadForFactory(messages, readKey) {
                     forceExpanded={Boolean(focusedOrderId && String(o.id) === String(focusedOrderId))}
                     projectById={projectById}
                     customerById={customerById}
+                    organizationById={organizationById}
                     onSiteUrlCopied={onSiteUrlCopied}
                   />
                 </li>
@@ -2091,7 +2174,14 @@ function isUnreadForFactory(messages, readKey) {
       );
     }
 
-    function NewOrderToast({ order, isReassignment, onDismiss }) {
+    function NewOrderToast({
+      order,
+      isReassignment,
+      onDismiss,
+      projectById,
+      customerById,
+      organizationById,
+    }) {
       if (!order) return null;
       return (
         <div
@@ -2111,7 +2201,14 @@ function isUnreadForFactory(messages, readKey) {
                 閉じる
               </button>
             </div>
-            <OrderRequestCard order={order} idx={0} variant="toast" />
+            <OrderRequestCard
+              order={order}
+              idx={0}
+              variant="toast"
+              projectById={projectById}
+              customerById={customerById}
+              organizationById={organizationById}
+            />
           </div>
         </div>
       );
@@ -2728,6 +2825,7 @@ function isUnreadForFactory(messages, readKey) {
       const [hiddenOrderIds, setHiddenOrderIds] = useState(() => new Set());
       const [projects, setProjects] = useState([]);
       const [customers, setCustomers] = useState([]);
+      const [organizations, setOrganizations] = useState([]);
       const [holidays, setHolidays] = useState([]);
       const [systemSettings, setSystemSettings] = useState({ start_time: '08:00:00', end_time: '16:00:00' });
       const [operationalSettings, setOperationalSettings] = useState(null);
@@ -2813,6 +2911,10 @@ function isUnreadForFactory(messages, readKey) {
       const customerById = useMemo(
         () => Object.fromEntries((customers || []).filter((c) => c?.id).map((c) => [String(c.id), c])),
         [customers],
+      );
+      const organizationById = useMemo(
+        () => Object.fromEntries((organizations || []).filter((o) => o?.id).map((o) => [String(o.id), o])),
+        [organizations],
       );
       const handleSiteUrlCopied = useCallback(() => {
         setActionNotice('URLをコピーしました');
@@ -3449,12 +3551,16 @@ function isUnreadForFactory(messages, readKey) {
         let cancelled = false;
         (async () => {
           try {
-            const [rows, projs, hols, settings, customerRows, opSettings, escalationSteps] = await Promise.all([
+            const [rows, projs, hols, settings, customerRows, organizationRows, opSettings, escalationSteps] = await Promise.all([
               db.fetchFactories(),
               db.fetchProjects(),
               db.fetchHolidays(),
               db.fetchSystemSettings(),
               db.fetchCustomers(),
+              db.fetchOrganizations().catch((error) => {
+                console.warn('[FactoryApp] organizations load failed', error);
+                return [];
+              }),
               db.fetchDispatchOperationalSettings(),
               db.fetchEscalationSteps(),
             ]);
@@ -3462,6 +3568,7 @@ function isUnreadForFactory(messages, readKey) {
             setFactories(rows);
             setProjects(projs);
             setCustomers(customerRows);
+            setOrganizations(organizationRows);
             setHolidays(hols);
             setSystemSettings(settings);
             setOperationalSettings(opSettings);
@@ -4239,6 +4346,7 @@ function isUnreadForFactory(messages, readKey) {
                     focusedOrderId={focusedOrderId}
                     projectById={projectById}
                     customerById={customerById}
+                    organizationById={organizationById}
                     onSiteUrlCopied={handleSiteUrlCopied}
                   />
                 </div>
@@ -4344,7 +4452,14 @@ function isUnreadForFactory(messages, readKey) {
             </div>
           </PullToRefresh>
 
-          <NewOrderToast order={toastOrder} isReassignment={toastIsReassignment} onDismiss={dismissNewOrderToast} />
+          <NewOrderToast
+            order={toastOrder}
+            isReassignment={toastIsReassignment}
+            onDismiss={dismissNewOrderToast}
+            projectById={projectById}
+            customerById={customerById}
+            organizationById={organizationById}
+          />
           <OrderAcceptModal
             order={acceptModalOrder}
             open={Boolean(acceptModalOrder)}
