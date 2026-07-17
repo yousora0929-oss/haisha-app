@@ -8,6 +8,7 @@ import {
 } from './deliveryAreaEscalation.js';
 import { associationAssignedFactoryIds } from './associationFactoryAssignment.js';
 import { resolveProjectTradingCompanyName } from './projectTradingCompany.js';
+import { resolveOrderPartyDisplay } from './projectPartyDisplay.js';
 import {
   formatEscalationStepLabel,
   getActiveEscalationStep,
@@ -551,21 +552,36 @@ export function rankFactoryIdsByDistance(
   return ids;
 }
 
-export function enrichOrderWithProject(order, projectById) {
+function resolveCustomerForOrderParty(order, project, customerById) {
+  const cid = String(
+    order?.customer_id ?? order?.customerId ?? project?.customer_id ?? '',
+  ).trim();
+  if (cid && customerById && typeof customerById === 'object' && customerById[cid]) {
+    return customerById[cid];
+  }
+  const name = String(order?.customerName ?? order?.customer_name ?? '').trim();
+  return name ? { company_name: name } : null;
+}
+
+export function enrichOrderWithProject(order, projectById, customerById = {}) {
   if (!order || typeof order !== 'object') return order;
   const pid = orderProjectId(order);
   const p = pid ? projectById[pid] : null;
   if (!p) return order;
   const tc = resolveProjectTradingCompanyName(p);
-  const ct = (p.contractor || '').trim();
+  const customer = resolveCustomerForOrderParty(order, p, customerById);
+  const party = resolveOrderPartyDisplay(order, { project: p, customer });
+  const prime = party.prime !== '—' ? party.prime : '';
+  const trader = party.trader !== '—' ? party.trader : '';
   return {
     ...order,
     projectTradingCompany: tc,
     projectTradingCompanyName: tc,
     trading_company_name: order.trading_company_name || tc,
-    projectContractor: ct,
-    displayTraderName: tc || order.traderName,
-    displayContractorName: ct || order.contractorName,
+    projectContractor: prime,
+    displayTraderName: trader || order.traderName,
+    displayContractorName: prime || order.contractorName,
+    displaySubContractorName: party.sub || '',
   };
 }
 
@@ -706,9 +722,13 @@ export function buildEscalationContext(
   holidays,
   now = new Date(),
   escalationStepsByFactoryId = {},
+  customers = [],
 ) {
   const projectById = Object.fromEntries(
     (projects || []).filter((p) => p && p.id).map((p) => [String(p.id), p]),
+  );
+  const customerById = Object.fromEntries(
+    (customers || []).filter((c) => c && c.id).map((c) => [String(c.id), c]),
   );
   const globalAllowedAreas = normalizeAllowedDeliveryAreas(settings?.allowed_delivery_areas);
   const allFactoryIds = (factories || [])
@@ -724,6 +744,7 @@ export function buildEscalationContext(
   }
   return {
     projectById,
+    customerById,
     topNByOrderId,
     areaFactoryIdsByOrder,
     settings: settings || {},
@@ -741,7 +762,7 @@ export function buildEscalationContext(
 
 export function filterOrdersForFactory(orders, factoryId, ctx) {
   return (orders || [])
-    .map((o) => enrichOrderWithProject(o, ctx.projectById))
+    .map((o) => enrichOrderWithProject(o, ctx.projectById, ctx.customerById))
     .filter((o) => isOrderVisibleToFactory(o, factoryId, ctx));
 }
 

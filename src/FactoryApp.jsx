@@ -11,6 +11,7 @@ import {
 import { buildEscalationContext, filterOrdersForFactory, getOrderEscalationStepInfo } from './utils/escalationUtils.js';
 import {
   billingTargetLabel,
+  resolveOrderPartyDisplay,
   resolveProjectContractorLabel,
 } from './utils/projectPartyDisplay.js';
 import {
@@ -398,6 +399,14 @@ function buildOrderChangeDiffLines(before, patch) {
       label: '電話番号',
       before: String(before.sitePhone ?? '').trim(),
       after: String(patch.sitePhone ?? '').trim(),
+    },
+    {
+      key: 'contractorName',
+      label: '業者',
+    },
+    {
+      key: 'traderName',
+      label: '商社',
     },
   ];
 
@@ -884,14 +893,27 @@ function isUnreadForFactory(messages, readKey) {
         const ts = order.timeSlot != null ? String(order.timeSlot) : '';
         const ok = TIME_SLOTS.some((s) => s.value === ts);
         const q = order.quantityM3 ?? order.quantityCube;
+        const projectId = String(order?.project_id ?? order?.projectId ?? '').trim();
+        const linkedProject = projectId ? projectById?.[projectId] : null;
+        const linkedCustomer =
+          customerById?.[String(order?.customer_id ?? order?.customerId ?? '')] ?? null;
+        const partyDisplay = resolveOrderPartyDisplay(order, {
+          project: linkedProject,
+          customer: linkedCustomer,
+        });
+        const explicitTrader = order.traderName != null ? String(order.traderName).trim() : '';
+        const explicitContractor =
+          order.contractorName != null ? String(order.contractorName).trim() : '';
         setEditData({
           preferredDate: order.preferredDate && typeof order.preferredDate === 'string' ? order.preferredDate : '',
           timeSlot: ok ? ts : String(TIME_SLOTS[0]?.value ?? '480'),
           vehicleType: order.vehicleType === 'small' ? 'small' : 'large',
           quantityM3: q != null && String(q).trim() !== '' && String(q) !== 'null' ? String(q) : '',
           unloadDuration: String(order.unloadDurationMinutes || order.unloadDuration || order.unloadingTime || '30'),
-          traderName: order.traderName != null ? String(order.traderName) : '',
-          contractorName: order.contractorName != null ? String(order.contractorName) : '',
+          traderName:
+            explicitTrader || (partyDisplay.trader !== '—' ? partyDisplay.trader : ''),
+          contractorName:
+            explicitContractor || (partyDisplay.prime !== '—' ? partyDisplay.prime : ''),
           siteName:
             sanitizeSiteNameValue(order.siteName) ||
             sanitizeSiteNameValue(order.projectName) ||
@@ -901,7 +923,7 @@ function isUnreadForFactory(messages, readKey) {
           mixText: order.mixText != null ? String(order.mixText) : '',
           hasTest: Boolean(order.has_test),
         });
-      }, [order?.id, open]);
+      }, [order?.id, open, projectById, customerById]);
 
       if (!open || !order) return null;
 
@@ -1270,14 +1292,22 @@ function isUnreadForFactory(messages, readKey) {
       const siteHeroLine = siteNm || addrRaw || '（未入力）';
       const party = orderPartyInfo(order);
       const phone = order.sitePhone != null ? String(order.sitePhone).trim() : '';
-      const trader = (order.displayTraderName ?? order.traderName)?.trim() || '';
-      const contractor = (order.displayContractorName ?? order.contractorName)?.trim() || '';
       const projectId = String(order?.project_id ?? order?.projectId ?? '').trim();
       const linkedProject = projectId ? projectById?.[projectId] : null;
+      const linkedCustomer =
+        customerById?.[String(order?.customer_id ?? order?.customerId ?? '')] ?? null;
+      const partyDisplay = resolveOrderPartyDisplay(order, {
+        project: linkedProject,
+        customer: linkedCustomer,
+      });
+      const trader = partyDisplay.trader !== '—' ? partyDisplay.trader : '';
+      const contractor = partyDisplay.prime !== '—' ? partyDisplay.prime : '';
       const projectBillingLabel = linkedProject
         ? billingTargetLabel(linkedProject.billing_target)
-        : '';
-      const projectBillingIsSub = linkedProject?.billing_target === 'sub';
+        : partyDisplay.billing || '';
+      const projectBillingIsSub = linkedProject
+        ? linkedProject.billing_target === 'sub'
+        : partyDisplay.billingIsSub;
       const isSpotOrder = Boolean(order.is_spot);
       const isLarge = vehicle === '大型';
       const unloadDurationText = factoryUnloadDurationLabel(order);
@@ -1449,12 +1479,17 @@ function isUnreadForFactory(messages, readKey) {
               <div className="min-w-0 text-left">
                 <p className={primaryFieldLabel}>業者</p>
                 <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                  <p
-                    className={'break-words ' + primaryFieldValue + ' ' + (isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg')}
-                    title={party.contractor}
-                  >
-                    {party.contractor}
-                  </p>
+                  <div className="min-w-0">
+                    <p
+                      className={'break-words ' + primaryFieldValue + ' ' + (isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg')}
+                      title={partyDisplay.prime}
+                    >
+                      {partyDisplay.prime}
+                    </p>
+                    {!isToast && partyDisplay.sub ? (
+                      <p className="text-[11px] font-medium text-slate-500">下請: {partyDisplay.sub}</p>
+                    ) : null}
+                  </div>
                   {!isToast && projectBillingIsSub ? (
                     <span className="text-[10px] font-bold text-amber-700">
                       請求先:下請
@@ -2933,10 +2968,11 @@ function isUnreadForFactory(messages, readKey) {
             holidays,
             new Date(),
             escalationStepsByFactoryId,
+            customers,
           );
           return filterAndSortFactoryOrders(list, activeFactoryId, ctx).filter((o) => !hiddenOrderIds.has(String(o?.id || '')));
         },
-        [activeFactoryId, factories, projects, escalationSettings, holidays, hiddenOrderIds, escalationStepsByFactoryId],
+        [activeFactoryId, factories, projects, customers, escalationSettings, holidays, hiddenOrderIds, escalationStepsByFactoryId],
       );
 
       const applyIncomingOrders = useCallback(
@@ -3090,6 +3126,7 @@ function isUnreadForFactory(messages, readKey) {
               holidays,
               new Date(),
               escalationStepsByFactoryId,
+              customers,
             );
             const detected = detectFactoryNotifyOrderIds(prevOrders, list, activeFactoryId, ctx);
             for (const id of detected.notifyOrderIds) notifyOrderIds.add(id);
@@ -3138,7 +3175,7 @@ function isUnreadForFactory(messages, readKey) {
             });
           }
         },
-        [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById, factories, projects, escalationSettings, holidays, enrichOrdersWithProjectFactory, escalationStepsByFactoryId],
+        [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById, factories, projects, customers, escalationSettings, holidays, enrichOrdersWithProjectFactory, escalationStepsByFactoryId],
       );
 
       const syncFromStorageRef = useRef(syncFromStorage);
