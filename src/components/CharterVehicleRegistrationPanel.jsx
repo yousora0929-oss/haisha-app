@@ -4,7 +4,7 @@ import { downloadCharterVehicleCsvTemplate, parseCharterVehicleCsv } from '../ut
 import { plateCategoryLabel, vehicleTypeLabel } from '../utils/charterAssignedVehicles.js';
 
 const inputClass =
-  'min-h-[44px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200';
+  'min-h-[44px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100';
 
 const btnBase =
   'min-h-[44px] rounded-xl border-2 px-4 py-2 text-sm font-bold transition';
@@ -14,14 +14,14 @@ function toggleClass(active) {
     btnBase +
     (active
       ? ' border-indigo-600 bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-300'
-      : ' border-slate-200 bg-white text-slate-700 hover:bg-slate-50')
+      : ' border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700')
   );
 }
 
 function plateCategoryBadgeClass(category) {
   return category === 'private'
-    ? 'bg-slate-100 text-slate-700 border-slate-300'
-    : 'bg-emerald-100 text-emerald-900 border-emerald-300';
+    ? 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-700 dark:text-slate-100 dark:border-slate-500'
+    : 'bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200 dark:border-emerald-700';
 }
 
 function emptyVehicleForm() {
@@ -245,16 +245,16 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
   };
 
   return (
-    <section className="rounded-2xl border-2 border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-      {title ? <h2 className="text-lg font-black text-slate-900">{title}</h2> : null}
-      <p className={title ? 'mt-1 text-sm font-medium text-slate-600' : 'text-sm font-medium text-slate-600'}>
+    <section className="rounded-2xl border-2 border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800 sm:p-6">
+      {title ? <h2 className="text-lg font-black text-slate-900 dark:text-slate-100">{title}</h2> : null}
+      <p className={title ? 'mt-1 text-sm font-medium text-slate-600 dark:text-slate-300' : 'text-sm font-medium text-slate-600 dark:text-slate-300'}>
         チャーター供給用の車両を1台ずつ登録します（大型/小型、ナンバー種別、車両ナンバー、ドアナンバー）。
       </p>
 
-      {notice ? <p className="mt-3 text-sm font-bold text-emerald-700">{notice}</p> : null}
-      {error ? <p className="mt-3 whitespace-pre-line text-sm font-bold text-red-700">{error}</p> : null}
+      {notice ? <p className="mt-3 text-sm font-bold text-emerald-700 dark:text-emerald-300">{notice}</p> : null}
+      {error ? <p className="mt-3 whitespace-pre-line text-sm font-bold text-red-700 dark:text-red-300">{error}</p> : null}
       {listError ? (
-        <p className="mt-3 whitespace-pre-line text-sm font-bold text-amber-700" role="alert">
+        <p className="mt-3 whitespace-pre-line text-sm font-bold text-amber-700 dark:text-amber-300" role="alert">
           {listError}
         </p>
       ) : null}
@@ -264,14 +264,14 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
           type="button"
           onClick={() => csvInputRef.current?.click()}
           disabled={saving}
-          className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-black text-indigo-800 hover:bg-indigo-100 disabled:opacity-60"
+          className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-black text-indigo-800 hover:bg-indigo-100 disabled:opacity-60 dark:border-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-200 dark:hover:bg-indigo-900/50"
         >
           CSVで一括登録
         </button>
         <button
           type="button"
           onClick={downloadCharterVehicleCsvTemplate}
-          className="text-sm font-bold text-indigo-600 hover:underline"
+          className="text-sm font-bold text-indigo-600 hover:underline dark:text-indigo-300"
         >
           サンプルCSVをダウンロード
         </button>
@@ -279,8 +279,8 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
       </div>
 
       {csvPreview ? (
-        <div className="mt-3 rounded-xl border border-indigo-200 bg-indigo-50 p-3">
-          <p className="text-sm font-black text-indigo-900">{csvPreview.rows.length}件を登録します</p>
+        <div className="mt-3 rounded-xl border border-indigo-200 bg-indigo-50 p-3 dark:border-indigo-700 dark:bg-indigo-950/40">
+          <p className="text-sm font-black text-indigo-900 dark:text-indigo-100">{csvPreview.rows.length}件を登録します</p>
           <div className="mt-2 flex flex-wrap gap-2">
             <button
               type="button"
@@ -294,7 +294,7 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
               type="button"
               onClick={() => setCsvPreview(null)}
               disabled={saving}
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
             >
               キャンセル
             </button>
@@ -302,11 +302,11 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
         </div>
       ) : null}
 
-      <form onSubmit={(e) => void handleSave(e)} className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
-        <p className="text-sm font-black text-slate-800">{form.id ? '車両を編集' : '新規車両を登録'}</p>
+      <form onSubmit={(e) => void handleSave(e)} className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-900/50">
+        <p className="text-sm font-black text-slate-800 dark:text-slate-100">{form.id ? '車両を編集' : '新規車両を登録'}</p>
 
         <div className="mt-3 flex flex-col gap-2">
-          <span className="text-xs font-bold text-slate-600">車両タイプ</span>
+          <span className="text-xs font-bold text-slate-600 dark:text-slate-300">車両タイプ</span>
           <div className="flex gap-3">
             <button
               type="button"
@@ -328,7 +328,7 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
         </div>
 
         <div className="mt-3">
-          <label className="text-sm font-black text-slate-700">ナンバー種別</label>
+          <label className="text-sm font-black text-slate-700 dark:text-slate-200">ナンバー種別</label>
           <div className="mt-2 flex gap-2">
             <button
               type="button"
@@ -350,7 +350,7 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
         </div>
 
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <label className="block text-xs font-bold text-slate-600">
+          <label className="block text-xs font-bold text-slate-600 dark:text-slate-300">
             車両ナンバー
             <input
               type="text"
@@ -360,7 +360,7 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
               placeholder="例: 大分800あ1234"
             />
           </label>
-          <label className="block text-xs font-bold text-slate-600">
+          <label className="block text-xs font-bold text-slate-600 dark:text-slate-300">
             ドアナンバー
             <input
               type="text"
@@ -385,7 +385,7 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
               type="button"
               onClick={resetForm}
               disabled={saving}
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
             >
               新規入力に切替
             </button>
@@ -394,18 +394,18 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
       </form>
 
       <div className="mt-6">
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-          <p className="text-sm font-black text-slate-700">
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-600 dark:bg-slate-900/50">
+          <p className="text-sm font-black text-slate-700 dark:text-slate-200">
             現在登録台数：大型 {summary.large}台 ／ 小型 {summary.small}台 ／ 合計 {summary.total}台
           </p>
         </div>
 
-        <h3 className="mt-4 text-sm font-black text-slate-800">登録済み車両</h3>
+        <h3 className="mt-4 text-sm font-black text-slate-800 dark:text-slate-100">登録済み車両</h3>
         {loading && vehicles.length === 0 ? (
-          <p className="mt-2 text-sm text-slate-500">読み込み中…</p>
+          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">読み込み中…</p>
         ) : null}
         {!loading && vehicles.length === 0 ? (
-          <p className="mt-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-sm text-slate-500">
+          <p className="mt-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-sm text-slate-500 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-400">
             登録された車両はありません
           </p>
         ) : (
@@ -413,18 +413,18 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
             {vehicles.map((vehicle) => (
               <li
                 key={vehicle.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-3"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-slate-600 dark:bg-slate-900/60"
               >
                 <div className="min-w-0 text-sm">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="font-black text-slate-900">{vehicleTypeLabel(vehicle.vehicle_type)}</p>
+                    <p className="font-black text-slate-900 dark:text-slate-100">{vehicleTypeLabel(vehicle.vehicle_type)}</p>
                     <span
                       className={`rounded-full border px-2 py-0.5 text-[11px] font-black ${plateCategoryBadgeClass(vehicle.plate_category)}`}
                     >
                       {plateCategoryLabel(vehicle.plate_category)}
                     </span>
                   </div>
-                  <p className="mt-0.5 text-xs font-medium text-slate-600">
+                  <p className="mt-0.5 text-xs font-medium text-slate-600 dark:text-slate-300">
                     車両ナンバー: {vehicle.vehicle_number || '—'} / ドア: {vehicle.door_number || '—'}
                   </p>
                 </div>
@@ -433,7 +433,7 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
                     type="button"
                     onClick={() => handleEdit(vehicle)}
                     disabled={saving}
-                    className="text-sm font-bold text-indigo-600 hover:underline disabled:opacity-60"
+                    className="text-sm font-bold text-indigo-600 hover:underline disabled:opacity-60 dark:text-indigo-300"
                   >
                     編集
                   </button>
@@ -441,7 +441,7 @@ export function CharterVehicleRegistrationPanel({ ownerType, ownerId, title = '�
                     type="button"
                     onClick={() => void handleDelete(vehicle)}
                     disabled={saving}
-                    className="text-sm font-bold text-red-600 hover:underline disabled:opacity-60"
+                    className="text-sm font-bold text-red-600 hover:underline disabled:opacity-60 dark:text-red-300"
                   >
                     削除
                   </button>

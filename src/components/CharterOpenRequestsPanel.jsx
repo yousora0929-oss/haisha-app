@@ -366,18 +366,18 @@ export function CharterOpenRequestsPanel({
   };
 
   return (
-    <section className="rounded-2xl border-2 border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-      <h2 className="text-lg font-black text-slate-900">{title}</h2>
-      <p className="mt-1 text-sm font-medium text-slate-600">{description}</p>
+    <section className="rounded-2xl border-2 border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800 sm:p-6">
+      <h2 className="text-lg font-black text-slate-900 dark:text-slate-100">{title}</h2>
+      <p className="mt-1 text-sm font-medium text-slate-600 dark:text-slate-300">{description}</p>
 
-      {notice ? <p className="mt-3 text-sm font-bold text-emerald-700">{notice}</p> : null}
-      {error ? <p className="mt-3 text-sm font-bold text-red-700">{error}</p> : null}
+      {notice ? <p className="mt-3 text-sm font-bold text-emerald-700 dark:text-emerald-300">{notice}</p> : null}
+      {error ? <p className="mt-3 text-sm font-bold text-red-700 dark:text-red-300">{error}</p> : null}
 
       {loading && visibleRequests.length === 0 ? (
-        <p className="mt-4 text-sm text-slate-500">読み込み中…</p>
+        <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">読み込み中…</p>
       ) : null}
       {!loading && visibleRequests.length === 0 ? (
-        <p className="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-sm text-slate-500">
+        <p className="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-sm text-slate-500 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-400">
           現在、応答可能な募集はありません
         </p>
       ) : (
@@ -387,7 +387,7 @@ export function CharterOpenRequestsPanel({
             const statusMeta = myResponse
               ? RESPONSE_STATUS_META[myResponse.status] || {
                   label: myResponse.status,
-                  className: 'bg-slate-100 text-slate-700 border-slate-200',
+                  className: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:border-slate-500',
                 }
               : null;
             const isFormOpen = respondingId === request.id;
@@ -395,24 +395,24 @@ export function CharterOpenRequestsPanel({
             const withdrawAllowed = canWithdrawCharterResponse(request.request_date);
 
             return (
-              <li key={request.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
+              <li key={request.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-600 dark:bg-slate-900/50 sm:p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1 text-sm">
-                    <p className="font-black text-slate-900">
+                    <p className="font-black text-slate-900 dark:text-slate-100">
                       {request.requesting_factory_name || request.requesting_factory_id}
                     </p>
-                    <p className="mt-1 font-bold text-slate-800">
+                    <p className="mt-1 font-bold text-slate-800 dark:text-slate-200">
                       {request.request_date.replace(/-/g, '/')} ・ {vehicleTypeLabel(request.vehicle_type)} ・{' '}
                       {request.desired_count}台希望
                     </p>
                     {request.note?.trim() ? (
-                      <p className="mt-1 text-xs font-medium text-slate-600">備考: {request.note}</p>
+                      <p className="mt-1 text-xs font-medium text-slate-600 dark:text-slate-300">備考: {request.note}</p>
                     ) : null}
                     {myResponse?.status === 'offered' ||
                     myResponse?.status === 'accepted' ||
                     myResponse?.status === 'partially_accepted' ||
                     myResponse?.status === 'rejected' ? (
-                      <p className="mt-2 text-xs font-bold text-slate-600">
+                      <p className="mt-2 text-xs font-bold text-slate-600 dark:text-slate-300">
                         提供 {myResponse.offered_count}台
                         {myResponse.message?.trim() && myResponse.status === 'offered'
                           ? ` — ${myResponse.message}`
@@ -423,7 +423,7 @@ export function CharterOpenRequestsPanel({
                       <AssignedVehicleBadges assignedVehicles={myResponse.assigned_vehicles} />
                     ) : null}
                     {myResponse?.status === 'offered' && !withdrawAllowed ? (
-                      <p className="mt-1 text-xs font-bold text-amber-700">
+                      <p className="mt-1 text-xs font-bold text-amber-700 dark:text-amber-300">
                         募集日の3日前を過ぎているため取り下げできません
                       </p>
                     ) : null}
@@ -512,7 +512,7 @@ export function CharterOpenRequestsPanel({
                 {isFormOpen ? (
                   <form
                     onSubmit={(e) => void handleSubmitResponse(e, request)}
-                    className="mt-3 rounded-lg border border-indigo-200 bg-white p-3"
+                    className="mt-3 rounded-lg border border-indigo-200 bg-white p-3 dark:border-indigo-700 dark:bg-slate-900/60"
                   >
                     <p className="text-xs font-black text-slate-800">応答内容</p>
                     <div className="mt-2 grid gap-3 sm:grid-cols-2">
@@ -571,7 +571,7 @@ export function CharterOpenRequestsPanel({
                 ) : null}
 
                 {isVehicleEditOpen && myResponse ? (
-                  <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-600 dark:bg-slate-900/60">
                     <p className="text-xs font-black text-slate-800">割り当て車両を編集</p>
                     <CharterVehiclePicker
                       vehicles={ownerVehicles}

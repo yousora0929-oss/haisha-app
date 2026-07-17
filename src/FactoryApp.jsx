@@ -2472,7 +2472,7 @@ function isUnreadForFactory(messages, readKey) {
         const holiday = holidayByDate[day];
         const description = String(holiday?.description || '');
         if (description.includes('メンテ')) {
-          return { value: 'maintenance', label: '🔧 メンテ', badgeClass: 'bg-orange-500 text-slate-950', dayClass: 'border-yellow-300 bg-yellow-50' };
+          return { value: 'maintenance', label: '🔧 メンテ', badgeClass: 'bg-orange-500 text-slate-950', dayClass: 'border-yellow-300 bg-yellow-50 dark:border-yellow-700 dark:bg-yellow-950/40' };
         }
         if (holiday) {
           return { value: 'stopped', label: '❌ 出荷停止', badgeClass: 'bg-red-600 text-white', dayClass: 'border-red-300 bg-red-50' };
@@ -2558,7 +2558,7 @@ function isUnreadForFactory(messages, readKey) {
                           : 'border-slate-100 bg-slate-50 opacity-45')
                     }
                   >
-                    <p className="text-xs font-black text-slate-500">{d.getDate()}</p>
+                    <p className="text-xs font-black text-slate-600 dark:text-slate-300">{d.getDate()}</p>
                     <div className="mt-1 space-y-0.5">
                       {hasSpecialStatus ? <span className={'block rounded-md px-1.5 py-1 text-[10px] font-black ' + statusMeta.badgeClass}>{statusMeta.label}</span> : null}
                       {capacityMeta ? <span className={'block rounded-md px-1.5 py-1 text-[10px] font-black ' + capacityMeta.badgeClass}>{capacityMeta.label}</span> : null}

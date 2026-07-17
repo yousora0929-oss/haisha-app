@@ -279,7 +279,7 @@ function CompactFactoryStatusBar({ factories, schedulesByFactoryId, scheduleDate
     status: getFactoryDayStatus(schedulesByFactoryId, f.id, scheduleDate, f),
   }));
   return (
-    <div className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+    <div className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm dark:border-slate-700 dark:bg-slate-800">
       <div className="flex flex-wrap items-center gap-2">
         <span className="shrink-0 text-xs font-black text-slate-500">工場稼働</span>
         <input
@@ -326,7 +326,7 @@ function FactoryAvailabilitySection({ factories, schedulesByFactoryId, scheduleD
   })).filter((group) => group.rows.length > 0);
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-md sm:p-6">
+    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-md dark:border-slate-700 dark:bg-slate-800 sm:p-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-lg font-black text-slate-900">工場稼働ステータス</h2>
@@ -347,14 +347,14 @@ function FactoryAvailabilitySection({ factories, schedulesByFactoryId, scheduleD
           <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-600">工場マスタが未登録です。</p>
         ) : (
           groupedRows.map((group) => (
-            <div key={group.area} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2">
+            <div key={group.area} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3 dark:border-slate-600 dark:bg-slate-900/40">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2 dark:border-slate-600">
                 <h3 className="text-base font-black text-slate-900">📍 {group.area}</h3>
                 <span className="rounded-full bg-slate-900 px-2 py-0.5 text-xs font-black text-white">{group.rows.length}工場</span>
               </div>
               <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {group.rows.map((f) => (
-                  <article key={f.factoryId} className={'rounded-xl border-2 bg-white p-4 shadow-sm ' + (f.status.allFull ? 'border-red-300 bg-red-50' : 'border-slate-200')}>
+                  <article key={f.factoryId} className={'rounded-xl border-2 p-4 shadow-sm ' + (f.status.allFull ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-white dark:border-slate-600 dark:bg-slate-800')}>
                     <p className="text-lg font-black text-slate-900">{f.factoryName}</p>
                     <div className="mt-3">
                       <FactoryAvailabilityBadges status={f.status} />
@@ -2567,7 +2567,7 @@ function OrdersMonitorSection({
   );
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-md sm:p-6">
+    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-md dark:border-slate-700 dark:bg-slate-800 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-black text-slate-900">全注文モニター</h2>
@@ -2631,7 +2631,7 @@ function OrdersMonitorSection({
             {pendingAssociationOrders.map((o) => {
               const party = orderPartyInfo(o);
               return (
-                <li key={o.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2">
+                <li key={o.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2 dark:border-violet-700 dark:bg-slate-800">
                   <div className="min-w-0">
                     <p className="text-sm font-black text-slate-900">
                       {formatDateJp(orderDeliveryDate(o))} {formatOrderTime(o)} · {party.site}
@@ -2681,7 +2681,7 @@ function OrdersMonitorSection({
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[1500px] border-collapse text-left text-sm">
             <thead>
-              <tr className="border-b-2 border-slate-200 bg-slate-50">
+              <tr className="border-b-2 border-slate-200 bg-slate-50 dark:border-slate-600 dark:bg-slate-900">
                 <th className="px-3 py-2 font-black text-slate-700">種別</th>
                 <th className="px-3 py-2 font-black text-slate-700">希望日時</th>
                 <th className="px-3 py-2 font-black text-slate-700">業者</th>
@@ -2789,7 +2789,7 @@ function OrdersMonitorSection({
             <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-600">受注済みの注文はありません。</p>
           ) : (
             acceptedByFactory.map((group) => (
-              <div key={group.factoryId} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div key={group.factoryId} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-600 dark:bg-slate-900/40">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="min-w-0">
                     <h3 className="text-base font-black text-slate-900">{group.factoryName}</h3>
@@ -2806,7 +2806,7 @@ function OrdersMonitorSection({
                   </div>
                   <span className="rounded-full bg-slate-900 px-2 py-0.5 text-xs font-black text-white">{group.orders.length}件</span>
                 </div>
-                <ul className="mt-3 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
+                <ul className="mt-3 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white dark:divide-slate-600 dark:border-slate-600 dark:bg-slate-800">
                   {group.orders.map((o) => {
                     const party = orderPartyInfo(o);
                     return (

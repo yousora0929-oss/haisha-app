@@ -557,19 +557,19 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [draft, onSendMessage, orderId]);
       if (!order) return null;
       return (
-        <div className="fixed inset-0 z-[420] flex h-[100dvh] flex-col overflow-hidden bg-[#e5ddd5]">
-          <header className="shrink-0 border-b border-slate-200 bg-white px-4 py-[max(0.75rem,env(safe-area-inset-top))] shadow-sm">
+        <div className="fixed inset-0 z-[420] flex h-[100dvh] flex-col overflow-hidden bg-[#e5ddd5] dark:bg-slate-800">
+          <header className="shrink-0 border-b border-slate-200 bg-white px-4 py-[max(0.75rem,env(safe-area-inset-top))] shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <div className="mx-auto flex max-w-md items-center gap-3">
               <button
                 type="button"
                 onClick={onBack}
-                className="shrink-0 rounded-full border-2 border-slate-200 bg-slate-50 px-3 py-2 text-sm font-black text-slate-700 shadow-sm"
+                className="shrink-0 rounded-full border-2 border-slate-200 bg-slate-50 px-3 py-2 text-sm font-black text-slate-700 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
               >
                 ← 戻る
               </button>
               <div className="min-w-0">
-                <h2 className="truncate text-base font-black text-slate-900">{factoryName} との質疑応答</h2>
-                <p className="mt-0.5 truncate text-xs font-bold text-slate-500">{resolveOrderSiteDisplayName(order) || '注文チャット'}</p>
+                <h2 className="truncate text-base font-black text-slate-900 dark:text-slate-100">{factoryName} との質疑応答</h2>
+                <p className="mt-0.5 truncate text-xs font-bold text-slate-500 dark:text-slate-400">{resolveOrderSiteDisplayName(order) || '注文チャット'}</p>
               </div>
             </div>
           </header>
@@ -579,15 +579,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             aria-live="polite"
           >
             {list.length === 0 ? (
-              <li className="px-2 py-12 text-center text-sm font-bold text-slate-500">まだメッセージはありません</li>
+              <li className="px-2 py-12 text-center text-sm font-bold text-slate-500 dark:text-slate-400">まだメッセージはありません</li>
             ) : (
               list.map((m) => {
                 if (isSystemChatSender(m.from)) {
                   return (
                     <li key={m.id} className="flex justify-center">
-                      <div className="max-w-[95%] rounded-xl border border-slate-300/80 bg-slate-100/95 px-3 py-2 text-center text-xs font-bold text-slate-700 shadow-sm">
+                      <div className="max-w-[95%] rounded-xl border border-slate-300/80 bg-slate-100/95 px-3 py-2 text-center text-xs font-bold text-slate-700 shadow-sm dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100">
                         <p className="whitespace-pre-wrap break-words leading-snug">{m.body}</p>
-                        <p className="mt-1 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                        <p className="mt-1 text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-300">
                           システム ·{' '}
                           {new Date(m.createdAt).toLocaleTimeString('ja-JP', {
                             hour: '2-digit',
@@ -606,12 +606,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       className={
                         'max-w-[88%] rounded-2xl px-3 py-2 text-sm shadow-sm ' +
                         (mine
-                          ? 'rounded-br-md border border-sky-200 bg-sky-100 text-slate-900'
-                          : 'rounded-bl-md bg-white text-slate-900')
+                          ? 'rounded-br-md border border-sky-200 bg-sky-100 text-slate-900 dark:border-sky-500 dark:bg-sky-800 dark:text-sky-50'
+                          : 'rounded-bl-md bg-white text-slate-900 dark:bg-slate-700 dark:text-slate-100')
                       }
                     >
                       <p className="whitespace-pre-wrap break-words leading-snug">{m.body}</p>
-                      <p className="mt-1 text-[10px] font-bold text-slate-500">
+                      <p className={'mt-1 text-[10px] font-bold ' + (mine ? 'text-slate-500 dark:text-sky-200/80' : 'text-slate-500 dark:text-slate-300')}>
                         {displaySenderName} ·{' '}
                         {new Date(m.createdAt).toLocaleTimeString('ja-JP', {
                           hour: '2-digit',
@@ -625,7 +625,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             )}
             <li ref={messagesEndRef} aria-hidden="true" className="h-px" />
           </ul>
-          <div className="shrink-0 border-t border-slate-200 bg-white px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.08)]">
+          <div className="shrink-0 border-t border-slate-200 bg-white px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.08)] dark:border-slate-700 dark:bg-slate-900">
             <div className="mx-auto flex w-full max-w-md items-center gap-2">
             <input
               type="text"
@@ -638,7 +638,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 }
               }}
               placeholder="メッセージを入力…"
-              className="min-h-[48px] min-w-0 flex-1 rounded-full border border-slate-300 bg-white px-4 text-sm outline-none focus:ring-2 focus:ring-indigo-300"
+              className="min-h-[48px] min-w-0 flex-1 rounded-full border border-slate-300 bg-white px-4 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-300 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
             />
             <button
               type="button"
