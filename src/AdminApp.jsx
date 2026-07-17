@@ -72,6 +72,7 @@ import {
   isUnregisteredTradingCompanyName,
   resolveProjectTradingCompanyName,
 } from './utils/projectTradingCompany.js';
+import { resolveProjectContractorLabel } from './utils/projectPartyDisplay.js';
 
 const ADMIN_AUTH_SESSION_KEY = 'concrete_link_admin_auth_v1';
 
@@ -972,22 +973,6 @@ function ProjectForm({
   );
 }
 
-function resolveProjectContractorLabel(project, customers) {
-  const trader = String(
-    project?.trading_company_name || project?.trading_company || '',
-  ).trim();
-  const display = String(project?.contractor_display_name || '').trim();
-  const master = (customers || []).find(
-    (customer) => String(customer?.id || '') === String(project?.customer_id || ''),
-  );
-  const masterName = String(master?.company_name || master?.name || '').trim();
-  const prime = display && display !== trader ? display : masterName;
-  return {
-    prime: prime || '—',
-    sub: String(project?.sub_contractor_name || project?.contractor || '').trim(),
-  };
-}
-
 function ProjectsSection({ factories, factoryNameById }) {
   const [projects, setProjects] = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -1235,7 +1220,10 @@ function ProjectsSection({ factories, factoryNameById }) {
             </thead>
             <tbody>
               {projects.map((p) => {
-                const contractor = resolveProjectContractorLabel(p, customers);
+                const customer = customers.find(
+                  (c) => String(c?.id || '') === String(p.customer_id || ''),
+                );
+                const contractor = resolveProjectContractorLabel(p, customer);
                 return (
                   <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50/80">
                     <td className="px-3 py-2.5 font-bold text-slate-900">{p.name}</td>
@@ -1246,17 +1234,17 @@ function ProjectsSection({ factories, factoryNameById }) {
                       ) : null}
                     </td>
                     <td className="px-3 py-2.5 text-slate-700">
-                      {String(p.trading_company_name || p.trading_company || '').trim() || '—'}
+                      {contractor.trader}
                     </td>
                     <td
                       className={
                         'px-3 py-2.5 ' +
-                        (p.billing_target === 'sub'
+                        (contractor.billingIsSub
                           ? 'font-bold text-amber-700'
                           : 'text-slate-600')
                       }
                     >
-                      {p.billing_target === 'sub' ? '下請' : '元請'}
+                      {contractor.billing}
                     </td>
                   <td className="px-3 py-2.5">{factoryNameById[p.main_factory_id] || '—'}</td>
                   <td className="max-w-[12rem] px-3 py-2.5 text-xs text-slate-600">{(p.sub_factory_ids || []).map((id) => factoryNameById[id] || id).join('、') || '—'}</td>

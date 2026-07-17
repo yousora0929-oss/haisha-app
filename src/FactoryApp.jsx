@@ -9,7 +9,10 @@ import {
   FACTORY_PANEL_PASSWORD_KEY,
 } from './supabaseClient.js';
 import { buildEscalationContext, filterOrdersForFactory, getOrderEscalationStepInfo } from './utils/escalationUtils.js';
-import { resolveProjectTradingCompanyName } from './utils/projectTradingCompany.js';
+import {
+  billingTargetLabel,
+  resolveProjectContractorLabel,
+} from './utils/projectPartyDisplay.js';
 import {
   FACTORY_SITE_ID,
   FACTORY_SITE_NAME,
@@ -655,9 +658,7 @@ function isUnreadForFactory(messages, readKey) {
 
     function enrichProjectForFactoryList(project, customers) {
       const customer = (customers || []).find((c) => c && String(c.id) === String(project?.customer_id || ''));
-      const companyName = String(customer?.company_name || customer?.name || '').trim();
-      const contractor = String(project?.contractor || '').trim() || companyName || '—';
-      const trader = resolveProjectTradingCompanyName(project) || '—';
+      const party = resolveProjectContractorLabel(project, customer);
       const phone = String(customer?.phone_number || '').trim() || '—';
       const contact = String(customer?.manager_name || '').trim();
       const pt = String(project?.url_token || '').trim();
@@ -666,8 +667,11 @@ function isUnreadForFactory(messages, readKey) {
       return {
         ...project,
         url_token: urlToken,
-        displayContractor: contractor,
-        displayTrader: trader,
+        displayContractor: party.prime,
+        displaySubContractor: party.sub,
+        displayTrader: party.trader,
+        displayBilling: party.billing,
+        displayBillingIsSub: party.billingIsSub,
         displayPhone: phone,
         displayContact: contact || '—',
         displayLocation: formatProjectLocation(project),
@@ -695,11 +699,29 @@ function isUnreadForFactory(messages, readKey) {
               <dl className="mt-2 grid gap-1.5 text-xs sm:grid-cols-2 sm:text-sm">
                 <div>
                   <dt className="font-bold text-slate-500">業者</dt>
-                  <dd className="font-bold text-slate-800">{project.displayContractor}</dd>
+                  <dd className="font-bold text-slate-800">
+                    {project.displayContractor}
+                    {project.displaySubContractor ? (
+                      <span className="block text-[11px] font-medium text-slate-500">
+                        下請: {project.displaySubContractor}
+                      </span>
+                    ) : null}
+                  </dd>
                 </div>
                 <div>
                   <dt className="font-bold text-slate-500">商社</dt>
                   <dd className="font-bold text-slate-800">{project.displayTrader}</dd>
+                </div>
+                <div>
+                  <dt className="font-bold text-slate-500">請求先</dt>
+                  <dd
+                    className={
+                      'font-bold ' +
+                      (project.displayBillingIsSub ? 'text-amber-700' : 'text-slate-800')
+                    }
+                  >
+                    {project.displayBilling}
+                  </dd>
                 </div>
                 <div>
                   <dt className="font-bold text-slate-500">担当者</dt>
@@ -883,6 +905,12 @@ function isUnreadForFactory(messages, readKey) {
 
       if (!open || !order) return null;
 
+      const projectId = String(order?.project_id ?? order?.projectId ?? '').trim();
+      const linkedProject = projectId ? projectById?.[projectId] : null;
+      const projectBillingLabel = linkedProject
+        ? billingTargetLabel(linkedProject.billing_target)
+        : '';
+      const projectBillingIsSub = linkedProject?.billing_target === 'sub';
       const fieldLabel = 'mb-1 block text-sm font-bold text-slate-600 sm:text-base';
       const fieldInput =
         'mt-1 min-h-[48px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 sm:text-lg';
@@ -1011,6 +1039,16 @@ function isUnreadForFactory(messages, readKey) {
                     <label className={fieldLabel} htmlFor="foe-trader">商社名</label>
                     <input id="foe-trader" name="traderName" type="text" value={editData.traderName} onChange={handleInputChange} className={fieldInput} />
                   </div>
+                  {linkedProject ? (
+                    <p
+                      className={
+                        'text-xs font-bold ' +
+                        (projectBillingIsSub ? 'text-amber-700' : 'text-slate-600')
+                      }
+                    >
+                      請求先: {projectBillingLabel}
+                    </p>
+                  ) : null}
                   <div>
                     <label className={fieldLabel} htmlFor="foe-site">
                       現場名
@@ -1234,6 +1272,12 @@ function isUnreadForFactory(messages, readKey) {
       const phone = order.sitePhone != null ? String(order.sitePhone).trim() : '';
       const trader = (order.displayTraderName ?? order.traderName)?.trim() || '';
       const contractor = (order.displayContractorName ?? order.contractorName)?.trim() || '';
+      const projectId = String(order?.project_id ?? order?.projectId ?? '').trim();
+      const linkedProject = projectId ? projectById?.[projectId] : null;
+      const projectBillingLabel = linkedProject
+        ? billingTargetLabel(linkedProject.billing_target)
+        : '';
+      const projectBillingIsSub = linkedProject?.billing_target === 'sub';
       const isSpotOrder = Boolean(order.is_spot);
       const isLarge = vehicle === '大型';
       const unloadDurationText = factoryUnloadDurationLabel(order);
@@ -1404,12 +1448,19 @@ function isUnreadForFactory(messages, readKey) {
             <div className={ORDER_GRID_META_2X2 + ' border-t border-slate-200/80 pt-2.5 dark:border-slate-600/80'}>
               <div className="min-w-0 text-left">
                 <p className={primaryFieldLabel}>業者</p>
-                <p
-                  className={'mt-0.5 break-words ' + primaryFieldValue + ' ' + (isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg')}
-                  title={party.contractor}
-                >
-                  {party.contractor}
-                </p>
+                <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <p
+                    className={'break-words ' + primaryFieldValue + ' ' + (isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg')}
+                    title={party.contractor}
+                  >
+                    {party.contractor}
+                  </p>
+                  {!isToast && projectBillingIsSub ? (
+                    <span className="text-[10px] font-bold text-amber-700">
+                      請求先:下請
+                    </span>
+                  ) : null}
+                </div>
               </div>
               <div className="min-w-0 border-l border-slate-200/70 pl-2 text-left dark:border-slate-600/70">
                 <p className={primaryFieldLabel}>商社</p>
@@ -1507,6 +1558,16 @@ function isUnreadForFactory(messages, readKey) {
 
       const renderDetailBody = () => (
         <>
+          {linkedProject ? (
+            <p
+              className={
+                'mb-2 text-xs font-bold ' +
+                (projectBillingIsSub ? 'text-amber-700' : 'text-slate-600')
+              }
+            >
+              請求先: {projectBillingLabel}
+            </p>
+          ) : null}
           <div className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border border-slate-200/90 bg-white px-3 py-3 sm:grid-cols-3">
             <div className="min-w-0">
               <p className="text-xs font-bold uppercase tracking-wider text-slate-500 sm:text-sm">配合</p>
