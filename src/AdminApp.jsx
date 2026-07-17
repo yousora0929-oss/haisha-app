@@ -62,7 +62,6 @@ import { AdminCsvDownloadButton } from './components/AdminCsvDownloadButton.jsx'
 import { AdminFactoryNewsSection } from './components/AdminFactoryNewsSection.jsx';
 import { AdminOrgSection } from './components/AdminOrgSection.jsx';
 import { AdminCharterSection } from './components/AdminCharterSection.jsx';
-import { AdminTradingCompaniesSection } from './components/AdminTradingCompaniesSection.jsx';
 import BillingMark from './components/BillingMark.jsx';
 import {
   downloadProjectsExportCsv,
@@ -3152,12 +3151,7 @@ export function AdminApp() {
         {tab === 'factoryNews' ? <AdminFactoryNewsSection factories={factories} /> : null}
         {tab === 'adminSettings' ? <AdminSettingsSection /> : null}
         {tab === 'projects' ? <ProjectsSection factories={factories} factoryNameById={factoryNameById} /> : null}
-        {tab === 'agents' ? (
-          <div className="space-y-6">
-            <AdminOrgSection orgType="agent" label="商社" />
-            <AdminTradingCompaniesSection />
-          </div>
-        ) : null}
+        {tab === 'agents' ? <AdminOrgSection orgType="agent" label="商社" /> : null}
         {tab === 'cooperatives' ? <AdminOrgSection orgType="cooperative" label="組合員" /> : null}
         {tab === 'customers' ? <AdminOrgSection orgType="contractor" label="業者" /> : null}
         {tab === 'charter' ? <AdminCharterSection /> : null}

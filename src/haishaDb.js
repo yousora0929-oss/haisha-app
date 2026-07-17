@@ -1812,9 +1812,6 @@ export async function subscribeHaishaRealtime(onEvent) {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, (payload) => route(payload, 'schedules'))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'factories' }, (payload) => route(payload, 'factories'))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, (payload) => route(payload, 'customers'))
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'trading_companies' }, (payload) =>
-      route(payload, 'trading_companies'),
-    )
     .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_settings' }, (payload) => route(payload, 'admin_settings'))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news' }, (payload) => route(payload, 'factory_news'))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news_reads' }, (payload) =>
@@ -1949,6 +1946,12 @@ function mapOrganizationRow(row) {
   };
 }
 
+const ORGANIZATION_TYPES = ['agent', 'cooperative', 'contractor'];
+
+function validateOrganizationType(type) {
+  if (!ORGANIZATION_TYPES.includes(type)) throw new Error('種別が不正です');
+}
+
 export async function fetchOrganizations() {
   const { data, error } = await supabase
     .from('organizations')
@@ -1962,7 +1965,7 @@ export async function fetchOrganizations() {
 export async function insertOrganization({ name, type, cooperative_id, furigana }) {
   const trimmed = String(name ?? '').trim();
   if (!trimmed) throw new Error('組織名を入力してください');
-  if (!['agent', 'cooperative', 'contractor'].includes(type)) throw new Error('種別が不正です');
+  validateOrganizationType(type);
   const { data, error } = await supabase
     .from('organizations')
     .insert({
@@ -1990,9 +1993,7 @@ export async function updateOrganization(id, nameOrOpts) {
     };
     // type は明示された場合だけ検証・更新し、名称編集では現在値を維持する。
     if (type !== undefined && type !== null && type !== '') {
-      if (!['agent', 'cooperative', 'contractor'].includes(type)) {
-        throw new Error('種別が不正です');
-      }
+      validateOrganizationType(type);
       updateRow.type = type;
     }
     // 所属組合とフリガナも、呼び出し側がキーを渡した場合だけ更新する。
@@ -2062,6 +2063,7 @@ export async function deleteOrganizationWithMembers(orgId) {
  * }>
  */
 export async function fetchOrganizationsWithMembers(type) {
+  validateOrganizationType(type);
   const { data: orgs, error: oe } = await supabase
     .from('organizations')
     .select('id, name, furigana, type, created_at')
@@ -2090,10 +2092,13 @@ export async function fetchOrganizationsWithMembers(type) {
 
 /** 組織を新規作成 */
 export async function createOrganization(name, type, { furigana } = {}) {
+  const trimmed = String(name ?? '').trim();
+  if (!trimmed) throw new Error('組織名を入力してください');
+  validateOrganizationType(type);
   const { data, error } = await supabase
     .from('organizations')
     .insert({
-      name: name.trim(),
+      name: trimmed,
       type,
       furigana: String(furigana ?? '').trim() || null,
     })
@@ -2187,6 +2192,7 @@ export async function fetchCustomersByOrganizationId(organizationId) {
  * @returns {{ created: number, skipped: number }}
  */
 export async function bulkImportOrgMembers(rows, orgType, existingOrgs, existingMembers) {
+  validateOrganizationType(orgType);
   // 既存組織名→IDのマップ
   const orgNameToId = {};
   for (const o of existingOrgs) orgNameToId[o.name.trim()] = o.id;
@@ -2275,78 +2281,6 @@ export async function fetchCustomers() {
 }
 
 const BULK_INSERT_CHUNK = 100;
-
-function mapTradingCompanyRow(row) {
-  if (!row || typeof row !== 'object') return null;
-  const name = String(row.name ?? '').trim();
-  if (!name) return null;
-  return {
-    id: row.id != null ? String(row.id) : '',
-    name,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  };
-}
-
-export async function fetchTradingCompanies() {
-  const { data, error } = await supabase.from('trading_companies').select('*').order('name', { ascending: true });
-  if (error) throw error;
-  return (data || []).map(mapTradingCompanyRow).filter(Boolean);
-}
-
-export async function insertTradingCompany({ name }) {
-  const trimmed = String(name ?? '').trim();
-  if (!trimmed) throw new Error('商社名を入力してください');
-  const { data, error } = await supabase.from('trading_companies').insert({ name: trimmed }).select('*').single();
-  if (error) throw error;
-  return mapTradingCompanyRow(data);
-}
-
-export async function updateTradingCompany(id, opts = {}) {
-  const companyId = sanitizeRefId(id);
-  if (!companyId) throw new Error('商社IDが必要です');
-  const { name } = opts && typeof opts === 'object' ? opts : {};
-  const trimmed = String(name ?? '').trim();
-  if (!trimmed) throw new Error('商社名を入力してください');
-  const { data, error } = await supabase
-    .from('trading_companies')
-    .update({ name: trimmed, updated_at: new Date().toISOString() })
-    .eq('id', companyId)
-    .select('*')
-    .single();
-  if (error) throw error;
-  return mapTradingCompanyRow(data);
-}
-
-export async function deleteTradingCompany(id) {
-  const companyId = sanitizeRefId(id);
-  if (!companyId) throw new Error('商社IDが必要です');
-  const { error } = await supabase.from('trading_companies').delete().eq('id', companyId);
-  if (error) throw error;
-}
-
-export async function bulkInsertTradingCompanies(rows) {
-  const list = Array.isArray(rows) ? rows.filter((r) => r && typeof r === 'object') : [];
-  if (list.length === 0) return [];
-
-  const prepared = list.map((row) => {
-    const name = String(row.name ?? '').trim();
-    if (!name) throw new Error('商社名が空の行があります');
-    return { name };
-  });
-
-  const inserted = [];
-  for (let i = 0; i < prepared.length; i += BULK_INSERT_CHUNK) {
-    const chunk = prepared.slice(i, i + BULK_INSERT_CHUNK);
-    const { data, error } = await supabase
-      .from('trading_companies')
-      .upsert(chunk, { onConflict: 'name', ignoreDuplicates: true })
-      .select('*');
-    if (error) throw error;
-    inserted.push(...(data || []));
-  }
-  return inserted.map(mapTradingCompanyRow).filter(Boolean);
-}
 
 export async function bulkInsertCustomers(customerRows) {
   const list = Array.isArray(customerRows) ? customerRows.filter((r) => r && typeof r === 'object') : [];

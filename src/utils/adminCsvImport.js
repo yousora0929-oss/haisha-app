@@ -4,8 +4,6 @@ import { resolveUrlTokenForInsert } from './urlValidation.js';
 import {
   CUSTOMER_CSV_ALIASES,
   CUSTOMER_EXPORT_HEADERS,
-  TRADING_COMPANY_CSV_ALIASES,
-  TRADING_COMPANY_EXPORT_HEADERS,
   downloadCsvWithUtf8Bom,
   formatCsvExcelTextField,
   mapCsvHeaders,
@@ -144,42 +142,6 @@ export async function parseProjectsCsvFile(
 /**
  * @param {File} file
  */
-export async function parseTradingCompaniesCsvFile(file) {
-  const text = await readCsvFileAsText(file);
-  const matrix = parseCsvText(text);
-  if (matrix.length < 2) {
-    throw new Error('データ行がありません（ヘッダー＋1行以上必要です）。');
-  }
-
-  const headerIndex = mapCsvHeaders(matrix[0], TRADING_COMPANY_CSV_ALIASES);
-  if (headerIndex.name == null) {
-    throw new Error('ヘッダーに「商社名」列が見つかりません。1行目を確認してください。');
-  }
-
-  const rawRows = rowsToObjects(matrix, headerIndex);
-  const rows = [];
-  const skipped = [];
-
-  for (const raw of rawRows) {
-    const line = raw.__line;
-    const name = cleanCell(raw.name);
-    if (!name) {
-      skipped.push({ line, reason: '商社名が空のためスキップ' });
-      continue;
-    }
-    rows.push({ name, __line: line });
-  }
-
-  if (rows.length === 0) {
-    throw new Error('取り込み可能な商社がありません。');
-  }
-
-  return { rows, skipped, warnings: [] };
-}
-
-/**
- * @param {File} file
- */
 export async function parseCustomersCsvFile(file) {
   const text = await readCsvFileAsText(file);
   const matrix = parseCsvText(text);
@@ -268,14 +230,6 @@ export function buildProjectsExportRows(projects, customers = []) {
 }
 
 /**
- * 商社一覧 → 取込互換 CSV 行（ヘッダー含む）
- */
-export function buildTradingCompaniesExportRows(tradingCompanies) {
-  const dataRows = (tradingCompanies || []).map((t) => [cleanCell(t.name)]);
-  return [TRADING_COMPANY_EXPORT_HEADERS, ...dataRows];
-}
-
-/**
  * 業者一覧 → 取込互換 CSV 行（ヘッダー含む）
  */
 export function buildCustomersExportRows(customers) {
@@ -321,7 +275,3 @@ export function downloadOrgMembersExportCsv(orgs, filenamePrefix = 'org_members'
   downloadCsvWithUtf8Bom(`${filenamePrefix}_export_${exportDateSuffix()}.csv`, rows);
 }
 
-export function downloadTradingCompaniesExportCsv(tradingCompanies) {
-  const rows = buildTradingCompaniesExportRows(tradingCompanies);
-  downloadCsvWithUtf8Bom(`trading_companies_export_${exportDateSuffix()}.csv`, rows);
-}
