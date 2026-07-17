@@ -1311,39 +1311,28 @@ function isUnreadForFactory(messages, readKey) {
       ).trim();
       const linkedCustomer =
         (linkedCustomerId ? customerById?.[linkedCustomerId] : null) ?? null;
-      const projectPartyDisplay = linkedProject
-        ? resolveProjectPartyDisplay(linkedProject, linkedCustomer)
-        : null;
       const orderCustomerId = String(
         order?.customer_id ?? order?.customerId ?? '',
       ).trim();
       const orderCustomer =
         (orderCustomerId ? customerById?.[orderCustomerId] : null) ?? null;
-      const prime = String(
-        orderCustomer?.company_name || '',
-      ).trim();
-      const sub = String(order?.contractorName ?? order?.contractor_name ?? '').trim();
-      const trader = String(order?.traderName ?? order?.trader_name ?? '').trim();
       const orderPartyDisplay = resolveOrderPartyDisplay(order, {
         project: linkedProject,
         customer: linkedCustomer,
         orderingCustomer: orderCustomer,
-        organizationById,
-        primeForOrderedBy:
-          projectPartyDisplay?.prime && projectPartyDisplay.prime !== '—'
-            ? projectPartyDisplay.prime
-            : prime,
+        organizationById: organizationById || {},
       });
-      const projectBillingIsSub = linkedProject?.billing_target === 'sub';
-      const showBillingMark = Boolean(linkedProject);
-      const primaryPartyName = prime || sub || '—';
-      const markPrimaryParty =
-        showBillingMark && (!projectBillingIsSub || (!prime && Boolean(sub)));
-      const showSubParty = Boolean(sub && sub !== prime);
-      const missingBillingSub =
-        showBillingMark && projectBillingIsSub && !sub;
-      const orderedByLabel = orderPartyDisplay.orderedByLabel;
-      const orderedByIsProxy = orderPartyDisplay.orderedByIsProxy;
+      const {
+        prime: displayPrime,
+        sub: displaySub,
+        trader: displayTrader,
+        billOnPrime,
+        billOnSub,
+        billingIsSub,
+        orderedByLabel,
+        orderedByIsProxy,
+      } = orderPartyDisplay;
+      const missingBillingSub = billingIsSub && displaySub === '—';
       const isSpotOrder = Boolean(order.is_spot);
       const isLarge = vehicle === '大型';
       const unloadDurationText = factoryUnloadDurationLabel(order);
@@ -1516,18 +1505,18 @@ function isUnreadForFactory(messages, readKey) {
                 {isToast ? (
                   <p className="flex flex-wrap items-center gap-x-1.5 text-xs font-bold text-slate-700 dark:text-slate-200">
                     <span>
-                      業者: {primaryPartyName}
-                      {markPrimaryParty ? <BillingMark /> : null}
+                      業者: {displayPrime}
+                      {billOnPrime ? <BillingMark /> : null}
                     </span>
-                    {showSubParty && prime ? (
+                    {displaySub !== '—' ? (
                       <span className="text-slate-500 dark:text-slate-300">
-                        ／ 下請: {sub}
-                        {showBillingMark && projectBillingIsSub ? <BillingMark /> : null}
+                        ／ 下請: {displaySub}
+                        {billOnSub ? <BillingMark /> : null}
                       </span>
                     ) : null}
-                    {trader ? (
+                    {displayTrader !== '—' ? (
                       <span className="text-slate-500 dark:text-slate-300">
-                        ／ 商社: {trader}
+                        ／ 商社: {displayTrader}
                       </span>
                     ) : null}
                     {orderedByIsProxy ? (
@@ -1551,17 +1540,15 @@ function isUnreadForFactory(messages, readKey) {
                     <div className="min-w-0 pr-2">
                       <dt className="text-xs font-bold text-slate-500">業者（元請）</dt>
                       <dd className="mt-0.5 break-words text-sm font-bold text-slate-900">
-                        {primaryPartyName}
-                        {markPrimaryParty ? <BillingMark /> : null}
+                        {displayPrime}
+                        {billOnPrime ? <BillingMark /> : null}
                       </dd>
                     </div>
                     <div className="min-w-0 border-l border-slate-200 px-2">
                       <dt className="text-xs font-bold text-slate-500">下請</dt>
                       <dd className="mt-0.5 break-words text-sm font-bold text-slate-900">
-                        {showSubParty && prime ? sub : '—'}
-                        {showSubParty && prime && showBillingMark && projectBillingIsSub ? (
-                          <BillingMark />
-                        ) : null}
+                        {displaySub}
+                        {billOnSub && displaySub !== '—' ? <BillingMark /> : null}
                         {missingBillingSub ? (
                           <span className="mt-0.5 block text-[10px] font-bold text-red-600">
                             ⚠請求先(下請)未設定
@@ -1572,7 +1559,7 @@ function isUnreadForFactory(messages, readKey) {
                     <div className="min-w-0 border-l border-slate-200 px-2">
                       <dt className="text-xs font-bold text-slate-500">商社</dt>
                       <dd className="mt-0.5 break-words text-sm font-bold text-slate-900">
-                        {trader || '—'}
+                        {displayTrader}
                       </dd>
                     </div>
                     {orderedByIsProxy ? (
@@ -1580,6 +1567,9 @@ function isUnreadForFactory(messages, readKey) {
                         <dt className="text-xs font-bold text-slate-500">発注</dt>
                         <dd className="mt-0.5 break-words text-sm font-bold text-slate-900">
                           {orderedByLabel}
+                          <span className="ml-1 rounded bg-sky-100 px-1 text-[10px] font-black text-sky-800">
+                            代理
+                          </span>
                         </dd>
                       </div>
                     ) : null}
@@ -1593,10 +1583,10 @@ function isUnreadForFactory(messages, readKey) {
                     <SiteOrderUrlActions
                       urlToken={resolveSiteUrlToken(order, projectById, customerById)}
                       siteName={party.site !== '—' ? party.site : siteNm}
-                      customerName={prime || sub}
-                      traderName={trader}
-                      project={projectById?.[String(order?.project_id ?? order?.projectId ?? '')]}
-                      customer={customerById?.[String(order?.customer_id ?? order?.customerId ?? '')]}
+                      customerName={displayPrime !== '—' ? displayPrime : ''}
+                      traderName={displayTrader !== '—' ? displayTrader : ''}
+                      project={linkedProject}
+                      customer={orderCustomer}
                       onCopied={onSiteUrlCopied}
                       compact
                     />
@@ -1673,7 +1663,7 @@ function isUnreadForFactory(messages, readKey) {
 
       const renderDetailBody = () => (
         <>
-          {projectPartyDisplay ? (
+          {linkedProject ? (
             <dl
               className={
                 'mb-3 grid min-w-0 grid-cols-2 gap-2 rounded-xl border border-slate-200/90 bg-white px-3 py-3 ' +
@@ -1683,21 +1673,26 @@ function isUnreadForFactory(messages, readKey) {
               <div className="min-w-0">
                 <dt className="text-xs font-bold text-slate-500 sm:text-sm">業者（元請）</dt>
                 <dd className="mt-1 break-words font-black text-slate-900">
-                  {projectPartyDisplay.prime}
-                  {projectPartyDisplay.billOnPrime ? <BillingMark /> : null}
+                  {displayPrime}
+                  {billOnPrime ? <BillingMark /> : null}
                 </dd>
               </div>
               <div className="min-w-0 sm:border-l sm:border-slate-200 sm:pl-4">
                 <dt className="text-xs font-bold text-slate-500 sm:text-sm">下請</dt>
                 <dd className="mt-1 break-words font-black text-slate-900">
-                  {projectPartyDisplay.sub}
-                  {projectPartyDisplay.billOnSub ? <BillingMark /> : null}
+                  {displaySub}
+                  {billOnSub && displaySub !== '—' ? <BillingMark /> : null}
+                  {missingBillingSub ? (
+                    <span className="mt-0.5 block text-[10px] font-bold text-red-600">
+                      ⚠請求先(下請)未設定
+                    </span>
+                  ) : null}
                 </dd>
               </div>
               <div className="min-w-0 sm:border-l sm:border-slate-200 sm:pl-4">
                 <dt className="text-xs font-bold text-slate-500 sm:text-sm">商社</dt>
                 <dd className="mt-1 break-words font-black text-slate-900">
-                  {projectPartyDisplay.trader}
+                  {displayTrader}
                 </dd>
               </div>
               {orderedByIsProxy ? (
