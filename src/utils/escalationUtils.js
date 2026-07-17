@@ -581,7 +581,7 @@ export function enrichOrderWithProject(order, projectById, customerById = {}) {
     projectContractor: prime,
     displayTraderName: trader || order.traderName,
     displayContractorName: prime || order.contractorName,
-    displaySubContractorName: party.sub || '',
+    displaySubContractorName: party.sub !== '—' ? party.sub : '',
   };
 }
 

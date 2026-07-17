@@ -62,6 +62,7 @@ import { AdminCsvDownloadButton } from './components/AdminCsvDownloadButton.jsx'
 import { AdminFactoryNewsSection } from './components/AdminFactoryNewsSection.jsx';
 import { AdminOrgSection } from './components/AdminOrgSection.jsx';
 import { AdminCharterSection } from './components/AdminCharterSection.jsx';
+import BillingMark from './components/BillingMark.jsx';
 import {
   downloadProjectsExportCsv,
   parseProjectsCsvFile,
@@ -72,7 +73,7 @@ import {
   isUnregisteredTradingCompanyName,
   resolveProjectTradingCompanyName,
 } from './utils/projectTradingCompany.js';
-import { resolveProjectContractorLabel } from './utils/projectPartyDisplay.js';
+import { resolveProjectPartyDisplay } from './utils/projectPartyDisplay.js';
 
 const ADMIN_AUTH_SESSION_KEY = 'concrete_link_admin_auth_v1';
 
@@ -1204,13 +1205,13 @@ function ProjectsSection({ factories, factoryNameById }) {
       {!loading && projects.length === 0 && !formMode ? <p className="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-600">登録された物件はありません。</p> : null}
       {!loading && projects.length > 0 ? (
         <div className="mt-4 overflow-x-auto">
-          <table className="w-full min-w-[800px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[900px] border-collapse text-left text-sm">
             <thead>
               <tr className="border-b-2 border-slate-200 bg-slate-50">
                 <th className="px-3 py-2 font-black text-slate-700">物件名</th>
-                <th className="px-3 py-2 font-black text-slate-700">業者</th>
+                <th className="px-3 py-2 font-black text-slate-700">業者（元請）</th>
+                <th className="px-3 py-2 font-black text-slate-700">下請</th>
                 <th className="px-3 py-2 font-black text-slate-700">商社</th>
-                <th className="px-3 py-2 font-black text-slate-700">請求先</th>
                 <th className="px-3 py-2 font-black text-slate-700">メイン工場</th>
                 <th className="px-3 py-2 font-black text-slate-700">サブ工場</th>
                 <th className="px-3 py-2 font-black text-slate-700">緯度・経度</th>
@@ -1223,28 +1224,25 @@ function ProjectsSection({ factories, factoryNameById }) {
                 const customer = customers.find(
                   (c) => String(c?.id || '') === String(p.customer_id || ''),
                 );
-                const contractor = resolveProjectContractorLabel(p, customer);
+                const display = resolveProjectPartyDisplay(p, customer);
                 return (
                   <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50/80">
                     <td className="px-3 py-2.5 font-bold text-slate-900">{p.name}</td>
+                    <td className="px-3 py-2.5 font-bold text-slate-800">
+                      {display.prime}
+                      {display.billOnPrime ? <BillingMark /> : null}
+                    </td>
                     <td className="px-3 py-2.5 text-slate-700">
-                      <p className="font-bold text-slate-800">{contractor.prime}</p>
-                      {contractor.sub ? (
-                        <p className="mt-0.5 text-xs text-slate-500">下請: {contractor.sub}</p>
+                      <span className="font-bold text-slate-800">{display.sub}</span>
+                      {display.billOnSub && display.sub !== '—' ? <BillingMark /> : null}
+                      {display.billOnSub && display.sub === '—' ? (
+                        <span className="mt-0.5 block text-[10px] font-bold text-red-600">
+                          ⚠請求先未設定
+                        </span>
                       ) : null}
                     </td>
                     <td className="px-3 py-2.5 text-slate-700">
-                      {contractor.trader}
-                    </td>
-                    <td
-                      className={
-                        'px-3 py-2.5 ' +
-                        (contractor.billingIsSub
-                          ? 'font-bold text-amber-700'
-                          : 'text-slate-600')
-                      }
-                    >
-                      {contractor.billing}
+                      {display.trader}
                     </td>
                   <td className="px-3 py-2.5">{factoryNameById[p.main_factory_id] || '—'}</td>
                   <td className="max-w-[12rem] px-3 py-2.5 text-xs text-slate-600">{(p.sub_factory_ids || []).map((id) => factoryNameById[id] || id).join('、') || '—'}</td>

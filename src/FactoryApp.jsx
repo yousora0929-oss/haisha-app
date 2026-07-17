@@ -10,10 +10,10 @@ import {
 } from './supabaseClient.js';
 import { buildEscalationContext, filterOrdersForFactory, getOrderEscalationStepInfo } from './utils/escalationUtils.js';
 import {
-  billingTargetLabel,
   resolveOrderPartyDisplay,
-  resolveProjectContractorLabel,
+  resolveProjectPartyDisplay,
 } from './utils/projectPartyDisplay.js';
+import BillingMark from './components/BillingMark.jsx';
 import {
   FACTORY_SITE_ID,
   FACTORY_SITE_NAME,
@@ -667,7 +667,7 @@ function isUnreadForFactory(messages, readKey) {
 
     function enrichProjectForFactoryList(project, customers) {
       const customer = (customers || []).find((c) => c && String(c.id) === String(project?.customer_id || ''));
-      const party = resolveProjectContractorLabel(project, customer);
+      const party = resolveProjectPartyDisplay(project, customer);
       const phone = String(customer?.phone_number || '').trim() || '—';
       const contact = String(customer?.manager_name || '').trim();
       const pt = String(project?.url_token || '').trim();
@@ -679,8 +679,8 @@ function isUnreadForFactory(messages, readKey) {
         displayContractor: party.prime,
         displaySubContractor: party.sub,
         displayTrader: party.trader,
-        displayBilling: party.billing,
-        displayBillingIsSub: party.billingIsSub,
+        displayBillOnPrime: party.billOnPrime,
+        displayBillOnSub: party.billOnSub,
         displayPhone: phone,
         displayContact: contact || '—',
         displayLocation: formatProjectLocation(project),
@@ -707,30 +707,22 @@ function isUnreadForFactory(messages, readKey) {
               </div>
               <dl className="mt-2 grid gap-1.5 text-xs sm:grid-cols-2 sm:text-sm">
                 <div>
-                  <dt className="font-bold text-slate-500">業者</dt>
+                  <dt className="font-bold text-slate-500">業者（元請）</dt>
                   <dd className="font-bold text-slate-800">
                     {project.displayContractor}
-                    {project.displaySubContractor ? (
-                      <span className="block text-[11px] font-medium text-slate-500">
-                        下請: {project.displaySubContractor}
-                      </span>
-                    ) : null}
+                    {project.displayBillOnPrime ? <BillingMark /> : null}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-bold text-slate-500">下請</dt>
+                  <dd className="font-bold text-slate-800">
+                    {project.displaySubContractor}
+                    {project.displayBillOnSub ? <BillingMark /> : null}
                   </dd>
                 </div>
                 <div>
                   <dt className="font-bold text-slate-500">商社</dt>
                   <dd className="font-bold text-slate-800">{project.displayTrader}</dd>
-                </div>
-                <div>
-                  <dt className="font-bold text-slate-500">請求先</dt>
-                  <dd
-                    className={
-                      'font-bold ' +
-                      (project.displayBillingIsSub ? 'text-amber-700' : 'text-slate-800')
-                    }
-                  >
-                    {project.displayBilling}
-                  </dd>
                 </div>
                 <div>
                   <dt className="font-bold text-slate-500">担当者</dt>
@@ -895,8 +887,11 @@ function isUnreadForFactory(messages, readKey) {
         const q = order.quantityM3 ?? order.quantityCube;
         const projectId = String(order?.project_id ?? order?.projectId ?? '').trim();
         const linkedProject = projectId ? projectById?.[projectId] : null;
+        const linkedCustomerId = String(
+          linkedProject?.customer_id ?? order?.customer_id ?? order?.customerId ?? '',
+        ).trim();
         const linkedCustomer =
-          customerById?.[String(order?.customer_id ?? order?.customerId ?? '')] ?? null;
+          (linkedCustomerId ? customerById?.[linkedCustomerId] : null) ?? null;
         const partyDisplay = resolveOrderPartyDisplay(order, {
           project: linkedProject,
           customer: linkedCustomer,
@@ -929,10 +924,14 @@ function isUnreadForFactory(messages, readKey) {
 
       const projectId = String(order?.project_id ?? order?.projectId ?? '').trim();
       const linkedProject = projectId ? projectById?.[projectId] : null;
-      const projectBillingLabel = linkedProject
-        ? billingTargetLabel(linkedProject.billing_target)
-        : '';
-      const projectBillingIsSub = linkedProject?.billing_target === 'sub';
+      const linkedCustomerId = String(
+        linkedProject?.customer_id ?? order?.customer_id ?? order?.customerId ?? '',
+      ).trim();
+      const linkedCustomer =
+        (linkedCustomerId ? customerById?.[linkedCustomerId] : null) ?? null;
+      const projectPartyDisplay = linkedProject
+        ? resolveProjectPartyDisplay(linkedProject, linkedCustomer)
+        : null;
       const fieldLabel = 'mb-1 block text-sm font-bold text-slate-600 sm:text-base';
       const fieldInput =
         'mt-1 min-h-[48px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 sm:text-lg';
@@ -1053,6 +1052,28 @@ function isUnreadForFactory(messages, readKey) {
 
                 <section className="mt-4 space-y-4 rounded-xl border border-slate-200 bg-white p-3">
                   <p className="text-xs font-black uppercase tracking-wider text-slate-500">物件基本情報</p>
+                  {projectPartyDisplay ? (
+                    <dl className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+                      <div>
+                        <dt className="font-bold text-slate-500">業者（元請）</dt>
+                        <dd className="font-black text-slate-900">
+                          {projectPartyDisplay.prime}
+                          {projectPartyDisplay.billOnPrime ? <BillingMark /> : null}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="font-bold text-slate-500">下請</dt>
+                        <dd className="font-black text-slate-900">
+                          {projectPartyDisplay.sub}
+                          {projectPartyDisplay.billOnSub ? <BillingMark /> : null}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="font-bold text-slate-500">商社</dt>
+                        <dd className="font-black text-slate-900">{projectPartyDisplay.trader}</dd>
+                      </div>
+                    </dl>
+                  ) : null}
                   <div>
                     <label className={fieldLabel} htmlFor="foe-contractor">業者名</label>
                     <input id="foe-contractor" name="contractorName" type="text" value={editData.contractorName} onChange={handleInputChange} className={fieldInput} />
@@ -1061,16 +1082,6 @@ function isUnreadForFactory(messages, readKey) {
                     <label className={fieldLabel} htmlFor="foe-trader">商社名</label>
                     <input id="foe-trader" name="traderName" type="text" value={editData.traderName} onChange={handleInputChange} className={fieldInput} />
                   </div>
-                  {linkedProject ? (
-                    <p
-                      className={
-                        'text-xs font-bold ' +
-                        (projectBillingIsSub ? 'text-amber-700' : 'text-slate-600')
-                      }
-                    >
-                      請求先: {projectBillingLabel}
-                    </p>
-                  ) : null}
                   <div>
                     <label className={fieldLabel} htmlFor="foe-site">
                       現場名
@@ -1294,20 +1305,30 @@ function isUnreadForFactory(messages, readKey) {
       const phone = order.sitePhone != null ? String(order.sitePhone).trim() : '';
       const projectId = String(order?.project_id ?? order?.projectId ?? '').trim();
       const linkedProject = projectId ? projectById?.[projectId] : null;
+      const linkedCustomerId = String(
+        linkedProject?.customer_id ?? order?.customer_id ?? order?.customerId ?? '',
+      ).trim();
       const linkedCustomer =
-        customerById?.[String(order?.customer_id ?? order?.customerId ?? '')] ?? null;
+        (linkedCustomerId ? customerById?.[linkedCustomerId] : null) ?? null;
+      const projectPartyDisplay = linkedProject
+        ? resolveProjectPartyDisplay(linkedProject, linkedCustomer)
+        : null;
       const partyDisplay = resolveOrderPartyDisplay(order, {
         project: linkedProject,
         customer: linkedCustomer,
       });
       const trader = partyDisplay.trader !== '—' ? partyDisplay.trader : '';
       const contractor = partyDisplay.prime !== '—' ? partyDisplay.prime : '';
-      const projectBillingLabel = linkedProject
-        ? billingTargetLabel(linkedProject.billing_target)
-        : partyDisplay.billing || '';
-      const projectBillingIsSub = linkedProject
-        ? linkedProject.billing_target === 'sub'
-        : partyDisplay.billingIsSub;
+      const compactContractor =
+        String(
+          order?.contractorName ??
+            order?.contractor_name ??
+            order?.displayContractorName ??
+            '',
+        ).trim() ||
+        contractor ||
+        '—';
+      const projectBillingIsSub = linkedProject?.billing_target === 'sub';
       const isSpotOrder = Boolean(order.is_spot);
       const isLarge = vehicle === '大型';
       const unloadDurationText = factoryUnloadDurationLabel(order);
@@ -1479,22 +1500,13 @@ function isUnreadForFactory(messages, readKey) {
               <div className="min-w-0 text-left">
                 <p className={primaryFieldLabel}>業者</p>
                 <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                  <div className="min-w-0">
-                    <p
-                      className={'break-words ' + primaryFieldValue + ' ' + (isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg')}
-                      title={partyDisplay.prime}
-                    >
-                      {partyDisplay.prime}
-                    </p>
-                    {!isToast && partyDisplay.sub ? (
-                      <p className="text-[11px] font-medium text-slate-500">下請: {partyDisplay.sub}</p>
-                    ) : null}
-                  </div>
-                  {!isToast && projectBillingIsSub ? (
-                    <span className="text-[10px] font-bold text-amber-700">
-                      請求先:下請
-                    </span>
-                  ) : null}
+                  <p
+                    className={'break-words ' + primaryFieldValue + ' ' + (isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg')}
+                    title={compactContractor}
+                  >
+                    {compactContractor}
+                    {!isToast && projectBillingIsSub ? <BillingMark /> : null}
+                  </p>
                 </div>
               </div>
               <div className="min-w-0 border-l border-slate-200/70 pl-2 text-left dark:border-slate-600/70">
@@ -1593,15 +1605,29 @@ function isUnreadForFactory(messages, readKey) {
 
       const renderDetailBody = () => (
         <>
-          {linkedProject ? (
-            <p
-              className={
-                'mb-2 text-xs font-bold ' +
-                (projectBillingIsSub ? 'text-amber-700' : 'text-slate-600')
-              }
-            >
-              請求先: {projectBillingLabel}
-            </p>
+          {projectPartyDisplay ? (
+            <dl className="mb-3 grid min-w-0 grid-cols-1 gap-2 rounded-xl border border-slate-200/90 bg-white px-3 py-3 sm:grid-cols-3">
+              <div className="min-w-0">
+                <dt className="text-xs font-bold text-slate-500 sm:text-sm">業者（元請）</dt>
+                <dd className="mt-1 break-words font-black text-slate-900">
+                  {projectPartyDisplay.prime}
+                  {projectPartyDisplay.billOnPrime ? <BillingMark /> : null}
+                </dd>
+              </div>
+              <div className="min-w-0 sm:border-l sm:border-slate-200 sm:pl-4">
+                <dt className="text-xs font-bold text-slate-500 sm:text-sm">下請</dt>
+                <dd className="mt-1 break-words font-black text-slate-900">
+                  {projectPartyDisplay.sub}
+                  {projectPartyDisplay.billOnSub ? <BillingMark /> : null}
+                </dd>
+              </div>
+              <div className="min-w-0 sm:border-l sm:border-slate-200 sm:pl-4">
+                <dt className="text-xs font-bold text-slate-500 sm:text-sm">商社</dt>
+                <dd className="mt-1 break-words font-black text-slate-900">
+                  {projectPartyDisplay.trader}
+                </dd>
+              </div>
+            </dl>
           ) : null}
           <div className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border border-slate-200/90 bg-white px-3 py-3 sm:grid-cols-3">
             <div className="min-w-0">

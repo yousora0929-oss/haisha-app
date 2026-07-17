@@ -1,26 +1,28 @@
-/** 請求先ラベル */
-export function billingTargetLabel(billingTarget) {
-  return billingTarget === 'sub' ? '下請' : '元請';
-}
-
 /**
- * 物件の業者（元請/下請）表示名を解決（商社名との重複を排除）
+ * 物件の業者（元請/下請）・商社・請求先マークの表示情報を解決
+ * - contractor_display_name が商社名と同一なら元請名として使わず customers マスタへフォールバック
+ * - billing_target（'main'|'sub'）に応じて請求マークの付与先を返す
  * @param {object} project mapProjectRow 済みの物件
  * @param {object|null} customer projects.customer_id に対応する customers 行
  */
-export function resolveProjectContractorLabel(project, customer) {
+export function resolveProjectPartyDisplay(project, customer) {
   const trader = String(
     project?.trading_company_name || project?.trading_company || '',
   ).trim();
   const display = String(project?.contractor_display_name || '').trim();
   const masterName = String(customer?.company_name || customer?.name || '').trim();
   const prime = display && display !== trader ? display : masterName;
+  const sub = String(
+    project?.sub_contractor_name || project?.contractor || '',
+  ).trim();
+  const billingIsSub = project?.billing_target === 'sub';
   return {
     prime: prime || '—',
-    sub: String(project?.sub_contractor_name || project?.contractor || '').trim(),
+    sub: sub || '—',
     trader: trader || '—',
-    billing: billingTargetLabel(project?.billing_target),
-    billingIsSub: project?.billing_target === 'sub',
+    billingIsSub,
+    billOnPrime: !billingIsSub,
+    billOnSub: billingIsSub,
   };
 }
 
@@ -37,7 +39,7 @@ export function resolveOrderPartyDisplay(order, { project = null, customer = nul
   const customerFallback = String(order?.customerName ?? order?.customer_name ?? '').trim();
 
   if (project && typeof project === 'object') {
-    const party = resolveProjectContractorLabel(project, customer);
+    const party = resolveProjectPartyDisplay(project, customer);
     const prime =
       explicitContractor ||
       (party.prime !== '—' ? party.prime : '') ||
@@ -48,10 +50,11 @@ export function resolveOrderPartyDisplay(order, { project = null, customer = nul
       String(order?.displayTraderName ?? '').trim();
     return {
       prime: prime || '—',
-      sub: party.sub || '',
+      sub: party.sub,
       trader: trader || '—',
-      billing: party.billing,
       billingIsSub: party.billingIsSub,
+      billOnPrime: party.billOnPrime,
+      billOnSub: party.billOnSub,
     };
   }
 
@@ -62,9 +65,10 @@ export function resolveOrderPartyDisplay(order, { project = null, customer = nul
     explicitTrader || String(order?.displayTraderName ?? '').trim();
   return {
     prime: prime || '—',
-    sub: '',
+    sub: '—',
     trader: trader || '—',
-    billing: '',
     billingIsSub: false,
+    billOnPrime: false,
+    billOnSub: false,
   };
 }
