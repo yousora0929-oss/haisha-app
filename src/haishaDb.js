@@ -2283,7 +2283,6 @@ function mapTradingCompanyRow(row) {
   return {
     id: row.id != null ? String(row.id) : '',
     name,
-    contacts: normalizeContactList(row.contacts),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -2295,14 +2294,10 @@ export async function fetchTradingCompanies() {
   return (data || []).map(mapTradingCompanyRow).filter(Boolean);
 }
 
-export async function insertTradingCompany({ name, contacts }) {
+export async function insertTradingCompany({ name }) {
   const trimmed = String(name ?? '').trim();
   if (!trimmed) throw new Error('商社名を入力してください');
-  const row = { name: trimmed };
-  if (contacts !== undefined) {
-    row.contacts = normalizeContactList(contacts);
-  }
-  const { data, error } = await supabase.from('trading_companies').insert(row).select('*').single();
+  const { data, error } = await supabase.from('trading_companies').insert({ name: trimmed }).select('*').single();
   if (error) throw error;
   return mapTradingCompanyRow(data);
 }
@@ -2310,22 +2305,12 @@ export async function insertTradingCompany({ name, contacts }) {
 export async function updateTradingCompany(id, opts = {}) {
   const companyId = sanitizeRefId(id);
   if (!companyId) throw new Error('商社IDが必要です');
-  const { name, contacts } = opts && typeof opts === 'object' ? opts : {};
-  const updateRow = { updated_at: new Date().toISOString() };
-  if (name !== undefined) {
-    const trimmed = String(name ?? '').trim();
-    if (!trimmed) throw new Error('商社名を入力してください');
-    updateRow.name = trimmed;
-  }
-  if (contacts !== undefined) {
-    updateRow.contacts = normalizeContactList(contacts);
-  }
-  if (Object.keys(updateRow).length <= 1) {
-    throw new Error('更新内容がありません');
-  }
+  const { name } = opts && typeof opts === 'object' ? opts : {};
+  const trimmed = String(name ?? '').trim();
+  if (!trimmed) throw new Error('商社名を入力してください');
   const { data, error } = await supabase
     .from('trading_companies')
-    .update(updateRow)
+    .update({ name: trimmed, updated_at: new Date().toISOString() })
     .eq('id', companyId)
     .select('*')
     .single();

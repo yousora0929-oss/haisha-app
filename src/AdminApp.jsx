@@ -375,7 +375,6 @@ function ProjectForm({
   factories,
   customers,
   agentOrganizations = [],
-  tradingCompanies = [],
   allowedDeliveryAreas = [],
   deliveryPrefecture = '',
   salesStaffList = [],
@@ -581,20 +580,35 @@ function ProjectForm({
     };
   }, [deliveryArea, deliveryPrefecture]);
 
-  const matchedTradingCompany = useMemo(() => {
-    const q = String(tradingCompany || '').trim().toLowerCase();
+  const matchedAgentOrganization = useMemo(() => {
+    const q = String(tradingCompany || '').trim();
     if (!q) return null;
     return (
-      (tradingCompanies || []).find(
-        (c) => String(c?.name || '').trim().toLowerCase() === q,
+      (agentOrganizations || []).find(
+        (o) => String(o?.name || '').trim() === q,
       ) || null
     );
-  }, [tradingCompanies, tradingCompany]);
+  }, [agentOrganizations, tradingCompany]);
 
-  const tradingContactCandidates = useMemo(
-    () => (Array.isArray(matchedTradingCompany?.contacts) ? matchedTradingCompany.contacts : []),
-    [matchedTradingCompany],
-  );
+  const tradingContactCandidates = useMemo(() => {
+    const members = Array.isArray(matchedAgentOrganization?.members)
+      ? matchedAgentOrganization.members
+      : [];
+    return members
+      .map((m) => ({
+        id: m?.id != null ? String(m.id) : '',
+        manager_name: String(m?.manager_name || '').trim(),
+        phone_number: String(m?.phone_number || '').trim(),
+      }))
+      .filter((m) => m.manager_name);
+  }, [matchedAgentOrganization]);
+
+  const formatTradingContactLabel = useCallback((member) => {
+    const name = String(member?.manager_name || '').trim();
+    const phone = String(member?.phone_number || '').trim();
+    if (!name) return '';
+    return phone ? `${name}（${phone}）` : name;
+  }, []);
 
   const showTradingCompanyWarning = useMemo(
     () => isUnregisteredTradingCompanyName(tradingCompany, agentOrganizations, tradingCompanyOrganizationId),
@@ -631,16 +645,16 @@ function ProjectForm({
       const trimmed = String(text || '').trim().toLowerCase();
       if (!trimmed) return;
       const hit = tradingContactCandidates.find(
-        (c) => String(c?.name || '').trim().toLowerCase() === trimmed,
+        (c) => String(c?.manager_name || '').trim().toLowerCase() === trimmed,
       );
-      if (hit?.phone) setTradingContactPhone(String(hit.phone).trim());
+      if (hit?.phone_number) setTradingContactPhone(String(hit.phone_number).trim());
     },
     [tradingContactCandidates],
   );
 
-  const handleTradingContactSelect = useCallback((contact) => {
-    setTradingContactName(String(contact?.name || '').trim());
-    setTradingContactPhone(String(contact?.phone || '').trim());
+  const handleTradingContactSelect = useCallback((member) => {
+    setTradingContactName(String(member?.manager_name || '').trim());
+    setTradingContactPhone(String(member?.phone_number || '').trim());
   }, []);
 
   const updateSiteContact = (index, key, value) => {
@@ -838,9 +852,9 @@ function ProjectForm({
               onValueChange={handleTradingContactNameChange}
               onSelect={handleTradingContactSelect}
               items={tradingContactCandidates}
-              getItemKey={(c) => `${String(c?.name || '')}::${String(c?.phone || '')}`}
-              getItemLabel={(c) => String(c?.name || '').trim()}
-              getSearchTexts={(c) => [c?.name || '', c?.phone || '']}
+              getItemKey={(c) => c.id || `${c.manager_name}::${c.phone_number}`}
+              getItemLabel={formatTradingContactLabel}
+              getSearchTexts={(c) => [c.manager_name || '', c.phone_number || '']}
               placeholder={
                 tradingCompany.trim()
                   ? '担当者名を入力（候補から選択可）'
@@ -1130,7 +1144,6 @@ function ProjectsSection({ factories, factoryNameById }) {
   const [projects, setProjects] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [agentOrganizations, setAgentOrganizations] = useState([]);
-  const [tradingCompanies, setTradingCompanies] = useState([]);
   const [allowedDeliveryAreas, setAllowedDeliveryAreas] = useState([]);
   const [salesStaff, setSalesStaff] = useState([]);
   const [deliveryPrefecture, setDeliveryPrefecture] = useState('');
@@ -1147,20 +1160,18 @@ function ProjectsSection({ factories, factoryNameById }) {
     setLoading(true);
     setError('');
     try {
-      const [rows, customerRows, orgRows, tradingRows, settings] = await Promise.all([
+      const [rows, customerRows, agentOrgRows, settings] = await Promise.all([
         db.fetchProjects(),
         db.fetchCustomers(),
-        db.fetchOrganizations(),
-        db.fetchTradingCompanies().catch((e) => {
-          console.warn('[ProjectsSection] trading companies load failed', e);
+        db.fetchOrganizationsWithMembers('agent').catch((e) => {
+          console.warn('[ProjectsSection] agent organizations load failed', e);
           return [];
         }),
         db.fetchAdminSettings(),
       ]);
       setProjects(rows);
       setCustomers(customerRows);
-      setAgentOrganizations((orgRows || []).filter((o) => o && o.type === 'agent'));
-      setTradingCompanies(tradingRows || []);
+      setAgentOrganizations(agentOrgRows || []);
       setAllowedDeliveryAreas(normalizeAllowedDeliveryAreas(settings?.allowed_delivery_areas));
       setSalesStaff(normalizeSalesStaffList(settings?.sales_staff));
       setDeliveryPrefecture(resolveDeliveryPrefecture(settings));
@@ -1349,7 +1360,6 @@ function ProjectsSection({ factories, factoryNameById }) {
             factories={factories}
             customers={customers}
             agentOrganizations={agentOrganizations}
-            tradingCompanies={tradingCompanies}
             allowedDeliveryAreas={allowedDeliveryAreas}
             deliveryPrefecture={deliveryPrefecture}
             salesStaffList={salesStaff}
