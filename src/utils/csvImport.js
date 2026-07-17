@@ -179,6 +179,7 @@ export const PROJECT_CSV_ALIASES = {
   trading_company_name: ['商社名', '商社', 'trading_company_name', 'trading_company', '担当商社'],
   site_address: ['現場住所', '住所', 'site_address', '町名', '町名・地名', '現場住所詳細'],
   delivery_area: ['エリア', '納入エリア', 'delivery_area', '市町村', '配送エリア'],
+  billing_target: ['請求先', 'billing_target', '請求区分'],
 };
 
 export const TRADING_COMPANY_CSV_ALIASES = {
@@ -194,7 +195,7 @@ export const CUSTOMER_CSV_ALIASES = {
 };
 
 /** CSV取込フォーマットと一致するエクスポート用ヘッダー */
-export const PROJECT_EXPORT_HEADERS = ['物件名', '元請業者', '業者名（表記用）', '商社名', '現場住所', 'エリア'];
+export const PROJECT_EXPORT_HEADERS = ['物件名', '元請業者', '業者名（表記用）', '商社名', '現場住所', 'エリア', '請求先'];
 export const CUSTOMER_EXPORT_HEADERS = ['業者名', 'フリガナ', '担当者名', '電話番号', 'ログインパスワード'];
 export const TRADING_COMPANY_EXPORT_HEADERS = ['商社名'];
 

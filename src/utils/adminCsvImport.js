@@ -78,6 +78,8 @@ export async function parseProjectsCsvFile(
     const trading_company_name = cleanCell(raw.trading_company_name);
     const contractorDisplayName = cleanCell(raw.contractor_display_name);
     const contractorName = cleanCell(raw.contractor);
+    const billingTargetRaw = cleanCell(raw.billing_target);
+    const billing_target = billingTargetRaw.includes('下請') ? 'sub' : 'main';
 
     if (delivery_area && site_address) {
       const full = `${delivery_area} ${site_address}`;
@@ -114,6 +116,7 @@ export async function parseProjectsCsvFile(
       contractor_display_name: contractorDisplayName || null,
       contractor: null,
       sub_contractor_name: null,
+      billing_target,
       delivery_area: delivery_area || null,
       site_address: site_address || null,
       lat: null,
@@ -259,6 +262,7 @@ export function buildProjectsExportRows(projects, customers = []) {
     cleanCell(resolveProjectTradingCompanyName(p)),
     cleanCell(p.site_address),
     cleanCell(p.delivery_area),
+    p.billing_target === 'sub' ? '下請' : '元請',
   ]);
   return [PROJECT_EXPORT_HEADERS, ...dataRows];
 }

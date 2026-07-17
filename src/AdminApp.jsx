@@ -390,6 +390,9 @@ function ProjectForm({
   const [subContractor, setSubContractor] = useState(
     initial?.sub_contractor_name ?? initial?.contractor ?? '',
   );
+  const [billingTarget, setBillingTarget] = useState(
+    initial?.billing_target === 'sub' ? 'sub' : 'main',
+  );
   const [mainFactoryId, setMainFactoryId] = useState(initial?.main_factory_id ?? '');
   const [subIds, setSubIds] = useState(() => new Set(initial?.sub_factory_ids ?? []));
   const [mainFactorySwapNotice, setMainFactorySwapNotice] = useState('');
@@ -459,6 +462,7 @@ function ProjectForm({
     setTradingCompany(resolveProjectTradingCompanyName(initial));
     setTradingCompanyOrganizationId(initial?.trading_company_organization_id ?? '');
     setSubContractor(initial?.sub_contractor_name ?? initial?.contractor ?? '');
+    setBillingTarget(initial?.billing_target === 'sub' ? 'sub' : 'main');
     setMainFactoryId(initial?.main_factory_id ?? '');
     setSubIds(new Set(initial?.sub_factory_ids ?? []));
     setMainFactorySwapNotice('');
@@ -662,6 +666,11 @@ function ProjectForm({
       }
     }
 
+    if (billingTarget === 'sub' && !subContractor.trim()) {
+      const ok = window.confirm('請求先が下請ですが、業者（下請）が未入力です');
+      if (!ok) return;
+    }
+
     onSave({
       name: name.trim(),
       customer_id: nextCustomerId,
@@ -671,6 +680,7 @@ function ProjectForm({
       trading_company_organization_id: tradingCompanyOrganizationId || null,
       contractor: subContractor.trim(),
       sub_contractor_name: subContractor.trim(),
+      billing_target: billingTarget,
       main_factory_id: mainFactoryId,
       sub_factory_ids: [...subIds].filter((id) => id && id !== mainFactoryId),
       delivery_area: area,
@@ -740,10 +750,37 @@ function ProjectForm({
           ) : null}
         </div>
         <div>
-          <label className="text-xs font-bold text-slate-600" htmlFor="proj-contractor">業者（下請）</label>
-          <input id="proj-contractor" type="text" value={subContractor} onChange={(e) => setSubContractor(e.target.value)} className={fieldClass} placeholder="例: △△建設" />
+          <label className="text-xs font-bold text-slate-600" htmlFor="proj-sub-contractor">業者（下請）</label>
+          <input id="proj-sub-contractor" type="text" value={subContractor} onChange={(e) => setSubContractor(e.target.value)} className={fieldClass} placeholder="例: △△建設" />
         </div>
       </div>
+      <fieldset>
+        <legend className="text-xs font-bold text-slate-600">請求先</legend>
+        <div className="mt-2 flex flex-wrap gap-3">
+          <label className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-lg border-2 border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
+            <input
+              type="radio"
+              name="proj-billing-target"
+              value="main"
+              checked={billingTarget === 'main'}
+              onChange={() => setBillingTarget('main')}
+              className="h-4 w-4 border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            元請に請求
+          </label>
+          <label className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-lg border-2 border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
+            <input
+              type="radio"
+              name="proj-billing-target"
+              value="sub"
+              checked={billingTarget === 'sub'}
+              onChange={() => setBillingTarget('sub')}
+              className="h-4 w-4 border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            下請に請求
+          </label>
+        </div>
+      </fieldset>
       <div>
         <label className="text-xs font-bold text-slate-600" htmlFor="proj-main-factory">
           メイン工場（1社） <span className="text-red-600">*</span>
@@ -1191,7 +1228,22 @@ function ProjectsSection({ factories, factoryNameById }) {
                       || '—'}
                   </td>
                   <td className="px-3 py-2.5 text-slate-700">{resolveProjectTradingCompanyName(p) || '—'}</td>
-                  <td className="px-3 py-2.5 text-slate-700">{(p.sub_contractor_name || p.contractor)?.trim() || '—'}</td>
+                  <td className="px-3 py-2.5 text-slate-700">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span>
+                        {(p.sub_contractor_name || p.contractor)?.trim() || '—'}
+                      </span>
+                      {p.billing_target === 'sub' ? (
+                        <span className="rounded border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[11px] font-bold text-amber-800">
+                          請求先: 下請
+                        </span>
+                      ) : (
+                        <span className="rounded border border-slate-300 bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold text-slate-700">
+                          請求先: 元請
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-3 py-2.5">{factoryNameById[p.main_factory_id] || '—'}</td>
                   <td className="max-w-[12rem] px-3 py-2.5 text-xs text-slate-600">{(p.sub_factory_ids || []).map((id) => factoryNameById[id] || id).join('、') || '—'}</td>
                   <td className="px-3 py-2.5 font-mono text-xs">{p.lat != null && p.lng != null ? `${p.lat}, ${p.lng}` : '—'}</td>

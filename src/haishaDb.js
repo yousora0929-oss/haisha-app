@@ -47,7 +47,7 @@ const CUSTOMER_SELECT_MIN =
 // projects は環境差分（未適用マイグレーション）でカラム欠損しやすい。
 // まずは trading_company_name を優先し、無ければ段階的にフォールバックする。
 const PROJECT_SELECT_MIN =
-  'id, name, customer_id, trading_company_name, main_factory_id, sub_factory_ids, lat, lng, contractor, sub_contractor_name, delivery_area, site_address, created_at, updated_at';
+  'id, name, customer_id, trading_company_name, main_factory_id, sub_factory_ids, lat, lng, contractor, sub_contractor_name, billing_target, delivery_area, site_address, created_at, updated_at';
 const PROJECT_SELECT_MIN_LEGACY =
   'id, name, main_factory_id, sub_factory_ids, lat, lng, trading_company, contractor, created_at, updated_at';
 const PROJECT_SELECT_MIN_BASE =
@@ -1897,6 +1897,7 @@ function mapProjectRow(row) {
         : row.contractor != null
           ? String(row.contractor)
           : '',
+    billing_target: String(row.billing_target || '').trim() === 'sub' ? 'sub' : 'main',
     contractor_display_name:
       row.contractor_display_name != null ? String(row.contractor_display_name) : '',
     delivery_area: row.delivery_area != null ? String(row.delivery_area) : '',
@@ -2686,6 +2687,7 @@ export async function bulkInsertProjects(projectRows) {
       ...buildProjectTradingCompanyFields(payload),
       contractor: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
       sub_contractor_name: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
+      billing_target: String(payload.billing_target || '').trim() === 'sub' ? 'sub' : 'main',
       contractor_display_name: String(payload.contractor_display_name || '').trim() || null,
       delivery_area: String(payload.delivery_area || '').trim() || null,
       site_address: String(payload.site_address || '').trim() || null,
@@ -2725,6 +2727,7 @@ export async function insertProject(payload) {
     ...buildProjectTradingCompanyFields(payload),
     contractor: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
     sub_contractor_name: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
+    billing_target: String(payload.billing_target || '').trim() === 'sub' ? 'sub' : 'main',
     contractor_display_name: String(payload.contractor_display_name || '').trim() || null,
     delivery_area: String(payload.delivery_area || '').trim() || null,
     site_address: String(payload.site_address || '').trim() || null,
@@ -2755,6 +2758,7 @@ export async function updateProject(projectId, payload) {
     ...buildProjectTradingCompanyFields(payload),
     contractor: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
     sub_contractor_name: String(payload.sub_contractor_name || payload.contractor || '').trim() || null,
+    billing_target: String(payload.billing_target || '').trim() === 'sub' ? 'sub' : 'main',
     contractor_display_name: String(payload.contractor_display_name || '').trim() || null,
     delivery_area: String(payload.delivery_area || '').trim() || null,
     site_address: String(payload.site_address || '').trim() || null,
