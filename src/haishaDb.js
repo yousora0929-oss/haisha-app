@@ -1868,6 +1868,16 @@ function normalizeSubFactoryIds(raw) {
   return [];
 }
 
+function normalizeContactList(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((c) => ({
+      name: String(c?.name ?? '').trim(),
+      phone: String(c?.phone ?? '').trim(),
+    }))
+    .filter((c) => c.name || c.phone);
+}
+
 function mapProjectRow(row) {
   if (!row || typeof row !== 'object') return null;
   return {
@@ -1913,6 +1923,11 @@ function mapProjectRow(row) {
     ).trim(),
     sales_admin_id: row.sales_admin_id != null ? String(row.sales_admin_id).trim() : '',
     sales_admin_name: row.sales_admin_name != null ? String(row.sales_admin_name).trim() : '',
+    site_contacts: normalizeContactList(row.site_contacts),
+    trading_contact_name:
+      row.trading_contact_name != null ? String(row.trading_contact_name).trim() : '',
+    trading_contact_phone:
+      row.trading_contact_phone != null ? String(row.trading_contact_phone).trim() : '',
     map_annotations: row.map_annotations && typeof row.map_annotations === 'object' ? row.map_annotations : null,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -2268,6 +2283,7 @@ function mapTradingCompanyRow(row) {
   return {
     id: row.id != null ? String(row.id) : '',
     name,
+    contacts: normalizeContactList(row.contacts),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -2279,22 +2295,37 @@ export async function fetchTradingCompanies() {
   return (data || []).map(mapTradingCompanyRow).filter(Boolean);
 }
 
-export async function insertTradingCompany({ name }) {
+export async function insertTradingCompany({ name, contacts }) {
   const trimmed = String(name ?? '').trim();
   if (!trimmed) throw new Error('商社名を入力してください');
-  const { data, error } = await supabase.from('trading_companies').insert({ name: trimmed }).select('*').single();
+  const row = { name: trimmed };
+  if (contacts !== undefined) {
+    row.contacts = normalizeContactList(contacts);
+  }
+  const { data, error } = await supabase.from('trading_companies').insert(row).select('*').single();
   if (error) throw error;
   return mapTradingCompanyRow(data);
 }
 
-export async function updateTradingCompany(id, { name }) {
+export async function updateTradingCompany(id, opts = {}) {
   const companyId = sanitizeRefId(id);
   if (!companyId) throw new Error('商社IDが必要です');
-  const trimmed = String(name ?? '').trim();
-  if (!trimmed) throw new Error('商社名を入力してください');
+  const { name, contacts } = opts && typeof opts === 'object' ? opts : {};
+  const updateRow = { updated_at: new Date().toISOString() };
+  if (name !== undefined) {
+    const trimmed = String(name ?? '').trim();
+    if (!trimmed) throw new Error('商社名を入力してください');
+    updateRow.name = trimmed;
+  }
+  if (contacts !== undefined) {
+    updateRow.contacts = normalizeContactList(contacts);
+  }
+  if (Object.keys(updateRow).length <= 1) {
+    throw new Error('更新内容がありません');
+  }
   const { data, error } = await supabase
     .from('trading_companies')
-    .update({ name: trimmed, updated_at: new Date().toISOString() })
+    .update(updateRow)
     .eq('id', companyId)
     .select('*')
     .single();
@@ -2747,6 +2778,9 @@ export async function insertProject(payload) {
     url_token: resolveUrlTokenForInsert(payload),
     sales_admin_id: String(payload.sales_admin_id ?? '').trim() || null,
     sales_admin_name: String(payload.sales_admin_name ?? '').trim() || null,
+    site_contacts: normalizeContactList(payload.site_contacts),
+    trading_contact_name: String(payload.trading_contact_name ?? '').trim() || null,
+    trading_contact_phone: String(payload.trading_contact_phone ?? '').trim() || null,
   };
   const { data, error } = await supabase.from('projects').insert(row).select('*').single();
   if (error) throw error;
@@ -2777,6 +2811,9 @@ export async function updateProject(projectId, payload) {
     sheet_url: normalizeExternalUrl(payload.sheet_url) || null,
     sales_admin_id: String(payload.sales_admin_id ?? '').trim() || null,
     sales_admin_name: String(payload.sales_admin_name ?? '').trim() || null,
+    site_contacts: normalizeContactList(payload.site_contacts),
+    trading_contact_name: String(payload.trading_contact_name ?? '').trim() || null,
+    trading_contact_phone: String(payload.trading_contact_phone ?? '').trim() || null,
   };
   const latNum = payload.lat != null && payload.lat !== '' ? Number(payload.lat) : NaN;
   const lngNum = payload.lng != null && payload.lng !== '' ? Number(payload.lng) : NaN;

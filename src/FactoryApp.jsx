@@ -668,8 +668,6 @@ function isUnreadForFactory(messages, readKey) {
     function enrichProjectForFactoryList(project, customers) {
       const customer = (customers || []).find((c) => c && String(c.id) === String(project?.customer_id || ''));
       const party = resolveProjectPartyDisplay(project, customer);
-      const phone = String(customer?.phone_number || '').trim() || '—';
-      const contact = String(customer?.manager_name || '').trim();
       const pt = String(project?.url_token || '').trim();
       const ct = String(customer?.url_token || '').trim();
       const urlToken = isValidSiteOrderUrlToken(pt) ? pt : isValidSiteOrderUrlToken(ct) ? ct : '';
@@ -681,13 +679,25 @@ function isUnreadForFactory(messages, readKey) {
         displayTrader: party.trader,
         displayBillOnPrime: party.billOnPrime,
         displayBillOnSub: party.billOnSub,
-        displayPhone: phone,
-        displayContact: contact || '—',
+        displaySiteContacts: Array.isArray(project?.site_contacts) ? project.site_contacts : [],
+        displayTradingContactName: String(project?.trading_contact_name || '').trim(),
+        displayTradingContactPhone: String(project?.trading_contact_phone || '').trim(),
         displayLocation: formatProjectLocation(project),
       };
     }
 
+    function formatTelHref(phone) {
+      const digits = String(phone || '').replace(/[^\d+]/g, '');
+      return digits ? `tel:${digits}` : '';
+    }
+
     function FactoryAssignedProjectCard({ project, roleLabel, onUrlCopied }) {
+      const siteContacts = Array.isArray(project.displaySiteContacts)
+        ? project.displaySiteContacts.filter((c) => c && (c.name || c.phone))
+        : [];
+      const tradingContactName = project.displayTradingContactName || '';
+      const tradingContactPhone = project.displayTradingContactPhone || '';
+      const showTradingContact = Boolean(tradingContactName || tradingContactPhone);
       return (
         <li className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -725,13 +735,59 @@ function isUnreadForFactory(messages, readKey) {
                   <dd className="font-bold text-slate-800">{project.displayTrader}</dd>
                 </div>
                 <div>
-                  <dt className="font-bold text-slate-500">担当者</dt>
-                  <dd className="font-bold text-slate-800">{project.displayContact}</dd>
+                  <dt className="font-bold text-slate-500">現場担当者</dt>
+                  <dd className="font-bold text-slate-800">
+                    {siteContacts.length === 0 ? (
+                      '—'
+                    ) : (
+                      <ul className="space-y-0.5">
+                        {siteContacts.map((c, i) => {
+                          const tel = formatTelHref(c.phone);
+                          return (
+                            <li key={`site-contact-${i}`}>
+                              {c.name || '—'}
+                              {c.phone ? (
+                                <>
+                                  {' '}
+                                  {tel ? (
+                                    <a href={tel} className="font-mono text-indigo-700 underline-offset-2 hover:underline">
+                                      {c.phone}
+                                    </a>
+                                  ) : (
+                                    <span className="font-mono">{c.phone}</span>
+                                  )}
+                                </>
+                              ) : null}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </dd>
                 </div>
-                <div>
-                  <dt className="font-bold text-slate-500">連絡先</dt>
-                  <dd className="font-mono font-bold text-slate-800">{project.displayPhone}</dd>
-                </div>
+                {showTradingContact ? (
+                  <div>
+                    <dt className="font-bold text-slate-500">商社担当者</dt>
+                    <dd className="font-bold text-slate-800">
+                      {tradingContactName || '—'}
+                      {tradingContactPhone ? (
+                        <>
+                          {' '}
+                          {formatTelHref(tradingContactPhone) ? (
+                            <a
+                              href={formatTelHref(tradingContactPhone)}
+                              className="font-mono text-indigo-700 underline-offset-2 hover:underline"
+                            >
+                              {tradingContactPhone}
+                            </a>
+                          ) : (
+                            <span className="font-mono">{tradingContactPhone}</span>
+                          )}
+                        </>
+                      ) : null}
+                    </dd>
+                  </div>
+                ) : null}
                 <div className="sm:col-span-2">
                   <dt className="font-bold text-slate-500">所在地（座標）</dt>
                   <dd className="font-mono text-slate-700">{project.displayLocation}</dd>

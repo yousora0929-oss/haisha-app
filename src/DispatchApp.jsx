@@ -1316,6 +1316,18 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         () => (projects || []).find((p) => p && String(p.id) === String(selectedProjectId)) || null,
         [projects, selectedProjectId],
       );
+      const selectedProjectSiteContacts = useMemo(
+        () =>
+          (Array.isArray(selectedProject?.site_contacts) ? selectedProject.site_contacts : [])
+            .map((contact) => ({
+              name: String(contact?.name ?? '').trim(),
+              phone: String(contact?.phone ?? '').trim(),
+            }))
+            .filter((contact) => contact.name || contact.phone),
+        [selectedProject],
+      );
+      const usesProjectSiteContacts =
+        orderKind === 'project' && selectedProjectSiteContacts.length > 0;
       const allowedDeliveryAreas = useMemo(
         () => normalizeAllowedDeliveryAreas(adminSettings?.allowed_delivery_areas),
         [adminSettings],
@@ -4258,7 +4270,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </label>
               </div>
 
-              {(orderKind === 'project' || orderKind === 'spot') && !isGuestSiteOrder ? (
+              {((orderKind === 'project' || orderKind === 'spot') && !isGuestSiteOrder) ||
+              (isGuestSiteOrder && usesProjectSiteContacts) ? (
                 <div className="flex flex-col gap-3">
                   <MasterSuggestInput
                     label="現場担当者"
@@ -4269,13 +4282,37 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       setSiteContactName(next);
                       setSubmitError('');
                     }}
-                    items={siteContactCandidates}
-                    getItemKey={(c) => String(c.id)}
-                    getItemLabel={(c) => String(c.manager_name || '').trim()}
-                    getSearchTexts={(c) => [c.manager_name, c.phone_number]}
+                    items={usesProjectSiteContacts ? selectedProjectSiteContacts : siteContactCandidates}
+                    getItemKey={(c) =>
+                      usesProjectSiteContacts
+                        ? `${String(c?.name || '')}::${String(c?.phone || '')}`
+                        : String(c?.id)
+                    }
+                    getItemLabel={(c) => {
+                      if (!usesProjectSiteContacts) {
+                        return String(c?.manager_name || '').trim();
+                      }
+                      const contactName = String(c?.name || '').trim();
+                      const contactPhone = String(c?.phone || '').trim();
+                      return contactPhone
+                        ? `${contactName || '—'}（${contactPhone}）`
+                        : contactName;
+                    }}
+                    getSearchTexts={(c) =>
+                      usesProjectSiteContacts
+                        ? [c?.name || '', c?.phone || '']
+                        : [c?.manager_name || '', c?.phone_number || '']
+                    }
                     onSelect={(c) => {
-                      setSiteContactName(String(c?.manager_name || '').trim());
-                      setSitePhone(String(c?.phone_number || '').trim());
+                      setSiteContactName(
+                        String(
+                          usesProjectSiteContacts ? c?.name || '' : c?.manager_name || '',
+                        ).trim(),
+                      );
+                      const selectedPhone = String(
+                        usesProjectSiteContacts ? c?.phone || '' : c?.phone_number || '',
+                      ).trim();
+                      if (selectedPhone) setSitePhone(selectedPhone);
                       setSubmitError('');
                     }}
                     placeholder="現場担当者名を入力（候補から選択可）"
@@ -4286,7 +4323,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     }
                     inputClassName="min-h-[56px] rounded-xl border-2 border-slate-200 px-4 py-3 text-base"
                   />
-                  {orderKind === 'project' || !isAgentOrCooperative || spotContractorOrgId ? (
+                  {usesProjectSiteContacts ? (
+                    <p className="text-xs leading-relaxed text-slate-500">
+                      物件に登録された現場担当者から選ぶと、電話番号が自動入力されます。
+                    </p>
+                  ) : orderKind === 'project' || !isAgentOrCooperative || spotContractorOrgId ? (
                     <p className="text-xs leading-relaxed text-slate-500">
                       業者に登録された担当者から選ぶと、電話番号が自動入力されます。
                     </p>

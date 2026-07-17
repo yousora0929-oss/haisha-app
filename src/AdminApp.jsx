@@ -62,6 +62,7 @@ import { AdminCsvDownloadButton } from './components/AdminCsvDownloadButton.jsx'
 import { AdminFactoryNewsSection } from './components/AdminFactoryNewsSection.jsx';
 import { AdminOrgSection } from './components/AdminOrgSection.jsx';
 import { AdminCharterSection } from './components/AdminCharterSection.jsx';
+import { AdminTradingCompaniesSection } from './components/AdminTradingCompaniesSection.jsx';
 import BillingMark from './components/BillingMark.jsx';
 import {
   downloadProjectsExportCsv,
@@ -374,6 +375,7 @@ function ProjectForm({
   factories,
   customers,
   agentOrganizations = [],
+  tradingCompanies = [],
   allowedDeliveryAreas = [],
   deliveryPrefecture = '',
   salesStaffList = [],
@@ -389,6 +391,16 @@ function ProjectForm({
   const [tradingCompanyOrganizationId, setTradingCompanyOrganizationId] = useState(
     initial?.trading_company_organization_id ?? '',
   );
+  const [tradingContactName, setTradingContactName] = useState(
+    () => String(initial?.trading_contact_name ?? '').trim(),
+  );
+  const [tradingContactPhone, setTradingContactPhone] = useState(
+    () => String(initial?.trading_contact_phone ?? '').trim(),
+  );
+  const [siteContacts, setSiteContacts] = useState(() => {
+    const list = Array.isArray(initial?.site_contacts) ? initial.site_contacts : [];
+    return list.length ? list.map((c) => ({ name: c?.name || '', phone: c?.phone || '' })) : [{ name: '', phone: '' }];
+  });
   const [subContractor, setSubContractor] = useState(
     initial?.sub_contractor_name ?? initial?.contractor ?? '',
   );
@@ -463,6 +475,16 @@ function ProjectForm({
     }
     setTradingCompany(resolveProjectTradingCompanyName(initial));
     setTradingCompanyOrganizationId(initial?.trading_company_organization_id ?? '');
+    setTradingContactName(String(initial?.trading_contact_name ?? '').trim());
+    setTradingContactPhone(String(initial?.trading_contact_phone ?? '').trim());
+    {
+      const list = Array.isArray(initial?.site_contacts) ? initial.site_contacts : [];
+      setSiteContacts(
+        list.length
+          ? list.map((c) => ({ name: String(c?.name || ''), phone: String(c?.phone || '') }))
+          : [{ name: '', phone: '' }],
+      );
+    }
     setSubContractor(initial?.sub_contractor_name ?? initial?.contractor ?? '');
     setBillingTarget(initial?.billing_target === 'sub' ? 'sub' : 'main');
     setMainFactoryId(initial?.main_factory_id ?? '');
@@ -559,6 +581,21 @@ function ProjectForm({
     };
   }, [deliveryArea, deliveryPrefecture]);
 
+  const matchedTradingCompany = useMemo(() => {
+    const q = String(tradingCompany || '').trim().toLowerCase();
+    if (!q) return null;
+    return (
+      (tradingCompanies || []).find(
+        (c) => String(c?.name || '').trim().toLowerCase() === q,
+      ) || null
+    );
+  }, [tradingCompanies, tradingCompany]);
+
+  const tradingContactCandidates = useMemo(
+    () => (Array.isArray(matchedTradingCompany?.contacts) ? matchedTradingCompany.contacts : []),
+    [matchedTradingCompany],
+  );
+
   const showTradingCompanyWarning = useMemo(
     () => isUnregisteredTradingCompanyName(tradingCompany, agentOrganizations, tradingCompanyOrganizationId),
     [tradingCompany, agentOrganizations, tradingCompanyOrganizationId],
@@ -567,6 +604,8 @@ function ProjectForm({
   const handleTradingCompanyChange = useCallback(
     (text) => {
       setTradingCompany(text);
+      setTradingContactName('');
+      setTradingContactPhone('');
       const trimmed = String(text || '').trim();
       if (!trimmed) {
         setTradingCompanyOrganizationId('');
@@ -582,7 +621,44 @@ function ProjectForm({
     if (!org?.id) return;
     setTradingCompanyOrganizationId(String(org.id));
     setTradingCompany(String(org.name || '').trim());
+    setTradingContactName('');
+    setTradingContactPhone('');
   }, []);
+
+  const handleTradingContactNameChange = useCallback(
+    (text) => {
+      setTradingContactName(text);
+      const trimmed = String(text || '').trim().toLowerCase();
+      if (!trimmed) return;
+      const hit = tradingContactCandidates.find(
+        (c) => String(c?.name || '').trim().toLowerCase() === trimmed,
+      );
+      if (hit?.phone) setTradingContactPhone(String(hit.phone).trim());
+    },
+    [tradingContactCandidates],
+  );
+
+  const handleTradingContactSelect = useCallback((contact) => {
+    setTradingContactName(String(contact?.name || '').trim());
+    setTradingContactPhone(String(contact?.phone || '').trim());
+  }, []);
+
+  const updateSiteContact = (index, key, value) => {
+    setSiteContacts((prev) =>
+      prev.map((row, i) => (i === index ? { ...row, [key]: value } : row)),
+    );
+  };
+
+  const addSiteContact = () => {
+    setSiteContacts((prev) => [...prev, { name: '', phone: '' }]);
+  };
+
+  const removeSiteContact = (index) => {
+    setSiteContacts((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      return next.length ? next : [{ name: '', phone: '' }];
+    });
+  };
 
   const resolveFactoryName = (factoryId) => {
     const id = String(factoryId || '').trim();
@@ -680,6 +756,9 @@ function ProjectForm({
       trading_company_name: tradingCompany.trim(),
       trading_company: tradingCompany.trim(),
       trading_company_organization_id: tradingCompanyOrganizationId || null,
+      trading_contact_name: tradingContactName.trim(),
+      trading_contact_phone: tradingContactPhone.trim(),
+      site_contacts: siteContacts,
       contractor: subContractor.trim(),
       sub_contractor_name: subContractor.trim(),
       billing_target: billingTarget,
@@ -750,12 +829,85 @@ function ProjectForm({
               ⚠️ 未登録の商社名です。登録済み商社から選択することを推奨します
             </p>
           ) : null}
+          <div className="mt-3 space-y-2">
+            <MasterSuggestInput
+              label="商社担当者（任意）"
+              htmlFor="proj-trading-contact-name"
+              name="proj_trading_contact_name"
+              value={tradingContactName}
+              onValueChange={handleTradingContactNameChange}
+              onSelect={handleTradingContactSelect}
+              items={tradingContactCandidates}
+              getItemKey={(c) => `${String(c?.name || '')}::${String(c?.phone || '')}`}
+              getItemLabel={(c) => String(c?.name || '').trim()}
+              getSearchTexts={(c) => [c?.name || '', c?.phone || '']}
+              placeholder={
+                tradingCompany.trim()
+                  ? '担当者名を入力（候補から選択可）'
+                  : '先に商社名を入力してください'
+              }
+              emptyHint="候補がありません（自由入力できます）"
+              disabled={!tradingCompany.trim()}
+              inputClassName="min-h-[44px] rounded-lg border-2 border-slate-200 px-3 py-2 text-sm"
+            />
+            <div>
+              <label className="text-xs font-bold text-slate-600" htmlFor="proj-trading-contact-phone">
+                商社担当者連絡先（任意）
+              </label>
+              <input
+                id="proj-trading-contact-phone"
+                type="tel"
+                value={tradingContactPhone}
+                onChange={(e) => setTradingContactPhone(e.target.value)}
+                className={fieldClass}
+                placeholder="例: 097-xxx-xxxx"
+                disabled={!tradingCompany.trim()}
+              />
+            </div>
+          </div>
         </div>
         <div>
           <label className="text-xs font-bold text-slate-600" htmlFor="proj-sub-contractor">業者（下請）</label>
           <input id="proj-sub-contractor" type="text" value={subContractor} onChange={(e) => setSubContractor(e.target.value)} className={fieldClass} placeholder="例: △△建設" />
         </div>
       </div>
+      <fieldset className="rounded-lg border border-slate-200 bg-white p-3">
+        <legend className="px-1 text-xs font-bold text-slate-600">現場担当者（任意・複数可）</legend>
+        <div className="mt-2 space-y-2">
+          {siteContacts.map((row, index) => (
+            <div key={`site-contact-${index}`} className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
+              <input
+                type="text"
+                value={row.name}
+                onChange={(e) => updateSiteContact(index, 'name', e.target.value)}
+                className={fieldClass}
+                placeholder="担当者名"
+              />
+              <input
+                type="tel"
+                value={row.phone}
+                onChange={(e) => updateSiteContact(index, 'phone', e.target.value)}
+                className={fieldClass}
+                placeholder="電話番号"
+              />
+              <button
+                type="button"
+                onClick={() => removeSiteContact(index)}
+                className="min-h-[44px] rounded-lg border border-red-200 bg-red-50 px-3 text-xs font-bold text-red-700 hover:bg-red-100"
+              >
+                削除
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={addSiteContact}
+            className="min-h-[40px] rounded-lg border border-slate-300 bg-white px-3 text-xs font-bold text-slate-700 hover:bg-slate-50"
+          >
+            ＋担当者を追加
+          </button>
+        </div>
+      </fieldset>
       <fieldset>
         <legend className="text-xs font-bold text-slate-600">請求先</legend>
         <div className="mt-2 flex flex-wrap gap-3">
@@ -978,6 +1130,7 @@ function ProjectsSection({ factories, factoryNameById }) {
   const [projects, setProjects] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [agentOrganizations, setAgentOrganizations] = useState([]);
+  const [tradingCompanies, setTradingCompanies] = useState([]);
   const [allowedDeliveryAreas, setAllowedDeliveryAreas] = useState([]);
   const [salesStaff, setSalesStaff] = useState([]);
   const [deliveryPrefecture, setDeliveryPrefecture] = useState('');
@@ -994,15 +1147,20 @@ function ProjectsSection({ factories, factoryNameById }) {
     setLoading(true);
     setError('');
     try {
-      const [rows, customerRows, orgRows, settings] = await Promise.all([
+      const [rows, customerRows, orgRows, tradingRows, settings] = await Promise.all([
         db.fetchProjects(),
         db.fetchCustomers(),
         db.fetchOrganizations(),
+        db.fetchTradingCompanies().catch((e) => {
+          console.warn('[ProjectsSection] trading companies load failed', e);
+          return [];
+        }),
         db.fetchAdminSettings(),
       ]);
       setProjects(rows);
       setCustomers(customerRows);
       setAgentOrganizations((orgRows || []).filter((o) => o && o.type === 'agent'));
+      setTradingCompanies(tradingRows || []);
       setAllowedDeliveryAreas(normalizeAllowedDeliveryAreas(settings?.allowed_delivery_areas));
       setSalesStaff(normalizeSalesStaffList(settings?.sales_staff));
       setDeliveryPrefecture(resolveDeliveryPrefecture(settings));
@@ -1191,6 +1349,7 @@ function ProjectsSection({ factories, factoryNameById }) {
             factories={factories}
             customers={customers}
             agentOrganizations={agentOrganizations}
+            tradingCompanies={tradingCompanies}
             allowedDeliveryAreas={allowedDeliveryAreas}
             deliveryPrefecture={deliveryPrefecture}
             salesStaffList={salesStaff}
@@ -2983,7 +3142,12 @@ export function AdminApp() {
         {tab === 'factoryNews' ? <AdminFactoryNewsSection factories={factories} /> : null}
         {tab === 'adminSettings' ? <AdminSettingsSection /> : null}
         {tab === 'projects' ? <ProjectsSection factories={factories} factoryNameById={factoryNameById} /> : null}
-        {tab === 'agents' ? <AdminOrgSection orgType="agent" label="商社" /> : null}
+        {tab === 'agents' ? (
+          <div className="space-y-6">
+            <AdminOrgSection orgType="agent" label="商社" />
+            <AdminTradingCompaniesSection />
+          </div>
+        ) : null}
         {tab === 'cooperatives' ? <AdminOrgSection orgType="cooperative" label="組合員" /> : null}
         {tab === 'customers' ? <AdminOrgSection orgType="contractor" label="業者" /> : null}
         {tab === 'charter' ? <AdminCharterSection /> : null}
