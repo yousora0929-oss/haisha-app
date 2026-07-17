@@ -1969,16 +1969,27 @@ export async function updateOrganization(id, nameOrOpts) {
     const { name, type, cooperative_id, furigana } = nameOrOpts;
     const trimmed = String(name ?? '').trim();
     if (!trimmed) throw new Error('組織名を入力してください');
-    if (!['agent', 'cooperative', 'contractor'].includes(type)) throw new Error('種別が不正です');
+    const updateRow = {
+      name: trimmed,
+      updated_at: new Date().toISOString(),
+    };
+    // type は明示された場合だけ検証・更新し、名称編集では現在値を維持する。
+    if (type !== undefined && type !== null && type !== '') {
+      if (!['agent', 'cooperative', 'contractor'].includes(type)) {
+        throw new Error('種別が不正です');
+      }
+      updateRow.type = type;
+    }
+    // 所属組合とフリガナも、呼び出し側がキーを渡した場合だけ更新する。
+    if ('cooperative_id' in nameOrOpts) {
+      updateRow.cooperative_id = cooperative_id || null;
+    }
+    if ('furigana' in nameOrOpts) {
+      updateRow.furigana = String(furigana ?? '').trim() || null;
+    }
     const { data, error } = await supabase
       .from('organizations')
-      .update({
-        name: trimmed,
-        type,
-        cooperative_id: cooperative_id || null,
-        furigana: String(furigana ?? '').trim() || null,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updateRow)
       .eq('id', orgId)
       .select('*')
       .single();

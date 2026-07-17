@@ -192,6 +192,7 @@ export function AdminOrgSection({ orgType, label }) {
     setLoading(true);
     setError('');
     try {
+      // 組織名・フリガナのみ同期し、種別や所属組合は現在値を維持する。
       await db.updateOrganization(editingOrg.id, {
         name,
         furigana: editingOrg.furigana,

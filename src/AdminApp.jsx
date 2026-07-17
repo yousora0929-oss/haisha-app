@@ -972,6 +972,22 @@ function ProjectForm({
   );
 }
 
+function resolveProjectContractorLabel(project, customers) {
+  const trader = String(
+    project?.trading_company_name || project?.trading_company || '',
+  ).trim();
+  const display = String(project?.contractor_display_name || '').trim();
+  const master = (customers || []).find(
+    (customer) => String(customer?.id || '') === String(project?.customer_id || ''),
+  );
+  const masterName = String(master?.company_name || master?.name || '').trim();
+  const prime = display && display !== trader ? display : masterName;
+  return {
+    prime: prime || '—',
+    sub: String(project?.sub_contractor_name || project?.contractor || '').trim(),
+  };
+}
+
 function ProjectsSection({ factories, factoryNameById }) {
   const [projects, setProjects] = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -1207,9 +1223,9 @@ function ProjectsSection({ factories, factoryNameById }) {
             <thead>
               <tr className="border-b-2 border-slate-200 bg-slate-50">
                 <th className="px-3 py-2 font-black text-slate-700">物件名</th>
-                <th className="px-3 py-2 font-black text-slate-700">業者（元請）</th>
-                <th className="px-3 py-2 font-black text-slate-700">商社名</th>
-                <th className="px-3 py-2 font-black text-slate-700">業者（下請）</th>
+                <th className="px-3 py-2 font-black text-slate-700">業者</th>
+                <th className="px-3 py-2 font-black text-slate-700">商社</th>
+                <th className="px-3 py-2 font-black text-slate-700">請求先</th>
                 <th className="px-3 py-2 font-black text-slate-700">メイン工場</th>
                 <th className="px-3 py-2 font-black text-slate-700">サブ工場</th>
                 <th className="px-3 py-2 font-black text-slate-700">緯度・経度</th>
@@ -1218,32 +1234,30 @@ function ProjectsSection({ factories, factoryNameById }) {
               </tr>
             </thead>
             <tbody>
-              {projects.map((p) => (
-                <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50/80">
-                  <td className="px-3 py-2.5 font-bold text-slate-900">{p.name}</td>
-                  <td className="px-3 py-2.5 text-slate-700">
-                    {p.contractor_display_name?.trim()
-                      || customers.find((c) => c.id === p.customer_id)?.company_name
-                      || customers.find((c) => c.id === p.customer_id)?.name
-                      || '—'}
-                  </td>
-                  <td className="px-3 py-2.5 text-slate-700">{resolveProjectTradingCompanyName(p) || '—'}</td>
-                  <td className="px-3 py-2.5 text-slate-700">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span>
-                        {(p.sub_contractor_name || p.contractor)?.trim() || '—'}
-                      </span>
-                      {p.billing_target === 'sub' ? (
-                        <span className="rounded border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[11px] font-bold text-amber-800">
-                          請求先: 下請
-                        </span>
-                      ) : (
-                        <span className="rounded border border-slate-300 bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold text-slate-700">
-                          請求先: 元請
-                        </span>
-                      )}
-                    </div>
-                  </td>
+              {projects.map((p) => {
+                const contractor = resolveProjectContractorLabel(p, customers);
+                return (
+                  <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50/80">
+                    <td className="px-3 py-2.5 font-bold text-slate-900">{p.name}</td>
+                    <td className="px-3 py-2.5 text-slate-700">
+                      <p className="font-bold text-slate-800">{contractor.prime}</p>
+                      {contractor.sub ? (
+                        <p className="mt-0.5 text-xs text-slate-500">下請: {contractor.sub}</p>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-2.5 text-slate-700">
+                      {String(p.trading_company_name || p.trading_company || '').trim() || '—'}
+                    </td>
+                    <td
+                      className={
+                        'px-3 py-2.5 ' +
+                        (p.billing_target === 'sub'
+                          ? 'font-bold text-amber-700'
+                          : 'text-slate-600')
+                      }
+                    >
+                      {p.billing_target === 'sub' ? '下請' : '元請'}
+                    </td>
                   <td className="px-3 py-2.5">{factoryNameById[p.main_factory_id] || '—'}</td>
                   <td className="max-w-[12rem] px-3 py-2.5 text-xs text-slate-600">{(p.sub_factory_ids || []).map((id) => factoryNameById[id] || id).join('、') || '—'}</td>
                   <td className="px-3 py-2.5 font-mono text-xs">{p.lat != null && p.lng != null ? `${p.lat}, ${p.lng}` : '—'}</td>
@@ -1268,7 +1282,8 @@ function ProjectsSection({ factories, factoryNameById }) {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
