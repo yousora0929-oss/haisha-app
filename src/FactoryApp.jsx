@@ -2894,6 +2894,10 @@ function isUnreadForFactory(messages, readKey) {
       const [systemSettings, setSystemSettings] = useState({ start_time: '08:00:00', end_time: '16:00:00' });
       const [operationalSettings, setOperationalSettings] = useState(null);
       const [escalationStepsByFactoryId, setEscalationStepsByFactoryId] = useState({});
+      const masterDataReady = useMemo(
+        () => factories.length > 0 && Object.keys(escalationStepsByFactoryId).length > 0,
+        [factories, escalationStepsByFactoryId],
+      );
       const escalationSettings = useMemo(
         () => ({
           ...systemSettings,
@@ -3380,6 +3384,7 @@ function isUnreadForFactory(messages, readKey) {
 
           const incomingOptions = {
             ...options,
+            playSound: Boolean(options?.playSound) && masterDataReady,
             ...(notifyOrderIds.size > 0 ? { notifyOrderIds } : {}),
             ...(reassignNotifyOrderIds.size > 0 ? { reassignNotifyOrderIds } : {}),
           };
@@ -3402,7 +3407,7 @@ function isUnreadForFactory(messages, readKey) {
             });
           }
         },
-        [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById, factories, projects, customers, escalationSettings, holidays, enrichOrdersWithProjectFactory, escalationStepsByFactoryId],
+        [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById, factories, projects, customers, escalationSettings, holidays, enrichOrdersWithProjectFactory, escalationStepsByFactoryId, masterDataReady],
       );
 
       const syncFromStorageRef = useRef(syncFromStorage);
@@ -3416,10 +3421,11 @@ function isUnreadForFactory(messages, readKey) {
 
       useEffect(() => {
         if (!activeFactoryId) return undefined;
+        if (!masterDataReady) return undefined;
         // マスタ再取得などに伴う再同期は既存注文の通知を出さない
         void syncFromStorage({ playSound: false, muteExisting: true });
         return undefined;
-      }, [activeFactoryId, factories, projects, holidays, escalationSettings, escalationStepsByFactoryId, syncFromStorage]);
+      }, [activeFactoryId, masterDataReady, factories, projects, holidays, escalationSettings, escalationStepsByFactoryId, syncFromStorage]);
 
       useEffect(() => {
         if (!activeFactoryId) return undefined;
