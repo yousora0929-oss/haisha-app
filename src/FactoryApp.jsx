@@ -4270,7 +4270,7 @@ function isUnreadForFactory(messages, readKey) {
               </div>
 
               <nav
-                className="flex min-w-0 flex-1 gap-1 overflow-x-auto overscroll-x-contain whitespace-nowrap [scrollbar-width:thin]"
+                className="flex min-w-0 flex-1 justify-end gap-1 overflow-x-auto overscroll-x-contain whitespace-nowrap [scrollbar-width:thin]"
                 aria-label="工場画面タブ"
               >
                 {[
