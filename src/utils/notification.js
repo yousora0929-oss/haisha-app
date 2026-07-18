@@ -309,3 +309,15 @@ export function clearAppBadge() {
     console.error('バッジの消去に失敗しました:', error);
   });
 }
+
+export function setAppBadge(count) {
+  if (typeof navigator === 'undefined' || typeof navigator.setAppBadge !== 'function') return;
+  const n = Math.max(0, Math.floor(Number(count)) || 0);
+  if (n <= 0) {
+    clearAppBadge();
+    return;
+  }
+  navigator.setAppBadge(n).catch((error) => {
+    console.error('バッジの設定に失敗しました:', error);
+  });
+}

@@ -31,7 +31,7 @@ import {
   getOrderMinutesForScheduleScan,
   computeScheduleAutoRejectReason,
 } from './haishaConstants.js';
-import { registerOneSignalUser, unregisterOneSignalUser, buildFactoryOneSignalExternalId } from './utils/notification.js';
+import { registerOneSignalUser, unregisterOneSignalUser, buildFactoryOneSignalExternalId, setAppBadge } from './utils/notification.js';
 import {
   clearPushRedirect,
   consumePushRedirectForApp,
@@ -364,63 +364,68 @@ function isOrderAcceptedByFactory(order, factoryId) {
  * 変更前の注文オブジェクト（target）と保存後のpatchを比較し、
  * 変更されたフィールドのみ「表示名：旧値 → 新値」形式の配列を返す
  */
-function buildOrderChangeDiffLines(before, patch) {
+function factoryVehicleTypeLabel(value) {
+  const s = String(value || '').trim();
+  if (s === 'large') return '大型';
+  if (s === 'small') return '小型';
+  return s;
+}
+
+/** 変更前・変更後を比較し、日本語ラベル付きの変更点配列を返す（カンマ区切り用） */
+function buildOrderChangeDiffLines(before, after) {
+  const b = before && typeof before === 'object' ? before : {};
+  const a = after && typeof after === 'object' ? after : {};
   const fields = [
     {
-      key: 'preferredDate',
-      label: '希望日',
+      label: '日付',
+      before: String(b.preferredDate ?? b.preferred_date ?? '').trim(),
+      after: String(a.preferredDate ?? a.preferred_date ?? '').trim(),
     },
     {
-      key: 'timeSlotLabel',
-      label: '希望時刻',
-      patchKey: 'timeSlotLabel',
+      label: '時間',
+      before: String(b.timeSlotLabel ?? '').trim(),
+      after: String(a.timeSlotLabel ?? '').trim(),
+    },
+    {
+      label: '車種',
+      before: factoryVehicleTypeLabel(b.vehicleType ?? b.vehicle_type),
+      after: factoryVehicleTypeLabel(a.vehicleType ?? a.vehicle_type),
     },
     {
       label: '数量',
-      before: String(before.confirmedQuantityM3 ?? before.quantityM3 ?? '').trim(),
-      after: String(patch.quantityM3 ?? '').trim(),
+      before: String(b.confirmedQuantityM3 ?? b.quantityM3 ?? '').trim(),
+      after: String(a.confirmedQuantityM3 ?? a.quantityM3 ?? '').trim(),
       suffix: 'm³',
     },
     {
       label: '配合',
-      before: String(before.confirmedMixText ?? before.mixText ?? '').trim(),
-      after: String(patch.mixText ?? '').trim(),
+      before: String(b.confirmedMixText ?? b.mixText ?? '').trim(),
+      after: String(a.confirmedMixText ?? a.mixText ?? '').trim(),
     },
     {
       label: '現場名',
-      before: String(before.siteName ?? '').trim(),
-      after: String(patch.siteName ?? '').trim(),
+      before: String(b.siteName ?? '').trim(),
+      after: String(a.siteName ?? '').trim(),
     },
     {
       label: '現場住所',
-      before: String(before.siteAddress ?? '').trim(),
-      after: String(patch.siteAddress ?? '').trim(),
+      before: String(b.siteAddress ?? '').trim(),
+      after: String(a.siteAddress ?? '').trim(),
     },
     {
       label: '電話番号',
-      before: String(before.sitePhone ?? '').trim(),
-      after: String(patch.sitePhone ?? '').trim(),
-    },
-    {
-      key: 'contractorName',
-      label: '業者',
-    },
-    {
-      key: 'traderName',
-      label: '商社',
+      before: String(b.sitePhone ?? '').trim(),
+      after: String(a.sitePhone ?? '').trim(),
     },
   ];
 
-  const lines = [];
+  const parts = [];
   for (const f of fields) {
-    const patchKey = f.patchKey ?? f.key;
-    const bVal = f.before !== undefined ? f.before : String(before[f.key] ?? '').trim();
-    const aVal = f.after !== undefined ? f.after : String(patch[patchKey ?? f.label] ?? '').trim();
-    if (bVal === aVal || (!bVal && !aVal)) continue;
+    if (f.before === f.after || (!f.before && !f.after)) continue;
     const suffix = f.suffix ?? '';
-    lines.push(`・${f.label}：${bVal || '（未設定）'}${suffix} → ${aVal || '（未設定）'}${suffix}`);
+    parts.push(`${f.label} ${f.before || '（未設定）'}→${f.after || '（未設定）'}${suffix}`);
   }
-  return lines;
+  return parts;
 }
 
 function latestChatMessage(messages) {
@@ -1718,8 +1723,11 @@ function isUnreadForFactory(messages, readKey) {
               <FactoryStatusMini status={order.factoryResponseStatus} />
             ) : null}
             {hasUnreadChat ? (
-              <span className="inline-flex animate-pulse rounded-full border-2 border-red-500 bg-red-600 px-2 py-0.5 text-[10px] font-black text-white shadow-sm sm:text-[11px]">
-                🔴 新着チャット
+              <span
+                className="inline-flex items-center gap-0.5 rounded bg-sky-500 px-1.5 py-0.5 text-[9px] font-black leading-none text-white sm:text-[10px]"
+                aria-label="未読メッセージあり"
+              >
+                💬 未読
               </span>
             ) : null}
             {order.is_admin_modified ? (
@@ -1998,10 +2006,22 @@ function isUnreadForFactory(messages, readKey) {
                   非表示
                 </button>
               ) : null}
-              {idx === 0 && !isRead && !isRejectedByMe ? (
-                <span className="rounded bg-orange-500 px-1.5 py-0.5 text-[9px] font-black leading-none text-white sm:text-[10px]">
-                  NEW
-                </span>
+              {(idx === 0 && !isRead && !isRejectedByMe) || hasUnreadChat ? (
+                <div className="flex flex-col items-center gap-0.5">
+                  {idx === 0 && !isRead && !isRejectedByMe ? (
+                    <span className="rounded bg-orange-500 px-1.5 py-0.5 text-[9px] font-black leading-none text-white sm:text-[10px]">
+                      NEW
+                    </span>
+                  ) : null}
+                  {hasUnreadChat ? (
+                    <span
+                      className="inline-flex items-center gap-0.5 rounded bg-sky-500 px-1.5 py-0.5 text-[9px] font-black leading-none text-white sm:text-[10px]"
+                      aria-label="未読メッセージあり"
+                    >
+                      💬 未読
+                    </span>
+                  ) : null}
+                </div>
               ) : (
                 <span className="h-3 w-full shrink-0" aria-hidden="true" />
               )}
@@ -2893,6 +2913,7 @@ function isUnreadForFactory(messages, readKey) {
       const [chatThreads, setChatThreads] = useState({});
       const chatThreadsRef = useRef(chatThreads);
       const [readChatKeys, setReadChatKeys] = useState({});
+      const readChatKeysRef = useRef(readChatKeys);
       const [activeTab, setActiveTab] = useState('orders');
       const [calendarMode, setCalendarMode] = useState('orders'); // 'capacity' | 'orders' | 'charterRequests'
       const [historySearchQuery, setHistorySearchQuery] = useState('');
@@ -2986,6 +3007,10 @@ function isUnreadForFactory(messages, readKey) {
         chatThreadsRef.current = chatThreads;
       }, [chatThreads]);
 
+      useEffect(() => {
+        readChatKeysRef.current = readChatKeys;
+      }, [readChatKeys]);
+
       const refreshChatThreads = useCallback(async () => {
         const { chatThreads: th } = await db.fetchOrdersWithChat();
         setChatThreads(th);
@@ -3006,7 +3031,15 @@ function isUnreadForFactory(messages, readKey) {
         const id = String(orderId || '').trim();
         const key = chatMessageReadKey(latestChatMessage(messages));
         if (!id || !key) return;
-        setReadChatKeys((prev) => (prev?.[id] === key ? prev : { ...prev, [id]: key }));
+        setReadChatKeys((prev) => {
+          if (prev?.[id] === key) return prev;
+          const next = { ...prev, [id]: key };
+          readChatKeysRef.current = next;
+          return next;
+        });
+        void db.markFactoryChatRead(id, key).catch((err) => {
+          console.error('[FactoryApp] チャット既読の保存に失敗', err);
+        });
       }, []);
 
       const hideOrder = useCallback((orderId) => {
@@ -3294,6 +3327,21 @@ function isUnreadForFactory(messages, readKey) {
           list = enrichOrdersWithProjectFactory(list);
           setChatThreads(th);
 
+          const mergedReadKeys = { ...(readChatKeysRef.current || {}) };
+          let readKeysChanged = false;
+          for (const order of list || []) {
+            if (!order?.id) continue;
+            const persisted = String(order.factory_chat_read_key ?? order.factoryChatReadKey ?? '').trim();
+            if (persisted && !mergedReadKeys[order.id]) {
+              mergedReadKeys[order.id] = persisted;
+              readKeysChanged = true;
+            }
+          }
+          if (readKeysChanged) {
+            readChatKeysRef.current = mergedReadKeys;
+            setReadChatKeys(mergedReadKeys);
+          }
+
           const notifyOrderIds = new Set();
           const reassignNotifyOrderIds = new Set();
           if (activeFactoryId) {
@@ -3571,6 +3619,18 @@ function isUnreadForFactory(messages, readKey) {
         [factoryInProgressOrders, activeFactoryId, readOrderIds],
       );
 
+      const unreadChatCount = useMemo(
+        () =>
+          (factoryInProgressOrders || []).filter((order) =>
+            order?.id && isUnreadForFactory(chatThreads[order.id], readChatKeys?.[order.id]),
+          ).length,
+        [factoryInProgressOrders, chatThreads, readChatKeys],
+      );
+
+      useEffect(() => {
+        setAppBadge(newOrdersCount + unreadChatCount);
+      }, [newOrdersCount, unreadChatCount]);
+
       const handleOpenOrderFromCalendar = useCallback(
         (orderId) => {
           const id = String(orderId || '').trim();
@@ -3804,17 +3864,23 @@ function isUnreadForFactory(messages, readKey) {
             return false;
           }
           try {
-            const diffLines = buildOrderChangeDiffLines(target, patch);
+            const nextPatch = { ...patch, is_factory_modified: true };
+            // 受注済み: カスタマー表示用の確定値も同期する
+            if (Object.prototype.hasOwnProperty.call(patch, 'quantityM3')) {
+              nextPatch.confirmedQuantityM3 = patch.quantityM3;
+            }
+            if (Object.prototype.hasOwnProperty.call(patch, 'mixText')) {
+              nextPatch.confirmedMixText = patch.mixText;
+            }
 
-            const updated = await db.updateOrderDetails(orderId, {
-              ...patch,
-              is_factory_modified: true,
-            });
+            const updated = await db.updateOrderDetails(orderId, nextPatch);
             if (!updated) return false;
 
-            if (diffLines.length > 0) {
-              const msg = `【注文変更】工場により内容が変更されました。\n${diffLines.join('\n')}`;
+            const changeParts = buildOrderChangeDiffLines(target, updated);
+            if (changeParts.length > 0) {
+              const msg = `【内容変更】${activeFactoryName}が注文内容を変更しました：${changeParts.join('、')}`;
               await appendOrderChatMessage(orderId, 'system', msg);
+              await refreshChatThreads();
             }
 
             setRawOrders((prev) =>
@@ -3836,7 +3902,7 @@ function isUnreadForFactory(messages, readKey) {
             return false;
           }
         },
-        [activeFactoryId, rawOrders, orders, appendOrderChatMessage],
+        [activeFactoryId, activeFactoryName, rawOrders, orders, appendOrderChatMessage, refreshChatThreads],
       );
 
       const handleAcceptOrder = useCallback(
@@ -4290,7 +4356,7 @@ function isUnreadForFactory(messages, readKey) {
                       type="button"
                       onClick={() => setActiveTab(id)}
                       className={
-                        'min-h-[40px] shrink-0 rounded-lg px-3 text-xs font-black transition sm:px-4 sm:text-sm ' +
+                        'relative min-h-[40px] shrink-0 rounded-lg px-3 text-xs font-black transition sm:px-4 sm:text-sm ' +
                         (active
                           ? 'bg-indigo-600 text-white shadow-sm'
                           : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700')
@@ -4298,11 +4364,6 @@ function isUnreadForFactory(messages, readKey) {
                     >
                       <span className="inline-flex items-center justify-center gap-1.5">
                         {label}
-                        {id === 'orders' && newOrdersCount > 0 ? (
-                          <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
-                            {newOrdersCount}
-                          </span>
-                        ) : null}
                         {id === 'news' && factoryNewsUnread > 0 ? (
                           <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm">
                             {factoryNewsUnread}
@@ -4314,6 +4375,26 @@ function isUnreadForFactory(messages, readKey) {
                           </span>
                         ) : null}
                       </span>
+                      {id === 'orders' && (newOrdersCount > 0 || unreadChatCount > 0) ? (
+                        <span className="absolute -right-1 -top-1 flex items-center gap-0.5">
+                          {newOrdersCount > 0 ? (
+                            <span
+                              className="flex min-h-[16px] min-w-[16px] items-center justify-center rounded-full bg-orange-500 px-1 text-[9px] font-black leading-none text-white shadow-sm"
+                              aria-label={`新着注文 ${newOrdersCount}件`}
+                            >
+                              {newOrdersCount > 9 ? '9+' : newOrdersCount}
+                            </span>
+                          ) : null}
+                          {unreadChatCount > 0 ? (
+                            <span
+                              className="flex min-h-[16px] min-w-[16px] items-center justify-center rounded-full bg-sky-500 px-1 text-[9px] font-black leading-none text-white shadow-sm"
+                              aria-label={`未読チャット ${unreadChatCount}件`}
+                            >
+                              💬{unreadChatCount > 9 ? '9+' : unreadChatCount}
+                            </span>
+                          ) : null}
+                        </span>
+                      ) : null}
                     </button>
                   );
                 })}

@@ -2,7 +2,7 @@
 
 export function isIncomingChatForCustomer(message) {
   const from = String(message?.from || '').trim();
-  return from === 'factory' || from === 'admin';
+  return from === 'factory' || from === 'admin' || from === 'system';
 }
 
 export function latestChatMessage(messages) {

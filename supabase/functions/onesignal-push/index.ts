@@ -8,7 +8,7 @@ import {
   rankFactoryIdsForOrder,
 } from '../_shared/escalationVisibility.ts';
 
-const FUNCTION_VERSION = 32;
+const FUNCTION_VERSION = 33;
 const PUSH_NOTIFY_COOLDOWN_MS = 60_000;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 /** プレフィックス導入前の端末向けに無印 ID へも送る期間（ISO8601） */
@@ -258,12 +258,26 @@ function isSkippableSystemAutoChatMessage(
   return body.includes('— システム自動応答') || body.includes('満車のため拒否');
 }
 
+const CUSTOMER_FACING_SYSTEM_PREFIXES = ['【受注】', '【保留】', '【キャンセル】', '【内容変更】'];
+
+function isCustomerFacingSystemMessage(
+  message: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!message || typeof message !== 'object') return false;
+  const body = pickString(message.body);
+  if (!body) return false;
+  return CUSTOMER_FACING_SYSTEM_PREFIXES.some((prefix) => body.startsWith(prefix));
+}
+
 function shouldSkipChatPushNotification(
   message: Record<string, unknown> | null | undefined,
   chatFrom: string,
 ): boolean {
-  if (isSystemChatSender(chatFrom)) return true;
   if (isSkippableSystemAutoChatMessage(message)) return true;
+  if (isSystemChatSender(chatFrom)) {
+    // system は顧客向けプレフィックスに該当する場合のみ通す
+    return !isCustomerFacingSystemMessage(message);
+  }
   return false;
 }
 
@@ -1844,8 +1858,8 @@ async function sendCustomerChatNotifications(
     console.log('[onesignal-push] skip customer_chat: system auto reply', { orderId, chatFrom });
     return [];
   }
-  if (!isFactorySideChatSender(chatFrom)) {
-    console.log('[onesignal-push] skip customer_chat: sender is not factory/admin', { orderId, chatFrom });
+  if (!isFactorySideChatSender(chatFrom) && !isSystemChatSender(chatFrom)) {
+    console.log('[onesignal-push] skip customer_chat: sender is not factory/admin/system', { orderId, chatFrom });
     return [];
   }
   const factoryName = pickString(payload?.factory_name, factoryNameFromOrder(row));
@@ -2132,7 +2146,7 @@ async function processLegacyWebhook(payload: LegacyWebhookPayload): Promise<stri
       const chatFrom = pickString(latest?.from);
       if (shouldSkipChatPushNotification(latest, chatFrom)) {
         console.log('[onesignal-push] legacy chat skip system auto reply', { orderId, chatFrom });
-      } else if (isFactorySideChatSender(chatFrom)) {
+      } else if (isFactorySideChatSender(chatFrom) || isSystemChatSender(chatFrom)) {
         sent.push(...await sendCustomerChatNotifications(record, null, orderId, chatFrom));
       } else if (isCustomerSideChatSender(chatFrom)) {
         sent.push(...await sendFactoryChatNotifications(record, null, orderId, chatFrom));
@@ -2183,7 +2197,7 @@ async function processRescued(record: OrderRow, hint: 'chat' | 'status' | 'inser
     const chatFrom = pickString(latest.from);
     if (shouldSkipChatPushNotification(latest, chatFrom)) {
       console.log('[onesignal-push] rescued chat skip system auto reply', { orderId, chatFrom });
-    } else if (isFactorySideChatSender(chatFrom)) {
+    } else if (isFactorySideChatSender(chatFrom) || isSystemChatSender(chatFrom)) {
       sent.push(...await sendCustomerChatNotifications(record, null, orderId, chatFrom));
     } else if (isCustomerSideChatSender(chatFrom)) {
       sent.push(...await sendFactoryChatNotifications(record, null, orderId, chatFrom));
@@ -2211,7 +2225,7 @@ async function routeChatFromOrder(row: OrderRow, message: string, orderId: strin
     return null;
   }
 
-  if (isFactorySideChatSender(chatFrom)) {
+  if (isFactorySideChatSender(chatFrom) || isSystemChatSender(chatFrom)) {
     const sent = await sendCustomerChatNotifications(row, null, orderId, chatFrom);
     return sent[0] ?? null;
   }

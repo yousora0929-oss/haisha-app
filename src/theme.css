@@ -469,7 +469,8 @@ html.dark .bg-red-600,
 html.dark .bg-orange-500,
 html.dark .bg-orange-600,
 html.dark .bg-yellow-400,
-html.dark .bg-amber-600 {
+html.dark .bg-amber-600,
+html.dark .bg-sky-500 {
   /* ソリッド警告色はそのまま（上書きしない） */
   filter: none;
 }

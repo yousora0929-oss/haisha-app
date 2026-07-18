@@ -39,7 +39,7 @@ import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils
 import { generateInitialPassword } from './utils/initialPassword.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, is_admin_modified, is_factory_modified';
+  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, is_admin_modified, is_factory_modified, factory_chat_read_key, factory_chat_read_at';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -433,6 +433,38 @@ export function normalizeOrderRow(row) {
         : od.customer_chat_read_at != null
           ? String(od.customer_chat_read_at)
           : '',
+    factory_chat_read_key:
+      row.factory_chat_read_key != null
+        ? String(row.factory_chat_read_key).trim()
+        : od.factory_chat_read_key != null
+          ? String(od.factory_chat_read_key).trim()
+          : od.factoryChatReadKey != null
+            ? String(od.factoryChatReadKey).trim()
+            : '',
+    factoryChatReadKey:
+      row.factory_chat_read_key != null
+        ? String(row.factory_chat_read_key).trim()
+        : od.factoryChatReadKey != null
+          ? String(od.factoryChatReadKey).trim()
+          : od.factory_chat_read_key != null
+            ? String(od.factory_chat_read_key).trim()
+            : '',
+    factory_chat_read_at:
+      row.factory_chat_read_at != null
+        ? String(row.factory_chat_read_at)
+        : od.factory_chat_read_at != null
+          ? String(od.factory_chat_read_at)
+          : od.factoryChatReadAt != null
+            ? String(od.factoryChatReadAt)
+            : '',
+    factoryChatReadAt:
+      row.factory_chat_read_at != null
+        ? String(row.factory_chat_read_at)
+        : od.factoryChatReadAt != null
+          ? String(od.factoryChatReadAt)
+          : od.factory_chat_read_at != null
+            ? String(od.factory_chat_read_at)
+            : '',
     sub_factory_current_index:
       row.sub_factory_current_index != null
         ? Number(row.sub_factory_current_index)
@@ -501,6 +533,20 @@ export async function markCustomerChatRead(orderId, readKey) {
     customerChatReadKey: key,
     customer_chat_read_at: readAt,
     customerChatReadAt: readAt,
+  });
+}
+
+/** 工場がチャットを開いた際の既読キー（orders カラム + order_data に保存） */
+export async function markFactoryChatRead(orderId, readKey) {
+  const id = String(orderId || '').trim();
+  const key = String(readKey || '').trim();
+  if (!id || !key) return null;
+  const readAt = new Date().toISOString();
+  return updateOrderDetails(id, {
+    factory_chat_read_key: key,
+    factoryChatReadKey: key,
+    factory_chat_read_at: readAt,
+    factoryChatReadAt: readAt,
   });
 }
 
@@ -884,6 +930,20 @@ export async function updateOrderDetails(orderId, updatedData) {
   ) {
     const at = String(patch.accepted_at ?? patch.acceptedAt ?? '').trim();
     updateRow.accepted_at = at || null;
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'factory_chat_read_key') ||
+    Object.prototype.hasOwnProperty.call(patch, 'factoryChatReadKey')
+  ) {
+    const key = String(patch.factory_chat_read_key ?? patch.factoryChatReadKey ?? '').trim();
+    updateRow.factory_chat_read_key = key || null;
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'factory_chat_read_at') ||
+    Object.prototype.hasOwnProperty.call(patch, 'factoryChatReadAt')
+  ) {
+    const at = String(patch.factory_chat_read_at ?? patch.factoryChatReadAt ?? '').trim();
+    updateRow.factory_chat_read_at = at || null;
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'sub_factory_current_index') ||
       Object.prototype.hasOwnProperty.call(patch, 'subFactoryCurrentIndex')) {
