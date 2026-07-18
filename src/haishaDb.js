@@ -4229,6 +4229,57 @@ export async function fetchCharterRequests(factoryId) {
   }
 }
 
+/**
+ * 自工場のチャーター募集 + 日ごとの確定進捗（カレンダー用）
+ * accepted 車両数を集計（車両スナップショットが空のときは offered_count）
+ */
+export async function fetchCharterRequestsWithProgress(factoryId) {
+  const fid = String(factoryId || '').trim();
+  if (!fid) return [];
+  if (!supabase?.from) {
+    console.warn('[fetchCharterRequestsWithProgress] Supabase client is not ready');
+    return [];
+  }
+
+  const { data: requests, error: reqErr } = await supabase
+    .from('charter_requests')
+    .select('id, requesting_factory_id, request_date, vehicle_type, desired_count, status, note, created_at, updated_at')
+    .eq('requesting_factory_id', fid)
+    .order('request_date', { ascending: true });
+  if (reqErr) throw reqErr;
+
+  const mapped = (requests || []).map(mapCharterRequestRow).filter(Boolean);
+  if (!mapped.length) return [];
+
+  const requestIds = mapped.map((r) => r.id);
+  const { data: responses, error: respErr } = await supabase
+    .from('charter_responses')
+    .select('request_id, offered_count, assigned_vehicles, status')
+    .in('request_id', requestIds)
+    .in('status', ['accepted', 'partially_accepted']);
+  if (respErr) throw respErr;
+
+  const acceptedByRequestId = new Map();
+  for (const r of responses || []) {
+    const vehicles = normalizeAssignedVehicles(r.assigned_vehicles);
+    const count =
+      vehicles.length > 0
+        ? vehicles.filter((v) => v?.status === 'accepted').length
+        : String(r.status || '') === 'accepted'
+          ? Math.max(0, Number(r.offered_count) || 0)
+          : 0;
+    if (count <= 0) continue;
+    const rid = sanitizeRefId(r.request_id);
+    if (!rid) continue;
+    acceptedByRequestId.set(rid, (acceptedByRequestId.get(rid) || 0) + count);
+  }
+
+  return mapped.map((r) => ({
+    ...r,
+    acceptedTotal: acceptedByRequestId.get(r.id) || 0,
+  }));
+}
+
 /** チャーター募集の登録・更新 */
 export async function saveCharterRequest(request) {
   const r = request && typeof request === 'object' ? request : {};

@@ -64,6 +64,7 @@ import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
 import { FactorySettingsPanel } from './components/FactorySettingsPanel.jsx';
 import { CharterRequestsPanel } from './components/CharterRequestsPanel.jsx';
 import { CharterOpenRequestsPanel } from './components/CharterOpenRequestsPanel.jsx';
+import { FactoryCharterRequestCalendar } from './components/FactoryCharterRequestCalendar.jsx';
 import { FactoryNewsPanel } from './components/FactoryNewsPanel.jsx';
 import { countUnreadNewsForFactory } from './utils/factoryNews.js';
 import { countPendingCharterResponses } from './utils/charterBadges.js';
@@ -2870,6 +2871,7 @@ function isUnreadForFactory(messages, readKey) {
       const chatThreadsRef = useRef(chatThreads);
       const [readChatKeys, setReadChatKeys] = useState({});
       const [activeTab, setActiveTab] = useState('orders');
+      const [calendarMode, setCalendarMode] = useState('orders'); // 'capacity' | 'orders' | 'charterRequests'
       const [factoryNewsUnread, setFactoryNewsUnread] = useState(0);
       const [charterPendingCount, setCharterPendingCount] = useState(0);
       const [focusedOrderId, setFocusedOrderId] = useState('');
@@ -4225,7 +4227,6 @@ function isUnreadForFactory(messages, readKey) {
               <div className="flex min-w-0 w-full gap-1 overflow-x-auto overscroll-x-contain rounded-xl bg-slate-100 p-1 dark:bg-slate-800 [scrollbar-width:thin]">
                 {[
                   ['news', '📢 お知らせ'],
-                  ['schedule', '⚙️ スケジュール'],
                   ['orders', '🚚 注文'],
                   ['assignments', '割当物件'],
                   ['calendar', '📅 カレンダー'],
@@ -4298,26 +4299,6 @@ function isUnreadForFactory(messages, readKey) {
                   />
                 </div>
               ) : null}
-              {activeTab === 'schedule' ? (
-                <FactoryScheduleSettings
-                  selectedDate={selectedDate}
-                  dayBlocks={dayBlocks}
-                  onSelectDate={handleSelectScheduleDate}
-                  scheduleMonth={scheduleMonth}
-                  onMonthChange={handleScheduleMonthChange}
-                  onToggleVehicle={handleToggleBlockVehicle}
-                  onFullDay={handleBulkFullDay}
-                  onMorning={handleBulkMorning}
-                  onAfternoon={handleBulkAfternoon}
-                  onClearAll={handleBulkClearDay}
-                  onFullDayLargeOnly={handleBulkFullDayLargeOnly}
-                  onFullDaySmallOnly={handleBulkFullDaySmallOnly}
-                  holidays={holidays}
-                  scheduleByDate={scheduleByDate}
-                  selectedFactoryStatus={selectedFactoryStatus}
-                  onFactoryStatusChange={handleFactoryStatusChange}
-                />
-              ) : null}
               {activeTab === 'assignments' ? (
                 <FactoryAssignedProjectsTab
                   projects={projects}
@@ -4372,17 +4353,68 @@ function isUnreadForFactory(messages, readKey) {
                 </div>
               ) : null}
               {activeTab === 'calendar' ? (
-                <FactoryAllocationCalendar
-                  orders={orders}
-                  scheduleOrders={factoryInProgressOrders}
-                  todayIso={todaySchedule}
-                  currentFactoryId={activeFactoryId}
-                  selectedDate={calendarSelectedDate}
-                  onSelectDate={setCalendarSelectedDate}
-                  currentMonth={currentMonth}
-                  onMonthChange={handleCalendarMonthChange}
-                  onOpenOrder={handleOpenOrderFromCalendar}
-                />
+                <div>
+                  <div className="mb-3 flex gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-slate-100 p-1 dark:border-slate-600 dark:bg-slate-800">
+                    {[
+                      ['capacity', '受入枠設定'],
+                      ['orders', '注文'],
+                      ['charterRequests', 'チャーター募集'],
+                    ].map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setCalendarMode(mode)}
+                        className={
+                          'min-h-[40px] shrink-0 rounded-lg px-4 text-sm font-black transition ' +
+                          (calendarMode === mode
+                            ? 'bg-white text-indigo-700 shadow-sm dark:bg-slate-900 dark:text-indigo-300'
+                            : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100')
+                        }
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {calendarMode === 'capacity' ? (
+                    <FactoryScheduleSettings
+                      selectedDate={selectedDate}
+                      dayBlocks={dayBlocks}
+                      onSelectDate={handleSelectScheduleDate}
+                      scheduleMonth={scheduleMonth}
+                      onMonthChange={handleScheduleMonthChange}
+                      onToggleVehicle={handleToggleBlockVehicle}
+                      onFullDay={handleBulkFullDay}
+                      onMorning={handleBulkMorning}
+                      onAfternoon={handleBulkAfternoon}
+                      onClearAll={handleBulkClearDay}
+                      onFullDayLargeOnly={handleBulkFullDayLargeOnly}
+                      onFullDaySmallOnly={handleBulkFullDaySmallOnly}
+                      holidays={holidays}
+                      scheduleByDate={scheduleByDate}
+                      selectedFactoryStatus={selectedFactoryStatus}
+                      onFactoryStatusChange={handleFactoryStatusChange}
+                    />
+                  ) : null}
+
+                  {calendarMode === 'orders' ? (
+                    <FactoryAllocationCalendar
+                      orders={orders}
+                      scheduleOrders={factoryInProgressOrders}
+                      todayIso={todaySchedule}
+                      currentFactoryId={activeFactoryId}
+                      selectedDate={calendarSelectedDate}
+                      onSelectDate={setCalendarSelectedDate}
+                      currentMonth={currentMonth}
+                      onMonthChange={handleCalendarMonthChange}
+                      onOpenOrder={handleOpenOrderFromCalendar}
+                    />
+                  ) : null}
+
+                  {calendarMode === 'charterRequests' ? (
+                    <FactoryCharterRequestCalendar factoryId={activeFactoryId} />
+                  ) : null}
+                </div>
               ) : null}
               {activeTab === 'history' ? (
                 <section className="mx-auto max-w-4xl space-y-3 pb-8">
