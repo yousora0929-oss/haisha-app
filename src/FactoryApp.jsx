@@ -4249,9 +4249,9 @@ function isUnreadForFactory(messages, readKey) {
               ⚠️警告: 工場ID【{activeFactoryId}】はデータベースに存在しません
             </div>
           ) : null}
-          <header className="shrink-0 border-b border-slate-200 bg-white px-3 pt-2 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-            <div className="flex min-w-0 items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-2">
+          <header className="shrink-0 border-b border-slate-200 bg-white px-2 py-1 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <div className="flex min-w-0 shrink items-center gap-2">
                 <a
                   href="/"
                   className="inline-flex w-fit shrink-0 items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
@@ -4268,57 +4268,57 @@ function isUnreadForFactory(messages, readKey) {
                   </p>
                 </div>
               </div>
-            </div>
 
-            <nav
-              className="mt-2 flex gap-1 overflow-x-auto overscroll-x-contain whitespace-nowrap pb-2 [scrollbar-width:thin]"
-              aria-label="工場画面タブ"
-            >
-              {[
-                ['news', '📢 お知らせ'],
-                ['orders', '🚚 注文'],
-                ['assignments', '割当物件'],
-                ['calendar', '📅 カレンダー'],
-                ['history', '📋 履歴'],
-                ['charter', '📣 チャーター募集'],
-                ['charterRespond', '🚚 応援要請'],
-                ['settings', '⚙️ 設定'],
-              ].map(([id, label]) => {
-                const active = activeTab === id;
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setActiveTab(id)}
-                    className={
-                      'min-h-[40px] shrink-0 rounded-lg px-3 text-xs font-black transition sm:px-4 sm:text-sm ' +
-                      (active
-                        ? 'bg-indigo-600 text-white shadow-sm'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700')
-                    }
-                  >
-                    <span className="inline-flex items-center justify-center gap-1.5">
-                      {label}
-                      {id === 'orders' && newOrdersCount > 0 ? (
-                        <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
-                          {newOrdersCount}
-                        </span>
-                      ) : null}
-                      {id === 'news' && factoryNewsUnread > 0 ? (
-                        <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm">
-                          {factoryNewsUnread}
-                        </span>
-                      ) : null}
-                      {id === 'charterRespond' && charterPendingCount > 0 ? (
-                        <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
-                          {charterPendingCount}
-                        </span>
-                      ) : null}
-                    </span>
-                  </button>
-                );
-              })}
-            </nav>
+              <nav
+                className="flex min-w-0 flex-1 gap-1 overflow-x-auto overscroll-x-contain whitespace-nowrap [scrollbar-width:thin]"
+                aria-label="工場画面タブ"
+              >
+                {[
+                  ['news', '📢 お知らせ'],
+                  ['orders', '🚚 注文'],
+                  ['assignments', '割当物件'],
+                  ['calendar', '📅 カレンダー'],
+                  ['history', '📋 履歴'],
+                  ['charter', '📣 チャーター募集'],
+                  ['charterRespond', '🚚 応援要請'],
+                  ['settings', '⚙️ 設定'],
+                ].map(([id, label]) => {
+                  const active = activeTab === id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setActiveTab(id)}
+                      className={
+                        'min-h-[40px] shrink-0 rounded-lg px-3 text-xs font-black transition sm:px-4 sm:text-sm ' +
+                        (active
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700')
+                      }
+                    >
+                      <span className="inline-flex items-center justify-center gap-1.5">
+                        {label}
+                        {id === 'orders' && newOrdersCount > 0 ? (
+                          <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
+                            {newOrdersCount}
+                          </span>
+                        ) : null}
+                        {id === 'news' && factoryNewsUnread > 0 ? (
+                          <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm">
+                            {factoryNewsUnread}
+                          </span>
+                        ) : null}
+                        {id === 'charterRespond' && charterPendingCount > 0 ? (
+                          <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
+                            {charterPendingCount}
+                          </span>
+                        ) : null}
+                      </span>
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
 
             {activeTab === 'orders' ? (
               <button
@@ -4326,7 +4326,7 @@ function isUnreadForFactory(messages, readKey) {
                 disabled={hiddenOrderIds.size === 0}
                 onClick={showAllHiddenOrders}
                 className={
-                  'mb-2 min-h-[36px] rounded-lg border-2 px-2 py-1 text-[11px] font-black shadow-sm sm:text-xs ' +
+                  'mt-1 min-h-[36px] rounded-lg border-2 px-2 py-1 text-[11px] font-black shadow-sm sm:text-xs ' +
                   (hiddenOrderIds.size === 0
                     ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
                     : 'border-indigo-500 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 active:scale-95 active:bg-indigo-200')
