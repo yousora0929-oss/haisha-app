@@ -623,6 +623,7 @@ function isUnreadForFactory(messages, readKey) {
         order.factorySiteName,
         order.acceptedFactoryLabel,
         order.factoryPendingByName,
+        orderContactPersonName(order, ''),
         fl,
       ];
       return parts.map((p) => (p == null ? '' : String(p))).join(' ').toLowerCase();
@@ -2894,6 +2895,9 @@ function isUnreadForFactory(messages, readKey) {
       const [readChatKeys, setReadChatKeys] = useState({});
       const [activeTab, setActiveTab] = useState('orders');
       const [calendarMode, setCalendarMode] = useState('orders'); // 'capacity' | 'orders' | 'charterRequests'
+      const [historySearchQuery, setHistorySearchQuery] = useState('');
+      const [historyDateFrom, setHistoryDateFrom] = useState('');
+      const [historyDateTo, setHistoryDateTo] = useState('');
       const [factoryNewsUnread, setFactoryNewsUnread] = useState(0);
       const [charterPendingCount, setCharterPendingCount] = useState(0);
       const [focusedOrderId, setFocusedOrderId] = useState('');
@@ -3537,6 +3541,18 @@ function isUnreadForFactory(messages, readKey) {
           sortOrdersForHistory((orders || []).filter((o) => isOrderInHistoryView(o, todaySchedule, activeFactoryId))),
         [orders, todaySchedule, activeFactoryId],
       );
+
+      const filteredFactoryHistoryOrders = useMemo(() => {
+        const from = String(historyDateFrom || '').slice(0, 10);
+        const to = String(historyDateTo || '').slice(0, 10);
+        return factoryHistoryOrders.filter((order) => {
+          if (!orderMatchesFactorySearch(order, historySearchQuery, activeFactoryName)) return false;
+          const d = factoryOrderDate(order);
+          if (from && (!d || d < from)) return false;
+          if (to && (!d || d > to)) return false;
+          return true;
+        });
+      }, [factoryHistoryOrders, historySearchQuery, historyDateFrom, historyDateTo, activeFactoryName]);
 
       const newOrdersCount = useMemo(
         () =>
@@ -4233,72 +4249,84 @@ function isUnreadForFactory(messages, readKey) {
               ⚠️警告: 工場ID【{activeFactoryId}】はデータベースに存在しません
             </div>
           ) : null}
-          <div className="flex shrink-0 flex-col gap-0.5 border-b border-slate-200 bg-white px-2 py-0.5 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:py-1">
+          <header className="shrink-0 border-b border-slate-200 bg-white px-3 pt-2 shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <div className="flex min-w-0 items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2">
-              <a href="/" className="inline-flex w-fit shrink-0 items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label={APP_BRAND_HOME_LABEL}>
-                <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-7 w-auto sm:h-8" />
-              </a>
-              <div className="min-w-0">
-                <p className="truncate text-xs font-black leading-tight text-slate-900 sm:text-sm">工場画面</p>
-                <p className="truncate text-[10px] font-bold leading-tight text-slate-500 sm:text-xs">{activeFactoryName}</p>
-              </div>
+                <a
+                  href="/"
+                  className="inline-flex w-fit shrink-0 items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                  aria-label={APP_BRAND_HOME_LABEL}
+                >
+                  <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-7 w-auto sm:h-8" />
+                </a>
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-black leading-tight text-slate-900 dark:text-slate-100 sm:text-sm">
+                    工場画面
+                  </p>
+                  <p className="truncate text-[10px] font-bold leading-tight text-slate-500 dark:text-slate-400 sm:text-xs">
+                    {activeFactoryName}
+                  </p>
+                </div>
               </div>
             </div>
-            <div className="flex min-w-0 w-full flex-col gap-1">
-              <div className="flex min-w-0 w-full gap-1 overflow-x-auto overscroll-x-contain rounded-xl bg-slate-100 p-0.5 dark:bg-slate-800 [scrollbar-width:thin] sm:p-1">
-                {[
-                  ['news', '📢 お知らせ'],
-                  ['orders', '🚚 注文'],
-                  ['assignments', '割当物件'],
-                  ['calendar', '📅 カレンダー'],
-                  ['history', '📋 履歴'],
-                  ['charter', '📣 チャーター募集'],
-                  ['charterRespond', '🚚 応援要請'],
-                  ['settings', '⚙️ 設定'],
-                ].map(([id, label]) => {
-                  const active = activeTab === id;
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      onClick={() => setActiveTab(id)}
-                      className={
-                        'min-h-[40px] shrink-0 rounded-lg px-3 py-1.5 text-xs font-black transition whitespace-nowrap sm:min-h-[40px] sm:px-4 sm:text-sm ' +
-                        (active
-                          ? 'bg-indigo-600 text-white shadow ring-2 ring-indigo-200'
-                          : 'text-slate-500 hover:bg-white hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white')
-                      }
-                    >
-                      <span className="inline-flex items-center justify-center gap-1.5">
-                        {label}
-                        {id === 'orders' && newOrdersCount > 0 ? (
-                          <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
-                            {newOrdersCount}
-                          </span>
-                        ) : null}
-                        {id === 'news' && factoryNewsUnread > 0 ? (
-                          <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm">
-                            {factoryNewsUnread}
-                          </span>
-                        ) : null}
-                        {id === 'charterRespond' && charterPendingCount > 0 ? (
-                          <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
-                            {charterPendingCount}
-                          </span>
-                        ) : null}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+
+            <nav
+              className="mt-2 flex gap-1 overflow-x-auto overscroll-x-contain whitespace-nowrap pb-2 [scrollbar-width:thin]"
+              aria-label="工場画面タブ"
+            >
+              {[
+                ['news', '📢 お知らせ'],
+                ['orders', '🚚 注文'],
+                ['assignments', '割当物件'],
+                ['calendar', '📅 カレンダー'],
+                ['history', '📋 履歴'],
+                ['charter', '📣 チャーター募集'],
+                ['charterRespond', '🚚 応援要請'],
+                ['settings', '⚙️ 設定'],
+              ].map(([id, label]) => {
+                const active = activeTab === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setActiveTab(id)}
+                    className={
+                      'min-h-[40px] shrink-0 rounded-lg px-3 text-xs font-black transition sm:px-4 sm:text-sm ' +
+                      (active
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700')
+                    }
+                  >
+                    <span className="inline-flex items-center justify-center gap-1.5">
+                      {label}
+                      {id === 'orders' && newOrdersCount > 0 ? (
+                        <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
+                          {newOrdersCount}
+                        </span>
+                      ) : null}
+                      {id === 'news' && factoryNewsUnread > 0 ? (
+                        <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm">
+                          {factoryNewsUnread}
+                        </span>
+                      ) : null}
+                      {id === 'charterRespond' && charterPendingCount > 0 ? (
+                        <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
+                          {charterPendingCount}
+                        </span>
+                      ) : null}
+                    </span>
+                  </button>
+                );
+              })}
+            </nav>
+
             {activeTab === 'orders' ? (
               <button
                 type="button"
                 disabled={hiddenOrderIds.size === 0}
                 onClick={showAllHiddenOrders}
                 className={
-                  'min-h-[36px] rounded-lg border-2 px-2 py-1 text-[11px] font-black shadow-sm sm:text-xs ' +
+                  'mb-2 min-h-[36px] rounded-lg border-2 px-2 py-1 text-[11px] font-black shadow-sm sm:text-xs ' +
                   (hiddenOrderIds.size === 0
                     ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
                     : 'border-indigo-500 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 active:scale-95 active:bg-indigo-200')
@@ -4308,8 +4336,7 @@ function isUnreadForFactory(messages, readKey) {
                 {hiddenOrderIds.size > 0 ? `（${hiddenOrderIds.size}件）` : ''}
               </button>
             ) : null}
-            </div>
-          </div>
+          </header>
           <PullToRefresh onRefresh={handleFactoryRefresh} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 py-1">
             <div className="mx-auto grid max-w-6xl gap-2">
               {activeTab === 'news' ? (
@@ -4439,20 +4466,49 @@ function isUnreadForFactory(messages, readKey) {
                 </div>
               ) : null}
               {activeTab === 'history' ? (
-                <section className="mx-auto max-w-4xl space-y-3 pb-8">
+                <section className="space-y-3 pb-8">
                   <header>
                     <h2 className="text-xl font-black text-slate-900 dark:text-slate-100">注文履歴</h2>
                     <p className="mt-1 text-sm font-medium text-slate-600 dark:text-slate-300">
                       手動完了・予定日経過・他工場受注（受注日の翌日0時以降）の注文を表示します（予定日の新しい順）。
                     </p>
                   </header>
-                  {factoryHistoryOrders.length === 0 ? (
+                  <div className="shrink-0 space-y-2 rounded-lg border border-slate-200 bg-slate-50/95 px-2 py-2 dark:border-slate-600 dark:bg-slate-800/80">
+                    <OrderListSearchInput
+                      id="factory-history-search"
+                      value={historySearchQuery}
+                      onChange={setHistorySearchQuery}
+                    />
+                    <div className="flex flex-wrap items-end gap-2">
+                      <label className="min-w-[9rem] flex-1">
+                        <span className="mb-1 block text-xs font-bold text-slate-600 dark:text-slate-300">から</span>
+                        <input
+                          type="date"
+                          value={historyDateFrom}
+                          onChange={(e) => setHistoryDateFrom(e.target.value)}
+                          className="min-h-[44px] w-full rounded-lg border border-slate-200/90 bg-white px-2 py-2 text-sm text-slate-800 shadow-inner outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-slate-200/80 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-slate-500 dark:focus:ring-slate-700"
+                        />
+                      </label>
+                      <label className="min-w-[9rem] flex-1">
+                        <span className="mb-1 block text-xs font-bold text-slate-600 dark:text-slate-300">まで</span>
+                        <input
+                          type="date"
+                          value={historyDateTo}
+                          onChange={(e) => setHistoryDateTo(e.target.value)}
+                          className="min-h-[44px] w-full rounded-lg border border-slate-200/90 bg-white px-2 py-2 text-sm text-slate-800 shadow-inner outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-slate-200/80 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-slate-500 dark:focus:ring-slate-700"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                  {filteredFactoryHistoryOrders.length === 0 ? (
                     <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm font-bold text-slate-500 dark:border-slate-600 dark:bg-slate-900/50 dark:text-slate-300">
-                      履歴に表示する注文はありません
+                      {String(historySearchQuery || '').trim() || historyDateFrom || historyDateTo
+                        ? '条件に一致する注文はありません'
+                        : '履歴に表示する注文はありません'}
                     </p>
                   ) : (
                     <ul className="max-h-[min(70vh,640px)] space-y-2 overflow-y-auto rounded-2xl border-2 border-slate-200 bg-white p-2 dark:border-slate-600 dark:bg-slate-800">
-                      {factoryHistoryOrders.map((order) => {
+                      {filteredFactoryHistoryOrders.map((order) => {
                         const party = orderPartyInfo(order);
                         const delivery = factoryOrderDate(order);
                         const autoPast =
