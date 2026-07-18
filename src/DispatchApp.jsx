@@ -2194,7 +2194,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
         const latest = latestChatMessage(messages);
         const from = String(latest?.from || '');
-        if (!latest || (from !== 'factory' && from !== 'admin')) return;
+        if (!latest || (from !== 'factory' && from !== 'admin' && from !== 'system')) return;
 
         const key = chatMessageReadKey(latest);
         if (!key) return;
