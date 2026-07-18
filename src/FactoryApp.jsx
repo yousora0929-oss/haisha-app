@@ -2493,8 +2493,23 @@ function isUnreadForFactory(messages, readKey) {
         const smallFull = SCHEDULE_BLOCK_IDS.every((id) => blocks[id]?.small === 'full');
         if (largeFull) return { label: '大型 終日×', badgeClass: 'bg-slate-800 text-white' };
         if (smallFull) return { label: '小型 終日×', badgeClass: 'bg-slate-800 text-white' };
-        const fullCount = SCHEDULE_BLOCK_IDS.reduce((sum, id) => sum + (blocks[id]?.large === 'full' ? 1 : 0) + (blocks[id]?.small === 'full' ? 1 : 0), 0);
-        if (fullCount > 0) return { label: `満車枠 ${fullCount}/8`, badgeClass: 'bg-orange-100 text-orange-900' };
+        const fullEntries = SCHEDULE_BLOCK_IDS.flatMap((id) => {
+          const meta = SCHEDULE_BLOCKS.find((b) => b.id === id);
+          const shortLabel = meta?.shortLabel || id;
+          const entries = [];
+          if (blocks[id]?.large === 'full') entries.push(`${shortLabel}大型`);
+          if (blocks[id]?.small === 'full') entries.push(`${shortLabel}小型`);
+          return entries;
+        });
+        if (fullEntries.length > 0) {
+          const shown = fullEntries.slice(0, 2).join('・');
+          const label = fullEntries.length > 2 ? `${shown} 他${fullEntries.length - 2}件` : shown;
+          return {
+            label,
+            title: fullEntries.join('・'),
+            badgeClass: 'bg-orange-100 text-orange-900',
+          };
+        }
         return null;
       };
       return (
@@ -2562,7 +2577,14 @@ function isUnreadForFactory(messages, readKey) {
                     <p className="text-xs font-black text-slate-600 dark:text-slate-300">{d.getDate()}</p>
                     <div className="mt-1 space-y-0.5">
                       {hasSpecialStatus ? <span className={'block rounded-md px-1.5 py-1 text-[10px] font-black ' + statusMeta.badgeClass}>{statusMeta.label}</span> : null}
-                      {capacityMeta ? <span className={'block rounded-md px-1.5 py-1 text-[10px] font-black ' + capacityMeta.badgeClass}>{capacityMeta.label}</span> : null}
+                      {capacityMeta ? (
+                        <span
+                          className={'block rounded-md px-1.5 py-1 text-[10px] font-black ' + capacityMeta.badgeClass}
+                          title={capacityMeta.title || capacityMeta.label}
+                        >
+                          {capacityMeta.label}
+                        </span>
+                      ) : null}
                     </div>
                   </button>
                 );
@@ -4205,26 +4227,26 @@ function isUnreadForFactory(messages, readKey) {
       }
 
       return (
-        <div id="factory-dashboard" className="flex h-[100dvh] min-h-[100dvh] w-full max-w-full flex-col overflow-hidden overflow-x-hidden bg-slate-50 pt-3 antialiased dark:bg-gray-900 dark:text-gray-100 sm:pt-4">
+        <div id="factory-dashboard" className="flex h-[100dvh] min-h-[100dvh] w-full max-w-full flex-col overflow-hidden overflow-x-hidden bg-slate-50 pt-[max(0.25rem,env(safe-area-inset-top))] antialiased dark:bg-gray-900 dark:text-gray-100">
           {activeFactoryMissing ? (
             <div className="shrink-0 border-b-4 border-red-700 bg-red-100 px-4 py-3 text-center text-lg font-black text-red-700 shadow sm:text-2xl">
               ⚠️警告: 工場ID【{activeFactoryId}】はデータベースに存在しません
             </div>
           ) : null}
-          <div className="flex shrink-0 flex-col gap-1.5 border-b border-slate-200 bg-white px-2 py-1 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+          <div className="flex shrink-0 flex-col gap-0.5 border-b border-slate-200 bg-white px-2 py-0.5 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:py-1">
             <div className="flex min-w-0 items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2">
               <a href="/" className="inline-flex w-fit shrink-0 items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label={APP_BRAND_HOME_LABEL}>
                 <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-7 w-auto sm:h-8" />
               </a>
               <div className="min-w-0">
-                <p className="truncate text-xs font-black text-slate-900 sm:text-sm">工場画面</p>
+                <p className="truncate text-xs font-black leading-tight text-slate-900 sm:text-sm">工場画面</p>
                 <p className="truncate text-[10px] font-bold leading-tight text-slate-500 sm:text-xs">{activeFactoryName}</p>
               </div>
               </div>
             </div>
-            <div className="flex min-w-0 w-full flex-col gap-1.5">
-              <div className="flex min-w-0 w-full gap-1 overflow-x-auto overscroll-x-contain rounded-xl bg-slate-100 p-1 dark:bg-slate-800 [scrollbar-width:thin]">
+            <div className="flex min-w-0 w-full flex-col gap-1">
+              <div className="flex min-w-0 w-full gap-1 overflow-x-auto overscroll-x-contain rounded-xl bg-slate-100 p-0.5 dark:bg-slate-800 [scrollbar-width:thin] sm:p-1">
                 {[
                   ['news', '📢 お知らせ'],
                   ['orders', '🚚 注文'],
