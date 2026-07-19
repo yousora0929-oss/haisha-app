@@ -665,7 +665,7 @@ function isUnreadForFactory(messages, readKey) {
             value={value}
             onChange={(e) => onChange(e.target.value)}
             placeholder="キーワードで検索…"
-            className="min-h-[44px] w-full rounded-lg border border-slate-200/90 bg-white py-2.5 pl-9 pr-2 text-sm text-slate-800 shadow-inner outline-none ring-0 transition placeholder:text-slate-400 focus:border-slate-300 focus:ring-2 focus:ring-slate-200/80 sm:min-h-[48px] sm:text-base"
+            className="min-h-[44px] w-full rounded-lg border border-slate-200/90 bg-white py-2.5 pl-9 pr-2 text-sm text-slate-800 shadow-inner outline-none ring-0 transition placeholder:text-slate-400 focus:border-slate-300 focus:ring-2 focus:ring-slate-200/80 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-slate-500 dark:focus:ring-slate-700 sm:min-h-[48px] sm:text-base"
             autoComplete="off"
           />
         </div>
@@ -1444,13 +1444,13 @@ function isUnreadForFactory(messages, readKey) {
 
       const cardFrame =
         isToast
-          ? 'rounded-none border-0 bg-white shadow-none '
+          ? 'rounded-none border-0 bg-white shadow-none dark:bg-slate-800 '
           : responseStatus === FACTORY_RESPONSE.ACCEPTED
-            ? 'rounded-2xl border-[3px] border-emerald-500 bg-white shadow-xl ring-2 ring-emerald-200/80 '
+            ? 'rounded-2xl border-[3px] border-emerald-500 bg-white shadow-xl ring-2 ring-emerald-200/80 dark:bg-slate-800 dark:ring-emerald-800/60 '
             : responseStatus === FACTORY_RESPONSE.PENDING
-              ? 'rounded-2xl border-[3px] border-amber-400 bg-white shadow-xl ring-2 ring-amber-200/90 '
-              : 'rounded-2xl border-2 border-slate-800/15 bg-white shadow-xl ' +
-                (idx === 0 && !isRead && !isRejectedByMe ? 'ring-4 ring-orange-400 ring-offset-2 ring-offset-slate-50 ' : '');
+              ? 'rounded-2xl border-[3px] border-amber-400 bg-white shadow-xl ring-2 ring-amber-200/90 dark:bg-slate-800 dark:ring-amber-800/60 '
+              : 'rounded-2xl border-2 border-slate-800/15 bg-white shadow-xl dark:border-slate-600 dark:bg-slate-800 ' +
+                (idx === 0 && !isRead && !isRejectedByMe ? 'ring-4 ring-orange-400 ring-offset-2 ring-offset-slate-50 dark:ring-offset-slate-900 ' : '');
 
       const primaryTopLabel = isToast ? 'text-[10px] sm:text-[11px]' : 'text-[11px] sm:text-xs';
       const primaryFieldLabel =
@@ -1636,14 +1636,14 @@ function isUnreadForFactory(messages, readKey) {
                     }
                   >
                     <div className="min-w-0 pr-2">
-                      <dt className="text-sm font-bold text-slate-500">業者（元請）</dt>
+                      <dt className="text-sm font-bold text-slate-500 dark:text-slate-400">業者（元請）</dt>
                       <dd className="mt-0.5 break-words text-base font-bold text-slate-900 dark:text-slate-100 sm:text-lg">
                         {displayPrime}
                         {billOnPrime ? <BillingMark /> : null}
                       </dd>
                     </div>
-                    <div className="min-w-0 border-l border-slate-200 px-2">
-                      <dt className="text-sm font-bold text-slate-500">下請</dt>
+                    <div className="min-w-0 border-l border-slate-200 px-2 dark:border-slate-600">
+                      <dt className="text-sm font-bold text-slate-500 dark:text-slate-400">下請</dt>
                       <dd className="mt-0.5 break-words text-base font-bold text-slate-900 dark:text-slate-100 sm:text-lg">
                         {displaySub}
                         {billOnSub && displaySub !== '—' ? <BillingMark /> : null}
@@ -1654,18 +1654,18 @@ function isUnreadForFactory(messages, readKey) {
                         ) : null}
                       </dd>
                     </div>
-                    <div className="min-w-0 border-l border-slate-200 px-2">
-                      <dt className="text-sm font-bold text-slate-500">商社</dt>
+                    <div className="min-w-0 border-l border-slate-200 px-2 dark:border-slate-600">
+                      <dt className="text-sm font-bold text-slate-500 dark:text-slate-400">商社</dt>
                       <dd className="mt-0.5 break-words text-base font-bold text-slate-900 dark:text-slate-100 sm:text-lg">
                         {displayTrader}
                       </dd>
                     </div>
                     {orderedByIsProxy ? (
-                      <div className="min-w-0 border-l border-slate-200 pl-2">
-                        <dt className="text-sm font-bold text-slate-500">発注</dt>
+                      <div className="min-w-0 border-l border-slate-200 pl-2 dark:border-slate-600">
+                        <dt className="text-sm font-bold text-slate-500 dark:text-slate-400">発注</dt>
                         <dd className="mt-0.5 break-words text-base font-bold text-slate-900 dark:text-slate-100 sm:text-lg">
                           {orderedByLabel}
-                          <span className="ml-1 inline-block rounded bg-sky-100 px-1 align-middle text-[10px] font-black text-sky-800">
+                          <span className="ml-1 inline-block rounded bg-sky-100 px-1 align-middle text-[10px] font-black text-sky-800 dark:bg-sky-900/60 dark:text-sky-200">
                             代理
                           </span>
                         </dd>
@@ -1722,13 +1722,13 @@ function isUnreadForFactory(messages, readKey) {
           const deliveryLine = `${dateStr} ${slotStr}`;
           const qtyLabel = q.valid ? q.text : '—';
           return (
-            <div className="space-y-1.5 rounded-xl border-2 border-slate-300 bg-slate-100 px-3 py-2.5">
-              <p className="text-sm font-black text-slate-800">
+            <div className="space-y-1.5 rounded-xl border-2 border-slate-300 bg-slate-100 px-3 py-2.5 dark:border-slate-600 dark:bg-slate-900/60">
+              <p className="text-sm font-black text-slate-800 dark:text-slate-100">
                 ✓ {acceptedFactoryLabel}が受注しました（{acceptedTimeLabel}）
               </p>
-              <p className="text-xs font-bold text-slate-600">納入：{deliveryLine}</p>
-              <p className="text-xs font-bold text-slate-600">現場：{party.site || siteHeroLine}</p>
-              <p className="text-xs font-bold text-slate-600">
+              <p className="text-xs font-bold text-slate-600 dark:text-slate-300">納入：{deliveryLine}</p>
+              <p className="text-xs font-bold text-slate-600 dark:text-slate-300">現場：{party.site || siteHeroLine}</p>
+              <p className="text-xs font-bold text-slate-600 dark:text-slate-300">
                 {qtyLabel} / {vehicle}
               </p>
             </div>
@@ -1764,33 +1764,33 @@ function isUnreadForFactory(messages, readKey) {
 
       const renderDetailBody = () => (
         <>
-          <div className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border border-slate-200/90 bg-white px-3 py-3 sm:grid-cols-2">
+          <div className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border border-slate-200/90 bg-white px-3 py-3 dark:border-slate-600 dark:bg-slate-900/60 sm:grid-cols-2">
             <div className="min-w-0">
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 sm:text-sm">配合</p>
-              <p className={'mt-1 break-all font-mono font-black leading-tight text-slate-900 ' + mixSize}>{mix}</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 sm:text-sm">配合</p>
+              <p className={'mt-1 break-all font-mono font-black leading-tight text-slate-900 dark:text-slate-100 ' + mixSize}>{mix}</p>
             </div>
-            <div className="min-w-0 space-y-2 sm:border-l sm:border-slate-200 sm:pl-4">
+            <div className="min-w-0 space-y-2 sm:border-l sm:border-slate-200 sm:pl-4 dark:sm:border-slate-600">
               <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-slate-500 sm:text-sm">現場担当者</p>
-                <p className="mt-1 break-words text-base font-black text-slate-900 sm:text-lg">
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 sm:text-sm">現場担当者</p>
+                <p className="mt-1 break-words text-base font-black text-slate-900 dark:text-slate-100 sm:text-lg">
                   {siteContactName || '—'}
                   {phone ? (
-                    <span className="ml-2 font-mono font-black text-slate-800">{phone}</span>
+                    <span className="ml-2 font-mono font-black text-slate-800 dark:text-slate-200">{phone}</span>
                   ) : null}
                 </p>
               </div>
               <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-slate-500 sm:text-sm">発注者</p>
-                <p className="mt-1 break-words text-base font-black text-slate-900 sm:text-lg">
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 sm:text-sm">発注者</p>
+                <p className="mt-1 break-words text-base font-black text-slate-900 dark:text-slate-100 sm:text-lg">
                   {ordererDisplayLine}
                 </p>
               </div>
             </div>
           </div>
 
-          <div className="mt-3 border-t border-slate-200 pt-3">
-            <p className="text-xs font-black uppercase tracking-wider text-slate-500 sm:text-sm">エスカレーション</p>
-            <p className="mt-1 text-sm font-black text-slate-900 sm:text-base">{escalationLabel}</p>
+          <div className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-600">
+            <p className="text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 sm:text-sm">エスカレーション</p>
+            <p className="mt-1 text-sm font-black text-slate-900 dark:text-slate-100 sm:text-base">{escalationLabel}</p>
           </div>
 
           {!isToast && order.id ? (
@@ -1944,15 +1944,15 @@ function isUnreadForFactory(messages, readKey) {
       const rejectedLook = responseStatus === FACTORY_RESPONSE.REJECTED;
       const collapsedRejected = rejectedLook && !expanded;
       const outerArticleClass = collapsedRejected
-        ? 'rounded-xl border-2 border-red-600/90 bg-red-50/30 opacity-[0.72] shadow-sm ring-1 ring-red-200/60 dark:opacity-90 overflow-hidden'
+        ? 'rounded-xl border-2 border-red-600/90 bg-red-50/30 opacity-[0.72] shadow-sm ring-1 ring-red-200/60 dark:bg-red-950/30 dark:opacity-90 overflow-hidden'
         : isCustomerCancelled
-          ? 'rounded-2xl border-[3px] border-red-600 bg-red-50 shadow-xl ring-2 ring-red-200 overflow-hidden'
+          ? 'rounded-2xl border-[3px] border-red-600 bg-red-50 shadow-xl ring-2 ring-red-200 dark:bg-red-950/40 overflow-hidden'
           : isAcceptedByMe
-          ? 'rounded-2xl border-[3px] border-emerald-600 bg-emerald-50 shadow-xl ring-2 ring-emerald-200 overflow-hidden'
+          ? 'rounded-2xl border-[3px] border-emerald-600 bg-emerald-50 shadow-xl ring-2 ring-emerald-200 dark:bg-emerald-950/35 overflow-hidden'
           : isAcceptedByOther
-            ? 'rounded-2xl border-2 border-slate-300 bg-slate-100 opacity-65 shadow-sm grayscale dark:opacity-85 overflow-hidden'
+            ? 'rounded-2xl border-2 border-slate-300 bg-slate-100 opacity-65 shadow-sm grayscale dark:border-slate-600 dark:bg-slate-800 dark:opacity-85 overflow-hidden'
             : isRejectedByMe
-              ? 'rounded-2xl border-2 border-slate-300 bg-slate-100 opacity-80 shadow-sm dark:opacity-90 overflow-hidden'
+              ? 'rounded-2xl border-2 border-slate-300 bg-slate-100 opacity-80 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:opacity-90 overflow-hidden'
               : cardFrame.trimEnd() + ' overflow-hidden';
 
       return (
@@ -1960,18 +1960,20 @@ function isUnreadForFactory(messages, readKey) {
           <div
             className={
               'flex w-full min-w-0 items-stretch ' +
-              (collapsedRejected ? 'bg-red-50/40' : 'border-b border-slate-100 bg-white dark:border-slate-600')
+              (collapsedRejected
+                ? 'bg-red-50/40 dark:bg-red-950/20'
+                : 'border-b border-slate-100 bg-white dark:border-slate-600 dark:bg-slate-800')
             }
           >
             <button
               type="button"
-              className="min-w-0 flex-1 px-2 py-2.5 text-left text-sm transition hover:bg-slate-50/90 sm:px-3 sm:py-3"
+              className="min-w-0 flex-1 px-2 py-2.5 text-left text-sm transition hover:bg-slate-50/90 dark:hover:bg-slate-700/50 sm:px-3 sm:py-3"
               onClick={() => setExpanded((v) => !v)}
               aria-expanded={expanded}
             >
               {renderCompactRequestSummary()}
             </button>
-            <div className="relative flex w-[3.25rem] shrink-0 flex-col items-center justify-between gap-0.5 border-l border-slate-200/90 bg-slate-50/60 py-1">
+            <div className="relative flex w-[3.25rem] shrink-0 flex-col items-center justify-between gap-0.5 border-l border-slate-200/90 bg-slate-50/60 py-1 dark:border-slate-600 dark:bg-slate-900/50">
               {canOpenOrderMenu ? (
                 <button
                   type="button"
@@ -2074,7 +2076,7 @@ function isUnreadForFactory(messages, readKey) {
             </div>
           </div>
           {isActionable && (canAcceptOrder || canRejectOrder || canConsultOrder) ? (
-            <div className="border-t border-slate-100 bg-slate-50 px-3 py-2 dark:border-slate-600">
+            <div className="border-t border-slate-100 bg-slate-50 px-3 py-2 dark:border-slate-600 dark:bg-slate-900/50">
               {isConsultingByMe ? (
                 <div
                   className="mb-2 rounded-xl border-2 border-blue-400 bg-blue-50 px-3 py-2 text-center text-sm font-black text-blue-900"
@@ -2181,11 +2183,11 @@ function isUnreadForFactory(messages, readKey) {
       if (!orders.length) {
         return (
           <aside
-            className="flex h-full min-h-0 flex-col rounded-lg border-2 border-dashed border-slate-300 bg-white p-2"
+            className="flex h-full min-h-0 flex-col rounded-lg border-2 border-dashed border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-800"
             aria-label="新着の配車依頼"
           >
-            <h2 className="text-sm font-black text-slate-800">新着の配車依頼</h2>
-            <p className="mt-1 text-xs font-medium leading-snug text-slate-500">
+            <h2 className="text-sm font-black text-slate-800 dark:text-slate-100">新着の配車依頼</h2>
+            <p className="mt-1 text-xs font-medium leading-snug text-slate-500 dark:text-slate-400">
               注文画面から発注されると、ここにカード形式で表示されます（別タブ連携）。
             </p>
           </aside>
@@ -2193,20 +2195,20 @@ function isUnreadForFactory(messages, readKey) {
       }
       return (
         <aside
-          className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-md ring-1 ring-slate-200/60"
+          className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-md ring-1 ring-slate-200/60 dark:border-slate-600 dark:bg-slate-800 dark:ring-slate-700/60"
           aria-label="新着の配車依頼一覧"
         >
-          <div className="shrink-0 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white px-2 py-2.5 sm:px-3">
-            <h2 className="text-base font-black tracking-tight text-slate-900 sm:text-lg">新着の配車依頼</h2>
+          <div className="shrink-0 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white px-2 py-2.5 dark:border-slate-600 dark:from-slate-800 dark:to-slate-800 sm:px-3">
+            <h2 className="text-base font-black tracking-tight text-slate-900 dark:text-slate-100 sm:text-lg">新着の配車依頼</h2>
           </div>
-          <div className="shrink-0 border-b border-slate-200 bg-slate-50/95 px-2 py-2">
+          <div className="shrink-0 border-b border-slate-200 bg-slate-50/95 px-2 py-2 dark:border-slate-600 dark:bg-slate-900/60">
             <OrderListSearchInput id="factory-inbox-search" value={searchQuery} onChange={setSearchQuery} />
           </div>
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-2 pb-2 pt-2">
             <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden pr-0.5">
             {filteredOrders.length === 0 ? (
               <li className="list-none">
-                <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-2 py-4 text-center text-xs font-bold text-slate-600">
+                <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-2 py-4 text-center text-xs font-bold text-slate-600 dark:border-slate-600 dark:bg-slate-900/50 dark:text-slate-300">
                   該当する依頼がありません
                 </p>
               </li>
@@ -2276,7 +2278,7 @@ function isUnreadForFactory(messages, readKey) {
           className="fixed bottom-4 left-4 right-4 z-[90] mx-auto max-w-md sm:left-auto sm:right-6 sm:mx-0 lg:bottom-8 lg:right-8 lg:max-w-lg"
           role="alert"
         >
-          <div className="overflow-hidden rounded-2xl border-2 border-orange-600 bg-white shadow-2xl">
+          <div className="overflow-hidden rounded-2xl border-2 border-orange-600 bg-white shadow-2xl dark:bg-slate-800">
             <div className="flex items-start justify-between gap-2 bg-orange-600 px-4 py-2.5">
               <p className="text-sm font-black text-white sm:text-base">
                 {isReassignment ? '手配振替の注文を受信' : '新規注文を受信'}
@@ -2305,8 +2307,8 @@ function isUnreadForFactory(messages, readKey) {
     function VehicleToggleRow({ kindLabel, isFull, onPick }) {
       const free = !isFull;
       return (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-1 rounded-md border border-slate-200/90 bg-white p-1.5 shadow-inner">
-          <span className="shrink-0 break-words text-xs font-black leading-tight text-slate-800 sm:text-sm">{kindLabel}</span>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-1 rounded-md border border-slate-200/90 bg-white p-1.5 shadow-inner dark:border-slate-600 dark:bg-slate-800">
+          <span className="shrink-0 break-words text-xs font-black leading-tight text-slate-800 dark:text-slate-300 sm:text-sm">{kindLabel}</span>
           <div className="grid min-h-0 flex-1 grid-cols-2 gap-1.5">
             <button
               type="button"
@@ -2316,7 +2318,7 @@ function isUnreadForFactory(messages, readKey) {
                 'flex min-h-[44px] h-full min-w-0 touch-manipulation items-center justify-center rounded-md border-2 px-1 py-2 text-xl font-black leading-none transition active:scale-[0.97] sm:min-h-[48px] sm:text-2xl ' +
                 (free
                   ? 'border-sky-600 bg-sky-600 text-white shadow-sm'
-                  : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-sky-400 hover:bg-sky-50')
+                  : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-sky-400 hover:bg-sky-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-sky-400 dark:hover:bg-sky-950/40')
               }
             >
               ○
@@ -2329,7 +2331,7 @@ function isUnreadForFactory(messages, readKey) {
                 'flex min-h-[44px] h-full min-w-0 touch-manipulation items-center justify-center rounded-md border-2 px-1 py-2 text-xl font-black leading-none transition active:scale-[0.97] sm:min-h-[48px] sm:text-2xl ' +
                 (isFull
                   ? 'border-orange-700 bg-gradient-to-b from-orange-600 to-red-600 text-white shadow-sm'
-                  : 'border-slate-200 bg-white text-slate-600 hover:border-orange-400 hover:bg-orange-50')
+                  : 'border-slate-200 bg-white text-slate-600 hover:border-orange-400 hover:bg-orange-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-orange-400 dark:hover:bg-orange-950/40')
               }
             >
               ×
@@ -2345,12 +2347,12 @@ function isUnreadForFactory(messages, readKey) {
       const smallFull = st.small === 'full';
       return (
         <article
-          className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-md border border-slate-200 bg-gradient-to-b from-white to-slate-50/90 p-1.5 shadow-sm"
+          className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-md border border-slate-200 bg-gradient-to-b from-white to-slate-50/90 p-1.5 shadow-sm dark:border-slate-600 dark:from-slate-800 dark:to-slate-900"
           aria-label={`${blockMeta.shortLabel} ${blockMeta.label}`}
         >
-          <div className="flex min-w-0 shrink-0 items-baseline justify-between gap-1 border-b border-slate-200 pb-1">
-            <p className="shrink-0 text-[11px] font-black uppercase tracking-wider text-slate-500 sm:text-xs">{blockMeta.shortLabel}</p>
-            <p className="min-w-0 break-words text-right text-xs font-black leading-tight text-slate-900 sm:text-sm">{blockMeta.label}</p>
+          <div className="flex min-w-0 shrink-0 items-baseline justify-between gap-1 border-b border-slate-200 pb-1 dark:border-slate-600">
+            <p className="shrink-0 text-[11px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 sm:text-xs">{blockMeta.shortLabel}</p>
+            <p className="min-w-0 break-words text-right text-xs font-black leading-tight text-slate-900 dark:text-slate-100 sm:text-sm">{blockMeta.label}</p>
           </div>
           <div className="mt-1 flex min-h-0 min-w-0 flex-1 flex-col gap-1">
             <VehicleToggleRow
@@ -2382,11 +2384,11 @@ function isUnreadForFactory(messages, readKey) {
       const clearBtn =
         'flex min-h-[46px] touch-manipulation items-center justify-center rounded-md border-2 border-teal-600 bg-gradient-to-b from-emerald-500 to-teal-600 px-2 py-2 text-xs font-black leading-tight text-white shadow-sm transition hover:from-emerald-400 hover:to-teal-500 active:scale-[0.98] sm:min-h-[50px] sm:text-sm';
       const typeBtn =
-        'flex min-h-[44px] touch-manipulation items-center justify-center rounded-md border border-slate-700 bg-slate-800 px-2 py-2 text-[11px] font-black leading-tight text-white shadow-sm transition hover:bg-slate-900 active:scale-[0.98] sm:min-h-[48px] sm:text-xs';
+        'flex min-h-[44px] touch-manipulation items-center justify-center rounded-md border border-slate-700 bg-slate-800 px-2 py-2 text-[11px] font-black leading-tight text-white shadow-sm transition hover:bg-slate-900 active:scale-[0.98] sm:min-h-[48px] sm:text-xs dark:border-slate-500 dark:bg-slate-700 dark:hover:bg-slate-600';
 
       return (
         <div
-          className="rounded-md border border-slate-200 bg-white p-1.5 shadow-sm"
+          className="rounded-md border border-slate-200 bg-white p-1.5 shadow-sm dark:border-slate-600 dark:bg-slate-800"
           role="group"
           aria-label={`一括操作（${selectedDate}）`}
         >
@@ -2482,37 +2484,37 @@ function isUnreadForFactory(messages, readKey) {
       {
         id: 'full',
         label: '終日満車',
-        idleClass: 'border-red-300 bg-white text-red-800 hover:bg-red-50',
+        idleClass: 'border-red-300 bg-white text-red-800 hover:bg-red-50 dark:border-red-700 dark:bg-slate-800 dark:text-red-300 dark:hover:bg-red-950/40',
         activeClass: 'border-red-800 bg-red-700 text-white ring-2 ring-red-300',
       },
       {
         id: 'am',
         label: '午前満車',
-        idleClass: 'border-sky-300 bg-white text-sky-800 hover:bg-sky-50',
+        idleClass: 'border-sky-300 bg-white text-sky-800 hover:bg-sky-50 dark:border-sky-700 dark:bg-slate-800 dark:text-sky-300 dark:hover:bg-sky-950/40',
         activeClass: 'border-sky-800 bg-sky-600 text-white ring-2 ring-sky-300',
       },
       {
         id: 'pm',
         label: '午後満車',
-        idleClass: 'border-violet-300 bg-white text-violet-800 hover:bg-violet-50',
+        idleClass: 'border-violet-300 bg-white text-violet-800 hover:bg-violet-50 dark:border-violet-700 dark:bg-slate-800 dark:text-violet-300 dark:hover:bg-violet-950/40',
         activeClass: 'border-violet-800 bg-violet-600 text-white ring-2 ring-violet-300',
       },
       {
         id: 'largeOnly',
         label: '大型のみ×',
-        idleClass: 'border-slate-400 bg-white text-slate-800 hover:bg-slate-50',
+        idleClass: 'border-slate-400 bg-white text-slate-800 hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700',
         activeClass: 'border-slate-900 bg-slate-800 text-white ring-2 ring-slate-400',
       },
       {
         id: 'smallOnly',
         label: '小型のみ×',
-        idleClass: 'border-slate-400 bg-white text-slate-800 hover:bg-slate-50',
+        idleClass: 'border-slate-400 bg-white text-slate-800 hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700',
         activeClass: 'border-slate-900 bg-slate-800 text-white ring-2 ring-slate-400',
       },
       {
         id: 'clear',
         label: 'クリア',
-        idleClass: 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50',
+        idleClass: 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700',
         activeClass: 'border-slate-600 bg-slate-500 text-white ring-2 ring-slate-300',
       },
     ];
@@ -2709,7 +2711,7 @@ function isUnreadForFactory(messages, readKey) {
           return { value: 'maintenance', label: '🔧 メンテ', badgeClass: 'bg-orange-500 text-slate-950', dayClass: 'border-yellow-300 bg-yellow-50 dark:border-yellow-700 dark:bg-yellow-950/40' };
         }
         if (holiday) {
-          return { value: 'stopped', label: '❌ 出荷停止', badgeClass: 'bg-red-600 text-white', dayClass: 'border-red-300 bg-red-50' };
+          return { value: 'stopped', label: '❌ 休日', badgeClass: 'bg-red-600 text-white', dayClass: 'border-red-300 bg-red-50' };
         }
         return { value: 'normal', label: '通常営業', badgeClass: 'bg-emerald-100 text-emerald-800', dayClass: '' };
       };
@@ -2779,7 +2781,7 @@ function isUnreadForFactory(messages, readKey) {
               </div>
             </div>
 
-            <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50/90 p-2">
+            <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50/90 p-2 dark:border-slate-600 dark:bg-slate-800/80">
               <div className="flex flex-wrap items-stretch gap-1.5">
                 {SCHEDULE_STAMP_OPTIONS.map((opt) => {
                   const selected = activeStamp === opt.id;
@@ -2805,15 +2807,15 @@ function isUnreadForFactory(messages, readKey) {
                   className={
                     'min-h-[44px] shrink-0 rounded-lg border-2 px-3 py-2 text-xs font-black transition sm:text-sm ' +
                     (stampUndoAvailable
-                      ? 'border-amber-500 bg-amber-50 text-amber-950 hover:bg-amber-100 active:scale-[0.98]'
-                      : 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400')
+                      ? 'border-amber-500 bg-amber-50 text-amber-950 hover:bg-amber-100 active:scale-[0.98] dark:border-amber-500 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/60'
+                      : 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-500')
                   }
                 >
                   元に戻す
                 </button>
               </div>
               {activeStamp ? (
-                <p className="mt-1.5 text-[11px] font-bold leading-relaxed text-slate-600 sm:text-xs">
+                <p className="mt-1.5 text-[11px] font-bold leading-relaxed text-slate-600 dark:text-slate-300 sm:text-xs">
                   日付をタップまたはなぞって適用 · もう一度スタンプを押すと解除
                 </p>
               ) : null}
@@ -2882,28 +2884,28 @@ function isUnreadForFactory(messages, readKey) {
             </div>
           </div>
 
-          <aside className="rounded-2xl border-2 border-slate-200 bg-white p-2.5 shadow-sm">
-            <p className="text-xs font-black uppercase tracking-wider text-indigo-600">選択中の日付</p>
-            <h3 className="text-base font-black text-slate-900">{selectedLabel}</h3>
+          <aside className="rounded-2xl border-2 border-slate-200 bg-white p-2.5 shadow-sm dark:border-slate-600 dark:bg-slate-800">
+            <p className="text-xs font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-300">選択中の日付</p>
+            <h3 className="text-base font-black text-slate-900 dark:text-slate-100">{selectedLabel}</h3>
             <div className="mt-2 grid gap-2">
-              <label className="text-sm font-black text-slate-700">
+              <label className="text-sm font-black text-slate-700 dark:text-slate-300">
                 工場の状況
                 <select
                   value={selectedFactoryStatus}
                   onChange={(e) => onFactoryStatusChange(e.target.value)}
-                  className="mt-1 min-h-[42px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-black text-slate-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  className="mt-1 min-h-[42px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-black text-slate-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-indigo-400 dark:focus:ring-indigo-800"
                 >
                   <option value="normal">通常営業</option>
-                  <option value="stopped">出荷停止</option>
+                  <option value="stopped">休日</option>
                   <option value="maintenance">メンテナンス</option>
                 </select>
               </label>
-              <p className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-bold leading-relaxed text-slate-600">
+              <p className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-bold leading-relaxed text-slate-600 dark:border-slate-600 dark:bg-slate-900/50 dark:text-slate-300">
                 選択すると左のカレンダーへ即時反映されます。
               </p>
             </div>
-            <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
-              <p className="text-xs font-black uppercase tracking-wider text-slate-500">選択日の受入枠</p>
+            <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 p-2 dark:border-slate-600 dark:bg-slate-900/50">
+              <p className="text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">選択日の受入枠</p>
               <div className="mt-2">
               <ScheduleBulkToolbar
                 selectedDate={selectedDate}
@@ -3857,7 +3859,7 @@ function isUnreadForFactory(messages, readKey) {
         const status = ['normal', 'stopped', 'maintenance'].includes(nextStatus) ? nextStatus : 'normal';
         const targetDate = String(selectedDate || '').slice(0, 10);
         if (!targetDate) return;
-        const description = status === 'maintenance' ? 'メンテナンス' : '出荷停止日';
+        const description = status === 'maintenance' ? 'メンテナンス' : '休日';
         const optimisticHoliday = { id: `temp-${targetDate}`, holiday_date: targetDate, description };
         setHolidays((prev) => {
           const withoutTarget = (prev || []).filter((h) => String(h?.holiday_date || '').slice(0, 10) !== targetDate);
@@ -3873,7 +3875,7 @@ function isUnreadForFactory(messages, readKey) {
           if (status !== 'normal') {
             await db.insertHoliday({ holiday_date: targetDate, description });
           }
-          setActionNotice(status === 'normal' ? '通常営業に戻しました' : status === 'maintenance' ? 'メンテナンス日にしました' : '出荷停止日にしました');
+          setActionNotice(status === 'normal' ? '通常営業に戻しました' : status === 'maintenance' ? 'メンテナンス日にしました' : '休日にしました');
           const hols = await db.fetchHolidays();
           setHolidays(hols);
           window.setTimeout(() => setActionNotice(''), 3500);
