@@ -1,4 +1,10 @@
 import { resolveOrderSiteDisplayName } from './siteNameDisplay.js';
+import {
+  resolveOrdererName,
+  resolveSiteContactName,
+  resolveSitePhone,
+} from './orderContactInfo.js';
+import { formatPhoneNumberJP } from './phoneFormat.js';
 
 /** 帳票・一覧用の業者名（order_data.contractorName 優先、なければログイン業者名） */
 export function resolveOrderContractorDisplayName(order) {
@@ -34,15 +40,10 @@ export function orderPartyInfo(order, { preferSiteContact = false } = {}) {
   const contractor = resolveOrderContractorDisplayName(order);
   const site = resolveOrderSiteDisplayName(order);
   const orderedBy = preferSiteContact
-    ? String(
-        order?.siteContactName ??
-          order?.site_contact_name ??
-          order?.orderedBy ??
-          order?.ordered_by ??
-          '',
-      ).trim()
-    : String(order?.ordered_by ?? order?.orderedBy ?? '').trim();
-  const phone = String(order?.sitePhone ?? order?.phone ?? '').trim();
+    ? resolveSiteContactName(order)
+    : resolveOrdererName(order);
+  const phoneRaw = resolveSitePhone(order);
+  const phone = formatPhoneNumberJP(phoneRaw);
   return {
     contractor: tradingCompany && contractor ? `${contractor} (商社: ${tradingCompany})` : contractor || '—',
     site: site || '—',

@@ -80,6 +80,8 @@ import {
 } from './utils/customerStatusLabels.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { orderPartyInfo as buildOrderPartyInfo } from './utils/orderPartyInfo.js';
+import { resolveSiteContactName } from './utils/orderContactInfo.js';
+import { formatPhoneNumberJP } from './utils/phoneFormat.js';
 import { resolveGuestPreferredFactoryId, resolveProjectMainFactoryId, getProjectDataGapWarnings } from './utils/projectFactory.js';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
@@ -866,13 +868,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return buildMapEditorUrl(order.id, undefined, token ? { guestToken: token } : {});
       }, [guestToken, order?.id]);
 
-      const orderedByDisp = String(
-        order.siteContactName ??
-          order.site_contact_name ??
-          order.orderedBy ??
-          order.ordered_by ??
-          '',
-      ).trim();
+      const orderedByDisp = resolveSiteContactName(order);
       const compactMeta = [
         vehicle ? `車種:${vehicle}` : '',
         trader && trader !== '—' ? `商社:${trader}` : '',
@@ -4493,7 +4489,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         return String(c?.manager_name || '').trim();
                       }
                       const contactName = String(c?.name || '').trim();
-                      const contactPhone = String(c?.phone || '').trim();
+                      const contactPhone = formatPhoneNumberJP(String(c?.phone || '').trim());
                       return contactPhone
                         ? `${contactName || '—'}（${contactPhone}）`
                         : contactName;

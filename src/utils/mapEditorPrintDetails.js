@@ -1,6 +1,8 @@
 import { TIME_SLOTS } from '../haishaConstants.js';
 import { combineDeliveryAddress } from './deliveryAreas.js';
 import { resolveOrderSiteDisplayName } from './siteNameDisplay.js';
+import { resolveSiteContactName, resolveSitePhone } from './orderContactInfo.js';
+import { formatPhoneNumberJP } from './phoneFormat.js';
 
 /** 配合文字列を 強度-スランプ-粗骨材-セメント に分解 */
 export function parseMixComponents(mixText) {
@@ -115,10 +117,8 @@ export function buildOperationInstructionPrintGrid(order, project, siteTitle) {
       ? `${String(qtyRaw).trim()} ㎥`
       : '—';
 
-  const orderedBy = field(order.orderedBy ?? order.ordered_by);
-  const phone = field(
-    order.sitePhone ?? order.phone ?? order.site_phone ?? order.phone_number,
-  );
+  const orderedBy = field(resolveSiteContactName(order));
+  const phone = field(formatPhoneNumberJP(resolveSitePhone(order)));
 
   const deliveryArea = order.deliveryArea ?? order.delivery_area ?? project?.delivery_area ?? '';
   const addressDetail = order.siteAddressDetail ?? order.site_address_detail ?? '';

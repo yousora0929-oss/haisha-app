@@ -1878,7 +1878,7 @@ function AdminOrderDetailModal({
 
   if (!open || !order) return null;
 
-  const party = orderPartyInfo(order);
+  const party = orderPartyInfo(order, { preferSiteContact: true });
   const st = orderStatus(order);
   const assignedIds = associationAssignedFactoryIds(order);
   const preferredId = String(order.preferred_factory_id || order.preferredFactoryId || '').trim();
@@ -2089,7 +2089,7 @@ function AdminFollowupOrderCard({
   const [localError, setLocalError] = useState('');
   const [showChat, setShowChat] = useState(false);
 
-  const party = orderPartyInfo(order);
+  const party = orderPartyInfo(order, { preferSiteContact: true });
   const rejectedIds = Array.isArray(order.rejected_factory_ids) ? order.rejected_factory_ids : [];
   const notes = Array.isArray(order.admin_followup_notes)
     ? order.admin_followup_notes
@@ -2538,7 +2538,7 @@ function OrdersMonitorSection({
       ['注文ID', 'ステータス', '希望日', '希望時刻', '種別', '業者', '現場名', '担当者', '連絡先', '受注工場', '数量', '配合'],
       ...visibleOrders.map((o) => {
         const fid = String(o.factory_site_id || '').trim();
-        const party = orderPartyInfo(o);
+        const party = orderPartyInfo(o, { preferSiteContact: true });
         return [
           o.id,
           orderStatusLabel(orderStatus(o)),
@@ -2631,7 +2631,7 @@ function OrdersMonitorSection({
           </p>
           <ul className="mt-3 space-y-2">
             {pendingAssociationOrders.map((o) => {
-              const party = orderPartyInfo(o);
+              const party = orderPartyInfo(o, { preferSiteContact: true });
               return (
                 <li key={o.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2 dark:border-violet-700 dark:bg-slate-800">
                   <div className="min-w-0">
@@ -2706,7 +2706,7 @@ function OrdersMonitorSection({
                 visibleOrders.map((o) => {
                   const st = orderStatus(o);
                   const fid = String(o.factory_site_id || '').trim();
-                  const party = orderPartyInfo(o);
+                  const party = orderPartyInfo(o, { preferSiteContact: true });
                   return (
                     <tr key={o.id} className="border-b border-slate-100 hover:bg-slate-50/80">
                       <td className="px-3 py-2.5">
@@ -2810,7 +2810,7 @@ function OrdersMonitorSection({
                 </div>
                 <ul className="mt-3 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white dark:divide-slate-600 dark:border-slate-600 dark:bg-slate-800">
                   {group.orders.map((o) => {
-                    const party = orderPartyInfo(o);
+                    const party = orderPartyInfo(o, { preferSiteContact: true });
                     return (
                       <li key={o.id} className="grid gap-2 px-3 py-3 sm:grid-cols-[12rem_5rem_repeat(4,minmax(0,1fr))] sm:items-center">
                         <p className="font-mono text-sm font-black text-slate-900">{formatDateJp(orderDeliveryDate(o))} {formatOrderTime(o)}</p>

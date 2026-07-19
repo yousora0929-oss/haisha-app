@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as db from '../haishaDb.js';
 import { downloadOrgMembersExportCsv } from '../utils/adminCsvImport.js';
 import { generateInitialMemberPassword } from '../utils/generatePassword.js';
+import { formatPhoneNumberJP } from '../utils/phoneFormat.js';
 
 const emptyMember = () => ({
   companyName: '',
@@ -853,7 +854,7 @@ export function AdminOrgSection({ orgType, label }) {
                         {member.company_name || org.name || '—'}
                       </span>
                       <span className="min-w-[7rem] text-gray-600">
-                        {member.phone_number || '—'}
+                        {member.phone_number ? formatPhoneNumberJP(member.phone_number) : '—'}
                       </span>
                       <div className="ml-auto flex gap-2">
                         <button

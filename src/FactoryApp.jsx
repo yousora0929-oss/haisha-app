@@ -64,6 +64,12 @@ import { isValidSiteOrderUrlToken } from './utils/urlValidation.js';
 import { isLocationPendingOrder } from './utils/orderWorkflow.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { orderPartyInfo } from './utils/orderPartyInfo.js';
+import {
+  resolveOrdererName,
+  resolveSiteContactName,
+  resolveSitePhone,
+} from './utils/orderContactInfo.js';
+import { formatPhoneNumberJP } from './utils/phoneFormat.js';
 import { MAP_EDITOR_ORDER_SAVED_DOM_EVENT, MAP_EDITOR_ORDER_SAVED_EVENT_KEY } from './mapEditorConstants.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
@@ -167,8 +173,7 @@ function orderContactPersonName(order, fallback = '担当者') {
     order?.manager_name ??
       order?.contact_person ??
       order?.contactPerson ??
-      order?.ordered_by ??
-      order?.orderedBy ??
+      resolveSiteContactName(order) ??
       fallback ??
       '',
   ).trim() || '担当者';
@@ -754,18 +759,19 @@ function isUnreadForFactory(messages, readKey) {
                       <ul className="space-y-0.5">
                         {siteContacts.map((c, i) => {
                           const tel = formatTelHref(c.phone);
+                          const phoneDisp = formatPhoneNumberJP(c.phone);
                           return (
                             <li key={`site-contact-${i}`}>
                               {c.name || '—'}
-                              {c.phone ? (
+                              {phoneDisp ? (
                                 <>
                                   {' '}
                                   {tel ? (
                                     <a href={tel} className="font-mono text-indigo-700 underline-offset-2 hover:underline">
-                                      {c.phone}
+                                      {phoneDisp}
                                     </a>
                                   ) : (
-                                    <span className="font-mono">{c.phone}</span>
+                                    <span className="font-mono">{phoneDisp}</span>
                                   )}
                                 </>
                               ) : null}
@@ -789,10 +795,10 @@ function isUnreadForFactory(messages, readKey) {
                               href={formatTelHref(tradingContactPhone)}
                               className="font-mono text-indigo-700 underline-offset-2 hover:underline"
                             >
-                              {tradingContactPhone}
+                              {formatPhoneNumberJP(tradingContactPhone)}
                             </a>
                           ) : (
-                            <span className="font-mono">{tradingContactPhone}</span>
+                            <span className="font-mono">{formatPhoneNumberJP(tradingContactPhone)}</span>
                           )}
                         </>
                       ) : null}
@@ -1375,8 +1381,13 @@ function isUnreadForFactory(messages, readKey) {
       const addrRaw = order.siteAddress?.trim() || '';
       const addr = addrRaw || '（住所未入力）';
       const siteHeroLine = siteNm || addrRaw || '（未入力）';
-      const party = orderPartyInfo(order);
-      const phone = order.sitePhone != null ? String(order.sitePhone).trim() : '';
+      const party = orderPartyInfo(order, { preferSiteContact: true });
+      const siteContactName = resolveSiteContactName(order);
+      const ordererName = resolveOrdererName(order);
+      const sitePhoneFormatted = formatPhoneNumberJP(resolveSitePhone(order));
+      const showOrdererRow =
+        Boolean(ordererName) && ordererName !== siteContactName;
+      const phone = sitePhoneFormatted;
       const projectId = String(order?.project_id ?? order?.projectId ?? '').trim();
       const linkedProject = projectId ? projectById?.[projectId] : null;
       const linkedCustomerId = String(
@@ -1722,6 +1733,17 @@ function isUnreadForFactory(messages, readKey) {
           <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50/70 p-2 shadow-inner dark:border-indigo-500/40 dark:bg-indigo-950/35">
             {renderPrimarySummary({ borderless: true })}
           </div>
+          <div className="space-y-0.5 px-0.5 text-left">
+            <p className="break-words text-xs font-bold text-slate-700 dark:text-slate-200 sm:text-sm">
+              現場担当者：{siteContactName || '—'}
+              {phone ? `　${phone}` : ''}
+            </p>
+            {showOrdererRow ? (
+              <p className="break-words text-xs font-bold text-slate-600 dark:text-slate-300 sm:text-sm">
+                発注担当者：{ordererName || '—'}
+              </p>
+            ) : null}
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             {!isAccepted && !isCustomerCancelled && !isRejectedByMe ? (
               <FactoryStatusMini status={order.factoryResponseStatus} />
@@ -1747,18 +1769,29 @@ function isUnreadForFactory(messages, readKey) {
 
       const renderDetailBody = () => (
         <>
-          <div className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border border-slate-200/90 bg-white px-3 py-3 sm:grid-cols-3">
+          <div className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border border-slate-200/90 bg-white px-3 py-3 sm:grid-cols-2">
             <div className="min-w-0">
               <p className="text-xs font-bold uppercase tracking-wider text-slate-500 sm:text-sm">配合</p>
               <p className={'mt-1 break-all font-mono font-black leading-tight text-slate-900 ' + mixSize}>{mix}</p>
             </div>
-            <div className="min-w-0 sm:border-l sm:border-slate-200 sm:pl-4">
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 sm:text-sm">現場担当者</p>
-              <p className="mt-1 break-words text-base font-black text-slate-900 sm:text-lg">{party.orderedBy || '—'}</p>
-            </div>
-            <div className="min-w-0 sm:border-l sm:border-slate-200 sm:pl-4">
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 sm:text-sm">連絡先</p>
-              <p className="mt-1 break-words font-mono text-base font-black text-slate-900 sm:text-lg">{party.phone || phone || '—'}</p>
+            <div className="min-w-0 space-y-2 sm:border-l sm:border-slate-200 sm:pl-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-500 sm:text-sm">現場担当者</p>
+                <p className="mt-1 break-words text-base font-black text-slate-900 sm:text-lg">
+                  {siteContactName || '—'}
+                  {phone ? (
+                    <span className="ml-2 font-mono font-black text-slate-800">{phone}</span>
+                  ) : null}
+                </p>
+              </div>
+              {showOrdererRow ? (
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-500 sm:text-sm">発注担当者</p>
+                  <p className="mt-1 break-words text-base font-black text-slate-900 sm:text-lg">
+                    {ordererName || '—'}
+                  </p>
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -2830,7 +2863,7 @@ function isUnreadForFactory(messages, readKey) {
                     <p className="text-xs font-black text-slate-500">{d.getDate()}</p>
                     <div className="mt-1 space-y-0.5">
                       {list.slice(0, 3).map((order) => {
-                        const party = orderPartyInfo(order);
+                        const party = orderPartyInfo(order, { preferSiteContact: true });
                         return (
                           <span key={order.id} className={'block truncate rounded-md px-1.5 py-0.5 text-[10px] font-black ' + getOrderKindClass(order)}>
                             {party.site || '現場未設定'}: {factoryOrderQuantity(order)}㎡
@@ -2855,7 +2888,7 @@ function isUnreadForFactory(messages, readKey) {
             ) : (
               <ol className="mt-2 space-y-2">
                 {selectedOrders.map((order) => {
-                  const party = orderPartyInfo(order);
+                  const party = orderPartyInfo(order, { preferSiteContact: true });
                   return (
                     <li
                       key={order.id}
@@ -4331,7 +4364,7 @@ function isUnreadForFactory(messages, readKey) {
         const rows = [
           ['注文ID', '希望日', '希望時刻', 'ステータス', '業者', '現場名', '担当者', '連絡先', '数量', '配合'],
           ...(orders || []).map((o) => {
-            const party = orderPartyInfo(o);
+            const party = orderPartyInfo(o, { preferSiteContact: true });
             return [
               o.id,
               factoryOrderDate(o),
@@ -4707,7 +4740,7 @@ function isUnreadForFactory(messages, readKey) {
                   ) : (
                     <ul className="max-h-[min(70vh,640px)] space-y-2 overflow-y-auto rounded-2xl border-2 border-slate-200 bg-white p-2 dark:border-slate-600 dark:bg-slate-800">
                       {filteredFactoryHistoryOrders.map((order) => {
-                        const party = orderPartyInfo(order);
+                        const party = orderPartyInfo(order, { preferSiteContact: true });
                         const delivery = factoryOrderDate(order);
                         const autoPast =
                           !isOrderManuallyCompleted(order) &&
