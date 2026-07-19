@@ -2437,14 +2437,101 @@ function isUnreadForFactory(messages, readKey) {
       }
     }
 
-    function PullToRefresh({ children, onRefresh, className = '' }) {
+    /** stampId: 'full' | 'am' | 'pm' | 'largeOnly' | 'smallOnly' | 'clear' */
+    function applyStampToDayBlocks(dayBlocks, stampId) {
+      const base = normalizeDayBlockSchedule(dayBlocks);
+      if (stampId === 'clear') return defaultEmptyDayBlocks();
+      if (stampId === 'full') {
+        const next = defaultEmptyDayBlocks();
+        for (const id of SCHEDULE_BLOCK_IDS) {
+          next[id] = { large: 'full', small: 'full' };
+        }
+        return next;
+      }
+      if (stampId === 'am') {
+        const next = { ...base };
+        for (const id of ['am1', 'am2']) {
+          next[id] = { large: 'full', small: 'full' };
+        }
+        return next;
+      }
+      if (stampId === 'pm') {
+        const next = { ...base };
+        for (const id of ['pm1', 'pm2']) {
+          next[id] = { large: 'full', small: 'full' };
+        }
+        return next;
+      }
+      if (stampId === 'largeOnly') {
+        const next = { ...base };
+        for (const id of SCHEDULE_BLOCK_IDS) {
+          next[id] = { ...next[id], large: 'full' };
+        }
+        return next;
+      }
+      if (stampId === 'smallOnly') {
+        const next = { ...base };
+        for (const id of SCHEDULE_BLOCK_IDS) {
+          next[id] = { ...next[id], small: 'full' };
+        }
+        return next;
+      }
+      return base;
+    }
+
+    function isScheduleStampDateInBounds(day) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(day || ''))) return false;
+      const { minIso, maxIso } = getScheduleDateBoundsISO();
+      return day >= minIso && day <= maxIso;
+    }
+
+    const SCHEDULE_STAMP_OPTIONS = [
+      {
+        id: 'full',
+        label: '終日満車',
+        idleClass: 'border-red-300 bg-white text-red-800 hover:bg-red-50',
+        activeClass: 'border-red-800 bg-red-700 text-white ring-2 ring-red-300',
+      },
+      {
+        id: 'am',
+        label: '午前満車',
+        idleClass: 'border-sky-300 bg-white text-sky-800 hover:bg-sky-50',
+        activeClass: 'border-sky-800 bg-sky-600 text-white ring-2 ring-sky-300',
+      },
+      {
+        id: 'pm',
+        label: '午後満車',
+        idleClass: 'border-violet-300 bg-white text-violet-800 hover:bg-violet-50',
+        activeClass: 'border-violet-800 bg-violet-600 text-white ring-2 ring-violet-300',
+      },
+      {
+        id: 'largeOnly',
+        label: '大型のみ×',
+        idleClass: 'border-slate-400 bg-white text-slate-800 hover:bg-slate-50',
+        activeClass: 'border-slate-900 bg-slate-800 text-white ring-2 ring-slate-400',
+      },
+      {
+        id: 'smallOnly',
+        label: '小型のみ×',
+        idleClass: 'border-slate-400 bg-white text-slate-800 hover:bg-slate-50',
+        activeClass: 'border-slate-900 bg-slate-800 text-white ring-2 ring-slate-400',
+      },
+      {
+        id: 'clear',
+        label: 'クリア',
+        idleClass: 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50',
+        activeClass: 'border-slate-600 bg-slate-500 text-white ring-2 ring-slate-300',
+      },
+    ];
+
+    function PullToRefresh({ children, onRefresh, className = '', suspended = false }) {
       const [pullDistance, setPullDistance] = useState(0);
       const [refreshing, setRefreshing] = useState(false);
       const startYRef = useRef(null);
       const pullingRef = useRef(false);
       const threshold = 70;
       const runRefresh = useCallback(async () => {
-        if (refreshing || typeof onRefresh !== 'function') return;
+        if (suspended || refreshing || typeof onRefresh !== 'function') return;
         setRefreshing(true);
         try {
           await onRefresh();
@@ -2454,21 +2541,27 @@ function isUnreadForFactory(messages, readKey) {
           pullingRef.current = false;
           startYRef.current = null;
         }
-      }, [onRefresh, refreshing]);
+      }, [onRefresh, refreshing, suspended]);
       return (
         <div
           className={'relative overscroll-y-contain ' + className}
           onTouchStart={(e) => {
-            if (window.scrollY > 0 || refreshing) return;
+            if (suspended || window.scrollY > 0 || refreshing) return;
             startYRef.current = e.touches[0]?.clientY ?? null;
             pullingRef.current = true;
           }}
           onTouchMove={(e) => {
-            if (!pullingRef.current || startYRef.current == null) return;
+            if (suspended || !pullingRef.current || startYRef.current == null) return;
             const next = Math.max(0, (e.touches[0]?.clientY ?? 0) - startYRef.current);
             if (next > 0 && window.scrollY <= 0) setPullDistance(Math.min(96, next * 0.55));
           }}
           onTouchEnd={() => {
+            if (suspended) {
+              setPullDistance(0);
+              pullingRef.current = false;
+              startYRef.current = null;
+              return;
+            }
             if (pullDistance >= threshold) {
               void runRefresh();
             } else {
@@ -2510,6 +2603,13 @@ function isUnreadForFactory(messages, readKey) {
       scheduleByDate,
       selectedFactoryStatus,
       onFactoryStatusChange,
+      activeStamp = null,
+      onActiveStampChange,
+      stampUndoAvailable = false,
+      onStampUndo,
+      onStampPaintSessionStart,
+      onStampPaintDay,
+      onStampPaintSessionEnd,
     }) {
       const holidayByDate = useMemo(() => {
         const map = {};
@@ -2543,6 +2643,72 @@ function isUnreadForFactory(messages, readKey) {
         if (Number.isNaN(d.getTime())) return selectedDate || '未選択';
         return d.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' });
       }, [selectedDate]);
+      const stampPaintingRef = useRef(false);
+      const calendarGridRef = useRef(null);
+
+      const resolveStampDateFromPoint = useCallback((clientX, clientY) => {
+        if (typeof document === 'undefined' || typeof document.elementFromPoint !== 'function') return null;
+        const el = document.elementFromPoint(clientX, clientY);
+        if (!el || typeof el.closest !== 'function') return null;
+        const cell = el.closest('[data-date]');
+        if (!cell) return null;
+        const day = cell.getAttribute('data-date');
+        return /^\d{4}-\d{2}-\d{2}$/.test(String(day || '')) ? day : null;
+      }, []);
+
+      const endStampPaintIfNeeded = useCallback(
+        (e) => {
+          if (!stampPaintingRef.current) return;
+          stampPaintingRef.current = false;
+          try {
+            if (e?.currentTarget && e.pointerId != null && e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+              e.currentTarget.releasePointerCapture(e.pointerId);
+            }
+          } catch {
+            /* ignore */
+          }
+          if (typeof onStampPaintSessionEnd === 'function') onStampPaintSessionEnd();
+        },
+        [onStampPaintSessionEnd],
+      );
+
+      const handleStampGridPointerDown = useCallback(
+        (e) => {
+          if (!activeStamp) return;
+          if (e.pointerType === 'mouse' && e.button !== 0) return;
+          const day = resolveStampDateFromPoint(e.clientX, e.clientY);
+          if (!day || !isScheduleStampDateInBounds(day)) return;
+          e.preventDefault();
+          stampPaintingRef.current = true;
+          try {
+            e.currentTarget.setPointerCapture?.(e.pointerId);
+          } catch {
+            /* ignore */
+          }
+          if (typeof onStampPaintSessionStart === 'function') onStampPaintSessionStart();
+          if (typeof onStampPaintDay === 'function') onStampPaintDay(day);
+        },
+        [activeStamp, onStampPaintDay, onStampPaintSessionStart, resolveStampDateFromPoint],
+      );
+
+      const handleStampGridPointerMove = useCallback(
+        (e) => {
+          if (!activeStamp || !stampPaintingRef.current) return;
+          const day = resolveStampDateFromPoint(e.clientX, e.clientY);
+          if (!day) return;
+          if (typeof onStampPaintDay === 'function') onStampPaintDay(day);
+        },
+        [activeStamp, onStampPaintDay, resolveStampDateFromPoint],
+      );
+
+      const toggleStamp = useCallback(
+        (stampId) => {
+          if (typeof onActiveStampChange !== 'function') return;
+          onActiveStampChange(activeStamp === stampId ? null : stampId);
+        },
+        [activeStamp, onActiveStampChange],
+      );
+
       const getStatusMeta = (day) => {
         const holiday = holidayByDate[day];
         const description = String(holiday?.description || '');
@@ -2619,26 +2785,83 @@ function isUnreadForFactory(messages, readKey) {
                 </button>
               </div>
             </div>
+
+            <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50/90 p-2">
+              <div className="flex flex-wrap items-stretch gap-1.5">
+                {SCHEDULE_STAMP_OPTIONS.map((opt) => {
+                  const selected = activeStamp === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => toggleStamp(opt.id)}
+                      className={
+                        'min-h-[44px] flex-1 basis-[5.5rem] rounded-lg border-2 px-2 py-2 text-xs font-black leading-tight transition active:scale-[0.98] sm:text-sm ' +
+                        (selected ? opt.activeClass : opt.idleClass)
+                      }
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  disabled={!stampUndoAvailable || typeof onStampUndo !== 'function'}
+                  onClick={() => onStampUndo?.()}
+                  className={
+                    'min-h-[44px] shrink-0 rounded-lg border-2 px-3 py-2 text-xs font-black transition sm:text-sm ' +
+                    (stampUndoAvailable
+                      ? 'border-amber-500 bg-amber-50 text-amber-950 hover:bg-amber-100 active:scale-[0.98]'
+                      : 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400')
+                  }
+                >
+                  元に戻す
+                </button>
+              </div>
+              {activeStamp ? (
+                <p className="mt-1.5 text-[11px] font-bold leading-relaxed text-slate-600 sm:text-xs">
+                  日付をタップまたはなぞって適用 · もう一度スタンプを押すと解除
+                </p>
+              ) : null}
+            </div>
+
             <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[11px] font-black text-slate-500">
               {['日', '月', '火', '水', '木', '金', '土'].map((d) => (
                 <div key={d} className="rounded-lg bg-slate-100 py-1">{d}</div>
               ))}
             </div>
-            <div className="mt-1.5 grid grid-cols-7 gap-1">
+            <div
+              ref={calendarGridRef}
+              className="mt-1.5 grid grid-cols-7 gap-1"
+              style={{ touchAction: activeStamp ? 'none' : 'auto' }}
+              onPointerDown={handleStampGridPointerDown}
+              onPointerMove={handleStampGridPointerMove}
+              onPointerUp={endStampPaintIfNeeded}
+              onPointerCancel={endStampPaintIfNeeded}
+              onLostPointerCapture={endStampPaintIfNeeded}
+            >
               {days.map((day) => {
                 const active = day === selectedDate;
                 const inMonth = day.startsWith(monthKey);
                 const statusMeta = getStatusMeta(day);
                 const hasSpecialStatus = statusMeta.value !== 'normal';
                 const capacityMeta = getCapacityMeta(day);
+                const stampApplicable = isScheduleStampDateInBounds(day);
                 const d = new Date(`${day}T12:00:00`);
                 return (
                   <button
                     key={day}
                     type="button"
-                    onClick={() => onSelectDate(day)}
+                    data-date={day}
+                    onClick={() => {
+                      if (activeStamp) return;
+                      onSelectDate(day);
+                    }}
                     className={
                       'min-h-[4.8rem] rounded-lg border-2 p-1 text-left transition active:scale-[0.99] sm:min-h-[5.5rem] sm:p-1.5 ' +
+                      (activeStamp && stampApplicable ? 'cursor-pointer hover:brightness-95 ' : '') +
+                      (activeStamp && !stampApplicable ? 'opacity-40 ' : '') +
                       (active
                         ? `border-blue-600 ${hasSpecialStatus ? statusMeta.dayClass.replace('border-yellow-300 ', '').replace('border-red-300 ', '') : 'bg-blue-50'} ring-2 ring-blue-200`
                         : hasSpecialStatus
@@ -2935,6 +3158,15 @@ function isUnreadForFactory(messages, readKey) {
       });
       const [scheduleByDate, setScheduleByDate] = useState({});
       const scheduleByDateRef = useRef({});
+      const [activeStamp, setActiveStamp] = useState(null);
+      const [stampUndoAvailable, setStampUndoAvailable] = useState(false);
+      const stampUndoRef = useRef(null);
+      const stampUndoPaintedRef = useRef([]);
+      const stampPaintActiveRef = useRef(false);
+      const stampPaintedRef = useRef(new Set());
+      const stampPaintMapRef = useRef(null);
+      const stampPaintDirtyRef = useRef(false);
+      const activeStampRef = useRef(null);
       const [rawOrders, setRawOrders] = useState([]);
       const rawOrdersRef = useRef([]);
       const [orders, setOrders] = useState([]);
@@ -3057,6 +3289,16 @@ function isUnreadForFactory(messages, readKey) {
       useEffect(() => {
         scheduleByDateRef.current = scheduleByDate;
       }, [scheduleByDate]);
+
+      useEffect(() => {
+        activeStampRef.current = activeStamp;
+      }, [activeStamp]);
+
+      useEffect(() => {
+        if (activeTab !== 'calendar' || calendarMode !== 'capacity') {
+          setActiveStamp(null);
+        }
+      }, [activeTab, calendarMode]);
 
       useEffect(() => {
         rawOrdersRef.current = rawOrders;
@@ -4271,89 +4513,107 @@ function isUnreadForFactory(messages, readKey) {
         [persistOrders, refreshChatThreads, activeFactoryName],
       );
 
+      const handleBulkApplyStamp = useCallback(
+        (stampId) => {
+          setScheduleByDate((prev) => {
+            const safePrev = normalizeFullSchedule(prev);
+            const nextDay = applyStampToDayBlocks(safePrev[selectedDate], stampId);
+            const nextAll = { ...safePrev, [selectedDate]: nextDay };
+            void persistScheduleMap(activeFactoryId, nextAll);
+            window.queueMicrotask(() => runScheduleAutoPipeline(nextAll));
+            return nextAll;
+          });
+        },
+        [selectedDate, runScheduleAutoPipeline, activeFactoryId],
+      );
+
       const handleBulkFullDay = useCallback(() => {
-        setScheduleByDate((prev) => {
-          const safePrev = normalizeFullSchedule(prev);
-          const nextDay = defaultEmptyDayBlocks();
-          for (const id of SCHEDULE_BLOCK_IDS) {
-            nextDay[id] = { large: 'full', small: 'full' };
-          }
-          const nextAll = { ...safePrev, [selectedDate]: nextDay };
-          void persistScheduleMap(activeFactoryId, nextAll);
-          window.queueMicrotask(() => runScheduleAutoPipeline(nextAll));
-          return nextAll;
-        });
-      }, [selectedDate, runScheduleAutoPipeline, activeFactoryId]);
+        handleBulkApplyStamp('full');
+      }, [handleBulkApplyStamp]);
 
       const handleBulkMorning = useCallback(() => {
-        setScheduleByDate((prev) => {
-          const safePrev = normalizeFullSchedule(prev);
-          const base = normalizeDayBlockSchedule(safePrev[selectedDate]);
-          const nextDay = { ...base };
-          for (const id of ['am1', 'am2']) {
-            nextDay[id] = { large: 'full', small: 'full' };
-          }
-          const nextAll = { ...safePrev, [selectedDate]: nextDay };
-          void persistScheduleMap(activeFactoryId, nextAll);
-          window.queueMicrotask(() => runScheduleAutoPipeline(nextAll));
-          return nextAll;
-        });
-      }, [selectedDate, runScheduleAutoPipeline, activeFactoryId]);
+        handleBulkApplyStamp('am');
+      }, [handleBulkApplyStamp]);
 
       const handleBulkAfternoon = useCallback(() => {
-        setScheduleByDate((prev) => {
-          const safePrev = normalizeFullSchedule(prev);
-          const base = normalizeDayBlockSchedule(safePrev[selectedDate]);
-          const nextDay = { ...base };
-          for (const id of ['pm1', 'pm2']) {
-            nextDay[id] = { large: 'full', small: 'full' };
-          }
-          const nextAll = { ...safePrev, [selectedDate]: nextDay };
-          void persistScheduleMap(activeFactoryId, nextAll);
-          window.queueMicrotask(() => runScheduleAutoPipeline(nextAll));
-          return nextAll;
-        });
-      }, [selectedDate, runScheduleAutoPipeline, activeFactoryId]);
+        handleBulkApplyStamp('pm');
+      }, [handleBulkApplyStamp]);
 
       const handleBulkClearDay = useCallback(() => {
-        setScheduleByDate((prev) => {
-          const safePrev = normalizeFullSchedule(prev);
-          const nextAll = { ...safePrev, [selectedDate]: defaultEmptyDayBlocks() };
-          void persistScheduleMap(activeFactoryId, nextAll);
-          window.queueMicrotask(() => runScheduleAutoPipeline(nextAll));
-          return nextAll;
-        });
-      }, [selectedDate, runScheduleAutoPipeline, activeFactoryId]);
+        handleBulkApplyStamp('clear');
+      }, [handleBulkApplyStamp]);
 
       const handleBulkFullDayLargeOnly = useCallback(() => {
-        setScheduleByDate((prev) => {
-          const safePrev = normalizeFullSchedule(prev);
-          const base = normalizeDayBlockSchedule(safePrev[selectedDate]);
-          const nextDay = { ...base };
-          for (const id of SCHEDULE_BLOCK_IDS) {
-            nextDay[id] = { ...nextDay[id], large: 'full' };
-          }
-          const nextAll = { ...safePrev, [selectedDate]: nextDay };
-          void persistScheduleMap(activeFactoryId, nextAll);
-          window.queueMicrotask(() => runScheduleAutoPipeline(nextAll));
-          return nextAll;
-        });
-      }, [selectedDate, runScheduleAutoPipeline, activeFactoryId]);
+        handleBulkApplyStamp('largeOnly');
+      }, [handleBulkApplyStamp]);
 
       const handleBulkFullDaySmallOnly = useCallback(() => {
+        handleBulkApplyStamp('smallOnly');
+      }, [handleBulkApplyStamp]);
+
+      const handleStampPaintSessionStart = useCallback(() => {
+        if (stampPaintActiveRef.current) return;
+        stampPaintActiveRef.current = true;
+        stampPaintedRef.current = new Set();
+        stampPaintDirtyRef.current = false;
+        const snap = normalizeFullSchedule(scheduleByDateRef.current);
+        stampUndoRef.current = snap;
+        stampPaintMapRef.current = snap;
+        setStampUndoAvailable(true);
+      }, []);
+
+      const handleStampPaintDay = useCallback((day) => {
+        const stampId = activeStampRef.current;
+        if (!stampId || !stampPaintActiveRef.current) return;
+        if (!isScheduleStampDateInBounds(day)) return;
+        if (stampPaintedRef.current.has(day)) return;
+        stampPaintedRef.current.add(day);
+        stampPaintDirtyRef.current = true;
         setScheduleByDate((prev) => {
-          const safePrev = normalizeFullSchedule(prev);
-          const base = normalizeDayBlockSchedule(safePrev[selectedDate]);
-          const nextDay = { ...base };
-          for (const id of SCHEDULE_BLOCK_IDS) {
-            nextDay[id] = { ...nextDay[id], small: 'full' };
-          }
-          const nextAll = { ...safePrev, [selectedDate]: nextDay };
-          void persistScheduleMap(activeFactoryId, nextAll);
-          window.queueMicrotask(() => runScheduleAutoPipeline(nextAll));
+          const base = stampPaintMapRef.current ?? normalizeFullSchedule(prev);
+          const nextDay = applyStampToDayBlocks(base[day], stampId);
+          const nextAll = { ...base, [day]: nextDay };
+          stampPaintMapRef.current = nextAll;
           return nextAll;
         });
-      }, [selectedDate, runScheduleAutoPipeline, activeFactoryId]);
+      }, []);
+
+      const handleStampPaintSessionEnd = useCallback(() => {
+        if (!stampPaintActiveRef.current) return;
+        stampPaintActiveRef.current = false;
+        const finalMap = stampPaintMapRef.current;
+        const dirty = stampPaintDirtyRef.current;
+        const paintedDays = Array.from(stampPaintedRef.current);
+        stampPaintMapRef.current = null;
+        stampPaintedRef.current = new Set();
+        stampPaintDirtyRef.current = false;
+        if (!dirty || !finalMap) return;
+        stampUndoPaintedRef.current = paintedDays;
+        const normalized = normalizeFullSchedule(finalMap);
+        void persistScheduleMap(activeFactoryId, normalized);
+        window.queueMicrotask(() => runScheduleAutoPipeline(normalized));
+      }, [activeFactoryId, runScheduleAutoPipeline]);
+
+      const handleStampUndo = useCallback(() => {
+        const snap = stampUndoRef.current;
+        if (!snap) return;
+        const paintedDays = Array.from(stampUndoPaintedRef.current || []);
+        stampUndoRef.current = null;
+        stampUndoPaintedRef.current = [];
+        setStampUndoAvailable(false);
+        stampPaintActiveRef.current = false;
+        stampPaintMapRef.current = null;
+        stampPaintedRef.current = new Set();
+        stampPaintDirtyRef.current = false;
+        const nextAll = normalizeFullSchedule(snap);
+        for (const day of paintedDays) {
+          nextAll[day] =
+            snap[day] != null ? normalizeDayBlockSchedule(snap[day]) : defaultEmptyDayBlocks();
+        }
+        setScheduleByDate(nextAll);
+        void persistScheduleMap(activeFactoryId, nextAll);
+        window.queueMicrotask(() => runScheduleAutoPipeline(nextAll));
+      }, [activeFactoryId, runScheduleAutoPipeline]);
 
       const dayBlocks = useMemo(
         () => normalizeDayBlockSchedule(scheduleByDate[selectedDate]),
@@ -4567,8 +4827,11 @@ function isUnreadForFactory(messages, readKey) {
               </button>
             ) : null}
           </header>
-          <PullToRefresh onRefresh={handleFactoryRefresh} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 py-1">
-            <div className="mx-auto grid max-w-6xl gap-2">
+          <PullToRefresh
+            onRefresh={handleFactoryRefresh}
+            suspended={Boolean(activeStamp)}
+            className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 py-1"
+          >            <div className="mx-auto grid max-w-6xl gap-2">
               {activeTab === 'news' ? (
                 <div className="py-2 sm:py-4">
                   <FactoryNewsPanel
@@ -4674,6 +4937,13 @@ function isUnreadForFactory(messages, readKey) {
                       scheduleByDate={scheduleByDate}
                       selectedFactoryStatus={selectedFactoryStatus}
                       onFactoryStatusChange={handleFactoryStatusChange}
+                      activeStamp={activeStamp}
+                      onActiveStampChange={setActiveStamp}
+                      stampUndoAvailable={stampUndoAvailable}
+                      onStampUndo={handleStampUndo}
+                      onStampPaintSessionStart={handleStampPaintSessionStart}
+                      onStampPaintDay={handleStampPaintDay}
+                      onStampPaintSessionEnd={handleStampPaintSessionEnd}
                     />
                   ) : null}
 
