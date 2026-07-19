@@ -15,30 +15,46 @@ import {
   primeNotificationAlarm,
   setAlarmSoundType,
 } from '../utils/notificationAlarm.js';
+import * as db from '../haishaDb.js';
 
 const SECTION =
   'rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800 sm:p-5';
+
+const PREFERRED_TIMEOUT_OPTIONS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60];
 
 /**
  * 工場画面 — 設定管理タブ
  */
 export function FactorySettingsPanel({
   factoryId,
+  factories = [],
   projects = [],
   customers = [],
   onExportOrders,
   onCharterNotifySaved,
   onLogout,
+  onFactoriesUpdated,
 }) {
   const { effective, setMode } = useTheme();
   const [darkMode, setDarkMode] = useState(() => effective === 'dark');
   const [alarmType, setAlarmType] = useState(() => getAlarmSoundType());
   const [logoutConfirmed, setLogoutConfirmed] = useState(false);
   const [notice, setNotice] = useState('');
+  const [timeoutMinutes, setTimeoutMinutes] = useState(15);
+  const [timeoutSaving, setTimeoutSaving] = useState(false);
 
   useEffect(() => {
     setDarkMode(effective === 'dark');
   }, [effective]);
+
+  useEffect(() => {
+    const fid = String(factoryId || '').trim();
+    const row = (Array.isArray(factories) ? factories : []).find((f) => String(f?.id || '') === fid);
+    const raw = Number(row?.preferredNoResponseTimeoutMinutes ?? row?.preferred_no_response_timeout_minutes);
+    setTimeoutMinutes(
+      Number.isFinite(raw) && raw >= 5 && raw <= 60 && raw % 5 === 0 ? raw : 15,
+    );
+  }, [factoryId, factories]);
 
   const showNotice = useCallback((msg) => {
     setNotice(msg);
@@ -60,12 +76,31 @@ export function FactorySettingsPanel({
     playTestNotificationAlarm(alarmType);
   };
 
+  const handleSaveTimeout = async () => {
+    const fid = String(factoryId || '').trim();
+    if (!fid) {
+      showNotice('工場が選択されていません。');
+      return;
+    }
+    setTimeoutSaving(true);
+    try {
+      await db.updateFactoryPreferredTimeoutMinutes(fid, timeoutMinutes);
+      if (typeof onFactoriesUpdated === 'function') await onFactoriesUpdated();
+      showNotice(`第一希望の応答期限を${timeoutMinutes}分に保存しました。`);
+    } catch (err) {
+      console.error('[FactorySettings] preferred timeout save failed', err);
+      window.alert('保存に失敗しました。通信状態を確認してください。');
+    } finally {
+      setTimeoutSaving(false);
+    }
+  };
+
   return (
     <div className="w-full space-y-4 pb-8">
       <header>
         <h2 className="text-lg font-black text-slate-900 dark:text-slate-100">設定管理</h2>
         <p className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400">
-          表示・データ出力・通知音・チャーター設定・ログアウト
+          表示・データ出力・通知音・第一希望応答期限・チャーター設定・ログアウト
         </p>
       </header>
 
@@ -167,7 +202,36 @@ export function FactorySettingsPanel({
       </section>
 
       <section className={SECTION}>
-        <h3 className="text-sm font-black text-slate-900 dark:text-slate-100">D. チャーター設定</h3>
+        <h3 className="text-sm font-black text-slate-900 dark:text-slate-100">D. 第一希望指定の応答期限</h3>
+        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          お客様が貴工場を第一希望に指定した注文で、この時間応答がない場合、お客様に他工場へ広げるか確認が届きます。
+        </p>
+        <label className="mt-4 block text-xs font-bold text-slate-600 dark:text-slate-300">
+          応答期限（分）
+          <select
+            value={timeoutMinutes}
+            onChange={(e) => setTimeoutMinutes(Number(e.target.value))}
+            className="mt-2 w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-3 text-sm font-black text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+          >
+            {PREFERRED_TIMEOUT_OPTIONS.map((m) => (
+              <option key={m} value={m}>
+                {m}分
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          disabled={timeoutSaving || !factoryId}
+          onClick={() => void handleSaveTimeout()}
+          className="mt-4 inline-flex min-h-[44px] items-center justify-center rounded-xl bg-indigo-600 px-4 text-sm font-black text-white hover:bg-indigo-700 disabled:opacity-60"
+        >
+          {timeoutSaving ? '保存中…' : '応答期限を保存'}
+        </button>
+      </section>
+
+      <section className={SECTION}>
+        <h3 className="text-sm font-black text-slate-900 dark:text-slate-100">E. チャーター設定</h3>
         <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
           自工場で保有する車両の登録と、チャーター募集を出したときの通知優先順位を設定します。
         </p>
@@ -195,7 +259,7 @@ export function FactorySettingsPanel({
       </section>
 
       <section className={'border-2 border-red-300 ' + SECTION + ' dark:border-red-800'}>
-        <h3 className="text-sm font-black text-red-800 dark:text-red-300">E. ログアウト</h3>
+        <h3 className="text-sm font-black text-red-800 dark:text-red-300">F. ログアウト</h3>
         <p className="mt-1 text-xs font-medium text-slate-600 dark:text-slate-400">
           誤操作防止のため、チェック後にのみログアウトできます。
         </p>

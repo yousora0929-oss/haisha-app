@@ -55,3 +55,20 @@ export function formatEscalationStepLabel(step, nextThreshold, effectiveMinutes)
   }
   return `${trigger}分+: 近い順 ${count} 工場 · 次段階まで ${Math.max(0, nextThreshold - (Number(effectiveMinutes) || 0))}分`;
 }
+
+/** エスカレーション最終段階の対象工場数 */
+export function finalEscalationTargetCount(steps) {
+  const list = normalizeEscalationStepsList(steps?.length ? steps : DEFAULT_ESCALATION_STEPS);
+  const last = list[list.length - 1];
+  return Math.max(1, Number(last?.target_factory_count) || 1);
+}
+
+/**
+ * 全社拒否閾値を実在工場数でクランプ（設定15 > 実工場13 で永遠に発火しないバグ対策）
+ * @param {unknown} steps
+ * @param {number} realFactoryCount
+ */
+export function clampedFullRejectionThreshold(steps, realFactoryCount) {
+  const real = Math.max(1, Math.floor(Number(realFactoryCount)) || 1);
+  return Math.min(finalEscalationTargetCount(steps), real);
+}

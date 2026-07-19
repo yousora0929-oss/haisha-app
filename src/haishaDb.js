@@ -39,7 +39,7 @@ import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils
 import { generateInitialPassword } from './utils/initialPassword.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, is_admin_modified, is_factory_modified, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice';
+  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, is_admin_modified, is_factory_modified, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -497,6 +497,38 @@ export function normalizeOrderRow(row) {
           : od.preferred_factory_choice != null
             ? String(od.preferred_factory_choice).trim()
             : '',
+    escalation_approved_at:
+      row.escalation_approved_at != null
+        ? String(row.escalation_approved_at)
+        : od.escalation_approved_at != null
+          ? String(od.escalation_approved_at)
+          : od.escalationApprovedAt != null
+            ? String(od.escalationApprovedAt)
+            : '',
+    escalationApprovedAt:
+      row.escalation_approved_at != null
+        ? String(row.escalation_approved_at)
+        : od.escalationApprovedAt != null
+          ? String(od.escalationApprovedAt)
+          : od.escalation_approved_at != null
+            ? String(od.escalation_approved_at)
+            : '',
+    push_notified_map:
+      row.push_notified_map && typeof row.push_notified_map === 'object' && !Array.isArray(row.push_notified_map)
+        ? row.push_notified_map
+        : od.push_notified_map && typeof od.push_notified_map === 'object' && !Array.isArray(od.push_notified_map)
+          ? od.push_notified_map
+          : od.pushNotifiedMap && typeof od.pushNotifiedMap === 'object' && !Array.isArray(od.pushNotifiedMap)
+            ? od.pushNotifiedMap
+            : {},
+    pushNotifiedMap:
+      row.push_notified_map && typeof row.push_notified_map === 'object' && !Array.isArray(row.push_notified_map)
+        ? row.push_notified_map
+        : od.pushNotifiedMap && typeof od.pushNotifiedMap === 'object' && !Array.isArray(od.pushNotifiedMap)
+          ? od.pushNotifiedMap
+          : od.push_notified_map && typeof od.push_notified_map === 'object' && !Array.isArray(od.push_notified_map)
+            ? od.push_notified_map
+            : {},
     sub_factory_current_index:
       row.sub_factory_current_index != null
         ? Number(row.sub_factory_current_index)
@@ -602,6 +634,33 @@ export async function markPreferredFactoryDeclined(orderId) {
     preferred_factory_declined_at: declinedAt,
     preferredFactoryDeclinedAt: declinedAt,
   });
+}
+
+/** 顧客が「他工場に広げる」を許可（カラムのみ） */
+export async function approveOrderEscalation(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id) throw new Error('orderId が必要です');
+  const { data, error } = await supabase.rpc('approve_order_escalation', { p_order_id: id });
+  if (error) throw error;
+  return data;
+}
+
+/** 工場の第一希望無応答タイムアウト（分）を更新 */
+export async function updateFactoryPreferredTimeoutMinutes(factoryId, minutes) {
+  const fid = String(factoryId || '').trim();
+  const value = Number(minutes);
+  if (!fid) throw new Error('factoryId が必要です');
+  if (!Number.isFinite(value) || value < 5 || value > 60 || value % 5 !== 0) {
+    throw new Error('タイムアウトは5〜60分・5分刻みで指定してください');
+  }
+  const { data, error } = await supabase
+    .from('factories')
+    .update({ preferred_no_response_timeout_minutes: value })
+    .eq('id', fid)
+    .select('id, preferred_no_response_timeout_minutes')
+    .maybeSingle();
+  if (error) throw error;
+  return data;
 }
 
 export async function fetchOrdersWithChat() {
@@ -1658,6 +1717,11 @@ function mapFactoryRow(row) {
   const name = row.name != null ? String(row.name) : '';
   const latitude = row.latitude ?? row.lat ?? null;
   const longitude = row.longitude ?? row.lng ?? row.lon ?? null;
+  const timeoutRaw = Number(row.preferred_no_response_timeout_minutes);
+  const preferredNoResponseTimeoutMinutes =
+    Number.isFinite(timeoutRaw) && timeoutRaw >= 5 && timeoutRaw <= 60 && timeoutRaw % 5 === 0
+      ? timeoutRaw
+      : 15;
   return {
     id,
     name,
@@ -1665,6 +1729,8 @@ function mapFactoryRow(row) {
     latitude,
     longitude,
     allowed_delivery_areas: normalizeAllowedDeliveryAreas(row?.allowed_delivery_areas),
+    preferred_no_response_timeout_minutes: preferredNoResponseTimeoutMinutes,
+    preferredNoResponseTimeoutMinutes,
     raw: row,
   };
 }

@@ -3,12 +3,14 @@
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
   computeNewlyVisibleFactoryIds,
+  isUserSpecifiedPreferredFactory,
+  orderEscalationApprovedAt,
   type EscalationPushContext,
   type EscalationStep,
   rankFactoryIdsForOrder,
 } from '../_shared/escalationVisibility.ts';
 
-const FUNCTION_VERSION = 34;
+const FUNCTION_VERSION = 35;
 const PUSH_NOTIFY_COOLDOWN_MS = 60_000;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 /** プレフィックス導入前の端末向けに無印 ID へも送る期間（ISO8601） */
@@ -68,6 +70,8 @@ type PushEvent =
   | 'order_accepted'
   | 'order_rejected'
   | 'order_timeout'
+  | 'preferred_rejected'
+  | 'preferred_timeout'
   | 'consult_start'
   | 'customer_chat'
   | 'factory_chat'
@@ -116,6 +120,8 @@ type OrderRow = {
   delivery_lng?: number | string | null;
   push_notified_at?: string | null;
   push_notified_map?: Record<string, string> | null;
+  preferred_factory_declined_at?: string | null;
+  escalation_approved_at?: string | null;
   rejected_factory_ids?: unknown;
   association_assigned_factory_ids?: unknown;
 };
@@ -649,11 +655,41 @@ async function fetchEscalationSteps(factoryId: string): Promise<EscalationStep[]
   }
 }
 
-/** エスカレーション最終段階の対象工場数（= 全社拒否とみなす閾値） */
+/** エスカレーション最終段階の対象工場数（= 全社拒否とみなす閾値の上限） */
 function finalEscalationTargetCount(steps: EscalationStep[]): number {
   const list = steps.length ? steps : DEFAULT_ESCALATION_STEPS;
   const last = list[list.length - 1];
   return Math.max(1, Number(last?.target_factory_count) || 1);
+}
+
+function clampedFullRejectionThreshold(steps: EscalationStep[], realFactoryCount: number): number {
+  const real = Math.max(1, Math.floor(Number(realFactoryCount)) || 1);
+  return Math.min(finalEscalationTargetCount(steps), real);
+}
+
+async function fetchFactoryCount(): Promise<number> {
+  const base = Deno.env.get('SUPABASE_URL')?.replace(/\/$/, '') || '';
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  if (!base || !serviceKey) return 0;
+  try {
+    const response = await fetch(`${base}/rest/v1/factories?select=id`, {
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        Accept: 'application/json',
+        Prefer: 'count=exact',
+        Range: '0-0',
+      },
+    });
+    const contentRange = response.headers.get('content-range') || '';
+    const m = contentRange.match(/\/(\d+)\s*$/);
+    if (m) return Math.max(0, Number(m[1]) || 0);
+    if (!response.ok) return 0;
+    const rows = await response.json();
+    return Array.isArray(rows) ? rows.length : 0;
+  } catch {
+    return 0;
+  }
 }
 
 function resolveAnchorFactoryId(row?: OrderRow | null, payload?: SlimPayload | null): string {
@@ -679,10 +715,25 @@ function rejectedFactoryCount(row?: OrderRow | null): number {
   return new Set(fromData.map((x) => pickString(x)).filter(Boolean)).size;
 }
 
+function isPreferredFactoryRejectedRow(row?: OrderRow | null): boolean {
+  if (!row) return false;
+  const preferredId = pickString(row.preferred_factory_id, orderData(row).preferred_factory_id, orderData(row).preferredFactoryId);
+  if (!preferredId) return false;
+  const declined = pickString(
+    row.preferred_factory_declined_at,
+    orderData(row).preferred_factory_declined_at,
+    orderData(row).preferredFactoryDeclinedAt,
+  );
+  if (declined) return true;
+  const rejected = asArray(row.rejected_factory_ids).map((x) => pickString(x)).filter(Boolean);
+  return rejected.includes(preferredId);
+}
+
 /**
  * 拒否通知を顧客へ送ってよいか（= 全候補工場が拒否済みか）を判定。
- * - customer_cancelled は顧客本人がキャンセル済みのため通知しない。
- * - rejected_factory_ids.length >= 最終段階 target_factory_count のときのみ true。
+ * - 第一希望指定かつ未許可は対象外（preferred_rejected を別途送る）
+ * - customer_cancelled は顧客本人がキャンセル済みのため通知しない
+ * - 閾値は最終段階 target_factory_count を実在工場数でクランプ
  */
 async function shouldNotifyFullCompanyRejection(
   inputRow: OrderRow | null | undefined,
@@ -707,9 +758,15 @@ async function shouldNotifyFullCompanyRejection(
     return false;
   }
 
+  if (isUserSpecifiedPreferredFactory(row) && !orderEscalationApprovedAt(row)) {
+    console.log('[onesignal-push] reject skip: preferred gate (not full-company)', { orderId });
+    return false;
+  }
+
   const anchorId = resolveAnchorFactoryId(row, payload);
   const steps = await fetchEscalationSteps(anchorId);
-  const threshold = finalEscalationTargetCount(steps);
+  const factoryCount = await fetchFactoryCount();
+  const threshold = clampedFullRejectionThreshold(steps, factoryCount);
   const rejectedCount = rejectedFactoryCount(row);
   const isFull = rejectedCount >= threshold;
 
@@ -717,6 +774,7 @@ async function shouldNotifyFullCompanyRejection(
     orderId,
     anchorId: anchorId || '(none)',
     rejectedCount,
+    factoryCount,
     threshold,
     isFull,
   });
@@ -1999,6 +2057,42 @@ async function sendCustomerMapSharedNotifications(
   return sent;
 }
 
+async function sendPreferredRejectedNotifications(
+  row: OrderRow | null | undefined,
+  payload: SlimPayload | null | undefined,
+  orderId: string,
+): Promise<string[]> {
+  const sent: string[] = [];
+  const message = 'ご指定の工場が今回はご対応できません。次の対応を選んでください';
+  if (await sendToCustomerAudience(row, payload, message, {
+    type: 'preferred_rejected',
+    orderId,
+    targetApp: 'customer',
+    view: 'order',
+  })) {
+    sent.push('customer:preferred_rejected');
+  }
+  return sent;
+}
+
+async function sendPreferredTimeoutNotifications(
+  row: OrderRow | null | undefined,
+  payload: SlimPayload | null | undefined,
+  orderId: string,
+): Promise<string[]> {
+  const sent: string[] = [];
+  const message = 'ご指定の工場から応答がありません。他の工場に広げますか？';
+  if (await sendToCustomerAudience(row, payload, message, {
+    type: 'preferred_timeout',
+    orderId,
+    targetApp: 'customer',
+    view: 'order',
+  })) {
+    sent.push('customer:preferred_timeout');
+  }
+  return sent;
+}
+
 async function sendOrderAcceptedNotifications(
   row: OrderRow | null | undefined,
   payload: SlimPayload | null | undefined,
@@ -2025,17 +2119,31 @@ async function sendOrderRejectedNotifications(
   orderId: string,
   options: { force?: boolean } = {},
 ): Promise<string[]> {
+  let resolved = row ?? null;
+  if (!resolved && orderId) resolved = await fetchOrderRow(orderId);
+
+  // 第一希望指定かつ未許可で第一希望が拒否された場合 → preferred_rejected
+  if (
+    !options.force &&
+    resolved &&
+    isUserSpecifiedPreferredFactory(resolved) &&
+    !orderEscalationApprovedAt(resolved) &&
+    isPreferredFactoryRejectedRow(resolved)
+  ) {
+    return sendPreferredRejectedNotifications(resolved, payload, orderId);
+  }
+
   // 全社拒否（最終段階到達）でない限り送らない。timeout 経路のみ force=true。
   if (!options.force) {
-    const allowed = await shouldNotifyFullCompanyRejection(row, payload, orderId);
+    const allowed = await shouldNotifyFullCompanyRejection(resolved, payload, orderId);
     if (!allowed) return [];
   }
   const sent: string[] = [];
-  if (await sendToCustomerAudience(row, payload, '大変込み合っております。別日をご指定ください。', {
+  if (await sendToCustomerAudience(resolved, payload, '大変込み合っております。別日をご指定ください。', {
     type: 'order_rejected',
     orderId,
     targetApp: 'customer',
-    status: pickString(payload?.status, effectiveStatus(row), 'rejected'),
+    status: pickString(payload?.status, effectiveStatus(resolved), 'rejected'),
   })) {
     sent.push(options.force ? 'customer:order_timeout' : 'customer:order_rejected');
   }
@@ -2113,6 +2221,16 @@ async function processSlimPayload(payload: SlimPayload): Promise<string[]> {
     case 'order_timeout': {
       // エスカレーション完了後も未受注 → タイムアウト拒否（全社拒否ゲートをバイパス）
       sent.push(...await sendOrderRejectedNotifications(null, payload, orderId, { force: true }));
+      break;
+    }
+    case 'preferred_rejected': {
+      const row = orderId ? await fetchOrderRow(orderId) : null;
+      sent.push(...await sendPreferredRejectedNotifications(row, payload, orderId));
+      break;
+    }
+    case 'preferred_timeout': {
+      const row = orderId ? await fetchOrderRow(orderId) : null;
+      sent.push(...await sendPreferredTimeoutNotifications(row, payload, orderId));
       break;
     }
     case 'consult_start': {

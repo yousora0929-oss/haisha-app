@@ -37,6 +37,9 @@ export function isFactoryHoldPending(order) {
   return String(order?.factoryResponseStatus || '').trim() === 'pending';
 }
 
+/** 第一希望拒否/タイムアウト後の顧客確認待ち */
+export const CUSTOMER_ACTION_REQUIRED_LABEL = 'ご確認ください';
+
 /** 注文全体がお受けできなかったときのステータスバッジ */
 export const CUSTOMER_ORDER_REJECTED_LABEL = 'お受けできず';
 

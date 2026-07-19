@@ -21,6 +21,7 @@ type OrderLike = {
   preferred_factory_id?: string | null;
   preferred_factory_declined_at?: string | null;
   preferred_factory_choice?: string | null;
+  escalation_approved_at?: string | null;
   factory_site_id?: string | null;
   factory_consult_status?: string | null;
   factory_consult_by_factory_id?: string | null;
@@ -30,6 +31,7 @@ type OrderLike = {
   rejected_factory_ids?: unknown;
   association_assigned_factory_ids?: unknown;
   sub_factory_current_index?: number | null;
+  push_notified_map?: Record<string, string> | null;
 };
 
 type FactoryLike = {
@@ -142,6 +144,28 @@ function orderPreferredFactoryId(order?: OrderLike | null): string {
   return pickString(order?.preferred_factory_id, od.preferred_factory_id, od.preferredFactoryId);
 }
 
+/** ユーザーが第一希望工場を明示指定したか（フロント isUserSpecifiedPreferredFactory と同等） */
+export function isUserSpecifiedPreferredFactory(order?: OrderLike | null): boolean {
+  if (!order || typeof order !== 'object') return false;
+  const od = orderData(order);
+  if (od.preferred_factory_user_specified === true) return true;
+  if (od.preferredFactoryUserSpecified === true) return true;
+  if ((order as Record<string, unknown>).preferred_factory_user_specified === true) return true;
+  if ((order as Record<string, unknown>).preferredFactoryUserSpecified === true) return true;
+  const pid = orderProjectId(order);
+  if (pid && orderPreferredFactoryId(order)) return true;
+  return false;
+}
+
+export function orderEscalationApprovedAt(order?: OrderLike | null): string {
+  const od = orderData(order);
+  return pickString(
+    order?.escalation_approved_at,
+    od.escalation_approved_at,
+    od.escalationApprovedAt,
+  );
+}
+
 function parseTimeToMinutes(timeStr: string): number {
   const m = String(timeStr || '08:00:00').match(/^(\d{1,2}):(\d{2})/);
   if (!m) return 8 * 60;
@@ -226,9 +250,14 @@ function getEffectiveEscalationMinutes(order: OrderLike, ctx: EscalationPushCont
   const od = orderData(order);
   const status = pickString(order?.status, od.status, od.factoryResponseStatus);
   if (status === 'accepted' || status === 'customer_cancelled') return null;
-  const created = orderCreatedAt(order);
+
+  const approvedAt = orderEscalationApprovedAt(order);
+  const created = approvedAt || orderCreatedAt(order);
   if (!created) return 0;
   const minutes = getElapsedMinutesSinceEffectiveStart(created, ctx.settings, ctx.holidays, ctx.now ?? new Date());
+
+  if (approvedAt) return minutes;
+
   const isSpot = Boolean(order?.is_spot ?? od.is_spot);
   if (isSpot) {
     const rejected = rejectedFactoryIdSet(order);
@@ -407,6 +436,15 @@ export function buildCandidateFactoryIds(
   distanceWeight?: number,
 ): string[] {
   const rejectedIds = rejectedFactoryIdSet(order);
+  const preferredId = orderPreferredFactoryId(order);
+  const approvedAt = orderEscalationApprovedAt(order);
+
+  // 第一希望指定かつ未許可: 第一希望のみ（拒否済みなら候補ゼロ＝顧客選択待ち）
+  if (isUserSpecifiedPreferredFactory(order) && !approvedAt) {
+    if (!preferredId) return [];
+    return rejectedIds.has(preferredId) ? [] : [preferredId];
+  }
+
   const known = (ctx.factories || [])
     .map((f) => pickString(f.id))
     .filter(Boolean);
@@ -416,7 +454,7 @@ export function buildCandidateFactoryIds(
   const project = pid ? ctx.projectById[pid] : null;
 
   const vipIds = [
-    orderPreferredFactoryId(order),
+    preferredId,
     pickString(od.main_factory_id, od.mainFactoryId),
     pickString(project?.main_factory_id),
   ].filter((id) => id && knownSet.has(id));
@@ -438,7 +476,6 @@ export function buildCandidateFactoryIds(
   }
 
   if (!candidates.length && known.length) {
-    const preferredId = orderPreferredFactoryId(order);
     if (preferredId && knownSet.has(preferredId)) return [preferredId];
     const mainId = pickString(project?.main_factory_id);
     if (mainId && knownSet.has(mainId)) return [mainId];
@@ -453,6 +490,12 @@ function normalizeSubFactoryIds(raw: unknown): string[] {
 }
 
 function assignedProjectSubIndex(order?: OrderLike | null): number {
+  const preferredId = pickString(order?.preferred_factory_id);
+  const approvedAt = orderEscalationApprovedAt(order);
+  // 第一希望ゲート中はサブインデックスを -1
+  if (preferredId && isUserSpecifiedPreferredFactory(order) && !approvedAt) {
+    return -1;
+  }
   const od = orderData(order);
   const raw = order?.sub_factory_current_index ?? od.sub_factory_current_index ?? od.subFactoryCurrentIndex;
   if (raw == null || raw === '') return -1;
@@ -480,14 +523,17 @@ function isOrderVisibleToAssignedProjectFactory(
   if (!fid) return false;
 
   const preferredId = pickString(order?.preferred_factory_id);
-  const declinedAt = pickString(order?.preferred_factory_declined_at);
-  if (preferredId && !declinedAt) {
+  const approvedAt = orderEscalationApprovedAt(order);
+  const rejectedIds = rejectedFactoryIdSet(order);
+
+  // 第一希望指定かつ未許可: 第一希望のみ（拒否済みなら誰にも非公開）
+  if (preferredId && isUserSpecifiedPreferredFactory(order) && !approvedAt) {
+    if (rejectedIds.has(preferredId)) return false;
     return fid === preferredId;
   }
 
   const mainId = pickString(project.main_factory_id);
   const subIds = normalizeSubFactoryIds(project.sub_factory_ids);
-  const rejectedIds = rejectedFactoryIdSet(order);
   const currentSubIndex = assignedProjectSubIndex(order);
 
   if (mainId && !rejectedIds.has(mainId)) return fid === mainId;

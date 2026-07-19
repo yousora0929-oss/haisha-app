@@ -14,6 +14,7 @@ import {
   getActiveEscalationStep,
   getEscalationStepsForAnchor,
   getNextEscalationThreshold,
+  clampedFullRejectionThreshold,
 } from './escalationSteps.js';
 import {
   isAssignedProject,
@@ -192,13 +193,22 @@ export function buildCandidateFactoryIds(
   distanceWeight = 0.7,
 ) {
   const rejectedIds = rejectedFactoryIdSet(order);
+  const preferredId = orderPreferredFactoryId(order);
+  const approvedAt = orderEscalationApprovedAt(order);
+
+  // 第一希望指定かつ未許可: 第一希望のみ（拒否済みなら候補ゼロ＝顧客選択待ち）
+  if (isUserSpecifiedPreferredFactory(order) && !approvedAt) {
+    if (!preferredId) return [];
+    return rejectedIds.has(preferredId) ? [] : [preferredId];
+  }
+
   const knownFactoryIds = buildKnownFactoryIdSet(factories);
   const od = orderDataObject(order);
   const pid = orderProjectId(order);
   const project = pid ? projectById?.[pid] : null;
 
   const vipIds = [
-    orderPreferredFactoryId(order),
+    preferredId,
     normalizeFactoryRefId(od.main_factory_id ?? od.mainFactoryId),
     normalizeFactoryRefId(project?.main_factory_id),
   ].filter((id) => id && knownFactoryIds.has(id));
@@ -232,6 +242,67 @@ export function buildCandidateFactoryIds(
   }
 
   return candidates;
+}
+
+/** escalation_approved_at（許可時刻） */
+export function orderEscalationApprovedAt(order) {
+  const raw = order?.escalation_approved_at ?? order?.escalationApprovedAt;
+  return raw != null ? String(raw).trim() : '';
+}
+
+/** 第一希望が拒否済みか（declined_at または rejected_factory_ids） */
+export function isPreferredFactoryRejected(order) {
+  const preferredId = orderPreferredFactoryId(order);
+  if (!preferredId) return false;
+  if (order?.preferredFactoryDeclinedAt || order?.preferred_factory_declined_at) return true;
+  return rejectedFactoryIdSet(order).has(preferredId);
+}
+
+/** preferred_timeout プッシュ済みか */
+export function isPreferredTimeoutNotified(order) {
+  const map = order?.push_notified_map ?? order?.pushNotifiedMap;
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return false;
+  return Boolean(String(map.preferred_timeout || '').trim());
+}
+
+/**
+ * 第一希望指定で顧客の選択待ち（拒否またはタイムアウト通知後、未許可）
+ */
+export function needsPreferredCustomerChoice(order) {
+  if (!order || String(order.status || '').trim() !== 'pending') return false;
+  if (!isUserSpecifiedPreferredFactory(order)) return false;
+  if (orderEscalationApprovedAt(order)) return false;
+  return isPreferredFactoryRejected(order) || isPreferredTimeoutNotified(order);
+}
+
+/**
+ * おまかせ注文の全社拒否判定（第一希望指定かつ未許可は対象外）
+ * @param {object|null|undefined} order
+ * @param {{ factories?: unknown[], escalationStepsByFactoryId?: object, projectById?: object }} ctx
+ */
+export function isFullCompanyRejectionForCustomer(order, ctx = {}) {
+  if (!order || String(order.status || '').trim() !== 'pending') return false;
+  if (isUserSpecifiedPreferredFactory(order) && !orderEscalationApprovedAt(order)) {
+    return false;
+  }
+
+  const rejected = rejectedFactoryIdSet(order);
+  const factoryCount = Array.isArray(ctx.factories) ? ctx.factories.filter((f) => f?.id).length : 0;
+  if (factoryCount <= 0 || rejected.size <= 0) return false;
+
+  const pid = orderProjectId(order);
+  const project = pid ? ctx.projectById?.[pid] : null;
+  const candidatesHint = buildCandidateFactoryIds(
+    { ...order, rejected_factory_ids: [], rejectedFactoryIds: [] },
+    ctx.factories || [],
+    ctx.projectById || {},
+    ctx.globalAllowedAreas,
+  );
+  const realCount = Math.max(factoryCount, candidatesHint.length);
+  const anchorId = resolveEscalationAnchorFactoryId(order, project, candidatesHint);
+  const steps = getEscalationStepsForAnchor(anchorId, ctx.escalationStepsByFactoryId);
+  const threshold = clampedFullRejectionThreshold(steps, realCount);
+  return rejected.size >= threshold;
 }
 
 function logOrderVisibilityDebug(payload) {
@@ -312,9 +383,16 @@ function isRelatedProjectFactory(order, project, factoryId) {
 export function getEffectiveEscalationMinutes(order, projectById, settings, holidays, now = new Date()) {
   const status = String(order?.status || '');
   if (status === 'accepted' || status === 'customer_cancelled') return null;
-  const created = orderCreatedAt(order);
+
+  // 顧客がエスカレーションを許可した注文は、許可時刻を起点にする
+  const approvedAt = orderEscalationApprovedAt(order);
+  const created = approvedAt || orderCreatedAt(order);
   if (!created) return 0;
   const minutes = getElapsedMinutesSinceEffectiveStart(created, settings, holidays, now);
+
+  // 許可直後は通常エスカレーション（拒否ブーストはおまかせ/許可後のみ）
+  if (approvedAt) return minutes;
+
   if (Boolean(order?.is_spot)) {
     const rejected = rejectedFactoryIdSet(order);
     if (rejected.size > 0 && minutes < 15) return 15;

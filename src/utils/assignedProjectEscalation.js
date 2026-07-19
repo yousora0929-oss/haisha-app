@@ -40,11 +40,14 @@ export function normalizeSubFactoryIds(raw) {
 
 export function assignedProjectSubIndex(order) {
   const preferredId = String(order?.preferred_factory_id ?? order?.preferredFactoryId ?? '').trim();
-  const declinedAt = order?.preferredFactoryDeclinedAt ?? order?.preferred_factory_declined_at;
-  const choice = order?.preferredFactoryChoice ?? order?.preferred_factory_choice;
-  // 第一希望が先頭にいる間はサブインデックスを -1（誤って「サブ0」と表示しない）
-  if (preferredId && !declinedAt && !choice) {
-    return -1;
+  const approvedAt = String(order?.escalation_approved_at ?? order?.escalationApprovedAt ?? '').trim();
+  // 第一希望ゲート中はサブインデックスを -1
+  if (preferredId && !approvedAt) {
+    const userSpecified =
+      order?.preferred_factory_user_specified === true ||
+      order?.preferredFactoryUserSpecified === true ||
+      Boolean(String(order?.project_id ?? order?.projectId ?? '').trim());
+    if (userSpecified) return -1;
   }
   const raw = order?.sub_factory_current_index ?? order?.subFactoryCurrentIndex;
   if (raw == null || raw === '') return -1;
@@ -62,15 +65,23 @@ export function isOrderVisibleToAssignedProjectFactory(order, project, factoryId
   if (!fid) return false;
 
   const preferredId = String(order?.preferred_factory_id ?? order?.preferredFactoryId ?? '').trim();
-  const declinedAt = order?.preferredFactoryDeclinedAt ?? order?.preferred_factory_declined_at;
-  const choice = order?.preferredFactoryChoice ?? order?.preferred_factory_choice;
-  if (preferredId && !declinedAt && !choice) {
-    return fid === preferredId;
+  const approvedAt = String(order?.escalation_approved_at ?? order?.escalationApprovedAt ?? '').trim();
+  const rejectedIds = rejectedFactoryIdSet(order);
+
+  // 第一希望指定かつ未許可: 第一希望のみ（拒否済みなら誰にも非公開）
+  if (preferredId && !approvedAt) {
+    const userSpecified =
+      order?.preferred_factory_user_specified === true ||
+      order?.preferredFactoryUserSpecified === true ||
+      Boolean(String(order?.project_id ?? order?.projectId ?? '').trim());
+    if (userSpecified) {
+      if (rejectedIds.has(preferredId)) return false;
+      return fid === preferredId;
+    }
   }
 
   const mainId = normalizeFactoryRefId(project.main_factory_id);
   const subIds = normalizeSubFactoryIds(project.sub_factory_ids);
-  const rejectedIds = rejectedFactoryIdSet(order);
   const currentSubIndex = assignedProjectSubIndex(order);
 
   if (mainId && !rejectedIds.has(mainId)) {

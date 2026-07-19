@@ -4677,9 +4677,18 @@ function isUnreadForFactory(messages, readKey) {
               {activeTab === 'settings' ? (
                 <FactorySettingsPanel
                   factoryId={activeFactoryId}
+                  factories={factories}
                   projects={projects}
                   customers={customers}
                   onExportOrders={handleDownloadFactoryCsv}
+                  onFactoriesUpdated={async () => {
+                    try {
+                      const list = await db.fetchFactories();
+                      setFactories(list);
+                    } catch (e) {
+                      console.error('[FactoryApp] factories refresh failed', e);
+                    }
+                  }}
                   onCharterNotifySaved={(msg) => {
                     if (!msg) return;
                     setActionNotice(msg);
