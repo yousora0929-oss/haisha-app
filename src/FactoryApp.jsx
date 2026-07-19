@@ -3036,6 +3036,7 @@ function isUnreadForFactory(messages, readKey) {
         const id = String(orderId || '').trim();
         const key = chatMessageReadKey(latestChatMessage(messages));
         if (!id || !key) return;
+        if (readChatKeysRef.current?.[id] === key) return;
         setReadChatKeys((prev) => {
           if (prev?.[id] === key) return prev;
           const next = { ...prev, [id]: key };

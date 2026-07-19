@@ -8,7 +8,7 @@ import {
   rankFactoryIdsForOrder,
 } from '../_shared/escalationVisibility.ts';
 
-const FUNCTION_VERSION = 33;
+const FUNCTION_VERSION = 34;
 const PUSH_NOTIFY_COOLDOWN_MS = 60_000;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 /** プレフィックス導入前の端末向けに無印 ID へも送る期間（ISO8601） */
@@ -115,6 +115,7 @@ type OrderRow = {
   delivery_lat?: number | string | null;
   delivery_lng?: number | string | null;
   push_notified_at?: string | null;
+  push_notified_map?: Record<string, string> | null;
   rejected_factory_ids?: unknown;
   association_assigned_factory_ids?: unknown;
 };
@@ -468,9 +469,10 @@ async function makeCollapseId(orderId: string): Promise<string> {
   return collapseId;
 }
 
-async function shouldSkipRecentPush(orderId: string): Promise<boolean> {
+async function shouldSkipRecentPush(orderId: string, type: string): Promise<boolean> {
   const oid = pickString(orderId);
-  if (!oid) return false;
+  const pushType = pickString(type);
+  if (!oid || !pushType) return false;
 
   const base = Deno.env.get('SUPABASE_URL')?.replace(/\/$/, '') || '';
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
@@ -478,7 +480,7 @@ async function shouldSkipRecentPush(orderId: string): Promise<boolean> {
 
   try {
     const response = await fetch(
-      `${base}/rest/v1/orders?id=eq.${encodeURIComponent(oid)}&select=push_notified_at`,
+      `${base}/rest/v1/orders?id=eq.${encodeURIComponent(oid)}&select=push_notified_map`,
       {
         headers: {
           apikey: serviceKey,
@@ -488,31 +490,38 @@ async function shouldSkipRecentPush(orderId: string): Promise<boolean> {
       },
     );
     if (!response.ok) {
-      console.warn('[onesignal-push] push_notified_at fetch failed', { orderId: oid, status: response.status });
+      console.warn('[onesignal-push] push_notified_map fetch failed', {
+        orderId: oid,
+        type: pushType,
+        status: response.status,
+      });
       return false;
     }
     const rows = await response.json();
-    const notifiedAt = pickString(rows?.[0]?.push_notified_at);
-    if (!notifiedAt) return false;
-    const ts = Date.parse(notifiedAt);
+    const map = asObject(rows?.[0]?.push_notified_map);
+    const lastSentAt = pickString(map[pushType]);
+    if (!lastSentAt) return false;
+    const ts = Date.parse(lastSentAt);
     if (Number.isNaN(ts)) return false;
     if (Date.now() - ts < PUSH_NOTIFY_COOLDOWN_MS) {
-      console.log('[onesignal-push] skip recent push within 60s', {
+      console.log('[onesignal-push] skip: cooldown', {
         orderId: oid,
-        push_notified_at: notifiedAt,
+        type: pushType,
+        lastSentAt,
       });
       return true;
     }
     return false;
   } catch (error) {
-    console.warn('[onesignal-push] push_notified_at check failed — proceed', error);
+    console.warn('[onesignal-push] push_notified_map check failed — proceed', error);
     return false;
   }
 }
 
-async function markPushNotified(orderId: string): Promise<void> {
+async function markPushNotified(orderId: string, type: string): Promise<void> {
   const oid = pickString(orderId);
-  if (!oid) return;
+  const pushType = pickString(type);
+  if (!oid || !pushType) return;
 
   const base = Deno.env.get('SUPABASE_URL')?.replace(/\/$/, '') || '';
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
@@ -520,6 +529,29 @@ async function markPushNotified(orderId: string): Promise<void> {
 
   const now = new Date().toISOString();
   try {
+    const getRes = await fetch(
+      `${base}/rest/v1/orders?id=eq.${encodeURIComponent(oid)}&select=push_notified_map`,
+      {
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          Accept: 'application/json',
+        },
+      },
+    );
+    let prevMap: Record<string, unknown> = {};
+    if (getRes.ok) {
+      const rows = await getRes.json();
+      prevMap = asObject(rows?.[0]?.push_notified_map);
+    } else {
+      console.warn('[onesignal-push] push_notified_map pre-read failed', {
+        orderId: oid,
+        type: pushType,
+        status: getRes.status,
+      });
+    }
+    const nextMap = { ...prevMap, [pushType]: now };
+
     const response = await fetch(`${base}/rest/v1/orders?id=eq.${encodeURIComponent(oid)}`, {
       method: 'PATCH',
       headers: {
@@ -528,21 +560,47 @@ async function markPushNotified(orderId: string): Promise<void> {
         'Content-Type': 'application/json',
         Prefer: 'return=minimal',
       },
-      body: JSON.stringify({ push_notified_at: now }),
+      body: JSON.stringify({
+        push_notified_map: nextMap,
+        // 後方互換: 旧カラムも更新（判定には使わない）
+        push_notified_at: now,
+      }),
     });
     if (!response.ok) {
       const body = await response.text();
-      console.warn('[onesignal-push] push_notified_at update failed', {
+      console.warn('[onesignal-push] push_notified_map update failed', {
         orderId: oid,
+        type: pushType,
         status: response.status,
         body: body.slice(0, 200),
       });
       return;
     }
-    console.log('[onesignal-push] push_notified_at updated', { orderId: oid, push_notified_at: now });
+    console.log('[onesignal-push] push_notified_map updated', {
+      orderId: oid,
+      type: pushType,
+      push_notified_at: now,
+    });
   } catch (error) {
-    console.warn('[onesignal-push] push_notified_at update error', { orderId: oid, error });
+    console.warn('[onesignal-push] push_notified_map update error', {
+      orderId: oid,
+      type: pushType,
+      error,
+    });
   }
+}
+
+/** ハンドラ入口のクールダウン用 type（送信側 data.type と揃える） */
+function resolveCooldownType(incoming: IncomingPayload, eventLabel: string): string {
+  if (incoming.format === 'chat_message') return 'chat';
+  if (incoming.format === 'slim') return pickString(incoming.data.event, eventLabel);
+  if (incoming.format === 'legacy') return pickString(incoming.data.type, eventLabel);
+  if (incoming.format === 'rescued') {
+    if (incoming.hint === 'chat') return 'chat';
+    if (incoming.hint === 'insert') return 'new_order';
+    return pickString(eventLabel, 'order_status');
+  }
+  return pickString(eventLabel);
 }
 
 function normalizeEscalationSteps(rows: unknown): EscalationStep[] {
@@ -1221,7 +1279,7 @@ async function sendToExternalIds(
   externalIds: string[],
   message: string,
   data: Record<string, unknown> = {},
-  options: { orderId?: string; title?: string } = {},
+  options: { orderId?: string; title?: string; type?: string } = {},
 ) {
   const ids = expandOneSignalExternalIds([
     ...new Set(externalIds.map((id) => String(id || '').trim()).filter(Boolean)),
@@ -1229,7 +1287,8 @@ async function sendToExternalIds(
   if (!ids.length || !message) return false;
 
   const orderId = pickString(options.orderId, data.orderId);
-  if (orderId && await shouldSkipRecentPush(orderId)) return false;
+  const pushType = pickString(options.type, data.type);
+  if (orderId && await shouldSkipRecentPush(orderId, pushType)) return false;
 
   const collapseId = orderId ? await makeCollapseId(orderId) : '';
 
@@ -1240,7 +1299,7 @@ async function sendToExternalIds(
     ...(collapseId ? { collapse_id: collapseId, web_push_topic: collapseId } : {}),
     ...oneSignalPayloadExtras(data),
   });
-  if (ok && orderId) await markPushNotified(orderId);
+  if (ok && orderId) await markPushNotified(orderId, pushType);
   return ok;
 }
 
@@ -1248,13 +1307,14 @@ async function sendToRole(
   role: string,
   message: string,
   data: Record<string, unknown> = {},
-  options: { orderId?: string; title?: string } = {},
+  options: { orderId?: string; title?: string; type?: string } = {},
 ) {
   const normalizedRole = String(role || '').trim();
   if (!normalizedRole || !message) return false;
 
   const orderId = pickString(options.orderId, data.orderId);
-  if (orderId && await shouldSkipRecentPush(orderId)) return false;
+  const pushType = pickString(options.type, data.type);
+  if (orderId && await shouldSkipRecentPush(orderId, pushType)) return false;
 
   const collapseId = orderId ? await makeCollapseId(orderId) : '';
 
@@ -1265,7 +1325,7 @@ async function sendToRole(
     ...(collapseId ? { collapse_id: collapseId, web_push_topic: collapseId } : {}),
     ...oneSignalPayloadExtras(data),
   });
-  if (ok && orderId) await markPushNotified(orderId);
+  if (ok && orderId) await markPushNotified(orderId, pushType);
   return ok;
 }
 
@@ -2334,12 +2394,13 @@ Deno.serve(async (req) => {
     : incoming.format === 'chat_message'
     ? 'chat_message'
     : incoming.hint;
+  const cooldownType = resolveCooldownType(incoming, String(eventLabel || ''));
 
   if (
     incoming.format !== 'charter_request' &&
     incoming.format !== 'charter_response' &&
     orderId &&
-    await shouldSkipRecentPush(orderId)
+    await shouldSkipRecentPush(orderId, cooldownType)
   ) {
     return new Response(
       JSON.stringify({
@@ -2347,6 +2408,7 @@ Deno.serve(async (req) => {
         accepted: false,
         skipped: true,
         reason: 'recent_push',
+        skippedType: cooldownType,
         v: FUNCTION_VERSION,
         format: incoming.format,
         orderId,

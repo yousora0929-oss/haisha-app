@@ -568,18 +568,29 @@ export async function markCustomerChatRead(orderId, readKey) {
   });
 }
 
-/** 工場がチャットを開いた際の既読キー（orders カラム + order_data に保存） */
+/** 工場がチャットを開いた際の既読キー（orders カラムのみ。order_data は書き換えない） */
 export async function markFactoryChatRead(orderId, readKey) {
   const id = String(orderId || '').trim();
   const key = String(readKey || '').trim();
   if (!id || !key) return null;
   const readAt = new Date().toISOString();
-  return updateOrderDetails(id, {
-    factory_chat_read_key: key,
-    factoryChatReadKey: key,
-    factory_chat_read_at: readAt,
-    factoryChatReadAt: readAt,
-  });
+  // 同一キーなら更新0行（Realtime も発火しない）。NULL の初回は is.null で通す。
+  const quotedKey = `"${key.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  const { data, error } = await supabase
+    .from('orders')
+    .update({
+      factory_chat_read_key: key,
+      factory_chat_read_at: readAt,
+    })
+    .eq('id', id)
+    .or(`factory_chat_read_key.is.null,factory_chat_read_key.neq.${quotedKey}`)
+    .select('id, factory_chat_read_key, factory_chat_read_at')
+    .maybeSingle();
+  if (error) {
+    console.error('markFactoryChatRead failed', error);
+    throw error;
+  }
+  return data || null;
 }
 
 /** 第一希望工場が割当物件注文を拒否した時刻を記録 */
@@ -1778,19 +1789,25 @@ export async function persistScheduleAutoRejections({
   const nextThreads = { ...chatThreads };
   const next = orders.map((o) => {
     if (!o || !o.id) return o;
+    const orderStatus = String(o.status || 'pending').trim() || 'pending';
+    if (
+      orderStatus === 'accepted' ||
+      orderStatus === 'rejected' ||
+      orderStatus === 'cancelled' ||
+      orderStatus === 'customer_cancelled'
+    ) {
+      return o;
+    }
     if (o.factoryResponseStatus || o.scheduleAutoChecked) return o;
 
     const date = o.scheduleMatchDate || o.preferredDate;
     const fid = resolveScheduleCheckFactoryId(o);
 
+    // DB書き込みは実際に自動拒否理由が付く行のみ。チェック済みフラグだけの更新はしない。
     if (!date || typeof date !== 'string') {
-      changed = true;
-      changedOrderIds.add(o.id);
       return { ...o, scheduleAutoChecked: true };
     }
     if (!fid) {
-      changed = true;
-      changedOrderIds.add(o.id);
       return { ...o, scheduleAutoChecked: true };
     }
 
@@ -1799,8 +1816,6 @@ export async function persistScheduleAutoRejections({
     const reason = computeScheduleAutoRejectReason(o, dayBlocks);
 
     if (!reason) {
-      changed = true;
-      changedOrderIds.add(o.id);
       return { ...o, scheduleAutoChecked: true };
     }
 
@@ -1826,22 +1841,21 @@ export async function persistScheduleAutoRejections({
 
     const nextRejected = [...new Set([...currentRejected, fid])];
     const nextScheduleAuto = [...new Set([...scheduleAutoRejectedFactoryIds(o), fid])];
-    const orderStatus = String(o.status || 'pending').trim() || 'pending';
 
     return {
       ...o,
-      status: orderStatus === 'accepted' ? orderStatus : 'pending',
+      status: 'pending',
       rejected_factory_ids: nextRejected,
       schedule_auto_rejected_factory_ids: nextScheduleAuto,
       scheduleAutoRejectedFactoryIds: nextScheduleAuto,
       scheduleAutoChecked: true,
       factoryRejectSource: 'schedule_auto',
       factorySiteName: resolvedName || o.factorySiteName || defaultFactorySiteName,
-      factorySiteId: orderStatus === 'accepted' ? (o.factorySiteId ?? o.factory_site_id) : null,
-      factory_site_id: orderStatus === 'accepted' ? (o.factory_site_id ?? o.factorySiteId) : null,
-      factoryResponseStatus: orderStatus === 'accepted' ? o.factoryResponseStatus : null,
-      factoryResponseLocked: orderStatus === 'accepted' ? o.factoryResponseLocked : null,
-      acceptedFactoryLabel: orderStatus === 'accepted' ? o.acceptedFactoryLabel : undefined,
+      factorySiteId: null,
+      factory_site_id: null,
+      factoryResponseStatus: null,
+      factoryResponseLocked: null,
+      acceptedFactoryLabel: undefined,
       factoryPendingStartedAt: undefined,
       factoryPendingByName: undefined,
       factoryUnlockRequested: false,
