@@ -17,6 +17,11 @@ import {
   hasGuestSiteOrderSession,
   ensurePanelRealtimeAuth,
   CUSTOMER_PANEL_PHONE_KEY,
+  DISPATCH_AUTH_SESSION_KEY,
+  DISPATCH_CUSTOMER_SESSION_KEY,
+  readAuthValue,
+  writeAuthValue,
+  removeAuthValue,
 } from './supabaseClient.js';
 import {
   clearAppBadge,
@@ -134,9 +139,7 @@ function isOrderForGuestSite(order, ctx) {
   return true;
 }
 
-const DISPATCH_CUSTOMER_SESSION_KEY = 'haisha_dispatch_customer_id_v1';
 const SITE_ORDER_PENDING_SESSION_KEY = 'haisha_site_order_pending_v1';
-const DISPATCH_AUTH_SESSION_KEY = 'haisha_dispatch_auth_customer_id_v1';
 const UNLOAD_DURATION_OPTIONS = [
   { value: '15', label: '15分' },
   { value: '30', label: '30分（標準）' },
@@ -1344,7 +1347,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
       const [isLoggedIn, setIsLoggedIn] = useState(() => {
         try {
-          return Boolean(sessionStorage.getItem(DISPATCH_AUTH_SESSION_KEY)) && hasCustomerPanelSession();
+          return Boolean(readAuthValue(DISPATCH_AUTH_SESSION_KEY)) && hasCustomerPanelSession();
         } catch {
           return false;
         }
@@ -1385,7 +1388,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [agentOrganizations, setAgentOrganizations] = useState([]);
       const [currentCustomerId, setCurrentCustomerId] = useState(() => {
         try {
-          return sessionStorage.getItem(DISPATCH_AUTH_SESSION_KEY) || sessionStorage.getItem(DISPATCH_CUSTOMER_SESSION_KEY) || '';
+          return readAuthValue(DISPATCH_AUTH_SESSION_KEY) || readAuthValue(DISPATCH_CUSTOMER_SESSION_KEY) || '';
         } catch {
           return '';
         }
@@ -1690,7 +1693,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const sessionCustomerPhone = useMemo(() => {
         if (!isLoggedIn) return '';
         try {
-          return String(sessionStorage.getItem(CUSTOMER_PANEL_PHONE_KEY) || '').trim();
+          return String(readAuthValue(CUSTOMER_PANEL_PHONE_KEY) || '').trim();
         } catch {
           return '';
         }
@@ -2070,7 +2073,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             if (isLoggedIn) {
               const authId = (() => {
                 try {
-                  return sessionStorage.getItem(DISPATCH_AUTH_SESSION_KEY) || '';
+                  return readAuthValue(DISPATCH_AUTH_SESSION_KEY) || '';
                 } catch {
                   return '';
                 }
@@ -2080,8 +2083,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 setCurrentCustomerId('');
                 clearCustomerPanelSession();
                 try {
-                  sessionStorage.removeItem(DISPATCH_AUTH_SESSION_KEY);
-                  sessionStorage.removeItem(DISPATCH_CUSTOMER_SESSION_KEY);
+                  removeAuthValue(DISPATCH_AUTH_SESSION_KEY);
+                  removeAuthValue(DISPATCH_CUSTOMER_SESSION_KEY);
                 } catch {
                   /* ignore */
                 }
@@ -2103,7 +2106,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
       useEffect(() => {
         try {
-          sessionStorage.setItem(DISPATCH_CUSTOMER_SESSION_KEY, currentCustomerId || '');
+          writeAuthValue(DISPATCH_CUSTOMER_SESSION_KEY, currentCustomerId || '');
         } catch {
           /* ignore */
         }
@@ -2713,8 +2716,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             setLoginPassword('');
             setLoginError('');
             try {
-              sessionStorage.setItem(DISPATCH_AUTH_SESSION_KEY, customer.id);
-              sessionStorage.setItem(DISPATCH_CUSTOMER_SESSION_KEY, customer.id);
+              writeAuthValue(DISPATCH_AUTH_SESSION_KEY, customer.id);
+              writeAuthValue(DISPATCH_CUSTOMER_SESSION_KEY, customer.id);
             } catch {
               /* ignore */
             }
@@ -2764,8 +2767,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setContractorName('');
         clearCustomerPanelSession();
         try {
-          sessionStorage.removeItem(DISPATCH_AUTH_SESSION_KEY);
-          sessionStorage.removeItem(DISPATCH_CUSTOMER_SESSION_KEY);
+          removeAuthValue(DISPATCH_AUTH_SESSION_KEY);
+          removeAuthValue(DISPATCH_CUSTOMER_SESSION_KEY);
         } catch {
           /* ignore */
         }

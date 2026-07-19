@@ -5,6 +5,10 @@ import {
   clearAdminPanelSession,
   hasAdminPanelSession,
   ensurePanelRealtimeAuth,
+  ADMIN_AUTH_SESSION_KEY,
+  readAuthValue,
+  writeAuthValue,
+  removeAuthValue,
 } from './supabaseClient.js';
 import { ProjectMapEditorUrlActions } from './components/ProjectMapEditorUrlActions.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
@@ -74,8 +78,6 @@ import {
   resolveProjectTradingCompanyName,
 } from './utils/projectTradingCompany.js';
 import { resolveProjectPartyDisplay } from './utils/projectPartyDisplay.js';
-
-const ADMIN_AUTH_SESSION_KEY = 'concrete_link_admin_auth_v1';
 
 function timeToInputValue(t) {
   const s = t != null ? String(t) : '';
@@ -2903,7 +2905,7 @@ function AdminLoginScreen({ onLogin }) {
       setAdminPanelSession(phone, pass);
       await ensurePanelRealtimeAuth(admin?.realtime_token);
       try {
-        sessionStorage.setItem(ADMIN_AUTH_SESSION_KEY, '1');
+        writeAuthValue(ADMIN_AUTH_SESSION_KEY, '1');
       } catch {
         /* ignore */
       }
@@ -2968,7 +2970,7 @@ function AdminLoginScreen({ onLogin }) {
 export function AdminApp() {
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(() => {
     try {
-      return sessionStorage.getItem(ADMIN_AUTH_SESSION_KEY) === '1' && hasAdminPanelSession();
+      return readAuthValue(ADMIN_AUTH_SESSION_KEY) === '1' && hasAdminPanelSession();
     } catch {
       return false;
     }
@@ -2993,7 +2995,7 @@ export function AdminApp() {
   const handleAdminLogout = useCallback(() => {
     void unregisterOneSignalUser().catch(() => {});
     try {
-      sessionStorage.removeItem(ADMIN_AUTH_SESSION_KEY);
+      removeAuthValue(ADMIN_AUTH_SESSION_KEY);
     } catch {
       /* ignore */
     }

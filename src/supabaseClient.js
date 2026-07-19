@@ -42,12 +42,12 @@ export const CHARTER_PANEL_PASSWORD_KEY = 'concrete_link_charter_pass_v1';
 export const GUEST_SITE_ORDER_TOKEN_KEY = 'concrete_link_guest_site_order_token_v1';
 export const PANEL_REALTIME_TOKEN_KEY = 'concrete_link_panel_realtime_token_v1';
 
-/** 別タブ地図エディタ向け: sessionStorage → localStorage 一時退避 */
+/** 別タブ地図エディタ向け（認証は localStorage 常駐のため staging は実質 no-op） */
 export const MAP_EDITOR_PANEL_AUTH_STAGING_KEY = 'haisha_map_editor_panel_auth_staging_v1';
 export const MAP_EDITOR_RETURN_LOCAL_KEY = 'haisha_map_editor_return_url_local_v1';
 export const MAP_EDITOR_OPENED_AS_POPUP_KEY = 'haisha_map_editor_opened_as_popup_v1';
 
-/** 各パネルアプリ固有の sessionStorage キー（別タブ地図エディタ往復用） */
+/** 各パネルアプリ固有の認証セッションキー（TTL付き localStorage） */
 export const DISPATCH_AUTH_SESSION_KEY = 'haisha_dispatch_auth_customer_id_v1';
 export const DISPATCH_CUSTOMER_SESSION_KEY = 'haisha_dispatch_customer_id_v1';
 export const ADMIN_AUTH_SESSION_KEY = 'concrete_link_admin_auth_v1';
@@ -56,23 +56,86 @@ export const FACTORY_AUTH_STORAGE_KEY = 'haisha_factory_auth_id_v1';
 export const CHARTER_SESSION_STORAGE_KEY = 'haisha_charter_operator_id_v1';
 export const CHARTER_AUTH_STORAGE_KEY = 'haisha_charter_auth_id_v1';
 
-const MAP_EDITOR_PANEL_AUTH_KEYS = [
-  ADMIN_PANEL_PHONE_KEY,
-  ADMIN_PANEL_PASSWORD_KEY,
-  CUSTOMER_PANEL_PHONE_KEY,
-  CUSTOMER_PANEL_PASSWORD_KEY,
-  FACTORY_PANEL_ID_KEY,
-  FACTORY_PANEL_PASSWORD_KEY,
-  GUEST_SITE_ORDER_TOKEN_KEY,
-  PANEL_REALTIME_TOKEN_KEY,
-  DISPATCH_AUTH_SESSION_KEY,
-  DISPATCH_CUSTOMER_SESSION_KEY,
-  ADMIN_AUTH_SESSION_KEY,
-  FACTORY_SESSION_STORAGE_KEY,
-  FACTORY_AUTH_STORAGE_KEY,
-];
+const AUTH_STORAGE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30日
 
 const MAP_EDITOR_AUTH_STAGING_TTL_MS = 10 * 60 * 1000;
+
+/** TTL付き認証値を localStorage に保存（形式: { v, at }） */
+export function writeAuthValue(key, value) {
+  const k = String(key || '').trim();
+  if (!k || typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(k, JSON.stringify({ v: String(value ?? ''), at: Date.now() }));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** TTL付き認証値を読み取り。期限切れ・破損時は削除して ''。sessionStorage 旧値は移行コピーする */
+export function readAuthValue(key) {
+  const k = String(key || '').trim();
+  if (!k) return '';
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(k);
+      if (raw != null && String(raw).trim()) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && 'v' in parsed) {
+            const at = Number(parsed.at);
+            if (!Number.isFinite(at) || Date.now() - at > AUTH_STORAGE_TTL_MS) {
+              localStorage.removeItem(k);
+            } else {
+              const v = parsed.v != null ? String(parsed.v).trim() : '';
+              if (v) return v;
+              localStorage.removeItem(k);
+            }
+          } else {
+            // 想定外形式は破棄
+            localStorage.removeItem(k);
+          }
+        } catch {
+          localStorage.removeItem(k);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // 後方互換: sessionStorage の平文を localStorage へ移行
+  if (typeof sessionStorage !== 'undefined') {
+    try {
+      const fromSession = sessionStorage.getItem(k);
+      if (fromSession != null && String(fromSession).trim()) {
+        const v = String(fromSession).trim();
+        writeAuthValue(k, v);
+        return v;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return '';
+}
+
+/** localStorage と sessionStorage の両方から削除 */
+export function removeAuthValue(key) {
+  const k = String(key || '').trim();
+  if (!k) return;
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.removeItem(k);
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(k);
+  } catch {
+    /* ignore */
+  }
+}
 
 function readLocalStorageJson(key) {
   if (typeof localStorage === 'undefined') return null;
@@ -109,21 +172,19 @@ function readStagedPanelAuthValue(key) {
   return value != null ? String(value).trim() : '';
 }
 
+/** 読み取り優先: localStorage(TTL) → sessionStorage(移行) → 地図エディタ退避ペイロード */
 function readPanelAuthValue(key) {
-  if (typeof sessionStorage !== 'undefined') {
-    try {
-      const fromSession = sessionStorage.getItem(key);
-      if (fromSession != null && String(fromSession).trim()) {
-        return String(fromSession).trim();
-      }
-    } catch {
-      /* ignore */
-    }
+  const fromAuth = readAuthValue(key);
+  if (fromAuth) return fromAuth;
+  const staged = readStagedPanelAuthValue(key);
+  if (staged) {
+    writeAuthValue(key, staged);
+    return staged;
   }
-  return readStagedPanelAuthValue(key);
+  return '';
 }
 
-/** ゲスト専用発注トークンを path / query / session / localStorage 退避から解決 */
+/** ゲスト専用発注トークンを path / query / 永続セッションから解決 */
 export function resolveGuestSiteOrderToken() {
   if (typeof window === 'undefined') return '';
   try {
@@ -147,72 +208,24 @@ export function resolveGuestSiteOrderToken() {
 
 /**
  * 地図エディタを別タブで開く直前に呼ぶ。
- * sessionStorage が新タブに引き継がれない環境向けに localStorage へ一時コピーする。
+ * 認証は localStorage 常駐のため staging は不要（互換のため true を返す）。
  */
 function capturePanelAuthToLocalStorage() {
-  if (typeof localStorage === 'undefined' || typeof sessionStorage === 'undefined') return false;
-  const keys = {};
-  for (const key of MAP_EDITOR_PANEL_AUTH_KEYS) {
-    try {
-      const value = sessionStorage.getItem(key);
-      if (value != null && String(value).trim()) {
-        keys[key] = String(value);
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-  if (Object.keys(keys).length === 0) return false;
-  try {
-    localStorage.setItem(
-      MAP_EDITOR_PANEL_AUTH_STAGING_KEY,
-      JSON.stringify({ at: Date.now(), keys }),
-    );
-    return true;
-  } catch {
-    return false;
-  }
+  return true;
 }
 
 export function stageMapEditorPanelAuth() {
   return capturePanelAuthToLocalStorage();
 }
 
-/** 地図エディタを閉じて元画面へ戻る直前: 現在タブの認証を再退避 */
+/** 地図エディタを閉じて元画面へ戻る直前 */
 export function stageMapEditorPanelAuthForReturn() {
   return capturePanelAuthToLocalStorage();
 }
 
-/** 地図エディタ起動時 / パネル画面復帰時: localStorage 退避から sessionStorage へ認証を復元 */
-export function restoreMapEditorPanelAuthFromStorage(options = {}) {
-  const { overwrite = false, consume = true } = options;
-  if (typeof sessionStorage === 'undefined') return false;
-  const payload = readStagedPanelAuthPayload();
-  if (!payload?.keys) return false;
-
-  let restored = false;
-  for (const key of MAP_EDITOR_PANEL_AUTH_KEYS) {
-    const value = payload.keys[key];
-    if (value == null || !String(value).trim()) continue;
-    try {
-      if (overwrite || !sessionStorage.getItem(key)) {
-        sessionStorage.setItem(key, String(value));
-        restored = true;
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  if (consume) {
-    try {
-      localStorage.removeItem(MAP_EDITOR_PANEL_AUTH_STAGING_KEY);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  return restored;
+/** 地図エディタ起動時 / パネル画面復帰時（認証は既に localStorage にあるため no-op） */
+export function restoreMapEditorPanelAuthFromStorage(_options = {}) {
+  return true;
 }
 
 /** 別タブ地図エディタ向け: 戻り先 URL を localStorage にも保存 */
@@ -237,136 +250,94 @@ export function consumeStagedMapEditorReturnUrl() {
   }
 }
 
-/** 管理画面ログイン後、RLS 用ヘッダー認証の資格情報を sessionStorage に保存 */
+/** 管理画面ログイン後、RLS 用ヘッダー認証の資格情報を永続保存 */
 export function setAdminPanelSession(phone, password) {
-  if (typeof sessionStorage === 'undefined') return;
   const p = String(phone || '').trim();
   const pass = String(password || '').trim();
   if (!p || !pass) return;
-  sessionStorage.setItem(ADMIN_PANEL_PHONE_KEY, p);
-  sessionStorage.setItem(ADMIN_PANEL_PASSWORD_KEY, pass);
+  writeAuthValue(ADMIN_PANEL_PHONE_KEY, p);
+  writeAuthValue(ADMIN_PANEL_PASSWORD_KEY, pass);
 }
 
 let panelRealtimeAuthPromise = null;
 
 export function clearAdminPanelSession() {
-  if (typeof sessionStorage === 'undefined') return;
-  sessionStorage.removeItem(ADMIN_PANEL_PHONE_KEY);
-  sessionStorage.removeItem(ADMIN_PANEL_PASSWORD_KEY);
+  removeAuthValue(ADMIN_PANEL_PHONE_KEY);
+  removeAuthValue(ADMIN_PANEL_PASSWORD_KEY);
   clearPanelRealtimeAuth();
 }
 
 export function hasAdminPanelSession() {
-  if (typeof sessionStorage === 'undefined') return false;
-  try {
-    return Boolean(
-      sessionStorage.getItem(ADMIN_PANEL_PHONE_KEY) && sessionStorage.getItem(ADMIN_PANEL_PASSWORD_KEY),
-    );
-  } catch {
-    return false;
-  }
+  return Boolean(readAuthValue(ADMIN_PANEL_PHONE_KEY) && readAuthValue(ADMIN_PANEL_PASSWORD_KEY));
 }
 
 export function setCustomerPanelSession(phone, password) {
-  if (typeof sessionStorage === 'undefined') return;
   const p = String(phone || '').trim();
   const pass = String(password || '').trim();
   if (!p || !pass) return;
-  sessionStorage.setItem(CUSTOMER_PANEL_PHONE_KEY, p);
-  sessionStorage.setItem(CUSTOMER_PANEL_PASSWORD_KEY, pass);
+  writeAuthValue(CUSTOMER_PANEL_PHONE_KEY, p);
+  writeAuthValue(CUSTOMER_PANEL_PASSWORD_KEY, pass);
 }
 
 export function clearCustomerPanelSession() {
-  if (typeof sessionStorage === 'undefined') return;
-  sessionStorage.removeItem(CUSTOMER_PANEL_PHONE_KEY);
-  sessionStorage.removeItem(CUSTOMER_PANEL_PASSWORD_KEY);
+  removeAuthValue(CUSTOMER_PANEL_PHONE_KEY);
+  removeAuthValue(CUSTOMER_PANEL_PASSWORD_KEY);
   clearPanelRealtimeAuth();
 }
 
 export function hasCustomerPanelSession() {
-  if (typeof sessionStorage === 'undefined') return false;
-  try {
-    return Boolean(
-      sessionStorage.getItem(CUSTOMER_PANEL_PHONE_KEY) && sessionStorage.getItem(CUSTOMER_PANEL_PASSWORD_KEY),
-    );
-  } catch {
-    return false;
-  }
+  return Boolean(readAuthValue(CUSTOMER_PANEL_PHONE_KEY) && readAuthValue(CUSTOMER_PANEL_PASSWORD_KEY));
 }
 
 export function setFactoryPanelSession(factoryId, password) {
-  if (typeof sessionStorage === 'undefined') return;
   const id = String(factoryId || '').trim();
   const pass = String(password || '').trim();
   if (!id || !pass) return;
-  sessionStorage.setItem(FACTORY_PANEL_ID_KEY, id);
-  sessionStorage.setItem(FACTORY_PANEL_PASSWORD_KEY, pass);
+  writeAuthValue(FACTORY_PANEL_ID_KEY, id);
+  writeAuthValue(FACTORY_PANEL_PASSWORD_KEY, pass);
 }
 
 export function clearFactoryPanelSession() {
-  if (typeof sessionStorage === 'undefined') return;
-  sessionStorage.removeItem(FACTORY_PANEL_ID_KEY);
-  sessionStorage.removeItem(FACTORY_PANEL_PASSWORD_KEY);
+  removeAuthValue(FACTORY_PANEL_ID_KEY);
+  removeAuthValue(FACTORY_PANEL_PASSWORD_KEY);
   clearPanelRealtimeAuth();
 }
 
 export function setCharterPanelSession(charterId, password) {
-  if (typeof sessionStorage === 'undefined') return;
   const id = String(charterId || '').trim();
   const pass = String(password || '').trim();
   if (!id || !pass) return;
-  sessionStorage.setItem(CHARTER_PANEL_ID_KEY, id);
-  sessionStorage.setItem(CHARTER_PANEL_PASSWORD_KEY, pass);
+  writeAuthValue(CHARTER_PANEL_ID_KEY, id);
+  writeAuthValue(CHARTER_PANEL_PASSWORD_KEY, pass);
 }
 
 export function clearCharterPanelSession() {
-  if (typeof sessionStorage === 'undefined') return;
-  sessionStorage.removeItem(CHARTER_PANEL_ID_KEY);
-  sessionStorage.removeItem(CHARTER_PANEL_PASSWORD_KEY);
+  removeAuthValue(CHARTER_PANEL_ID_KEY);
+  removeAuthValue(CHARTER_PANEL_PASSWORD_KEY);
+  clearPanelRealtimeAuth();
 }
 
 export function hasCharterPanelSession() {
-  if (typeof sessionStorage === 'undefined') return false;
-  try {
-    return Boolean(
-      sessionStorage.getItem(CHARTER_PANEL_ID_KEY) && sessionStorage.getItem(CHARTER_PANEL_PASSWORD_KEY),
-    );
-  } catch {
-    return false;
-  }
+  return Boolean(readAuthValue(CHARTER_PANEL_ID_KEY) && readAuthValue(CHARTER_PANEL_PASSWORD_KEY));
 }
 
 export function hasFactoryPanelSession() {
-  if (typeof sessionStorage === 'undefined') return false;
-  try {
-    return Boolean(
-      sessionStorage.getItem(FACTORY_PANEL_ID_KEY) && sessionStorage.getItem(FACTORY_PANEL_PASSWORD_KEY),
-    );
-  } catch {
-    return false;
-  }
+  return Boolean(readAuthValue(FACTORY_PANEL_ID_KEY) && readAuthValue(FACTORY_PANEL_PASSWORD_KEY));
 }
 
 export function setGuestSiteOrderSession(urlToken) {
-  if (typeof sessionStorage === 'undefined') return;
   const token = String(urlToken || '').trim();
   if (!token) return;
-  sessionStorage.setItem(GUEST_SITE_ORDER_TOKEN_KEY, token);
+  writeAuthValue(GUEST_SITE_ORDER_TOKEN_KEY, token);
 }
 
 export function clearGuestSiteOrderSession() {
-  if (typeof sessionStorage === 'undefined') return;
-  sessionStorage.removeItem(GUEST_SITE_ORDER_TOKEN_KEY);
+  removeAuthValue(GUEST_SITE_ORDER_TOKEN_KEY);
   clearPanelRealtimeAuth();
 }
 
 export function hasGuestSiteOrderSession() {
-  if (typeof sessionStorage === 'undefined') return false;
-  try {
-    return Boolean(sessionStorage.getItem(GUEST_SITE_ORDER_TOKEN_KEY));
-  } catch {
-    return false;
-  }
+  return Boolean(readAuthValue(GUEST_SITE_ORDER_TOKEN_KEY));
 }
 
 export function hasAnyPanelSession() {
@@ -467,18 +438,14 @@ export function resolveMapEditorHomeUrl() {
 /** Realtime 用 JWT を supabase.realtime に適用 */
 export async function applyPanelRealtimeAuth(token) {
   const normalized = token ? String(token).trim() : '';
-  if (typeof sessionStorage !== 'undefined') {
-    if (normalized) sessionStorage.setItem(PANEL_REALTIME_TOKEN_KEY, normalized);
-    else sessionStorage.removeItem(PANEL_REALTIME_TOKEN_KEY);
-  }
+  if (normalized) writeAuthValue(PANEL_REALTIME_TOKEN_KEY, normalized);
+  else removeAuthValue(PANEL_REALTIME_TOKEN_KEY);
   await supabase.realtime.setAuth(normalized || null);
   return normalized || null;
 }
 
 export function clearPanelRealtimeAuth() {
-  if (typeof sessionStorage !== 'undefined') {
-    sessionStorage.removeItem(PANEL_REALTIME_TOKEN_KEY);
-  }
+  removeAuthValue(PANEL_REALTIME_TOKEN_KEY);
   void supabase.realtime.setAuth(null);
 }
 

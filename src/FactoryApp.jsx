@@ -7,6 +7,11 @@ import {
   ensurePanelRealtimeAuth,
   issuePanelRealtimeAuth,
   FACTORY_PANEL_PASSWORD_KEY,
+  FACTORY_SESSION_STORAGE_KEY,
+  FACTORY_AUTH_STORAGE_KEY,
+  readAuthValue,
+  writeAuthValue,
+  removeAuthValue,
 } from './supabaseClient.js';
 import { buildEscalationContext, filterOrdersForFactory, getOrderEscalationStepInfo } from './utils/escalationUtils.js';
 import { isAssignedProject } from './utils/assignedProjectEscalation.js';
@@ -93,8 +98,6 @@ import {
 } from './utils/chatNotificationDedup.js';
 import { normalizeFactoryRefId } from './utils/escalationUtils.js';
 
-const FACTORY_SESSION_STORAGE_KEY = 'haisha_factory_site_id_v1';
-const FACTORY_AUTH_STORAGE_KEY = 'haisha_factory_auth_id_v1';
 const FACTORY_SPLIT_STORAGE_KEY = 'haisha_factory_split_left_pct_v1';
 
 /** 依頼一覧 1 行目：希望日 | 希望時刻 | 荷卸し | 車種 | 数量 | 試験（最小幅を確保し、狭いときは横スクロール） */
@@ -284,7 +287,7 @@ function getFactoryIdFromUrl() {
 
 function readStoredFactoryId() {
   try {
-    return String(sessionStorage.getItem(FACTORY_SESSION_STORAGE_KEY) || '').trim();
+    return String(readAuthValue(FACTORY_SESSION_STORAGE_KEY) || '').trim();
   } catch {
     return '';
   }
@@ -292,7 +295,7 @@ function readStoredFactoryId() {
 
 function readAuthenticatedFactoryId() {
   try {
-    return String(sessionStorage.getItem(FACTORY_AUTH_STORAGE_KEY) || '').trim();
+    return String(readAuthValue(FACTORY_AUTH_STORAGE_KEY) || '').trim();
   } catch {
     return '';
   }
@@ -3157,8 +3160,8 @@ function isUnreadForFactory(messages, readKey) {
             setFactoryPanelSession(fid, loginPassword);
             await issuePanelRealtimeAuth('factory', fid, loginPassword);
             try {
-              sessionStorage.setItem(FACTORY_SESSION_STORAGE_KEY, fid);
-              sessionStorage.setItem(FACTORY_AUTH_STORAGE_KEY, fid);
+              writeAuthValue(FACTORY_SESSION_STORAGE_KEY, fid);
+              writeAuthValue(FACTORY_AUTH_STORAGE_KEY, fid);
             } catch {
               /* ignore */
             }
@@ -3217,8 +3220,8 @@ function isUnreadForFactory(messages, readKey) {
         setToastIsReassignment(false);
         clearFactoryPanelSession();
         try {
-          sessionStorage.removeItem(FACTORY_AUTH_STORAGE_KEY);
-          sessionStorage.removeItem(FACTORY_SESSION_STORAGE_KEY);
+          removeAuthValue(FACTORY_AUTH_STORAGE_KEY);
+          removeAuthValue(FACTORY_SESSION_STORAGE_KEY);
         } catch {
           /* ignore */
         }
@@ -3794,7 +3797,7 @@ function isUnreadForFactory(messages, readKey) {
               setActiveFactoryName(displayName);
               setIsFactoryAuthenticated(true);
               try {
-                const storedPassword = String(sessionStorage.getItem(FACTORY_PANEL_PASSWORD_KEY) || '').trim();
+                const storedPassword = String(readAuthValue(FACTORY_PANEL_PASSWORD_KEY) || '').trim();
                 if (storedPassword) {
                   await issuePanelRealtimeAuth('factory', stored, storedPassword);
                 } else {
@@ -3871,10 +3874,7 @@ function isUnreadForFactory(messages, readKey) {
         let unsubRealtime = () => {};
         void (async () => {
           try {
-            const factoryPassword =
-              typeof sessionStorage !== 'undefined'
-                ? String(sessionStorage.getItem(FACTORY_PANEL_PASSWORD_KEY) || '').trim()
-                : '';
+            const factoryPassword = String(readAuthValue(FACTORY_PANEL_PASSWORD_KEY) || '').trim();
             if (factoryPassword) {
               await issuePanelRealtimeAuth('factory', factoryId, factoryPassword);
             } else {

@@ -7,6 +7,9 @@ import {
   CHARTER_AUTH_STORAGE_KEY,
   CHARTER_SESSION_STORAGE_KEY,
   CHARTER_PANEL_PASSWORD_KEY,
+  readAuthValue,
+  writeAuthValue,
+  removeAuthValue,
 } from './supabaseClient.js';
 import { CharterVehicleRegistrationPanel } from './components/CharterVehicleRegistrationPanel.jsx';
 import { CharterOpenRequestsPanel } from './components/CharterOpenRequestsPanel.jsx';
@@ -23,7 +26,7 @@ import { countPendingCharterResponses } from './utils/charterBadges.js';
 
 function readStoredCharterId() {
   try {
-    return String(sessionStorage.getItem(CHARTER_SESSION_STORAGE_KEY) || '').trim();
+    return String(readAuthValue(CHARTER_SESSION_STORAGE_KEY) || '').trim();
   } catch {
     return '';
   }
@@ -31,7 +34,7 @@ function readStoredCharterId() {
 
 function readAuthenticatedCharterId() {
   try {
-    return String(sessionStorage.getItem(CHARTER_AUTH_STORAGE_KEY) || '').trim();
+    return String(readAuthValue(CHARTER_AUTH_STORAGE_KEY) || '').trim();
   } catch {
     return '';
   }
@@ -155,7 +158,7 @@ export function CharterApp() {
       setOperator({ id: stored, company_name: '' });
       setShowHomeScreenHint(!hasSeenHomeScreenHint(stored));
       void db
-        .loginCharter(stored, sessionStorage.getItem(CHARTER_PANEL_PASSWORD_KEY) || '')
+        .loginCharter(stored, readAuthValue(CHARTER_PANEL_PASSWORD_KEY) || '')
         .then(async (row) => {
           if (row) {
             setOperator(row);
@@ -167,12 +170,8 @@ export function CharterApp() {
         });
     } else {
       clearCharterPanelSession();
-      try {
-        sessionStorage.removeItem(CHARTER_SESSION_STORAGE_KEY);
-        sessionStorage.removeItem(CHARTER_AUTH_STORAGE_KEY);
-      } catch {
-        /* ignore */
-      }
+      removeAuthValue(CHARTER_SESSION_STORAGE_KEY);
+      removeAuthValue(CHARTER_AUTH_STORAGE_KEY);
     }
   }, []);
 
@@ -194,12 +193,8 @@ export function CharterApp() {
           return;
         }
         setCharterPanelSession(row.id, password);
-        try {
-          sessionStorage.setItem(CHARTER_SESSION_STORAGE_KEY, row.id);
-          sessionStorage.setItem(CHARTER_AUTH_STORAGE_KEY, row.id);
-        } catch {
-          /* ignore */
-        }
+        writeAuthValue(CHARTER_SESSION_STORAGE_KEY, row.id);
+        writeAuthValue(CHARTER_AUTH_STORAGE_KEY, row.id);
         setOperator(row);
         setIsAuthenticated(true);
         setShowHomeScreenHint(!hasSeenHomeScreenHint(row.id));
@@ -222,12 +217,8 @@ export function CharterApp() {
   const handleLogout = useCallback(() => {
     void unregisterOneSignalUser();
     clearCharterPanelSession();
-    try {
-      sessionStorage.removeItem(CHARTER_SESSION_STORAGE_KEY);
-      sessionStorage.removeItem(CHARTER_AUTH_STORAGE_KEY);
-    } catch {
-      /* ignore */
-    }
+    removeAuthValue(CHARTER_SESSION_STORAGE_KEY);
+    removeAuthValue(CHARTER_AUTH_STORAGE_KEY);
     setIsAuthenticated(false);
     setOperator(null);
     setLoginPassword('');
