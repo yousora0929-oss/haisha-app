@@ -19,6 +19,8 @@ type OrderLike = {
   created_at?: string | null;
   project_id?: string | null;
   preferred_factory_id?: string | null;
+  preferred_factory_declined_at?: string | null;
+  preferred_factory_choice?: string | null;
   factory_site_id?: string | null;
   factory_consult_status?: string | null;
   factory_consult_by_factory_id?: string | null;
@@ -476,6 +478,13 @@ function isOrderVisibleToAssignedProjectFactory(
 ): boolean {
   const fid = pickString(factoryId);
   if (!fid) return false;
+
+  const preferredId = pickString(order?.preferred_factory_id);
+  const declinedAt = pickString(order?.preferred_factory_declined_at);
+  if (preferredId && !declinedAt) {
+    return fid === preferredId;
+  }
+
   const mainId = pickString(project.main_factory_id);
   const subIds = normalizeSubFactoryIds(project.sub_factory_ids);
   const rejectedIds = rejectedFactoryIdSet(order);

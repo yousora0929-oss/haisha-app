@@ -39,7 +39,7 @@ import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils
 import { generateInitialPassword } from './utils/initialPassword.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, is_admin_modified, is_factory_modified, factory_chat_read_key, factory_chat_read_at';
+  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, is_admin_modified, is_factory_modified, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -465,6 +465,38 @@ export function normalizeOrderRow(row) {
           : od.factory_chat_read_at != null
             ? String(od.factory_chat_read_at)
             : '',
+    preferred_factory_declined_at:
+      row.preferred_factory_declined_at != null
+        ? String(row.preferred_factory_declined_at)
+        : od.preferred_factory_declined_at != null
+          ? String(od.preferred_factory_declined_at)
+          : od.preferredFactoryDeclinedAt != null
+            ? String(od.preferredFactoryDeclinedAt)
+            : '',
+    preferredFactoryDeclinedAt:
+      row.preferred_factory_declined_at != null
+        ? String(row.preferred_factory_declined_at)
+        : od.preferredFactoryDeclinedAt != null
+          ? String(od.preferredFactoryDeclinedAt)
+          : od.preferred_factory_declined_at != null
+            ? String(od.preferred_factory_declined_at)
+            : '',
+    preferred_factory_choice:
+      row.preferred_factory_choice != null
+        ? String(row.preferred_factory_choice).trim()
+        : od.preferred_factory_choice != null
+          ? String(od.preferred_factory_choice).trim()
+          : od.preferredFactoryChoice != null
+            ? String(od.preferredFactoryChoice).trim()
+            : '',
+    preferredFactoryChoice:
+      row.preferred_factory_choice != null
+        ? String(row.preferred_factory_choice).trim()
+        : od.preferredFactoryChoice != null
+          ? String(od.preferredFactoryChoice).trim()
+          : od.preferred_factory_choice != null
+            ? String(od.preferred_factory_choice).trim()
+            : '',
     sub_factory_current_index:
       row.sub_factory_current_index != null
         ? Number(row.sub_factory_current_index)
@@ -547,6 +579,17 @@ export async function markFactoryChatRead(orderId, readKey) {
     factoryChatReadKey: key,
     factory_chat_read_at: readAt,
     factoryChatReadAt: readAt,
+  });
+}
+
+/** 第一希望工場が割当物件注文を拒否した時刻を記録 */
+export async function markPreferredFactoryDeclined(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id) return null;
+  const declinedAt = new Date().toISOString();
+  return updateOrderDetails(id, {
+    preferred_factory_declined_at: declinedAt,
+    preferredFactoryDeclinedAt: declinedAt,
   });
 }
 
@@ -944,6 +987,20 @@ export async function updateOrderDetails(orderId, updatedData) {
   ) {
     const at = String(patch.factory_chat_read_at ?? patch.factoryChatReadAt ?? '').trim();
     updateRow.factory_chat_read_at = at || null;
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'preferred_factory_declined_at') ||
+    Object.prototype.hasOwnProperty.call(patch, 'preferredFactoryDeclinedAt')
+  ) {
+    const at = String(patch.preferred_factory_declined_at ?? patch.preferredFactoryDeclinedAt ?? '').trim();
+    updateRow.preferred_factory_declined_at = at || null;
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'preferred_factory_choice') ||
+    Object.prototype.hasOwnProperty.call(patch, 'preferredFactoryChoice')
+  ) {
+    const choice = String(patch.preferred_factory_choice ?? patch.preferredFactoryChoice ?? '').trim();
+    updateRow.preferred_factory_choice = choice || null;
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'sub_factory_current_index') ||
       Object.prototype.hasOwnProperty.call(patch, 'subFactoryCurrentIndex')) {

@@ -528,19 +528,29 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
     }
 
-    function CustomerChatScreen({ order, messages, onBack, onSendMessage, onMarkChatRead }) {
+    function CustomerChatScreen({ order, messages, onBack, onSendMessage, onMarkChatRead, onPreferredFactoryChoice }) {
       const [draft, setDraft] = useState('');
+      const [choiceSubmitting, setChoiceSubmitting] = useState(false);
+      const [choiceHiddenLocally, setChoiceHiddenLocally] = useState(false);
       const messagesListRef = useRef(null);
       const messagesEndRef = useRef(null);
       const list = Array.isArray(messages) ? messages : [];
       const orderId = order?.id;
       const senderName = orderContactPersonName(order);
       const factoryName = getDefaultFactoryDisplayName(order);
+      const showPreferredFactoryChoice =
+        Boolean(order?.preferredFactoryDeclinedAt || order?.preferred_factory_declined_at) &&
+        !order?.preferredFactoryChoice &&
+        !order?.preferred_factory_choice &&
+        !choiceHiddenLocally;
+      useEffect(() => {
+        setChoiceHiddenLocally(false);
+      }, [orderId]);
       useEffect(() => {
         const el = messagesListRef.current;
         if (!el) return;
         el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-      }, [list.length, messages]);
+      }, [list.length, messages, showPreferredFactoryChoice]);
       useEffect(() => {
         clearAppBadge();
       }, [orderId]);
@@ -555,6 +565,35 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         const ok = await onSendMessage(orderId, t);
         if (ok !== false) setDraft('');
       }, [draft, onSendMessage, orderId]);
+      const handlePreferredFactoryChoice = useCallback(
+        async (choice) => {
+          if (!order?.id || choiceSubmitting) return;
+          if (
+            !window.confirm(
+              choice === 'reschedule'
+                ? '別日・別時間を指定しますか？'
+                : choice === 'use_assigned'
+                  ? '担当工場に確認を依頼しますか？'
+                  : '注文をキャンセルしますか？',
+            )
+          ) {
+            return;
+          }
+          setChoiceSubmitting(true);
+          try {
+            if (typeof onPreferredFactoryChoice === 'function') {
+              await onPreferredFactoryChoice(order, choice);
+            }
+            setChoiceHiddenLocally(true);
+          } catch (e) {
+            console.error('set_preferred_factory_choice failed', e);
+            window.alert('処理に失敗しました。通信状態を確認してください。');
+          } finally {
+            setChoiceSubmitting(false);
+          }
+        },
+        [choiceSubmitting, onPreferredFactoryChoice, order],
+      );
       if (!order) return null;
       return (
         <div className="fixed inset-0 z-[420] flex h-[100dvh] flex-col overflow-hidden bg-[#e5ddd5] dark:bg-slate-800">
@@ -623,6 +662,41 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 );
               })
             )}
+            {showPreferredFactoryChoice ? (
+              <li>
+                <div className="mx-2 my-3 space-y-3 rounded-2xl border-2 border-amber-400 bg-amber-50 p-4 dark:border-amber-600 dark:bg-amber-950/40">
+                  <p className="text-sm font-bold text-amber-900 dark:text-amber-100">
+                    ご指定の工場では予約が取れませんでした。以下からお選びください。
+                  </p>
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      disabled={choiceSubmitting}
+                      onClick={() => void handlePreferredFactoryChoice('reschedule')}
+                      className="w-full rounded-xl bg-indigo-500 px-4 py-3 text-sm font-black text-white hover:bg-indigo-600 active:bg-indigo-700 disabled:opacity-60"
+                    >
+                      1️⃣ 別日・別時間を指定する
+                    </button>
+                    <button
+                      type="button"
+                      disabled={choiceSubmitting}
+                      onClick={() => void handlePreferredFactoryChoice('use_assigned')}
+                      className="w-full rounded-xl bg-emerald-500 px-4 py-3 text-sm font-black text-white hover:bg-emerald-600 active:bg-emerald-700 disabled:opacity-60"
+                    >
+                      2️⃣ 担当工場に確認する
+                    </button>
+                    <button
+                      type="button"
+                      disabled={choiceSubmitting}
+                      onClick={() => void handlePreferredFactoryChoice('cancel')}
+                      className="w-full rounded-xl border-2 border-slate-300 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 disabled:opacity-60"
+                    >
+                      3️⃣ キャンセル
+                    </button>
+                  </div>
+                </div>
+              </li>
+            ) : null}
             <li ref={messagesEndRef} aria-hidden="true" className="h-px" />
           </ul>
           <div className="shrink-0 border-t border-slate-200 bg-white px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.08)] dark:border-slate-700 dark:bg-slate-900">
@@ -2694,6 +2768,52 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         [applyProjectSelection, currentCustomer, orderPlacerName, projects, today],
       );
 
+      const handlePreferredFactoryChoice = useCallback(
+        async (order, choice) => {
+          if (!order?.id) return;
+          const { error } = await supabase.rpc('set_preferred_factory_choice', {
+            p_order_id: order.id,
+            p_choice: choice,
+          });
+          if (error) throw error;
+
+          const labels = {
+            reschedule: '【別日指定を選択】別日・別時間での手配を希望します。',
+            use_assigned: '【担当工場に確認】通常の担当工場に手配を依頼します。',
+            cancel: '【キャンセル】注文をキャンセルしました。',
+          };
+          const messages = await appendOrderChatMessage(order.id, 'customer', labels[choice] || '');
+          await refreshChatThreadsOnly(order.id, messages);
+
+          // Realtime 反映前にローカルへ反映して選択UIを即時非表示
+          setDashboardOrders((prev) =>
+            (Array.isArray(prev) ? prev : []).map((o) =>
+              o?.id === order.id
+                ? {
+                    ...o,
+                    preferred_factory_choice: choice,
+                    preferredFactoryChoice: choice,
+                  }
+                : o,
+            ),
+          );
+
+          if (choice === 'reschedule') {
+            // NOTE: 履歴タブの「日時だけ変えて再発注」(confirmRepeatOrder) は
+            // 履歴カード展開UIの日時入力に依存するため、チャットからは呼べない。
+            // 代わりに「この内容で再発注」(applyHistoryOrderToNewForm) を流用し、
+            // 新規発注フォームへ内容を反映して日時を選び直せるようにする。
+            activeChatOrderIdRef.current = '';
+            setActiveChatOrderId('');
+            applyHistoryOrderToNewForm(order);
+            return;
+          }
+
+          await refreshDashboard({ skipChatSound: true });
+        },
+        [applyHistoryOrderToNewForm, refreshChatThreadsOnly, refreshDashboard],
+      );
+
       const confirmRepeatOrder = useCallback(
         async (row) => {
           const item = row?.source || row || {};
@@ -4678,6 +4798,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               }}
               onSendMessage={handleSendMasterChat}
               onMarkChatRead={markChatRead}
+              onPreferredFactoryChoice={handlePreferredFactoryChoice}
             />
           ) : null}
         </div>

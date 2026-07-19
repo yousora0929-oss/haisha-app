@@ -9,6 +9,7 @@ import {
   FACTORY_PANEL_PASSWORD_KEY,
 } from './supabaseClient.js';
 import { buildEscalationContext, filterOrdersForFactory, getOrderEscalationStepInfo } from './utils/escalationUtils.js';
+import { isAssignedProject } from './utils/assignedProjectEscalation.js';
 import {
   resolveOrderPartyDisplay,
   resolveProjectPartyDisplay,
@@ -3976,13 +3977,33 @@ function isUnreadForFactory(messages, readKey) {
             setToastOrder((cur) => (cur?.id === order.id ? null : cur));
             setActionNotice('見送りました');
             window.setTimeout(() => setActionNotice(''), 3500);
+
+            const project = projectById[String(order.project_id ?? order.projectId ?? '')];
+            const preferredId = String(order?.preferred_factory_id ?? order?.preferredFactoryId ?? '').trim();
+            const alreadyDeclined = Boolean(
+              order?.preferredFactoryDeclinedAt ?? order?.preferred_factory_declined_at,
+            );
+            if (
+              isAssignedProject(order, project) &&
+              preferredId === String(activeFactoryId).trim() &&
+              !alreadyDeclined
+            ) {
+              await db.markPreferredFactoryDeclined(order.id);
+              await appendOrderChatMessage(
+                order.id,
+                'system',
+                `【ご指定工場の対応不可】${activeFactoryName}では予約が取れませんでした。` +
+                  `\nチャットから次のご対応をお選びください。`,
+              );
+            }
+
             await syncFromStorage({ playSound: false });
           } catch (e) {
             console.error(e);
             window.alert('見送り処理に失敗しました。通信状態を確認して再度お試しください。');
           }
         },
-        [activeFactoryId, markOrderRead, syncFromStorage],
+        [activeFactoryId, activeFactoryName, markOrderRead, projectById, syncFromStorage],
       );
 
       const handleConsultOrder = useCallback(
