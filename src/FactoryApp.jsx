@@ -2137,6 +2137,7 @@ function isUnreadForFactory(messages, readKey) {
       customerById,
       organizationById,
       onSiteUrlCopied,
+      exitingOrderIds,
     }) {
       const [searchQuery, setSearchQuery] = useState('');
       const filteredOrders = useMemo(
@@ -2181,35 +2182,50 @@ function isUnreadForFactory(messages, readKey) {
                 </p>
               </li>
             ) : (
-              filteredOrders.map((o, i) => (
-                <li key={o.id ?? `idx-${i}`}>
-                  <OrderRequestCard
-                    order={o}
-                    idx={i}
-                    currentFactoryId={currentFactoryId}
-                    isRead={Boolean(o?.id && readOrderIds?.has(o.id))}
-                    onMarkRead={onMarkRead}
-                    onOrderFullPatch={onOrderFullPatch}
-                    onAcceptOrder={onAcceptOrder}
-                    onRejectOrder={onRejectOrder}
-                    onConsultOrder={onConsultOrder}
-                    onCustomerCancelOrder={onCustomerCancelOrder}
-                    onHideOrder={onHideOrder}
-                    onResponseStatusChange={onResponseStatusChange}
-                    onRequestUnlock={onRequestUnlock}
-                    chatMessages={chatThreads[o.id]}
-                    hasUnreadChat={isUnreadForFactory(chatThreads[o.id], readChatKeys?.[o.id])}
-                    onMarkChatRead={onMarkChatRead}
-                    onFactoryChatSent={onFactoryChatSent}
-                    factoryName={factorySearchLabel}
-                    forceExpanded={Boolean(focusedOrderId && String(o.id) === String(focusedOrderId))}
-                    projectById={projectById}
-                    customerById={customerById}
-                    organizationById={organizationById}
-                    onSiteUrlCopied={onSiteUrlCopied}
-                  />
+              filteredOrders.map((o, i) => {
+                const isExiting = Boolean(o?.id && exitingOrderIds?.has?.(String(o.id)));
+                return (
+                <li key={o.id ?? `idx-${i}`} className="list-none">
+                  <div
+                    className="grid transition-[grid-template-rows,opacity,transform] duration-300 ease-in motion-reduce:transition-none"
+                    style={{
+                      gridTemplateRows: isExiting ? '0fr' : '1fr',
+                      opacity: isExiting ? 0 : 1,
+                      transform: isExiting ? 'translateX(24px) scale(0.98)' : 'none',
+                    }}
+                    aria-hidden={isExiting ? true : undefined}
+                  >
+                    <div className="min-h-0 overflow-hidden">
+                      <OrderRequestCard
+                        order={o}
+                        idx={i}
+                        currentFactoryId={currentFactoryId}
+                        isRead={Boolean(o?.id && readOrderIds?.has(o.id))}
+                        onMarkRead={onMarkRead}
+                        onOrderFullPatch={onOrderFullPatch}
+                        onAcceptOrder={onAcceptOrder}
+                        onRejectOrder={onRejectOrder}
+                        onConsultOrder={onConsultOrder}
+                        onCustomerCancelOrder={onCustomerCancelOrder}
+                        onHideOrder={onHideOrder}
+                        onResponseStatusChange={onResponseStatusChange}
+                        onRequestUnlock={onRequestUnlock}
+                        chatMessages={chatThreads[o.id]}
+                        hasUnreadChat={isUnreadForFactory(chatThreads[o.id], readChatKeys?.[o.id])}
+                        onMarkChatRead={onMarkChatRead}
+                        onFactoryChatSent={onFactoryChatSent}
+                        factoryName={factorySearchLabel}
+                        forceExpanded={Boolean(focusedOrderId && String(o.id) === String(focusedOrderId))}
+                        projectById={projectById}
+                        customerById={customerById}
+                        organizationById={organizationById}
+                        onSiteUrlCopied={onSiteUrlCopied}
+                      />
+                    </div>
+                  </div>
                 </li>
-              ))
+                );
+              })
             )}
           </ul>
           </div>
@@ -2888,6 +2904,8 @@ function isUnreadForFactory(messages, readKey) {
       const [orders, setOrders] = useState([]);
       const [readOrderIds, setReadOrderIds] = useState(() => new Set());
       const [hiddenOrderIds, setHiddenOrderIds] = useState(() => new Set());
+      const [exitingOrderIds, setExitingOrderIds] = useState(() => new Set());
+      const exitingOrderSnapshotsRef = useRef(new Map());
       const [projects, setProjects] = useState([]);
       const [customers, setCustomers] = useState([]);
       const [organizations, setOrganizations] = useState([]);
@@ -3064,6 +3082,45 @@ function isUnreadForFactory(messages, readKey) {
           }
           return cur;
         });
+      }, []);
+
+      const beginCardExit = useCallback((orderId, after, snapshot) => {
+        const id = String(orderId || '').trim();
+        if (!id) {
+          after?.();
+          return;
+        }
+        if (snapshot) exitingOrderSnapshotsRef.current.set(id, snapshot);
+
+        const reduceMotion =
+          typeof window !== 'undefined' &&
+          window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        if (reduceMotion) {
+          try {
+            after?.();
+          } finally {
+            exitingOrderSnapshotsRef.current.delete(id);
+          }
+          return;
+        }
+
+        setExitingOrderIds((prev) => {
+          if (prev.has(id)) return prev;
+          return new Set(prev).add(id);
+        });
+        window.setTimeout(() => {
+          try {
+            after?.();
+          } finally {
+            setExitingOrderIds((prev) => {
+              const next = new Set(prev);
+              next.delete(id);
+              return next;
+            });
+            exitingOrderSnapshotsRef.current.delete(id);
+          }
+        }, 340);
       }, []);
 
       const showAllHiddenOrders = useCallback(() => {
@@ -3592,6 +3649,18 @@ function isUnreadForFactory(messages, readKey) {
         [orders, todaySchedule, activeFactoryId],
       );
 
+      // 退場アニメ中は Realtime sync でリストから落ちてもスナップショットで描画を維持する
+      const inboxOrders = useMemo(() => {
+        const base = Array.isArray(factoryInProgressOrders) ? [...factoryInProgressOrders] : [];
+        const present = new Set(base.map((o) => String(o?.id || '')).filter(Boolean));
+        for (const id of exitingOrderIds) {
+          if (present.has(id)) continue;
+          const snap = exitingOrderSnapshotsRef.current.get(id);
+          if (snap) base.push(snap);
+        }
+        return base;
+      }, [factoryInProgressOrders, exitingOrderIds]);
+
       const factoryHistoryOrders = useMemo(
         () =>
           sortOrdersForHistory((orders || []).filter((o) => isOrderInHistoryView(o, todaySchedule, activeFactoryId))),
@@ -3957,6 +4026,7 @@ function isUnreadForFactory(messages, readKey) {
       const handleRejectOrder = useCallback(
         async (order) => {
           if (!order?.id || !activeFactoryId) return;
+          if (exitingOrderIds.has(String(order.id))) return;
           if (!window.confirm('この注文を見送りますか？')) return;
           markOrderRead(order.id);
           if (order?.id) notifiedOrderIds.current.add(order.id);
@@ -3964,47 +4034,65 @@ function isUnreadForFactory(messages, readKey) {
             const nextIds = await db.rejectOrderForFactory(order.id, activeFactoryId, {
               factoryName: activeFactoryName,
             });
-            const patchRejected = (o) =>
-              o?.id === order.id
-                ? {
-                    ...o,
-                    rejected_factory_ids: nextIds,
-                    factoryResponseStatus: FACTORY_RESPONSE.REJECTED,
-                    factoryResponseLocked: true,
-                  }
-                : o;
-            setRawOrders((prev) => (Array.isArray(prev) ? prev.map(patchRejected) : prev));
-            setOrders((prev) => (Array.isArray(prev) ? prev.map(patchRejected) : prev));
+
             setToastOrder((cur) => (cur?.id === order.id ? null : cur));
             setActionNotice('見送りました');
             window.setTimeout(() => setActionNotice(''), 3500);
 
-            const project = projectById[String(order.project_id ?? order.projectId ?? '')];
-            const preferredId = String(order?.preferred_factory_id ?? order?.preferredFactoryId ?? '').trim();
-            const alreadyDeclined = Boolean(
-              order?.preferredFactoryDeclinedAt ?? order?.preferred_factory_declined_at,
-            );
-            if (
-              isAssignedProject(order, project) &&
-              preferredId === String(activeFactoryId).trim() &&
-              !alreadyDeclined
-            ) {
-              await db.markPreferredFactoryDeclined(order.id);
-              await appendOrderChatMessage(
-                order.id,
-                'system',
-                `【ご指定工場の対応不可】${activeFactoryName}では予約が取れませんでした。` +
-                  `\nチャットから次のご対応をお選びください。`,
-              );
-            }
+            const orderSnapshot = { ...order };
+            beginCardExit(order.id, () => {
+              const patchRejected = (o) =>
+                o?.id === order.id
+                  ? {
+                      ...o,
+                      rejected_factory_ids: nextIds,
+                      factoryResponseStatus: FACTORY_RESPONSE.REJECTED,
+                      factoryResponseLocked: true,
+                    }
+                  : o;
+              setRawOrders((prev) => (Array.isArray(prev) ? prev.map(patchRejected) : prev));
+              setOrders((prev) => (Array.isArray(prev) ? prev.map(patchRejected) : prev));
 
-            await syncFromStorage({ playSound: false });
+              void (async () => {
+                try {
+                  const project = projectById[String(order.project_id ?? order.projectId ?? '')];
+                  const preferredId = String(order?.preferred_factory_id ?? order?.preferredFactoryId ?? '').trim();
+                  const alreadyDeclined = Boolean(
+                    order?.preferredFactoryDeclinedAt ?? order?.preferred_factory_declined_at,
+                  );
+                  if (
+                    isAssignedProject(order, project) &&
+                    preferredId === String(activeFactoryId).trim() &&
+                    !alreadyDeclined
+                  ) {
+                    await db.markPreferredFactoryDeclined(order.id);
+                    await appendOrderChatMessage(
+                      order.id,
+                      'system',
+                      `【ご指定工場の対応不可】${activeFactoryName}では予約が取れませんでした。` +
+                        `\nチャットから次のご対応をお選びください。`,
+                    );
+                  }
+                  await syncFromStorage({ playSound: false });
+                } catch (syncErr) {
+                  console.error('[FactoryApp] reject follow-up failed', syncErr);
+                }
+              })();
+            }, orderSnapshot);
           } catch (e) {
             console.error(e);
             window.alert('見送り処理に失敗しました。通信状態を確認して再度お試しください。');
           }
         },
-        [activeFactoryId, activeFactoryName, markOrderRead, projectById, syncFromStorage],
+        [
+          activeFactoryId,
+          activeFactoryName,
+          beginCardExit,
+          exitingOrderIds,
+          markOrderRead,
+          projectById,
+          syncFromStorage,
+        ],
       );
 
       const handleConsultOrder = useCallback(
@@ -4485,7 +4573,7 @@ function isUnreadForFactory(messages, readKey) {
               {activeTab === 'orders' ? (
                 <div className="grid gap-2">
                   <DispatchInbox
-                    orders={factoryInProgressOrders}
+                    orders={inboxOrders}
                     currentFactoryId={activeFactoryId}
                     readOrderIds={readOrderIds}
                     factorySearchLabel={activeFactoryName}
@@ -4507,6 +4595,7 @@ function isUnreadForFactory(messages, readKey) {
                     customerById={customerById}
                     organizationById={organizationById}
                     onSiteUrlCopied={handleSiteUrlCopied}
+                    exitingOrderIds={exitingOrderIds}
                   />
                 </div>
               ) : null}
