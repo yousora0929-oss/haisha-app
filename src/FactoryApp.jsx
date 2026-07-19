@@ -1385,8 +1385,6 @@ function isUnreadForFactory(messages, readKey) {
       const siteContactName = resolveSiteContactName(order);
       const ordererName = resolveOrdererName(order);
       const sitePhoneFormatted = formatPhoneNumberJP(resolveSitePhone(order));
-      const showOrdererRow =
-        Boolean(ordererName) && ordererName !== siteContactName;
       const phone = sitePhoneFormatted;
       const projectId = String(order?.project_id ?? order?.projectId ?? '').trim();
       const linkedProject = projectId ? projectById?.[projectId] : null;
@@ -1420,8 +1418,16 @@ function isUnreadForFactory(messages, readKey) {
         billOnSub,
         billingIsSub,
         orderedByLabel,
+        orderedByCompanyName,
         orderedByIsProxy,
       } = orderPartyDisplay;
+      const ordererPhoneFormatted = formatPhoneNumberJP(
+        String(orderCustomer?.phone_number ?? '').trim(),
+      );
+      const ordererDisplayLine =
+        [String(orderedByCompanyName || '').trim(), ordererName, ordererPhoneFormatted]
+          .filter(Boolean)
+          .join(' ') || '—';
       const missingBillingSub = billingIsSub && displaySub === '—';
       const isSpotOrder = Boolean(order.is_spot);
       const isLarge = vehicle === '大型';
@@ -1733,17 +1739,6 @@ function isUnreadForFactory(messages, readKey) {
           <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50/70 p-2 shadow-inner dark:border-indigo-500/40 dark:bg-indigo-950/35">
             {renderPrimarySummary({ borderless: true })}
           </div>
-          <div className="space-y-0.5 px-0.5 text-left">
-            <p className="break-words text-xs font-bold text-slate-700 dark:text-slate-200 sm:text-sm">
-              現場担当者：{siteContactName || '—'}
-              {phone ? `　${phone}` : ''}
-            </p>
-            {showOrdererRow ? (
-              <p className="break-words text-xs font-bold text-slate-600 dark:text-slate-300 sm:text-sm">
-                発注担当者：{ordererName || '—'}
-              </p>
-            ) : null}
-          </div>
           <div className="flex flex-wrap items-center gap-2">
             {!isAccepted && !isCustomerCancelled && !isRejectedByMe ? (
               <FactoryStatusMini status={order.factoryResponseStatus} />
@@ -1784,14 +1779,12 @@ function isUnreadForFactory(messages, readKey) {
                   ) : null}
                 </p>
               </div>
-              {showOrdererRow ? (
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-wider text-slate-500 sm:text-sm">発注担当者</p>
-                  <p className="mt-1 break-words text-base font-black text-slate-900 sm:text-lg">
-                    {ordererName || '—'}
-                  </p>
-                </div>
-              ) : null}
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-500 sm:text-sm">発注者</p>
+                <p className="mt-1 break-words text-base font-black text-slate-900 sm:text-lg">
+                  {ordererDisplayLine}
+                </p>
+              </div>
             </div>
           </div>
 

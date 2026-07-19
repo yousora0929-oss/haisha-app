@@ -84,6 +84,8 @@ export function resolveOrderPartyDisplay(
     return {
       ...party,
       orderedByLabel,
+      /** 発注元の会社・組合・商社名（担当者名は含まない） */
+      orderedByCompanyName: orderedByName || '',
       orderedByIsProxy: Boolean(
         orderedByName &&
           comparisonPrime &&
