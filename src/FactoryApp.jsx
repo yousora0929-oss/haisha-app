@@ -466,9 +466,8 @@ function isUnreadForFactory(messages, readKey) {
       const list = Array.isArray(messages) ? messages : [];
       const customerSenderName = orderContactPersonName(order);
       useEffect(() => {
-        const el = messagesListRef.current;
-        if (!el) return;
-        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+        // 内部スクロールは無いので、新規メッセージ時はページ側へ追従する
+        messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
       }, [list.length, messages]);
       if (!orderId) return null;
       const send = async () => {
@@ -484,11 +483,11 @@ function isUnreadForFactory(messages, readKey) {
         }
       };
       return (
-        <div className="flex max-h-[50vh] min-h-0 flex-col rounded-lg border-2 border-slate-300 bg-[#e5ddd5] p-3 shadow-inner">
-          <p className="shrink-0 text-xs font-black uppercase tracking-wider text-slate-700 sm:text-sm">質疑応答（チャット）</p>
+        <div className="rounded-lg border-2 border-slate-300 bg-[#e5ddd5] p-3 shadow-inner">
+          <p className="text-xs font-black uppercase tracking-wider text-slate-700 sm:text-sm">質疑応答（チャット）</p>
           <ul
             ref={messagesListRef}
-            className="mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto rounded-md bg-[#e5ddd5]/90 px-1.5 py-2"
+            className="mt-2 space-y-2 rounded-md bg-[#e5ddd5]/90 px-1.5 py-2"
             aria-live="polite"
           >
             {list.length === 0 ? (
@@ -1907,12 +1906,12 @@ function isUnreadForFactory(messages, readKey) {
 
       const renderDetail = () => (
         <>
-          <div className="min-h-0 flex-1 overflow-y-auto pr-0.5">
+          <div className="pr-0.5">
             {isToast ? renderPrimarySummary({}) : null}
             {renderDetailBody()}
           </div>
           {!isToast && order.id ? (
-            <div className="min-h-0 shrink-0 overflow-hidden">
+            <div>
               <FactoryOrderChatPanel
                 order={order}
                 orderId={order.id}
@@ -1927,7 +1926,7 @@ function isUnreadForFactory(messages, readKey) {
 
       if (isToast) {
         return (
-          <article className={cardFrame + pad + ' flex max-h-[min(75vh,48rem)] flex-col'}>
+          <article className={cardFrame + pad}>
             {renderDetail()}
           </article>
         );
@@ -2064,7 +2063,7 @@ function isUnreadForFactory(messages, readKey) {
             style={{ gridTemplateRows: expanded ? '1fr' : '0fr' }}
           >
             <div className="min-h-0 overflow-hidden">
-              <div className={pad + ' flex max-h-[min(75vh,48rem)] flex-col gap-2'}>{renderDetail()}</div>
+              <div className={pad + ' flex flex-col gap-2'}>{renderDetail()}</div>
             </div>
           </div>
           {isActionable && (canAcceptOrder || canRejectOrder || canConsultOrder) ? (
