@@ -387,7 +387,24 @@ export function MapEditorApp() {
       const dataUrl = await editorRef.current?.toDataURL?.();
       if (!dataUrl) throw new Error('画像の生成に失敗しました');
 
-      const payload = withImageOverlayLocal(annotations, baseImageUrl);
+      let payload = withImageOverlayLocal(annotations, baseImageUrl);
+      const liveMap = editorRef.current?.getMap?.();
+      if (liveMap && typeof liveMap.getCenter === 'function') {
+        const c = liveMap.getCenter();
+        const z = typeof liveMap.getZoom === 'function' ? liveMap.getZoom() : payload?.center?.zoom;
+        const lat = Number(c?.lat);
+        const lng = Number(c?.lng);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          payload = {
+            ...payload,
+            center: {
+              lat,
+              lng,
+              zoom: Number.isFinite(Number(z)) ? Number(z) : payload?.center?.zoom ?? 17,
+            },
+          };
+        }
+      }
 
       if (saveMode === 'project') {
         const result = await saveProjectDefaultMap(targetProjectId, dataUrl, payload);

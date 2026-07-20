@@ -2967,6 +2967,30 @@ function AdminLoginScreen({ onLogin }) {
   );
 }
 
+function readAdminTabFromUrl() {
+  const allowed = new Set([
+    'monitor',
+    'availability',
+    'factoryNews',
+    'adminSettings',
+    'projects',
+    'agents',
+    'cooperatives',
+    'customers',
+    'charter',
+    'inquiries',
+    'settings',
+    'escalation',
+  ]);
+  try {
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    if (tab && allowed.has(tab)) return tab;
+  } catch {
+    /* ignore */
+  }
+  return 'monitor';
+}
+
 export function AdminApp() {
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(() => {
     try {
@@ -2978,10 +3002,22 @@ export function AdminApp() {
   const [factories, setFactories] = useState([]);
   const [schedulesByFactoryId, setSchedulesByFactoryId] = useState({});
   const [scheduleDate, setScheduleDate] = useState(() => todayLocalISODate());
-  const [tab, setTab] = useState('monitor');
+  const [tab, setTab] = useState(readAdminTabFromUrl);
   const [activeMonitorTab, setActiveMonitorTab] = useState('orders');
   const [adminSettings, setAdminSettings] = useState({ admin_name: '', phone_number: '' });
   const factoryNameById = useMemo(() => Object.fromEntries(factories.map((f) => [f.id, f.name])), [factories]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get('tab') === tab) return;
+      url.searchParams.set('tab', tab);
+      window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+    } catch {
+      /* ignore */
+    }
+  }, [tab]);
 
   const handleAdminLogin = useCallback((admin) => {
     setIsAdminLoggedIn(true);

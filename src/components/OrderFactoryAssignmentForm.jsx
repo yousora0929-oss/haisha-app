@@ -118,7 +118,7 @@ export function OrderFactoryAssignmentForm({
 
       <fieldset>
         <legend className="text-xs font-black text-slate-700">サブ・応援工場（任意・複数可）</legend>
-        <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50/80 p-2">
+        <ul className="mt-2 space-y-1 rounded-lg border border-slate-200 bg-slate-50/80 p-2">
           {factoryList.length === 0 ? (
             <li className="px-2 py-2 text-xs text-slate-500">工場マスタがありません。</li>
           ) : (

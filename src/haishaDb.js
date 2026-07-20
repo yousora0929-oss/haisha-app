@@ -3,6 +3,7 @@ import {
   annotationsToLegacyStamps,
   applyInitialViewCenter,
   boundsFromCenter,
+  coerceMapAnnotationsRaw,
   getInitialMapViewFromAnnotations,
   normalizeMapAnnotations,
   pickCoordsFromMapAnnotations,
@@ -2127,7 +2128,7 @@ function mapProjectRow(row) {
       row.trading_contact_name != null ? String(row.trading_contact_name).trim() : '',
     trading_contact_phone:
       row.trading_contact_phone != null ? String(row.trading_contact_phone).trim() : '',
-    map_annotations: row.map_annotations && typeof row.map_annotations === 'object' ? row.map_annotations : null,
+    map_annotations: coerceMapAnnotationsRaw(row.map_annotations),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -3189,10 +3190,11 @@ export async function updateSystemSettings({ start_time, end_time }) {
 const PROJECT_MAP_SELECT_ATTEMPTS = [
   'id, name, default_map_image_url, map_base_image_url, lat, lng, map_annotations',
   'id, name, default_map_image_url, lat, lng, map_annotations',
-  'id, name, default_map_image_url, lat, lng',
   'id, name, map_base_image_url, lat, lng, map_annotations',
-  'id, name, map_base_image_url, lat, lng',
   'id, name, lat, lng, map_annotations',
+  // map_annotations 未適用スキーマ向け（注釈なし）
+  'id, name, default_map_image_url, lat, lng',
+  'id, name, map_base_image_url, lat, lng',
   'id, name, lat, lng',
 ];
 
@@ -3204,18 +3206,16 @@ function buildProjectMapPatchVariants(patch) {
   const basePatch = { ...patch };
   delete basePatch.default_map_image_url;
   delete basePatch.map_base_image_url;
-  const withoutAnnotations = { ...basePatch };
-  delete withoutAnnotations.map_annotations;
 
+  // map_annotations を落とすフォールバックは禁止。
+  // 以前はカラム欠損時に withoutAnnotations へ退避していたが、画像だけ保存されて
+  // スタンプ／荷卸し地点が消える原因になっていた。
   const variants = [];
-  const bases = basePatch.map_annotations != null ? [basePatch, withoutAnnotations] : [basePatch];
-  for (const body of bases) {
-    if (imageUrl) {
-      variants.push({ ...body, default_map_image_url: imageUrl });
-      variants.push({ ...body, map_base_image_url: imageUrl });
-    }
-    variants.push({ ...body });
+  if (imageUrl) {
+    variants.push({ ...basePatch, default_map_image_url: imageUrl });
+    variants.push({ ...basePatch, map_base_image_url: imageUrl });
   }
+  variants.push({ ...basePatch });
   return variants;
 }
 
@@ -3240,12 +3240,40 @@ async function fetchProjectMapRow(projectId) {
 async function updateProjectMapRow(projectId, patch) {
   const id = String(projectId || '').trim();
   const variants = buildProjectMapPatchVariants(patch);
+  const expectsAnnotations = patch.map_annotations != null;
 
   let lastError = null;
   for (const row of variants) {
     for (const select of PROJECT_MAP_SELECT_ATTEMPTS) {
+      // 注釈を保存するときは、返り値に map_annotations を含められる select を優先する
+      if (expectsAnnotations && !String(select).includes('map_annotations')) continue;
       const { data, error } = await supabase.from('projects').update(row).eq('id', id).select(select).single();
-      if (!error) return data;
+      if (!error) {
+        if (expectsAnnotations) {
+          const saved = data?.map_annotations;
+          const stampCount = Array.isArray(saved?.stamps) ? saved.stamps.length : 0;
+          const unloadCount = Array.isArray(saved?.unloadPoints) ? saved.unloadPoints.length : 0;
+          const wantStamps = Array.isArray(patch.map_annotations?.stamps)
+            ? patch.map_annotations.stamps.length
+            : 0;
+          const wantUnloads = Array.isArray(patch.map_annotations?.unloadPoints)
+            ? patch.map_annotations.unloadPoints.length
+            : 0;
+          if (saved == null && (wantStamps > 0 || wantUnloads > 0)) {
+            lastError = new Error('物件の map_annotations が保存結果に含まれていません');
+            continue;
+          }
+          if ((wantStamps > 0 || wantUnloads > 0) && stampCount === 0 && unloadCount === 0) {
+            console.warn('[updateProjectMapRow] saved map_annotations has no markers', {
+              projectId: id,
+              wantStamps,
+              wantUnloads,
+              saved,
+            });
+          }
+        }
+        return data;
+      }
       if (!isMissingRelationOrColumnError(error)) throw error;
       lastError = error;
     }
@@ -3531,8 +3559,9 @@ export async function fetchOrderForMapEditor(orderId) {
   const { url: displayImageUrl, source: mapSource } = resolveMapDisplayUrl(order, project, row);
   const legacyStamps = normalizeMapStamps(order.map_stamps ?? order.mapStamps);
   const projectCenter = pickMapEditorCenter(order, project);
-  const rawAnnotations =
-    row.map_annotations ?? order.map_annotations ?? order.mapAnnotations ?? order.order_data?.map_annotations;
+  const rawAnnotations = coerceMapAnnotationsRaw(
+    row.map_annotations ?? order.map_annotations ?? order.mapAnnotations ?? order.order_data?.map_annotations,
+  );
   let mapAnnotations = normalizeMapAnnotations(rawAnnotations, {
     legacyStamps,
     projectCenter,
@@ -3574,11 +3603,32 @@ export async function fetchProjectForMapEditor(projectId) {
   const displayImageUrl = normalizeExternalUrl(defaultMapImageUrl) || '';
   const mapSource = displayImageUrl ? 'default' : 'none';
   const projectCenter = pickMapEditorCenter(null, row);
-  const rawAnnotations = row.map_annotations;
+  const rawAnnotations = coerceMapAnnotationsRaw(row.map_annotations);
+  if (
+    displayImageUrl &&
+    rawAnnotations == null &&
+    Object.prototype.hasOwnProperty.call(row, 'map_annotations') === false
+  ) {
+    console.warn(
+      '[fetchProjectForMapEditor] projects.map_annotations が SELECT 結果に含まれていません。マイグレーション未適用の可能性があります。',
+      { projectId: id },
+    );
+  }
   let mapAnnotations = normalizeMapAnnotations(rawAnnotations, {
     projectCenter,
     imageUrl: '',
   });
+  if (
+    displayImageUrl &&
+    !(mapAnnotations.stamps?.length || mapAnnotations.unloadPoints?.length || mapAnnotations.comments?.length)
+  ) {
+    console.warn('[fetchProjectForMapEditor] 地図画像はあるが注釈マーカーが空です', {
+      projectId: id,
+      rawKeys: rawAnnotations && typeof rawAnnotations === 'object' ? Object.keys(rawAnnotations) : null,
+      stampCount: Array.isArray(rawAnnotations?.stamps) ? rawAnnotations.stamps.length : null,
+      unloadCount: Array.isArray(rawAnnotations?.unloadPoints) ? rawAnnotations.unloadPoints.length : null,
+    });
+  }
   mapAnnotations = stripSavedSnapshotOverlay(mapAnnotations, displayImageUrl);
   const { annotations: viewAnnotations, flyTarget: initialFlyTarget } =
     getInitialMapViewFromAnnotations(mapAnnotations);

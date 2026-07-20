@@ -144,7 +144,26 @@ export function resolveAnnotationsGeo(annotations, bounds) {
   return { ...annotations, stamps };
 }
 
-export function normalizeMapAnnotations(raw, options = {}) {
+/** jsonb が文字列や配列で返ってきた場合もオブジェクトへ揃える */
+export function coerceMapAnnotationsRaw(raw) {
+  if (raw == null) return null;
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    try {
+      const parsed = JSON.parse(trimmed);
+      return coerceMapAnnotationsRaw(parsed);
+    } catch {
+      return null;
+    }
+  }
+  if (Array.isArray(raw)) return null;
+  if (typeof raw === 'object') return raw;
+  return null;
+}
+
+export function normalizeMapAnnotations(rawInput, options = {}) {
+  const raw = coerceMapAnnotationsRaw(rawInput);
   const { legacyStamps = [], projectCenter = null, imageUrl = '' } = options;
   const centerRaw = raw?.center || projectCenter || DEFAULT_MAP_CENTER;
   const center = {
@@ -154,7 +173,7 @@ export function normalizeMapAnnotations(raw, options = {}) {
   };
 
   const base = emptyMapAnnotations(center);
-  if (!raw || typeof raw !== 'object') {
+  if (!raw) {
     if (legacyStamps.length) {
       const bounds = boundsFromCenter(center.lat, center.lng);
       const stamps = legacyStamps
@@ -204,32 +223,43 @@ export function normalizeMapAnnotations(raw, options = {}) {
   });
 }
 
+function firstAnnotationLatLng(annotations) {
+  const unload = (annotations?.unloadPoints || []).find(
+    (u) => u && Number.isFinite(Number(u.lat)) && Number.isFinite(Number(u.lng)),
+  );
+  if (unload) return { lat: Number(unload.lat), lng: Number(unload.lng) };
+  const stamp = (annotations?.stamps || []).find(
+    (s) => s && Number.isFinite(Number(s.lat)) && Number.isFinite(Number(s.lng)),
+  );
+  if (stamp) return { lat: Number(stamp.lat), lng: Number(stamp.lng) };
+  const comment = (annotations?.comments || []).find(
+    (c) => c && Number.isFinite(Number(c.lat)) && Number.isFinite(Number(c.lng)),
+  );
+  if (comment) return { lat: Number(comment.lat), lng: Number(comment.lng) };
+  return null;
+}
+
 /**
- * 荷下ろし地点（赤〇）があれば初期表示の中心にする（1件目を基準）
+ * 荷下ろし地点 → スタンプ → コメントの順で初期表示の中心にする
  * @returns {{ annotations: object, flyTarget: { lat: number, lng: number, zoom: number } | null }}
  */
 export function getInitialMapViewFromAnnotations(annotations) {
   const ann = applyInitialViewCenter(annotations || emptyMapAnnotations());
-  const first = ann.unloadPoints?.[0];
-  const flyTarget =
-    first && Number.isFinite(first.lat) && Number.isFinite(first.lng)
-      ? {
-          lat: first.lat,
-          lng: first.lng,
-          zoom: Number(ann.center?.zoom) || 17,
-        }
-      : null;
+  const first = firstAnnotationLatLng(ann);
+  const flyTarget = first
+    ? {
+        lat: first.lat,
+        lng: first.lng,
+        zoom: Number(ann.center?.zoom) || 17,
+      }
+    : null;
   return { annotations: ann, flyTarget };
 }
 
-/** 荷卸し地点 → 注釈中心の順で projects.lat/lng 用座標を取得 */
+/** 荷卸し地点 → スタンプ → 注釈中心の順で projects.lat/lng 用座標を取得 */
 export function pickCoordsFromMapAnnotations(annotations) {
-  const first = (annotations?.unloadPoints || []).find(
-    (u) => u && Number.isFinite(Number(u.lat)) && Number.isFinite(Number(u.lng)),
-  );
-  if (first) {
-    return { lat: Number(first.lat), lng: Number(first.lng) };
-  }
+  const first = firstAnnotationLatLng(annotations);
+  if (first) return first;
   const clat = Number(annotations?.center?.lat);
   const clng = Number(annotations?.center?.lng);
   if (Number.isFinite(clat) && Number.isFinite(clng)) {
@@ -238,12 +268,10 @@ export function pickCoordsFromMapAnnotations(annotations) {
   return null;
 }
 
-/** unloadPoints 先頭の座標を center に反映（地図起動時の表示用） */
+/** 注釈座標があれば center に反映（地図起動時の表示用） */
 export function applyInitialViewCenter(annotations) {
   if (!annotations || typeof annotations !== 'object') return annotations;
-  const first = (annotations.unloadPoints || []).find(
-    (u) => u && Number.isFinite(u.lat) && Number.isFinite(u.lng),
-  );
+  const first = firstAnnotationLatLng(annotations);
   if (!first) return annotations;
   const zoom = Number(annotations.center?.zoom) || 17;
   return {
