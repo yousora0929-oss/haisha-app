@@ -12,7 +12,7 @@ function useStableId() {
 }
 
 const LIST_CLASS =
-  'absolute left-0 right-0 top-full z-[9999] mt-1 max-h-60 touch-pan-y overscroll-contain overflow-y-auto rounded-md border border-gray-200 bg-white text-gray-900 shadow-2xl dark:border-gray-700 dark:bg-gray-800 dark:text-white';
+  'absolute left-0 right-0 top-full z-[9999] mt-1 max-h-[40vh] touch-pan-y overscroll-contain overflow-y-auto rounded-md border border-gray-200 bg-white pb-2 text-gray-900 shadow-2xl dark:border-gray-700 dark:bg-gray-800 dark:text-white';
 
 const INPUT_CLASS =
   'min-h-[56px] w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-base text-gray-900 placeholder:text-slate-400 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300 dark:border-slate-600 dark:bg-slate-900 dark:text-gray-100 dark:placeholder:text-slate-500 dark:focus:border-slate-500';

@@ -1,9 +1,10 @@
 /** サジェスト用 — マスタ配列のリアルタイム絞り込み */
 import { resolveProjectTradingCompanyName } from './projectTradingCompany.js';
+import { normalizeSuggestSearchText } from './normalizeSuggestSearchText.js';
 
 export function getTextMatchRank(text, queryLower) {
-  const t = String(text ?? '').trim().toLowerCase();
-  const q = String(queryLower ?? '').trim().toLowerCase();
+  const t = normalizeSuggestSearchText(text);
+  const q = normalizeSuggestSearchText(queryLower);
   if (!q) return 0;
   if (!t) return 2;
   if (t.startsWith(q)) return 0;
@@ -12,7 +13,7 @@ export function getTextMatchRank(text, queryLower) {
 }
 
 export function getItemMatchRank(item, query, getSearchTexts) {
-  const q = String(query ?? '').trim().toLowerCase();
+  const q = normalizeSuggestSearchText(query);
   if (!q) return 0;
   const texts = getSearchTexts(item);
   let best = 2;
@@ -25,7 +26,7 @@ export function getItemMatchRank(item, query, getSearchTexts) {
 
 export function filterSuggestItems(items, query, getSearchTexts, limit = 80) {
   const list = Array.isArray(items) ? items.filter(Boolean) : [];
-  const q = String(query ?? '').trim().toLowerCase();
+  const q = normalizeSuggestSearchText(query);
   if (!q) return list.slice(0, limit);
   return list
     .filter((item) => getItemMatchRank(item, q, getSearchTexts) < 2)
@@ -48,6 +49,8 @@ export function customerSuggestTexts(customer) {
   return [
     customer?.company_name,
     customer?.name,
+    customer?.furigana,
+    customer?.manager_name,
     customer?.phone_number,
     customer?.id,
   ];

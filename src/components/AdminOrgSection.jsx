@@ -773,21 +773,19 @@ export function AdminOrgSection({ orgType, label }) {
                               className={`${inputClass} mt-1 w-full`}
                             />
                           </label>
-                          {orgType === 'contractor' ? (
-                            <label className="block text-xs text-gray-600">
-                              フリガナ
-                              <input
-                                type="text"
-                                value={editingMember.furigana}
-                                onChange={(e) =>
-                                  setEditingMember((cur) =>
-                                    cur ? { ...cur, furigana: e.target.value } : cur,
-                                  )
-                                }
-                                className={`${inputClass} mt-1 w-full`}
-                              />
-                            </label>
-                          ) : null}
+                          <label className="block text-xs text-gray-600">
+                            フリガナ
+                            <input
+                              type="text"
+                              value={editingMember.furigana}
+                              onChange={(e) =>
+                                setEditingMember((cur) =>
+                                  cur ? { ...cur, furigana: e.target.value } : cur,
+                                )
+                              }
+                              className={`${inputClass} mt-1 w-full`}
+                            />
+                          </label>
                           <label className="block text-xs text-gray-600">
                             電話番号
                             <input
@@ -845,7 +843,7 @@ export function AdminOrgSection({ orgType, label }) {
                       <span className="min-w-[5rem] font-medium">
                         {member.manager_name || '—'}
                       </span>
-                      {orgType === 'contractor' && member.furigana?.trim() ? (
+                      {member.furigana?.trim() ? (
                         <span className="min-w-[5rem] text-gray-500 text-xs">
                           {member.furigana}
                         </span>
@@ -899,19 +897,17 @@ export function AdminOrgSection({ orgType, label }) {
                           className={`${inputClass} mt-1 w-full`}
                         />
                       </label>
-                      {orgType === 'contractor' ? (
-                        <label className="block text-xs text-gray-600">
-                          フリガナ
-                          <input
-                            type="text"
-                            value={newMember.furigana}
-                            onChange={(e) =>
-                              setNewMember((m) => ({ ...m, furigana: e.target.value }))
-                            }
-                            className={`${inputClass} mt-1 w-full`}
-                          />
-                        </label>
-                      ) : null}
+                      <label className="block text-xs text-gray-600">
+                        フリガナ
+                        <input
+                          type="text"
+                          value={newMember.furigana}
+                          onChange={(e) =>
+                            setNewMember((m) => ({ ...m, furigana: e.target.value }))
+                          }
+                          className={`${inputClass} mt-1 w-full`}
+                        />
+                      </label>
                       <label className="block text-xs text-gray-600">
                         電話番号
                         <input
