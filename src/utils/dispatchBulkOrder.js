@@ -283,6 +283,8 @@ export function buildDispatchOrderForDate(preferredDate, context) {
     isLocationPending,
     contractorCustomerId,
     agentOrganizationId,
+    tradingAgentCustomerId,
+    currentCustomerRole,
     isAgentOrCooperative,
   } = context;
 
@@ -391,6 +393,8 @@ export function buildDispatchOrderForDate(preferredDate, context) {
     isLocationPending: locationPending,
     contractor_customer_id: isAgentOrCooperative && !isSpot ? contractorCustomerId || null : null,
     agent_organization_id: isAgentOrCooperative && !isSpot ? agentOrganizationId || null : null,
+    trading_agent_customer_id:
+      currentCustomerRole === 'cooperative' ? tradingAgentCustomerId || null : null,
   };
 }
 
@@ -421,6 +425,13 @@ export function validateMultiDateOrderForm(context, dates, { today, isPastPrefer
   if (!String(context.currentCustomerId || '').trim()) missing.push('業者（会社）');
   if (context.isAgentOrCooperative && context.orderKind === 'project' && !String(context.contractorCustomerId || '').trim()) {
     missing.push('発注先業者');
+  }
+  if (
+    context.currentCustomerRole === 'cooperative' &&
+    String(context.tradingAgentSearchText || '').trim() &&
+    !String(context.tradingAgentCustomerId || '').trim()
+  ) {
+    missing.push('経由商社担当者（サジェストから選択し直してください）');
   }
   if (!isGuestSiteOrder) {
     if (context.orderKind === 'project') {

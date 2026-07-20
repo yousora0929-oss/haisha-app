@@ -1394,6 +1394,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [customerSearchText, setCustomerSearchText] = useState('');
       const [contractorCustomerId, setContractorCustomerId] = useState('');
       const [contractorSearchText, setContractorSearchText] = useState('');
+      const [tradingAgentCustomerId, setTradingAgentCustomerId] = useState('');
+      const [tradingAgentSearchText, setTradingAgentSearchText] = useState('');
       const [spotContractorOrgId, setSpotContractorOrgId] = useState('');
       const [projectSearchText, setProjectSearchText] = useState('');
       const [deliveryLat, setDeliveryLat] = useState('');
@@ -1572,6 +1574,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         () => currentCustomerRole === 'agent' || currentCustomerRole === 'cooperative',
         [currentCustomerRole],
       );
+
+      const formatTradingAgentLabel = useCallback((customer) => {
+        const company = String(customer?.company_name || customer?.name || '').trim();
+        const manager = String(customer?.manager_name || '').trim();
+        if (company && manager) return `${company}（${manager}）`;
+        return company || manager || '';
+      }, []);
 
       const applySpotOrderFieldDefaults = useCallback(() => {
         if (isGuestSiteOrder) return;
@@ -2754,6 +2763,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setCurrentCustomerId('');
         setContractorCustomerId('');
         setContractorSearchText('');
+        setTradingAgentCustomerId('');
+        setTradingAgentSearchText('');
         setCustomers([]);
         setSelectedProjectId('');
         setPreferredFactoryId('');
@@ -3014,8 +3025,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           isAgentOrCooperative,
           orderKind,
           currentCustomerId,
+          currentCustomerRole,
           contractorCustomerId: isAgentOrCooperative ? contractorCustomerId : currentCustomerId,
           agentOrganizationId: isAgentOrCooperative ? (currentCustomer?.organization_id ?? null) : null,
+          tradingAgentCustomerId: currentCustomerRole === 'cooperative' ? tradingAgentCustomerId : null,
+          tradingAgentSearchText: currentCustomerRole === 'cooperative' ? tradingAgentSearchText : '',
           currentCustomer,
           selectedProject,
           selectedProjectId,
@@ -3050,7 +3064,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           isAgentOrCooperative,
           orderKind,
           currentCustomerId,
+          currentCustomerRole,
           contractorCustomerId,
+          tradingAgentCustomerId,
+          tradingAgentSearchText,
           currentCustomer,
           selectedProject,
           selectedProjectId,
@@ -3118,6 +3135,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setSiteContactName('');
         setHasTest(false);
         setVehicleType('large');
+        setTradingAgentCustomerId('');
+        setTradingAgentSearchText('');
         if (isAgentOrCooperative) {
           // agent/cooperativeは業者選択を保持する（発注ごとにリセットしない）
           // 必要ならコメントアウトを外す:
@@ -3735,8 +3754,45 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   <p className="text-xs text-amber-700 mt-0.5">
                     {currentCustomerRole === 'agent' ? '商社' : '組合'}として発注しています。
                     発注先の業者を選択してください。
+                    {currentCustomerRole === 'cooperative'
+                      ? '必要に応じて経由商社の担当者を選択できます。'
+                      : ''}
                   </p>
-                  <div className="mt-3">
+                  <div className="mt-3 space-y-3">
+                    {currentCustomerRole === 'cooperative' ? (
+                      <MasterSuggestInput
+                        label="経由商社担当者（任意）"
+                        htmlFor="trading-agent-customer-select"
+                        name="trading_agent_customer"
+                        value={tradingAgentSearchText}
+                        placeholder="商社担当者名を入力して候補から選択"
+                        items={(customers || []).filter((c) => (c.role ?? 'contractor') === 'agent')}
+                        getItemKey={(c) => String(c.id)}
+                        getItemLabel={formatTradingAgentLabel}
+                        getSearchTexts={(c) => [
+                          c.company_name || c.name || '',
+                          c.furigana || '',
+                          c.manager_name || '',
+                        ]}
+                        onValueChange={(text) => {
+                          setTradingAgentSearchText(text);
+                          const hit = (customers || []).find(
+                            (c) =>
+                              (c.role ?? 'contractor') === 'agent' &&
+                              formatTradingAgentLabel(c).toLowerCase() === text.trim().toLowerCase(),
+                          );
+                          if (hit) setTradingAgentCustomerId(String(hit.id));
+                          else setTradingAgentCustomerId('');
+                          setSubmitError('');
+                        }}
+                        onSelect={(c) => {
+                          setTradingAgentCustomerId(String(c.id));
+                          setTradingAgentSearchText(formatTradingAgentLabel(c));
+                          setSubmitError('');
+                        }}
+                        emptyHint="該当する商社担当者がありません"
+                      />
+                    ) : null}
                     <MasterSuggestInput
                       label="発注先業者"
                       htmlFor="contractor-customer-select"
