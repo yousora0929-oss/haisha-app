@@ -920,6 +920,7 @@ function buildOrderInsertRow(order) {
     rejected_factory_ids: [],
     contractor_customer_id: sanitizeRefId(order.contractor_customer_id) || null,
     agent_organization_id: sanitizeRefId(order.agent_organization_id) || null,
+    trading_agent_customer_id: sanitizeRefId(order.trading_agent_customer_id) || null,
   };
 }
 
