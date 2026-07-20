@@ -1396,6 +1396,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [contractorSearchText, setContractorSearchText] = useState('');
       const [tradingAgentCustomerId, setTradingAgentCustomerId] = useState('');
       const [tradingAgentSearchText, setTradingAgentSearchText] = useState('');
+      const [linkedContractorIds, setLinkedContractorIds] = useState([]);
       const [spotContractorOrgId, setSpotContractorOrgId] = useState('');
       const [projectSearchText, setProjectSearchText] = useState('');
       const [deliveryLat, setDeliveryLat] = useState('');
@@ -1579,8 +1580,80 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         const company = String(customer?.company_name || customer?.name || '').trim();
         const manager = String(customer?.manager_name || '').trim();
         if (company && manager) return `${company}（${manager}）`;
-        return company || manager || '';
+        if (company) return `${company}（代表窓口）`;
+        return manager || '';
       }, []);
+
+      useEffect(() => {
+        let cancelled = false;
+        const agentId = String(tradingAgentCustomerId || '').trim();
+        if (currentCustomerRole !== 'cooperative' || !agentId) {
+          setLinkedContractorIds([]);
+          return undefined;
+        }
+        void (async () => {
+          try {
+            const links = await db.fetchAgentContractorLinksByAgentIds([agentId]);
+            if (cancelled) return;
+            const ids = [
+              ...new Set(
+                (links || [])
+                  .map((l) => String(l.contractor_customer_id || '').trim())
+                  .filter(Boolean),
+              ),
+            ];
+            setLinkedContractorIds(ids);
+          } catch (err) {
+            console.warn('[DispatchApp] agent_contractor_links fetch failed', err);
+            if (!cancelled) setLinkedContractorIds([]);
+          }
+        })();
+        return () => {
+          cancelled = true;
+        };
+      }, [tradingAgentCustomerId, currentCustomerRole]);
+
+      const proxyContractorItems = useMemo(() => {
+        const all = (customers || []).filter((c) => (c.role ?? 'contractor') === 'contractor');
+        if (currentCustomerRole !== 'cooperative' || linkedContractorIds.length === 0) {
+          return all;
+        }
+        const allowed = new Set(linkedContractorIds.map(String));
+        return all.filter((c) => allowed.has(String(c.id)));
+      }, [customers, currentCustomerRole, linkedContractorIds]);
+
+      const tradingAgentFilterHint = useMemo(() => {
+        if (currentCustomerRole !== 'cooperative' || linkedContractorIds.length === 0) return '';
+        const agent = (customers || []).find(
+          (c) => String(c.id) === String(tradingAgentCustomerId || ''),
+        );
+        const name = formatTradingAgentLabel(agent) || '選択中の商社';
+        return `（${name}の取引業者に絞り込み中）`;
+      }, [
+        currentCustomerRole,
+        linkedContractorIds,
+        customers,
+        tradingAgentCustomerId,
+        formatTradingAgentLabel,
+      ]);
+
+      useEffect(() => {
+        if (currentCustomerRole !== 'cooperative') return;
+        if (linkedContractorIds.length === 0) return;
+        const cid = String(contractorCustomerId || '').trim();
+        if (!cid) return;
+        if (linkedContractorIds.includes(cid)) return;
+        setContractorCustomerId('');
+        setContractorSearchText('');
+        setSelectedProjectId('');
+        lastAutofillProjectIdRef.current = '';
+        applyProjectSelection(null);
+      }, [
+        currentCustomerRole,
+        linkedContractorIds,
+        contractorCustomerId,
+        applyProjectSelection,
+      ]);
 
       const applySpotOrderFieldDefaults = useCallback(() => {
         if (isGuestSiteOrder) return;
@@ -2765,6 +2838,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setContractorSearchText('');
         setTradingAgentCustomerId('');
         setTradingAgentSearchText('');
+        setLinkedContractorIds([]);
         setCustomers([]);
         setSelectedProjectId('');
         setPreferredFactoryId('');
@@ -3137,6 +3211,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setVehicleType('large');
         setTradingAgentCustomerId('');
         setTradingAgentSearchText('');
+        setLinkedContractorIds([]);
         if (isAgentOrCooperative) {
           // agent/cooperativeは業者選択を保持する（発注ごとにリセットしない）
           // 必要ならコメントアウトを外す:
@@ -3773,6 +3848,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           c.company_name || c.name || '',
                           c.furigana || '',
                           c.manager_name || '',
+                          '代表窓口',
                         ]}
                         onValueChange={(text) => {
                           setTradingAgentSearchText(text);
@@ -3793,46 +3869,62 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         emptyHint="該当する商社担当者がありません"
                       />
                     ) : null}
-                    <MasterSuggestInput
-                      label="発注先業者"
-                      htmlFor="contractor-customer-select"
-                      name="contractor_customer"
-                      value={contractorSearchText}
-                      placeholder="業者名を入力して候補から選択"
-                      items={(customers || []).filter((c) => (c.role ?? 'contractor') === 'contractor')}
-                      getItemKey={(c) => String(c.id)}
-                      getItemLabel={(c) => String(c.company_name || c.name || '').trim()}
-                      getSearchTexts={(c) => [
-                        c.company_name || c.name || '',
-                        c.furigana || '',
-                        c.manager_name || '',
-                      ]}
-                      onValueChange={(text) => {
-                        setContractorSearchText(text);
-                        const hit = (customers || []).find(
-                          (c) =>
-                            (c.role ?? 'contractor') === 'contractor' &&
-                            String(c.company_name || c.name || '')
-                              .trim()
-                              .toLowerCase() === text.trim().toLowerCase(),
-                        );
-                        if (hit) setContractorCustomerId(String(hit.id));
-                        else setContractorCustomerId('');
-                        setSelectedProjectId('');
-                        lastAutofillProjectIdRef.current = '';
-                        applyProjectSelection(null);
-                        setSubmitError('');
-                      }}
-                      onSelect={(c) => {
-                        setContractorCustomerId(String(c.id));
-                        setContractorSearchText(String(c.company_name || c.name || '').trim());
-                        setSelectedProjectId('');
-                        lastAutofillProjectIdRef.current = '';
-                        applyProjectSelection(null);
-                        setSubmitError('');
-                      }}
-                      emptyHint="該当する業者がありません"
-                    />
+                    <div>
+                      <MasterSuggestInput
+                        label="発注先業者"
+                        htmlFor="contractor-customer-select"
+                        name="contractor_customer"
+                        value={contractorSearchText}
+                        placeholder="業者名を入力して候補から選択"
+                        items={
+                          currentCustomerRole === 'cooperative'
+                            ? proxyContractorItems
+                            : (customers || []).filter((c) => (c.role ?? 'contractor') === 'contractor')
+                        }
+                        getItemKey={(c) => String(c.id)}
+                        getItemLabel={(c) => String(c.company_name || c.name || '').trim()}
+                        getSearchTexts={(c) => [
+                          c.company_name || c.name || '',
+                          c.furigana || '',
+                          c.manager_name || '',
+                        ]}
+                        onValueChange={(text) => {
+                          setContractorSearchText(text);
+                          const pool =
+                            currentCustomerRole === 'cooperative'
+                              ? proxyContractorItems
+                              : (customers || []).filter(
+                                  (c) => (c.role ?? 'contractor') === 'contractor',
+                                );
+                          const hit = pool.find(
+                            (c) =>
+                              String(c.company_name || c.name || '')
+                                .trim()
+                                .toLowerCase() === text.trim().toLowerCase(),
+                          );
+                          if (hit) setContractorCustomerId(String(hit.id));
+                          else setContractorCustomerId('');
+                          setSelectedProjectId('');
+                          lastAutofillProjectIdRef.current = '';
+                          applyProjectSelection(null);
+                          setSubmitError('');
+                        }}
+                        onSelect={(c) => {
+                          setContractorCustomerId(String(c.id));
+                          setContractorSearchText(String(c.company_name || c.name || '').trim());
+                          setSelectedProjectId('');
+                          lastAutofillProjectIdRef.current = '';
+                          applyProjectSelection(null);
+                          setSubmitError('');
+                        }}
+                        emptyHint="該当する業者がありません"
+                      />
+                      {tradingAgentFilterHint ? (
+                        <p className="mt-1 text-[11px] font-bold text-amber-800">
+                          {tradingAgentFilterHint}
+                        </p>
+                      ) : null}
+                    </div>
                     {!contractorCustomerId ? (
                       <p className="mt-2 text-xs font-bold text-amber-800">
                         発注先の業者を選択してください。

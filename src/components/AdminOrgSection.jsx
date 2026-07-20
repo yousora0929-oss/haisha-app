@@ -969,8 +969,18 @@ export function AdminOrgSection({ orgType, label }) {
                                   cur ? { ...cur, managerName: e.target.value } : cur,
                                 )
                               }
+                              placeholder={
+                                isAgentOrg
+                                  ? '空欄の場合は会社の代表窓口として登録されます'
+                                  : undefined
+                              }
                               className={`${inputClass} mt-1 w-full`}
                             />
+                            {isAgentOrg ? (
+                              <span className="mt-1 block text-[11px] leading-relaxed text-slate-500">
+                                空欄の場合は会社の代表窓口として登録されます
+                              </span>
+                            ) : null}
                           </label>
                           <label className="block text-xs text-gray-600">
                             フリガナ
@@ -1053,8 +1063,19 @@ export function AdminOrgSection({ orgType, label }) {
                       key={member.id}
                       className="flex flex-wrap items-center gap-3 py-2 border-b border-gray-100 text-sm"
                     >
-                      <span className="min-w-[5rem] font-medium">
-                        {member.manager_name || '—'}
+                      <span className="flex min-w-[5rem] flex-wrap items-center gap-1.5 font-medium">
+                        {member.manager_name?.trim() ? (
+                          member.manager_name
+                        ) : isAgentOrg ? (
+                          <>
+                            <span className="text-slate-500">—</span>
+                            <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-bold text-slate-600">
+                              代表窓口
+                            </span>
+                          </>
+                        ) : (
+                          '—'
+                        )}
                       </span>
                       {member.furigana?.trim() ? (
                         <span className="min-w-[5rem] text-gray-500 text-xs">
@@ -1114,8 +1135,18 @@ export function AdminOrgSection({ orgType, label }) {
                           onChange={(e) =>
                             setNewMember((m) => ({ ...m, managerName: e.target.value }))
                           }
+                          placeholder={
+                            isAgentOrg
+                              ? '空欄の場合は会社の代表窓口として登録されます'
+                              : undefined
+                          }
                           className={`${inputClass} mt-1 w-full`}
                         />
+                        {isAgentOrg ? (
+                          <span className="mt-1 block text-[11px] leading-relaxed text-slate-500">
+                            空欄の場合は会社の代表窓口として登録されます
+                          </span>
+                        ) : null}
                       </label>
                       <label className="block text-xs text-gray-600">
                         フリガナ
