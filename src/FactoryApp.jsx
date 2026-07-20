@@ -109,9 +109,8 @@ const FACTORY_SPLIT_STORAGE_KEY = 'haisha_factory_split_left_pct_v1';
 /** 依頼一覧 1 行目：希望日 | 希望時刻 | 荷卸し | 車種 | 数量 | 試験（最小幅を確保し、狭いときは横スクロール） */
 const ORDER_GRID_TOP =
   'grid w-full min-w-[760px] grid-cols-6 grid-rows-1 items-end gap-x-2 gap-y-0 sm:gap-x-3';
-/** 依頼カード要約：商社・業者／現場名・現場住所・配合を揃える（狭い幅は2列、sm以上は下段3列） */
-const ORDER_GRID_META_2X2 =
-  'grid w-full min-w-0 grid-cols-2 gap-x-2 gap-y-0 sm:grid-cols-3';
+/** 依頼カード要約：上段＝商社・業者、下段＝現場名(1/2)＋住所・配合(1/2) */
+const ORDER_GRID_META_2X2 = 'grid w-full min-w-0 grid-cols-2 gap-x-2 gap-y-0';
 
 const SPLIT_MIN_LEFT_PX = 260;
 const SPLIT_MIN_RIGHT_PX = 300;
@@ -485,11 +484,11 @@ function isUnreadForFactory(messages, readKey) {
         }
       };
       return (
-        <div className="mt-3 flex max-h-[28rem] min-h-0 flex-col rounded-lg border-2 border-slate-300 bg-[#e5ddd5] p-3 shadow-inner sm:mt-4">
-          <p className="text-xs font-black uppercase tracking-wider text-slate-700 sm:text-sm">質疑応答（チャット）</p>
+        <div className="flex max-h-[50vh] min-h-0 flex-col overscroll-contain rounded-lg border-2 border-slate-300 bg-[#e5ddd5] p-3 shadow-inner">
+          <p className="shrink-0 text-xs font-black uppercase tracking-wider text-slate-700 sm:text-sm">質疑応答（チャット）</p>
           <ul
             ref={messagesListRef}
-            className="mt-2 h-64 min-h-0 space-y-2 overflow-y-auto overscroll-contain rounded-md bg-[#e5ddd5]/90 px-1.5 py-2"
+            className="mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain rounded-md bg-[#e5ddd5]/90 px-1.5 py-2"
             aria-live="polite"
           >
             {list.length === 0 ? (
@@ -1377,7 +1376,6 @@ function isUnreadForFactory(messages, readKey) {
           : isRejectedByMe
             ? { label: '見送り済み', className: 'border-slate-500 bg-slate-200 text-slate-700' }
             : null;
-      const mix = order.mixText?.trim() || '（配合未入力）';
       const siteNm = order.siteName?.trim() || '';
       const addrRaw = order.siteAddress?.trim() || '';
       const addr = addrRaw || '（住所未入力）';
@@ -1441,8 +1439,6 @@ function isUnreadForFactory(messages, readKey) {
         (String(order.timeSlot || '').match(/^\d+$/) ? parseInt(String(order.timeSlot), 10) : NaN);
       const matchMinOk = Number.isFinite(matchMinRaw);
       const pad = isToast ? 'p-3.5' : 'p-3 sm:p-3.5';
-      const mixSize = isToast ? 'text-base' : 'text-base sm:text-lg';
-      const addrSize = isToast ? 'text-sm' : 'text-sm sm:text-base';
 
       const cardFrame =
         isToast
@@ -1454,45 +1450,45 @@ function isUnreadForFactory(messages, readKey) {
               : 'rounded-2xl border-2 border-slate-800/15 bg-white shadow-xl dark:border-slate-600 dark:bg-slate-800 ' +
                 (idx === 0 && !isRead && !isRejectedByMe ? 'ring-4 ring-orange-400 ring-offset-2 ring-offset-slate-50 dark:ring-offset-slate-900 ' : '');
 
-      const primaryTopLabel = isToast ? 'text-[10px] sm:text-[11px]' : 'text-[11px] sm:text-xs';
+      const primaryTopLabel = isToast ? 'text-xs sm:text-sm' : 'text-xs sm:text-sm';
       const primaryFieldLabel =
         primaryTopLabel + ' font-bold uppercase tracking-wider text-slate-500 dark:text-slate-300';
       const primaryFieldValue =
         'font-bold text-slate-900 dark:text-slate-100';
       const primaryFieldValueSm =
         'font-bold leading-snug text-slate-700 dark:text-slate-100';
-      const primaryValueDate = isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg';
-      const primaryValueTime = isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg';
+      const primaryValueDate = isToast ? 'text-base sm:text-lg' : 'text-lg sm:text-xl';
+      const primaryValueTime = isToast ? 'text-base sm:text-lg' : 'text-lg sm:text-xl';
       const dateWrapClass =
-        'rounded-lg border-2 border-sky-500 bg-gradient-to-b from-sky-50 to-sky-100/90 px-2 py-1.5 shadow-sm ring-1 ring-sky-200/70 dark:border-sky-500/60 dark:from-sky-950/50 dark:to-sky-900/40 dark:ring-sky-800/40';
+        'rounded-lg border-2 border-sky-500 bg-gradient-to-b from-sky-50 to-sky-100/90 px-2 py-2 shadow-sm ring-1 ring-sky-200/70 dark:border-sky-500/60 dark:from-sky-950/50 dark:to-sky-900/40 dark:ring-sky-800/40';
       const timeWrapClass =
-        'rounded-lg border-2 border-violet-500 bg-gradient-to-b from-violet-50 to-violet-100/90 px-2 py-1.5 shadow-sm ring-1 ring-violet-200/70 dark:border-violet-500/60 dark:from-violet-950/50 dark:to-violet-900/40 dark:ring-violet-800/40';
+        'rounded-lg border-2 border-violet-500 bg-gradient-to-b from-violet-50 to-violet-100/90 px-2 py-2 shadow-sm ring-1 ring-violet-200/70 dark:border-violet-500/60 dark:from-violet-950/50 dark:to-violet-900/40 dark:ring-violet-800/40';
       const datePillClass =
-        'inline-block rounded-md bg-sky-600 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow-sm sm:text-[11px]';
+        'inline-block rounded-md bg-sky-600 px-1.5 py-0.5 text-[11px] font-black leading-none text-white shadow-sm sm:text-xs';
       const timePillClass =
-        'inline-block rounded-md bg-violet-600 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow-sm sm:text-[11px]';
+        'inline-block rounded-md bg-violet-600 px-1.5 py-0.5 text-[11px] font-black leading-none text-white shadow-sm sm:text-xs';
       const unloadWrapClass =
-        'rounded-lg border-2 border-cyan-600 bg-gradient-to-b from-cyan-50 to-sky-100/90 px-2 py-1.5 shadow-sm ring-1 ring-cyan-200/70 dark:border-cyan-500/60 dark:from-cyan-950/50 dark:to-cyan-900/40 dark:ring-cyan-800/40';
+        'rounded-lg border-2 border-cyan-600 bg-gradient-to-b from-cyan-50 to-sky-100/90 px-2 py-2 shadow-sm ring-1 ring-cyan-200/70 dark:border-cyan-500/60 dark:from-cyan-950/50 dark:to-cyan-900/40 dark:ring-cyan-800/40';
       const unloadPillClass =
-        'inline-block rounded-md bg-cyan-700 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow-sm sm:text-[11px]';
+        'inline-block rounded-md bg-cyan-700 px-1.5 py-0.5 text-[11px] font-black leading-none text-white shadow-sm sm:text-xs';
       const vehicleWrapClass = isLarge
-        ? 'rounded-lg border-2 border-emerald-600 bg-gradient-to-b from-emerald-50 to-emerald-100/90 px-2 py-1.5 shadow-sm ring-1 ring-emerald-200/70 dark:border-emerald-500/60 dark:from-emerald-950/50 dark:to-emerald-900/40 dark:ring-emerald-800/40'
-        : 'rounded-lg border-2 border-amber-500 bg-gradient-to-b from-amber-50 to-amber-100/90 px-2 py-1.5 shadow-sm ring-1 ring-amber-200/70 dark:border-amber-500/60 dark:from-amber-950/50 dark:to-amber-900/40 dark:ring-amber-800/40';
+        ? 'rounded-lg border-2 border-emerald-600 bg-gradient-to-b from-emerald-50 to-emerald-100/90 px-2 py-2 shadow-sm ring-1 ring-emerald-200/70 dark:border-emerald-500/60 dark:from-emerald-950/50 dark:to-emerald-900/40 dark:ring-emerald-800/40'
+        : 'rounded-lg border-2 border-amber-500 bg-gradient-to-b from-amber-50 to-amber-100/90 px-2 py-2 shadow-sm ring-1 ring-amber-200/70 dark:border-amber-500/60 dark:from-amber-950/50 dark:to-amber-900/40 dark:ring-amber-800/40';
       const vehiclePillClass = isLarge
-        ? 'inline-block rounded-md bg-emerald-700 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow-sm sm:text-[11px]'
-        : 'inline-block rounded-md bg-amber-600 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow-sm sm:text-[11px]';
+        ? 'inline-block rounded-md bg-emerald-700 px-1.5 py-0.5 text-[11px] font-black leading-none text-white shadow-sm sm:text-xs'
+        : 'inline-block rounded-md bg-amber-600 px-1.5 py-0.5 text-[11px] font-black leading-none text-white shadow-sm sm:text-xs';
       const qtyWrapClass = q.valid
-        ? 'rounded-lg border-2 border-orange-500 bg-gradient-to-b from-orange-50 to-amber-50/90 px-2 py-1.5 shadow-sm ring-1 ring-orange-200/70 dark:border-orange-500/60 dark:from-orange-950/50 dark:to-orange-900/40 dark:ring-orange-800/40'
-        : 'rounded-lg border-2 border-slate-400 bg-gradient-to-b from-slate-50 to-slate-100/90 px-2 py-1.5 shadow-sm ring-1 ring-slate-200/60 dark:border-slate-600 dark:from-slate-900/50 dark:to-slate-800/40 dark:ring-slate-700/40';
+        ? 'rounded-lg border-2 border-orange-500 bg-gradient-to-b from-orange-50 to-amber-50/90 px-2 py-2 shadow-sm ring-1 ring-orange-200/70 dark:border-orange-500/60 dark:from-orange-950/50 dark:to-orange-900/40 dark:ring-orange-800/40'
+        : 'rounded-lg border-2 border-slate-400 bg-gradient-to-b from-slate-50 to-slate-100/90 px-2 py-2 shadow-sm ring-1 ring-slate-200/60 dark:border-slate-600 dark:from-slate-900/50 dark:to-slate-800/40 dark:ring-slate-700/40';
       const qtyPillClass = q.valid
-        ? 'inline-block rounded-md bg-orange-600 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow-sm sm:text-[11px]'
-        : 'inline-block rounded-md bg-slate-500 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow-sm sm:text-[11px]';
+        ? 'inline-block rounded-md bg-orange-600 px-1.5 py-0.5 text-[11px] font-black leading-none text-white shadow-sm sm:text-xs'
+        : 'inline-block rounded-md bg-slate-500 px-1.5 py-0.5 text-[11px] font-black leading-none text-white shadow-sm sm:text-xs';
       const testWrapClass = hasTest
-        ? 'rounded-lg border-2 border-fuchsia-600 bg-gradient-to-b from-fuchsia-50 to-fuchsia-100/90 px-2 py-1.5 shadow-sm ring-1 ring-fuchsia-200/70 dark:border-fuchsia-500/60 dark:from-fuchsia-950/50 dark:to-fuchsia-900/40 dark:ring-fuchsia-800/40'
-        : 'rounded-lg border-2 border-slate-400 bg-gradient-to-b from-slate-50 to-slate-100/90 px-2 py-1.5 shadow-sm ring-1 ring-slate-200/60 dark:border-slate-600 dark:from-slate-900/50 dark:to-slate-800/40 dark:ring-slate-700/40';
+        ? 'rounded-lg border-2 border-fuchsia-600 bg-gradient-to-b from-fuchsia-50 to-fuchsia-100/90 px-2 py-2 shadow-sm ring-1 ring-fuchsia-200/70 dark:border-fuchsia-500/60 dark:from-fuchsia-950/50 dark:to-fuchsia-900/40 dark:ring-fuchsia-800/40'
+        : 'rounded-lg border-2 border-slate-400 bg-gradient-to-b from-slate-50 to-slate-100/90 px-2 py-2 shadow-sm ring-1 ring-slate-200/60 dark:border-slate-600 dark:from-slate-900/50 dark:to-slate-800/40 dark:ring-slate-700/40';
       const testPillClass = hasTest
-        ? 'inline-block rounded-md bg-fuchsia-700 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow-sm sm:text-[11px]'
-        : 'inline-block rounded-md bg-slate-500 px-1.5 py-0.5 text-[10px] font-black leading-none text-white shadow-sm sm:text-[11px]';
+        ? 'inline-block rounded-md bg-fuchsia-700 px-1.5 py-0.5 text-[11px] font-black leading-none text-white shadow-sm sm:text-xs'
+        : 'inline-block rounded-md bg-slate-500 px-1.5 py-0.5 text-[11px] font-black leading-none text-white shadow-sm sm:text-xs';
 
       const renderPrimarySummary = (opts) => {
         const { borderless } = opts || {};
@@ -1501,11 +1497,11 @@ function isUnreadForFactory(messages, readKey) {
             className={
               borderless
                 ? ''
-                : 'rounded-lg border border-slate-200/90 bg-slate-50/80 px-2.5 py-2.5 shadow-inner dark:border-slate-600/80 dark:bg-slate-800/80 sm:px-3'
+                : 'rounded-lg border border-slate-200/90 bg-slate-50/80 px-2.5 py-3.5 shadow-inner dark:border-slate-600/80 dark:bg-slate-800/80 sm:px-3'
             }
           >
             <div className="-mx-0.5 w-full overflow-x-auto overflow-y-visible">
-              <div className={ORDER_GRID_TOP + ' border-b border-slate-200/80 pb-2.5'}>
+              <div className={ORDER_GRID_TOP + ' border-b border-slate-200/80 pb-3.5'}>
               <div className="min-w-[120px] shrink-0 text-left">
                 <div className={dateWrapClass}>
                   <span className={datePillClass}>日付</span>
@@ -1598,8 +1594,8 @@ function isUnreadForFactory(messages, readKey) {
               </div>
             </div>
             </div>
-            <div className={ORDER_GRID_META_2X2 + ' border-t border-slate-200/80 pt-2.5 dark:border-slate-600/80'}>
-              <div className="col-span-2 min-w-0 text-left sm:col-span-3">
+            <div className={ORDER_GRID_META_2X2 + ' border-t border-slate-200/80 pt-3.5 dark:border-slate-600/80'}>
+              <div className="col-span-2 min-w-0 text-left">
                 {isToast ? (
                   <p className="flex flex-wrap items-center gap-x-1.5 text-xs font-bold text-slate-700 dark:text-slate-200">
                     <span>
@@ -1676,56 +1672,65 @@ function isUnreadForFactory(messages, readKey) {
                   </dl>
                 )}
               </div>
-              <div className="min-w-0 border-t border-slate-200/60 pt-1.5 text-left dark:border-slate-600/60">
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <p className={primaryFieldLabel}>現場名</p>
-                  {!isToast ? (
-                    <SiteOrderUrlActions
-                      urlToken={resolveSiteUrlToken(order, projectById, customerById)}
-                      siteName={party.site !== '—' ? party.site : siteNm}
-                      customerName={displayPrime !== '—' ? displayPrime : ''}
-                      traderName={displayTrader !== '—' ? displayTrader : ''}
-                      project={linkedProject}
-                      customer={orderCustomer}
-                      onCopied={onSiteUrlCopied}
-                      compact
-                    />
-                  ) : null}
+              <div className="col-span-2 flex min-w-0 flex-col border-t border-slate-200/60 pt-2.5 dark:border-slate-600/60 sm:flex-row">
+                <div className="min-w-0 basis-full pb-2 sm:basis-1/2 sm:border-r sm:border-slate-200/60 sm:pb-0 sm:pr-2 dark:sm:border-slate-600/60">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <p className={primaryFieldLabel}>現場名</p>
+                    {!isToast ? (
+                      <SiteOrderUrlActions
+                        urlToken={resolveSiteUrlToken(order, projectById, customerById)}
+                        siteName={party.site !== '—' ? party.site : siteNm}
+                        customerName={displayPrime !== '—' ? displayPrime : ''}
+                        traderName={displayTrader !== '—' ? displayTrader : ''}
+                        project={linkedProject}
+                        customer={orderCustomer}
+                        onCopied={onSiteUrlCopied}
+                        compact
+                      />
+                    ) : null}
+                  </div>
+                  <p
+                    className={
+                      'mt-0.5 truncate ' +
+                      primaryFieldValue +
+                      ' ' +
+                      (isToast ? 'text-base sm:text-lg' : 'text-lg sm:text-xl')
+                    }
+                    title={party.site}
+                  >
+                    {party.site}
+                  </p>
                 </div>
-                <p
-                  className={'mt-0.5 break-words ' + primaryFieldValue + ' ' + (isToast ? 'text-sm sm:text-base' : 'text-base sm:text-lg')}
-                  title={party.site}
-                >
-                  {party.site}
-                </p>
-              </div>
-              <div className="min-w-0 border-l border-t border-slate-200/60 pl-2 pt-1.5 text-left dark:border-slate-600/60">
-                <p className={primaryFieldLabel}>現場住所</p>
-                <p
-                  className={
-                    'mt-0.5 break-words ' +
-                    primaryFieldValueSm +
-                    ' ' +
-                    (isToast ? 'text-xs sm:text-sm' : 'text-xs sm:text-base')
-                  }
-                  title={addr}
-                >
-                  {addr}
-                </p>
-              </div>
-              <div className="col-span-2 min-w-0 border-t border-slate-200/60 pt-1.5 text-left dark:border-slate-600/60 sm:col-span-1 sm:border-l sm:pl-2">
-                <p className={primaryFieldLabel}>配合</p>
-                <p
-                  className={
-                    'mt-0.5 truncate ' +
-                    primaryFieldValueSm +
-                    ' ' +
-                    (isToast ? 'text-xs sm:text-sm' : 'text-xs sm:text-base')
-                  }
-                  title={mixDisplay}
-                >
-                  {mixDisplay}
-                </p>
+                <div className="flex min-w-0 basis-full flex-col gap-2 border-t border-slate-200/60 pt-2 sm:basis-1/2 sm:border-t-0 sm:pl-2 sm:pt-0 dark:border-slate-600/60">
+                  <div className="min-w-0">
+                    <p className={primaryFieldLabel}>現場住所</p>
+                    <p
+                      className={
+                        'mt-0.5 truncate ' +
+                        primaryFieldValueSm +
+                        ' ' +
+                        (isToast ? 'text-sm sm:text-base' : 'text-sm sm:text-base')
+                      }
+                      title={addr}
+                    >
+                      {addr}
+                    </p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className={primaryFieldLabel}>配合</p>
+                    <p
+                      className={
+                        'mt-0.5 truncate ' +
+                        primaryFieldValueSm +
+                        ' ' +
+                        (isToast ? 'text-sm sm:text-base' : 'text-sm sm:text-base')
+                      }
+                      title={mixDisplay}
+                    >
+                      {mixDisplay}
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1782,25 +1787,19 @@ function isUnreadForFactory(messages, readKey) {
         <>
           <div className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border border-slate-200/90 bg-white px-3 py-3 dark:border-slate-600 dark:bg-slate-900/60 sm:grid-cols-2">
             <div className="min-w-0">
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 sm:text-sm">配合</p>
-              <p className={'mt-1 break-all font-mono font-black leading-tight text-slate-900 dark:text-slate-100 ' + mixSize}>{mix}</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 sm:text-sm">現場担当者</p>
+              <p className="mt-1 break-words text-base font-black text-slate-900 dark:text-slate-100 sm:text-lg">
+                {siteContactName || '—'}
+                {phone ? (
+                  <span className="ml-2 font-mono font-black text-slate-800 dark:text-slate-200">{phone}</span>
+                ) : null}
+              </p>
             </div>
-            <div className="min-w-0 space-y-2 sm:border-l sm:border-slate-200 sm:pl-4 dark:sm:border-slate-600">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 sm:text-sm">現場担当者</p>
-                <p className="mt-1 break-words text-base font-black text-slate-900 dark:text-slate-100 sm:text-lg">
-                  {siteContactName || '—'}
-                  {phone ? (
-                    <span className="ml-2 font-mono font-black text-slate-800 dark:text-slate-200">{phone}</span>
-                  ) : null}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 sm:text-sm">発注者</p>
-                <p className="mt-1 break-words text-base font-black text-slate-900 dark:text-slate-100 sm:text-lg">
-                  {ordererDisplayLine}
-                </p>
-              </div>
+            <div className="min-w-0 sm:border-l sm:border-slate-200 sm:pl-4 dark:sm:border-slate-600">
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 sm:text-sm">発注者</p>
+              <p className="mt-1 break-words text-base font-black text-slate-900 dark:text-slate-100 sm:text-lg">
+                {ordererDisplayLine}
+              </p>
             </div>
           </div>
 
@@ -1813,16 +1812,6 @@ function isUnreadForFactory(messages, readKey) {
             <div className="mt-3">
               <OrderMapEditorUrlActions orderId={order.id} siteName={party.site} order={order} variant="compact" />
             </div>
-          ) : null}
-
-          {!isToast && order.id ? (
-            <FactoryOrderChatPanel
-              order={order}
-              orderId={order.id}
-              messages={chatMessages}
-              factoryName={factoryName}
-              onAfterSend={onFactoryChatSent}
-            />
           ) : null}
 
           {canSetStatus && false && (
@@ -1944,14 +1933,27 @@ function isUnreadForFactory(messages, readKey) {
 
       const renderDetail = () => (
         <>
-          {isToast ? renderPrimarySummary({}) : null}
-          {renderDetailBody()}
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5">
+            {isToast ? renderPrimarySummary({}) : null}
+            {renderDetailBody()}
+          </div>
+          {!isToast && order.id ? (
+            <div className="min-h-0 shrink-0 overflow-hidden">
+              <FactoryOrderChatPanel
+                order={order}
+                orderId={order.id}
+                messages={chatMessages}
+                factoryName={factoryName}
+                onAfterSend={onFactoryChatSent}
+              />
+            </div>
+          ) : null}
         </>
       );
 
       if (isToast) {
         return (
-          <article className={cardFrame + pad}>
+          <article className={cardFrame + pad + ' flex max-h-[min(75vh,48rem)] flex-col'}>
             {renderDetail()}
           </article>
         );
@@ -2088,7 +2090,7 @@ function isUnreadForFactory(messages, readKey) {
             style={{ gridTemplateRows: expanded ? '1fr' : '0fr' }}
           >
             <div className="min-h-0 overflow-hidden">
-              <div className={pad}>{renderDetail()}</div>
+              <div className={pad + ' flex max-h-[min(75vh,48rem)] flex-col gap-2'}>{renderDetail()}</div>
             </div>
           </div>
           {isActionable && (canAcceptOrder || canRejectOrder || canConsultOrder) ? (
