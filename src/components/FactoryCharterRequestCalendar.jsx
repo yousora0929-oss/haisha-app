@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import * as db from '../haishaDb.js';
 import { pad2, todayLocalISODate } from '../haishaConstants.js';
 import { vehicleTypeLabel } from '../utils/charterAssignedVehicles.js';
+import { PlateCategoryBadge } from './PlateCategoryBadge.jsx';
 
 const STATUS_LABEL = {
   open: '募集中',
@@ -21,6 +22,27 @@ function requestBadgeClass(req) {
   return 'bg-slate-300 text-slate-700 dark:bg-slate-600 dark:text-slate-100';
 }
 
+function dayBorrowBadgeClass(requests) {
+  const list = requests || [];
+  if (!list.length) return 'bg-slate-300 text-slate-700 dark:bg-slate-600 dark:text-slate-100';
+  const totalAccepted = list.reduce((sum, r) => sum + (r.acceptedTotal || 0), 0);
+  const totalDesired = list.reduce((sum, r) => sum + (r.desired_count || 0), 0);
+  const allMatched = list.every((r) => r.status === 'matched');
+  if (allMatched || (totalDesired > 0 && totalAccepted >= totalDesired)) {
+    return 'bg-emerald-500 text-white';
+  }
+  if (totalAccepted > 0) return 'bg-amber-400 text-white';
+  return 'bg-slate-300 text-slate-700 dark:bg-slate-600 dark:text-slate-100';
+}
+
+function pastToneBadgeClass(baseClass, isPast) {
+  if (!isPast) return baseClass;
+  if (baseClass.includes('emerald')) return 'bg-emerald-300 text-emerald-950 dark:bg-emerald-800 dark:text-emerald-100';
+  if (baseClass.includes('amber')) return 'bg-amber-200 text-amber-900 dark:bg-amber-800 dark:text-amber-100';
+  if (baseClass.includes('sky')) return 'bg-sky-300 text-sky-950 dark:bg-sky-800 dark:text-sky-100';
+  return 'bg-slate-300 text-slate-600 dark:bg-slate-600 dark:text-slate-200';
+}
+
 /**
  * 工場 — 自工場が出したチャーター募集の進捗カレンダー
  */
@@ -32,6 +54,7 @@ export function FactoryCharterRequestCalendar({ factoryId }) {
   });
   const [selectedDate, setSelectedDate] = useState(() => todayLocalISODate());
   const [requests, setRequests] = useState([]);
+  const [lendBookings, setLendBookings] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -39,17 +62,23 @@ export function FactoryCharterRequestCalendar({ factoryId }) {
     const fid = String(factoryId || '').trim();
     if (!fid) {
       setRequests([]);
+      setLendBookings([]);
       return;
     }
     setLoading(true);
     setError('');
     try {
-      const rows = await db.fetchCharterRequestsWithProgress(fid);
-      setRequests(Array.isArray(rows) ? rows : []);
+      const [borrowRows, lendRows] = await Promise.all([
+        db.fetchCharterRequestsWithProgress(fid),
+        db.fetchFactoryCharterLendBookings(fid),
+      ]);
+      setRequests(Array.isArray(borrowRows) ? borrowRows : []);
+      setLendBookings(Array.isArray(lendRows) ? lendRows : []);
     } catch (err) {
       console.warn('[FactoryCharterRequestCalendar] load failed', err);
       setError(err?.message || 'チャーター募集の取得に失敗しました');
       setRequests([]);
+      setLendBookings([]);
     } finally {
       setLoading(false);
     }
@@ -92,8 +121,34 @@ export function FactoryCharterRequestCalendar({ factoryId }) {
     return map;
   }, [requests]);
 
+  const lendCountByDate = useMemo(() => {
+    const map = {};
+    for (const b of lendBookings || []) {
+      const day = String(b.date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+      map[day] = (map[day] || 0) + (b.offeredCount || 0);
+    }
+    return map;
+  }, [lendBookings]);
+
+  const lendBookingsByDate = useMemo(() => {
+    const map = {};
+    for (const b of lendBookings || []) {
+      const day = String(b.date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+      if (!map[day]) map[day] = [];
+      map[day].push(b);
+    }
+    return map;
+  }, [lendBookings]);
+
   const selectedRequests = requestsByDate[selectedDate] || [];
+  const selectedLendBookings = lendBookingsByDate[selectedDate] || [];
   const selectedLabel = String(selectedDate || '').replace(/-/g, '/');
+  const todayDateOnly = todayLocalISODate();
+  const selectedDateIsPast = Boolean(selectedDate && selectedDate < todayDateOnly);
+
+  const selectedDayCount = selectedRequests.length + selectedLendBookings.length;
 
   return (
     <section className="grid gap-2 lg:grid-cols-[1.35fr_0.9fr]">
@@ -106,7 +161,7 @@ export function FactoryCharterRequestCalendar({ factoryId }) {
             <h2 className="text-lg font-black text-slate-900 dark:text-slate-100">チャーター募集カレンダー</h2>
           </div>
           <span className="rounded-full bg-slate-900 px-3 py-1 text-xs font-black text-white dark:bg-indigo-600">
-            {selectedRequests.length}件
+            {selectedDayCount}件
           </span>
         </div>
 
@@ -118,6 +173,20 @@ export function FactoryCharterRequestCalendar({ factoryId }) {
             {error}
           </p>
         ) : null}
+
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] font-bold text-slate-600 dark:text-slate-300 sm:text-xs">
+          <span className="inline-flex items-center gap-1">
+            <span className="rounded-full bg-emerald-500 px-1.5 py-0.5 text-[10px] font-black text-white">借</span>
+            ＝チャーター業者から借りる（確定/希望）
+          </span>
+          <span className="text-slate-400 dark:text-slate-500">／</span>
+          <span className="inline-flex items-center gap-1">
+            <span className="rounded-full bg-sky-600 px-1.5 py-0.5 text-[10px] font-black text-white dark:bg-sky-500">
+              貸
+            </span>
+            ＝応援で他工場へ貸す確定台数
+          </span>
+        </div>
 
         <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 p-1.5 dark:border-slate-600 dark:bg-slate-900/50">
           <button
@@ -155,10 +224,18 @@ export function FactoryCharterRequestCalendar({ factoryId }) {
 
         <div className="mt-1.5 grid grid-cols-7 gap-1">
           {days.map((day) => {
-            const list = requestsByDate[day] || [];
+            const borrowList = requestsByDate[day] || [];
+            const lendTotal = lendCountByDate[day] || 0;
+            const hasBorrow = borrowList.length > 0;
+            const hasLend = lendTotal > 0;
             const active = day === selectedDate;
             const d = new Date(`${day}T12:00:00`);
             const inMonth = day.startsWith(monthKey);
+            const isPast = day < todayDateOnly;
+            const borrowAccepted = borrowList.reduce((sum, r) => sum + (r.acceptedTotal || 0), 0);
+            const borrowDesired = borrowList.reduce((sum, r) => sum + (r.desired_count || 0), 0);
+            const borrowClass = pastToneBadgeClass(dayBorrowBadgeClass(borrowList), isPast);
+            const lendClass = pastToneBadgeClass('bg-sky-600 text-white dark:bg-sky-500', isPast);
             return (
               <button
                 key={day}
@@ -166,26 +243,41 @@ export function FactoryCharterRequestCalendar({ factoryId }) {
                 onClick={() => setSelectedDate(day)}
                 className={
                   'min-h-[4.8rem] rounded-lg border-2 p-1 text-left transition active:scale-[0.99] sm:min-h-[5.5rem] sm:p-1.5 ' +
-                  (active
-                    ? 'border-indigo-600 bg-indigo-50 ring-2 ring-indigo-200 dark:border-indigo-400 dark:bg-indigo-950/40'
-                    : inMonth
-                      ? 'border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900/40 dark:hover:bg-slate-900'
-                      : 'border-slate-100 bg-slate-50 opacity-45 dark:border-slate-700 dark:bg-slate-900/20')
+                  (isPast
+                    ? active
+                      ? 'border-slate-400 bg-slate-100 text-slate-400 ring-2 ring-slate-300 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                      : inMonth
+                        ? 'border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-400'
+                        : 'border-slate-100 bg-slate-50 opacity-45 dark:border-slate-700 dark:bg-slate-900/20'
+                    : active
+                      ? 'border-indigo-600 bg-indigo-50 ring-2 ring-indigo-200 dark:border-indigo-400 dark:bg-indigo-950/40'
+                      : inMonth
+                        ? 'border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900/40 dark:hover:bg-slate-900'
+                        : 'border-slate-100 bg-slate-50 opacity-45 dark:border-slate-700 dark:bg-slate-900/20')
                 }
               >
-                <p className="text-xs font-black text-slate-500 dark:text-slate-400">{d.getDate()}</p>
-                <div className="mt-1 space-y-0.5">
-                  {list.slice(0, 3).map((req) => (
+                <p
+                  className={
+                    isPast
+                      ? 'text-xs font-black text-slate-400 dark:text-slate-500'
+                      : 'text-xs font-black text-slate-500 dark:text-slate-400'
+                  }
+                >
+                  {d.getDate()}
+                </p>
+                <div className="mt-1 flex flex-col gap-0.5">
+                  {hasBorrow ? (
                     <span
-                      key={req.id}
-                      className={'block truncate rounded-full px-1.5 py-0.5 text-center text-[10px] font-black ' + requestBadgeClass(req)}
+                      className={'block truncate rounded-full px-1 py-0.5 text-center text-[10px] font-black ' + borrowClass}
                     >
-                      {req.acceptedTotal}/{req.desired_count}
+                      借 {borrowAccepted}/{borrowDesired}
                     </span>
-                  ))}
-                  {list.length > 3 ? (
-                    <span className="block text-[11px] font-black text-indigo-700 dark:text-indigo-300">
-                      +{list.length - 3}件
+                  ) : null}
+                  {hasLend ? (
+                    <span
+                      className={'block truncate rounded-full px-1 py-0.5 text-center text-[10px] font-black ' + lendClass}
+                    >
+                      貸 {lendTotal}
                     </span>
                   ) : null}
                 </div>
@@ -196,39 +288,101 @@ export function FactoryCharterRequestCalendar({ factoryId }) {
       </div>
 
       <aside className="rounded-2xl border-2 border-slate-200 bg-white p-2.5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-        <p className="text-xs font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400">選択日の募集</p>
+        <p className="text-xs font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400">選択日の詳細</p>
         <h3 className="text-base font-black text-slate-900 dark:text-slate-100">{selectedLabel}</h3>
-        {loading ? (
-          <p className="mt-2 text-sm font-bold text-slate-500 dark:text-slate-400">読み込み中…</p>
-        ) : selectedRequests.length === 0 ? (
-          <p className="mt-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-5 text-center text-sm font-bold text-slate-500 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-400">
-            この日の募集はありません
-          </p>
-        ) : (
-          <ul className="mt-2 space-y-2">
-            {selectedRequests.map((req) => (
-              <li
-                key={req.id}
-                className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-600 dark:bg-slate-900/50"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-sm font-black text-slate-900 dark:text-slate-100">
-                    {vehicleTypeLabel(req.vehicle_type)}
+
+        <div className="mt-3">
+          <p className="text-xs font-black text-slate-700 dark:text-slate-200">借りる（自分の募集）</p>
+          {loading ? (
+            <p className="mt-2 text-sm font-bold text-slate-500 dark:text-slate-400">読み込み中…</p>
+          ) : selectedRequests.length === 0 ? (
+            <p className="mt-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-center text-sm font-bold text-slate-500 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-400">
+              なし
+            </p>
+          ) : (
+            <ul className="mt-2 space-y-2">
+              {selectedRequests.map((req) => (
+                <li
+                  key={req.id}
+                  className={
+                    'rounded-xl border p-2.5 ' +
+                    (selectedDateIsPast
+                      ? 'border-slate-200 bg-slate-50 dark:border-slate-600 dark:bg-slate-900/50'
+                      : 'border-slate-200 bg-slate-50 dark:border-slate-600 dark:bg-slate-900/50')
+                  }
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-black text-slate-900 dark:text-slate-100">
+                      {vehicleTypeLabel(req.vehicle_type)}
+                    </p>
+                    <span className={'rounded-full px-2 py-0.5 text-[10px] font-black ' + requestBadgeClass(req)}>
+                      借 {req.acceptedTotal}/{req.desired_count}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs font-bold text-slate-600 dark:text-slate-300">
+                    希望 {req.desired_count}台 ／ 確定 {req.acceptedTotal}台 ／ {requestStatusLabel(req.status)}
                   </p>
-                  <span className={'rounded-full px-2 py-0.5 text-[10px] font-black ' + requestBadgeClass(req)}>
-                    {req.acceptedTotal}/{req.desired_count}
-                  </span>
-                </div>
-                <p className="mt-1 text-xs font-bold text-slate-600 dark:text-slate-300">
-                  希望 {req.desired_count}台 ／ 確定 {req.acceptedTotal}台 ／ {requestStatusLabel(req.status)}
-                </p>
-                {req.note ? (
-                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">備考: {req.note}</p>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
+                  {req.note ? (
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">備考: {req.note}</p>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="mt-4">
+          <p className="text-xs font-black text-slate-700 dark:text-slate-200">貸す（他工場への応援）</p>
+          {loading ? (
+            <p className="mt-2 text-sm font-bold text-slate-500 dark:text-slate-400">読み込み中…</p>
+          ) : selectedLendBookings.length === 0 ? (
+            <p className="mt-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-center text-sm font-bold text-slate-500 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-400">
+              なし
+            </p>
+          ) : (
+            <ul className="mt-2 space-y-2">
+              {selectedLendBookings.map((b) => (
+                <li
+                  key={b.responseId}
+                  className={
+                    'rounded-xl border p-2.5 ' +
+                    (selectedDateIsPast
+                      ? 'border-sky-200 bg-sky-50/60 dark:border-sky-800 dark:bg-sky-950/30'
+                      : 'border-sky-200 bg-sky-50 dark:border-sky-700 dark:bg-sky-950/40')
+                  }
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-black text-slate-900 dark:text-slate-100">🏭 {b.factoryName}</p>
+                    <span className="rounded-full bg-sky-600 px-2 py-0.5 text-[10px] font-black text-white dark:bg-sky-500">
+                      貸 {b.offeredCount}台
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs font-bold text-slate-600 dark:text-slate-300">
+                    {vehicleTypeLabel(b.vehicleType)} ／ {b.offeredCount}台
+                  </p>
+                  {b.assignedVehicles.length > 0 ? (
+                    <ul className="mt-1.5 space-y-1">
+                      {b.assignedVehicles.map((v, i) => (
+                        <li
+                          key={`${b.responseId}-${v.vehicle_id || i}`}
+                          className="flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 dark:border-slate-600 dark:bg-slate-900/60"
+                        >
+                          <PlateCategoryBadge category={v.plate_category} />
+                          <span className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                            {vehicleTypeLabel(v.vehicle_type)} {v.vehicle_number || '—'}
+                            {v.door_number ? `（ドア${v.door_number}）` : ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-1 text-xs font-bold text-amber-700 dark:text-amber-300">車両未設定</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </aside>
     </section>
   );

@@ -74,6 +74,27 @@ export function sortVehiclesForRequest(vehicles, requestVehicleType) {
 }
 
 /** 編集時に既存の accepted / rejected を保持してマージ */
+/**
+ * 応答の確定台数と確定済み車両一覧（fetchCharterOperatorBookings / 応援要請タブと同じ判定）
+ * partially_accepted は accepted 車両のみ。レガシーは応答全体 accepted 時に offered_count を使用。
+ */
+export function countAcceptedCharterResponseUnits(response) {
+  const r = response && typeof response === 'object' ? response : {};
+  const allVehicles = normalizeAssignedVehicles(r.assigned_vehicles);
+  const acceptedVehicles = allVehicles.filter((v) => {
+    if (v.status === 'accepted') return true;
+    if (v.status === 'rejected') return false;
+    return String(r.status) === 'accepted';
+  });
+  const offeredCount =
+    allVehicles.length > 0
+      ? acceptedVehicles.length
+      : String(r.status) === 'accepted'
+        ? Math.max(0, Math.floor(Number(r.offered_count)) || 0)
+        : 0;
+  return { offeredCount, acceptedVehicles };
+}
+
 export function mergeAssignedVehicleStatuses(nextVehicles, previousVehicles) {
   const prevById = new Map(
     (previousVehicles || [])

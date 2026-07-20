@@ -5,7 +5,7 @@ import { PlateCategoryBadge } from './PlateCategoryBadge.jsx';
 import { todayLocalISODate } from '../haishaConstants.js';
 
 const inputClass =
-  'min-h-[44px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200';
+  'min-h-[44px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-indigo-400 dark:focus:ring-indigo-900';
 
 const btnBase =
   'min-h-[44px] rounded-xl border-2 px-4 py-2 text-sm font-bold transition';
@@ -86,6 +86,7 @@ export function CharterRequestsPanel({ factoryId, factories = [] }) {
   const [notice, setNotice] = useState('');
   const [form, setForm] = useState(() => emptyRequestForm(today));
   const [selectedVehiclesByResponse, setSelectedVehiclesByResponse] = useState({});
+  const [listDateFilter, setListDateFilter] = useState('');
 
   const loadRequests = useCallback(async () => {
     const fid = String(factoryId || '').trim();
@@ -142,6 +143,20 @@ export function CharterRequestsPanel({ factoryId, factories = [] }) {
     }
     return map;
   }, [factories]);
+
+  const filteredRequests = useMemo(() => {
+    const filterDate = String(listDateFilter || '').trim();
+    if (!filterDate) return requests;
+    return requests.filter((r) => String(r.request_date || '').slice(0, 10) === filterDate);
+  }, [requests, listDateFilter]);
+
+  const listDateFilterLabel = useMemo(() => {
+    const filterDate = String(listDateFilter || '').trim();
+    if (!filterDate) return '';
+    const [y, m, d] = filterDate.split('-').map(Number);
+    if (!y || !m || !d) return filterDate.replace(/-/g, '/');
+    return `${y}/${m}/${d}`;
+  }, [listDateFilter]);
 
   const responderDisplayName = (response) => {
     if (!response) return '—';
@@ -363,6 +378,33 @@ export function CharterRequestsPanel({ factoryId, factories = [] }) {
 
       <div className="mt-6">
         <h3 className="text-base font-black text-slate-800 dark:text-slate-100 sm:text-lg">自分の募集一覧</h3>
+
+        <div className="mt-3 flex flex-wrap items-end gap-2">
+          <label className="block min-w-[10rem] flex-1 text-xs font-bold text-slate-600 dark:text-slate-300">
+            日付で絞り込み
+            <input
+              type="date"
+              value={listDateFilter}
+              onChange={(e) => setListDateFilter(e.target.value)}
+              className={`${inputClass} mt-1`}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => setListDateFilter('')}
+            disabled={!listDateFilter}
+            className="min-h-[44px] shrink-0 rounded-xl border-2 border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            クリア
+          </button>
+        </div>
+
+        {listDateFilter ? (
+          <p className="mt-2 text-sm font-bold text-slate-600 dark:text-slate-300">
+            {listDateFilterLabel} の募集：{filteredRequests.length}件
+          </p>
+        ) : null}
+
         {loading && requests.length === 0 ? (
           <p className="mt-2 text-sm font-medium text-slate-500 dark:text-slate-400">読み込み中…</p>
         ) : null}
@@ -370,9 +412,15 @@ export function CharterRequestsPanel({ factoryId, factories = [] }) {
           <p className="mt-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-sm font-medium text-slate-500 dark:border-slate-600 dark:bg-slate-800/50 dark:text-slate-400">
             募集はまだありません
           </p>
-        ) : (
+        ) : null}
+        {!loading && requests.length > 0 && filteredRequests.length === 0 ? (
+          <p className="mt-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-sm font-medium text-slate-500 dark:border-slate-600 dark:bg-slate-800/50 dark:text-slate-400">
+            {listDateFilterLabel} の募集はありません
+          </p>
+        ) : null}
+        {filteredRequests.length > 0 ? (
           <ul className="mt-3 space-y-3">
-            {requests.map((request) => {
+            {filteredRequests.map((request) => {
               const status = STATUS_META[request.status] || {
                 label: request.status || '—',
                 className:
@@ -602,7 +650,7 @@ export function CharterRequestsPanel({ factoryId, factories = [] }) {
               );
             })}
           </ul>
-        )}
+        ) : null}
       </div>
     </section>
   );

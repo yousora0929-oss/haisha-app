@@ -10,7 +10,11 @@ import {
 import { stripSavedSnapshotOverlay } from './utils/mapEditorOverlay.js';
 import { normalizeExternalUrl } from './utils/urlValidation.js';
 import { supabase, ensurePanelRealtimeAuth } from './supabaseClient.js';
-import { normalizeAssignedVehicles, mergeAssignedVehicleStatuses } from './utils/charterAssignedVehicles.js';
+import {
+  countAcceptedCharterResponseUnits,
+  mergeAssignedVehicleStatuses,
+  normalizeAssignedVehicles,
+} from './utils/charterAssignedVehicles.js';
 
 import { isValidSiteOrderUrlToken, resolveUrlTokenForInsert } from './utils/urlValidation.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
@@ -4458,13 +4462,7 @@ export async function fetchCharterRequestsWithProgress(factoryId) {
 
   const acceptedByRequestId = new Map();
   for (const r of responses || []) {
-    const vehicles = normalizeAssignedVehicles(r.assigned_vehicles);
-    const count =
-      vehicles.length > 0
-        ? vehicles.filter((v) => v?.status === 'accepted').length
-        : String(r.status || '') === 'accepted'
-          ? Math.max(0, Number(r.offered_count) || 0)
-          : 0;
+    const { offeredCount: count } = countAcceptedCharterResponseUnits(r);
     if (count <= 0) continue;
     const rid = sanitizeRefId(r.request_id);
     if (!rid) continue;
@@ -4766,65 +4764,16 @@ export async function fetchMyCharterResponses(responderType, responderId) {
   }
 }
 
-/** チャーター業者の確定済み（accepted）予約一覧（カレンダー用） */
-export async function fetchCharterOperatorBookings(responderId) {
-  const rid = String(responderId || '').trim();
-  if (!rid) return [];
-  if (!supabase?.from) {
-    console.warn('[fetchCharterOperatorBookings] Supabase client is not ready');
-    return [];
-  }
-
-  const { data: responses, error: respErr } = await supabase
-    .from('charter_responses')
-    .select('id, request_id, offered_count, assigned_vehicles, status')
-    .eq('responder_type', 'charter_operator')
-    .eq('responder_id', rid)
-    .in('status', ['accepted', 'partially_accepted']);
-  if (respErr) throw respErr;
-  if (!responses?.length) return [];
-
-  const requestIds = [...new Set(responses.map((r) => r.request_id).filter(Boolean))];
-  const { data: requests, error: reqErr } = await supabase
-    .from('charter_requests')
-    .select('id, request_date, requesting_factory_id, vehicle_type, note')
-    .in('id', requestIds);
-  if (reqErr) throw reqErr;
-  const requestById = new Map((requests || []).map((r) => [r.id, r]));
-
-  const factoryIds = [
-    ...new Set((requests || []).map((r) => r.requesting_factory_id).filter(Boolean)),
-  ];
-  let factoryNameById = new Map();
-  if (factoryIds.length) {
-    const { data: factories, error: facErr } = await supabase
-      .from('factories')
-      .select('id, name')
-      .in('id', factoryIds);
-    if (facErr) throw facErr;
-    factoryNameById = new Map((factories || []).map((f) => [f.id, f.name]));
-  }
-
-  return responses
+function mapCharterLendBookingsFromResponses(responses, requestById, factoryNameById) {
+  return (responses || [])
     .map((r) => {
       const req = requestById.get(r.request_id);
       if (!req) return null;
+      if (String(req.status || '') === 'cancelled') return null;
       const date = String(req.request_date || '').slice(0, 10);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
       const factoryId = String(req.requesting_factory_id || '');
-      const allVehicles = normalizeAssignedVehicles(r.assigned_vehicles);
-      const acceptedVehicles = allVehicles.filter((v) => {
-        if (v.status === 'accepted') return true;
-        if (v.status === 'rejected') return false;
-        // レガシー: 応答まるごと accepted（車両に status 未設定で normalize が offered になる）
-        return String(r.status) === 'accepted';
-      });
-      const offeredCount =
-        allVehicles.length > 0
-          ? acceptedVehicles.length
-          : String(r.status) === 'accepted'
-            ? Math.max(0, Math.floor(Number(r.offered_count)) || 0)
-            : 0;
+      const { offeredCount, acceptedVehicles } = countAcceptedCharterResponseUnits(r);
       if (offeredCount <= 0 && acceptedVehicles.length === 0) return null;
       return {
         responseId: String(r.id),
@@ -4843,6 +4792,73 @@ export async function fetchCharterOperatorBookings(responderId) {
         String(a.date).localeCompare(String(b.date)) ||
         String(a.factoryName).localeCompare(String(b.factoryName), 'ja'),
     );
+}
+
+async function fetchCharterLendBookingsForResponder(responderType, responderId) {
+  const type = responderType === 'charter_operator' ? 'charter_operator' : 'factory';
+  const rid = String(responderId || '').trim();
+  if (!rid) return [];
+  if (!supabase?.from) return [];
+
+  const { data: responses, error: respErr } = await supabase
+    .from('charter_responses')
+    .select('id, request_id, offered_count, assigned_vehicles, status')
+    .eq('responder_type', type)
+    .eq('responder_id', rid)
+    .in('status', ['accepted', 'partially_accepted']);
+  if (respErr) throw respErr;
+  if (!responses?.length) return [];
+
+  const requestIds = [...new Set(responses.map((r) => r.request_id).filter(Boolean))];
+  const { data: requests, error: reqErr } = await supabase
+    .from('charter_requests')
+    .select('id, request_date, requesting_factory_id, vehicle_type, note, status')
+    .in('id', requestIds);
+  if (reqErr) throw reqErr;
+  const requestById = new Map((requests || []).map((r) => [r.id, r]));
+
+  const factoryIds = [
+    ...new Set((requests || []).map((r) => r.requesting_factory_id).filter(Boolean)),
+  ];
+  let factoryNameById = new Map();
+  if (factoryIds.length) {
+    const { data: factories, error: facErr } = await supabase
+      .from('factories')
+      .select('id, name')
+      .in('id', factoryIds);
+    if (facErr) throw facErr;
+    factoryNameById = new Map((factories || []).map((f) => [f.id, f.name]));
+  }
+
+  return mapCharterLendBookingsFromResponses(responses, requestById, factoryNameById);
+}
+
+/** チャーター業者の確定済み（accepted）予約一覧（カレンダー用） */
+export async function fetchCharterOperatorBookings(responderId) {
+  if (!supabase?.from) {
+    console.warn('[fetchCharterOperatorBookings] Supabase client is not ready');
+    return [];
+  }
+  try {
+    return await fetchCharterLendBookingsForResponder('charter_operator', responderId);
+  } catch (err) {
+    console.warn('[fetchCharterOperatorBookings] failed', err);
+    throw err;
+  }
+}
+
+/** 工場が他工場へ貸す確定応答一覧（カレンダー用） */
+export async function fetchFactoryCharterLendBookings(factoryId) {
+  if (!supabase?.from) {
+    console.warn('[fetchFactoryCharterLendBookings] Supabase client is not ready');
+    return [];
+  }
+  try {
+    return await fetchCharterLendBookingsForResponder('factory', factoryId);
+  } catch (err) {
+    console.warn('[fetchFactoryCharterLendBookings] failed', err);
+    throw err;
+  }
 }
 
 /** 応答の送信（新規 or 更新） */
