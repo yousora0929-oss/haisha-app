@@ -109,8 +109,9 @@ const FACTORY_SPLIT_STORAGE_KEY = 'haisha_factory_split_left_pct_v1';
 /** 依頼一覧 1 行目：希望日 | 希望時刻 | 荷卸し | 車種 | 数量 | 試験（最小幅を確保し、狭いときは横スクロール） */
 const ORDER_GRID_TOP =
   'grid w-full min-w-[760px] grid-cols-6 grid-rows-1 items-end gap-x-2 gap-y-0 sm:gap-x-3';
-/** 依頼カード要約：商社・業者／現場名・現場住所を2行×2列で揃える */
-const ORDER_GRID_META_2X2 = 'grid w-full min-w-0 grid-cols-2 gap-x-2 gap-y-0';
+/** 依頼カード要約：商社・業者／現場名・現場住所・配合を揃える（狭い幅は2列、sm以上は下段3列） */
+const ORDER_GRID_META_2X2 =
+  'grid w-full min-w-0 grid-cols-2 gap-x-2 gap-y-0 sm:grid-cols-3';
 
 const SPLIT_MIN_LEFT_PX = 260;
 const SPLIT_MIN_RIGHT_PX = 300;
@@ -1380,6 +1381,7 @@ function isUnreadForFactory(messages, readKey) {
       const siteNm = order.siteName?.trim() || '';
       const addrRaw = order.siteAddress?.trim() || '';
       const addr = addrRaw || '（住所未入力）';
+      const mixDisplay = String(order.confirmedMixText ?? order.mixText ?? '').trim() || '—';
       const siteHeroLine = siteNm || addrRaw || '（未入力）';
       const party = orderPartyInfo(order, { preferSiteContact: true });
       const siteContactName = resolveSiteContactName(order);
@@ -1597,7 +1599,7 @@ function isUnreadForFactory(messages, readKey) {
             </div>
             </div>
             <div className={ORDER_GRID_META_2X2 + ' border-t border-slate-200/80 pt-2.5 dark:border-slate-600/80'}>
-              <div className="col-span-2 min-w-0 text-left">
+              <div className="col-span-2 min-w-0 text-left sm:col-span-3">
                 {isToast ? (
                   <p className="flex flex-wrap items-center gap-x-1.5 text-xs font-bold text-slate-700 dark:text-slate-200">
                     <span>
@@ -1709,6 +1711,20 @@ function isUnreadForFactory(messages, readKey) {
                   title={addr}
                 >
                   {addr}
+                </p>
+              </div>
+              <div className="col-span-2 min-w-0 border-t border-slate-200/60 pt-1.5 text-left dark:border-slate-600/60 sm:col-span-1 sm:border-l sm:pl-2">
+                <p className={primaryFieldLabel}>配合</p>
+                <p
+                  className={
+                    'mt-0.5 truncate ' +
+                    primaryFieldValueSm +
+                    ' ' +
+                    (isToast ? 'text-xs sm:text-sm' : 'text-xs sm:text-base')
+                  }
+                  title={mixDisplay}
+                >
+                  {mixDisplay}
                 </p>
               </div>
             </div>
