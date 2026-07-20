@@ -484,11 +484,11 @@ function isUnreadForFactory(messages, readKey) {
         }
       };
       return (
-        <div className="flex max-h-[50vh] min-h-0 flex-col overscroll-contain rounded-lg border-2 border-slate-300 bg-[#e5ddd5] p-3 shadow-inner">
+        <div className="flex max-h-[50vh] min-h-0 flex-col rounded-lg border-2 border-slate-300 bg-[#e5ddd5] p-3 shadow-inner">
           <p className="shrink-0 text-xs font-black uppercase tracking-wider text-slate-700 sm:text-sm">質疑応答（チャット）</p>
           <ul
             ref={messagesListRef}
-            className="mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain rounded-md bg-[#e5ddd5]/90 px-1.5 py-2"
+            className="mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto rounded-md bg-[#e5ddd5]/90 px-1.5 py-2"
             aria-live="polite"
           >
             {list.length === 0 ? (
@@ -1450,13 +1450,11 @@ function isUnreadForFactory(messages, readKey) {
               : 'rounded-2xl border-2 border-slate-800/15 bg-white shadow-xl dark:border-slate-600 dark:bg-slate-800 ' +
                 (idx === 0 && !isRead && !isRejectedByMe ? 'ring-4 ring-orange-400 ring-offset-2 ring-offset-slate-50 dark:ring-offset-slate-900 ' : '');
 
-      const primaryTopLabel = isToast ? 'text-xs sm:text-sm' : 'text-xs sm:text-sm';
-      const primaryFieldLabel =
-        primaryTopLabel + ' font-bold uppercase tracking-wider text-slate-500 dark:text-slate-300';
-      const primaryFieldValue =
-        'font-bold text-slate-900 dark:text-slate-100';
-      const primaryFieldValueSm =
-        'font-bold leading-snug text-slate-700 dark:text-slate-100';
+      /** メタ情報（1行目以外）の統一サイズ — ラベル / 値 */
+      const metaLabelClass =
+        'text-sm font-bold uppercase tracking-wider text-slate-500 dark:text-slate-300';
+      const metaValueClass = 'text-xl font-bold text-slate-900 dark:text-slate-100';
+      const metaValueMutedClass = 'text-xl font-bold leading-snug text-slate-700 dark:text-slate-100';
       const primaryValueDate = isToast ? 'text-base sm:text-lg' : 'text-lg sm:text-xl';
       const primaryValueTime = isToast ? 'text-base sm:text-lg' : 'text-lg sm:text-xl';
       const dateWrapClass =
@@ -1597,7 +1595,7 @@ function isUnreadForFactory(messages, readKey) {
             <div className={ORDER_GRID_META_2X2 + ' border-t border-slate-200/80 pt-3.5 dark:border-slate-600/80'}>
               <div className="col-span-2 min-w-0 text-left">
                 {isToast ? (
-                  <p className="flex flex-wrap items-center gap-x-1.5 text-xs font-bold text-slate-700 dark:text-slate-200">
+                  <p className="flex flex-wrap items-center gap-x-1.5 text-sm font-bold text-slate-700 dark:text-slate-200">
                     <span>
                       業者: {displayPrime}
                       {billOnPrime ? <BillingMark /> : null}
@@ -1619,7 +1617,7 @@ function isUnreadForFactory(messages, readKey) {
                       </span>
                     ) : null}
                     {missingBillingSub ? (
-                      <span className="text-[10px] font-bold text-red-600">
+                      <span className="text-sm font-bold text-red-600">
                         ⚠請求先(下請)未設定
                       </span>
                     ) : null}
@@ -1634,36 +1632,36 @@ function isUnreadForFactory(messages, readKey) {
                     }
                   >
                     <div className="min-w-0 pr-2">
-                      <dt className="text-sm font-bold text-slate-500 dark:text-slate-400">業者（元請）</dt>
-                      <dd className="mt-0.5 break-words text-base font-bold text-slate-900 dark:text-slate-100 sm:text-lg">
+                      <dt className={metaLabelClass}>業者（元請）</dt>
+                      <dd className={'mt-0.5 break-words ' + metaValueClass}>
                         {displayPrime}
                         {billOnPrime ? <BillingMark /> : null}
                       </dd>
                     </div>
                     <div className="min-w-0 border-l border-slate-200 px-2 dark:border-slate-600">
-                      <dt className="text-sm font-bold text-slate-500 dark:text-slate-400">下請</dt>
-                      <dd className="mt-0.5 break-words text-base font-bold text-slate-900 dark:text-slate-100 sm:text-lg">
+                      <dt className={metaLabelClass}>下請</dt>
+                      <dd className={'mt-0.5 break-words ' + metaValueClass}>
                         {displaySub}
                         {billOnSub && displaySub !== '—' ? <BillingMark /> : null}
                         {missingBillingSub ? (
-                          <span className="mt-0.5 block text-[10px] font-bold text-red-600">
+                          <span className="mt-0.5 block text-sm font-bold text-red-600">
                             ⚠請求先(下請)未設定
                           </span>
                         ) : null}
                       </dd>
                     </div>
                     <div className="min-w-0 border-l border-slate-200 px-2 dark:border-slate-600">
-                      <dt className="text-sm font-bold text-slate-500 dark:text-slate-400">商社</dt>
-                      <dd className="mt-0.5 break-words text-base font-bold text-slate-900 dark:text-slate-100 sm:text-lg">
+                      <dt className={metaLabelClass}>商社</dt>
+                      <dd className={'mt-0.5 break-words ' + metaValueClass}>
                         {displayTrader}
                       </dd>
                     </div>
                     {orderedByIsProxy ? (
                       <div className="min-w-0 border-l border-slate-200 pl-2 dark:border-slate-600">
-                        <dt className="text-sm font-bold text-slate-500 dark:text-slate-400">発注</dt>
-                        <dd className="mt-0.5 break-words text-base font-bold text-slate-900 dark:text-slate-100 sm:text-lg">
+                        <dt className={metaLabelClass}>発注</dt>
+                        <dd className={'mt-0.5 break-words ' + metaValueClass}>
                           {orderedByLabel}
-                          <span className="ml-1 inline-block rounded bg-sky-100 px-1 align-middle text-[10px] font-black text-sky-800 dark:bg-sky-900/60 dark:text-sky-200">
+                          <span className="ml-1 inline-block rounded bg-sky-100 px-1 align-middle text-sm font-black text-sky-800 dark:bg-sky-900/60 dark:text-sky-200">
                             代理
                           </span>
                         </dd>
@@ -1675,7 +1673,7 @@ function isUnreadForFactory(messages, readKey) {
               <div className="col-span-2 flex min-w-0 flex-col border-t border-slate-200/60 pt-2.5 dark:border-slate-600/60 sm:flex-row">
                 <div className="min-w-0 basis-full pb-2 sm:basis-1/2 sm:border-r sm:border-slate-200/60 sm:pb-0 sm:pr-2 dark:sm:border-slate-600/60">
                   <div className="flex flex-wrap items-start justify-between gap-2">
-                    <p className={primaryFieldLabel}>現場名</p>
+                    <p className={metaLabelClass}>現場名</p>
                     {!isToast ? (
                       <SiteOrderUrlActions
                         urlToken={resolveSiteUrlToken(order, projectById, customerById)}
@@ -1689,44 +1687,20 @@ function isUnreadForFactory(messages, readKey) {
                       />
                     ) : null}
                   </div>
-                  <p
-                    className={
-                      'mt-0.5 truncate ' +
-                      primaryFieldValue +
-                      ' ' +
-                      (isToast ? 'text-base sm:text-lg' : 'text-lg sm:text-xl')
-                    }
-                    title={party.site}
-                  >
+                  <p className={'mt-0.5 truncate ' + metaValueClass} title={party.site}>
                     {party.site}
                   </p>
                 </div>
-                <div className="flex min-w-0 basis-full flex-col gap-2 border-t border-slate-200/60 pt-2 sm:basis-1/2 sm:border-t-0 sm:pl-2 sm:pt-0 dark:border-slate-600/60">
-                  <div className="min-w-0">
-                    <p className={primaryFieldLabel}>現場住所</p>
-                    <p
-                      className={
-                        'mt-0.5 truncate ' +
-                        primaryFieldValueSm +
-                        ' ' +
-                        (isToast ? 'text-sm sm:text-base' : 'text-sm sm:text-base')
-                      }
-                      title={addr}
-                    >
+                <div className="flex min-w-0 basis-full items-start gap-2 border-t border-slate-200/60 pt-2 sm:basis-1/2 sm:border-t-0 sm:pl-2 sm:pt-0 dark:border-slate-600/60">
+                  <div className="min-w-0 flex-1">
+                    <p className={metaLabelClass}>現場住所</p>
+                    <p className={'mt-0.5 truncate ' + metaValueMutedClass} title={addr}>
                       {addr}
                     </p>
                   </div>
-                  <div className="min-w-0">
-                    <p className={primaryFieldLabel}>配合</p>
-                    <p
-                      className={
-                        'mt-0.5 truncate ' +
-                        primaryFieldValueSm +
-                        ' ' +
-                        (isToast ? 'text-sm sm:text-base' : 'text-sm sm:text-base')
-                      }
-                      title={mixDisplay}
-                    >
+                  <div className="min-w-0 max-w-[42%] shrink basis-[38%]">
+                    <p className={metaLabelClass}>配合</p>
+                    <p className={'mt-0.5 truncate ' + metaValueMutedClass} title={mixDisplay}>
                       {mixDisplay}
                     </p>
                   </div>
@@ -1933,7 +1907,7 @@ function isUnreadForFactory(messages, readKey) {
 
       const renderDetail = () => (
         <>
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5">
+          <div className="min-h-0 flex-1 overflow-y-auto pr-0.5">
             {isToast ? renderPrimarySummary({}) : null}
             {renderDetailBody()}
           </div>
