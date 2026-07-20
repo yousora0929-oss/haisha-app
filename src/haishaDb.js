@@ -2372,6 +2372,98 @@ export async function deleteOrgMember(id) {
   if (error) throw error;
 }
 
+/** 商社担当者ごとの取引業者リンク（agent_customer_id IN） */
+export async function fetchAgentContractorLinksByAgentIds(agentCustomerIds) {
+  const ids = [
+    ...new Set((agentCustomerIds || []).map((id) => String(id || '').trim()).filter(Boolean)),
+  ];
+  if (!ids.length || !supabase?.from) return [];
+  const { data, error } = await supabase
+    .from('agent_contractor_links')
+    .select('id, agent_customer_id, contractor_customer_id, created_at')
+    .in('agent_customer_id', ids);
+  if (error) throw error;
+  return (data || []).map((row) => ({
+    id: String(row.id),
+    agent_customer_id: String(row.agent_customer_id),
+    contractor_customer_id: String(row.contractor_customer_id),
+    created_at: row.created_at,
+  }));
+}
+
+/** 取引業者リンクを一括 INSERT（unique 衝突時は 23505） */
+export async function insertAgentContractorLinks(links) {
+  const rows = (Array.isArray(links) ? links : [])
+    .map((link) => ({
+      agent_customer_id: String(link?.agent_customer_id || '').trim(),
+      contractor_customer_id: String(link?.contractor_customer_id || '').trim(),
+    }))
+    .filter((r) => r.agent_customer_id && r.contractor_customer_id);
+  if (!rows.length || !supabase?.from) return [];
+  const { data, error } = await supabase
+    .from('agent_contractor_links')
+    .insert(rows)
+    .select('id, agent_customer_id, contractor_customer_id');
+  if (error) throw error;
+  return data || [];
+}
+
+/** 指定商社担当者の取引業者リンクを DELETE（contractor_customer_id IN） */
+export async function deleteAgentContractorLinks(agentCustomerId, contractorCustomerIds) {
+  const agentId = String(agentCustomerId || '').trim();
+  const contractorIds = [
+    ...new Set((contractorCustomerIds || []).map((id) => String(id || '').trim()).filter(Boolean)),
+  ];
+  if (!agentId || !contractorIds.length || !supabase?.from) return;
+  const { error } = await supabase
+    .from('agent_contractor_links')
+    .delete()
+    .eq('agent_customer_id', agentId)
+    .in('contractor_customer_id', contractorIds);
+  if (error) throw error;
+}
+
+/**
+ * 取引業者リンクを差分同期。
+ * @returns {{ inserted: number, deleted: number }}
+ */
+export async function syncAgentContractorLinks(agentCustomerId, nextContractorIds) {
+  const agentId = String(agentCustomerId || '').trim();
+  if (!agentId) throw new Error('agent_customer_id が必要です');
+  const nextIds = [
+    ...new Set((nextContractorIds || []).map((id) => String(id || '').trim()).filter(Boolean)),
+  ];
+  const existing = await fetchAgentContractorLinksByAgentIds([agentId]);
+  const existingIds = new Set(existing.map((r) => r.contractor_customer_id));
+  const nextSet = new Set(nextIds);
+  const toInsert = nextIds.filter((id) => !existingIds.has(id));
+  const toDelete = [...existingIds].filter((id) => !nextSet.has(id));
+  if (toInsert.length) {
+    try {
+      await insertAgentContractorLinks(
+        toInsert.map((contractor_customer_id) => ({
+          agent_customer_id: agentId,
+          contractor_customer_id,
+        })),
+      );
+    } catch (err) {
+      // unique 制約（23505）: バッチ失敗時は1件ずつ入れて既存分をスキップ
+      if (err?.code !== '23505') throw err;
+      for (const contractor_customer_id of toInsert) {
+        try {
+          await insertAgentContractorLinks([{ agent_customer_id: agentId, contractor_customer_id }]);
+        } catch (oneErr) {
+          if (oneErr?.code !== '23505') throw oneErr;
+        }
+      }
+    }
+  }
+  if (toDelete.length) {
+    await deleteAgentContractorLinks(agentId, toDelete);
+  }
+  return { inserted: toInsert.length, deleted: toDelete.length };
+}
+
 /** 組織に属する担当者（customers）一覧 — 現場担当者サジェスト用 */
 export async function fetchCustomersByOrganizationId(organizationId) {
   const orgId = sanitizeRefId(organizationId);

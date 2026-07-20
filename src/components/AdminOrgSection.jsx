@@ -3,6 +3,7 @@ import * as db from '../haishaDb.js';
 import { downloadOrgMembersExportCsv } from '../utils/adminCsvImport.js';
 import { generateInitialMemberPassword } from '../utils/generatePassword.js';
 import { formatPhoneNumberJP } from '../utils/phoneFormat.js';
+import { normalizeSuggestSearchText } from '../utils/normalizeSuggestSearchText.js';
 
 const emptyMember = () => ({
   companyName: '',
@@ -16,6 +17,72 @@ const newMemberWithGeneratedPassword = () => ({
   ...emptyMember(),
   password: generateInitialMemberPassword(),
 });
+
+function formatContractorLabel(customer) {
+  const company = String(customer?.company_name || customer?.name || '').trim();
+  const manager = String(customer?.manager_name || '').trim();
+  if (company && manager) return `${company}（${manager}）`;
+  return company || manager || '—';
+}
+
+function ContractorLinksChecklist({
+  contractors,
+  selectedIds,
+  onToggle,
+  filterText,
+  onFilterChange,
+  inputClass,
+}) {
+  const selectedCount = selectedIds.size;
+  const filtered = useMemo(() => {
+    const q = normalizeSuggestSearchText(filterText);
+    const list = Array.isArray(contractors) ? contractors : [];
+    if (!q) return list;
+    return list.filter((c) => {
+      const texts = [c.company_name, c.name, c.furigana, c.manager_name, c.phone_number];
+      return texts.some((t) => normalizeSuggestSearchText(t).includes(q));
+    });
+  }, [contractors, filterText]);
+
+  return (
+    <div className="mt-3 rounded border border-slate-200 bg-white p-3 sm:col-span-2">
+      <p className="text-xs font-bold text-slate-700">
+        取引業者（{selectedCount}件選択中）
+      </p>
+      <input
+        type="text"
+        value={filterText}
+        onChange={(e) => onFilterChange(e.target.value)}
+        placeholder="会社名・フリガナ・担当者名で絞り込み"
+        className={`${inputClass} mt-2 w-full`}
+      />
+      <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto overscroll-contain rounded border border-slate-100 bg-slate-50 p-2">
+        {filtered.length === 0 ? (
+          <li className="px-1 py-2 text-xs text-slate-500">該当する業者がありません</li>
+        ) : (
+          filtered.map((c) => {
+            const id = String(c.id);
+            const checked = selectedIds.has(id);
+            const label = formatContractorLabel(c);
+            return (
+              <li key={id}>
+                <label className="flex cursor-pointer items-start gap-2 rounded px-1 py-1 hover:bg-white">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => onToggle(id)}
+                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600"
+                  />
+                  <span className="text-xs font-medium text-slate-800">{label}</span>
+                </label>
+              </li>
+            );
+          })
+        )}
+      </ul>
+    </div>
+  );
+}
 
 function parseCsvRows(text) {
   const lines = String(text || '')
@@ -109,7 +176,14 @@ export function AdminOrgSection({ orgType, label }) {
   const [csvText, setCsvText] = useState('');
   const [csvPreview, setCsvPreview] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [contractors, setContractors] = useState([]);
+  const [linkCountByAgentId, setLinkCountByAgentId] = useState({});
+  const [selectedLinkContractorIds, setSelectedLinkContractorIds] = useState(() => new Set());
+  const [initialLinkContractorIds, setInitialLinkContractorIds] = useState(() => new Set());
+  const [contractorListFilter, setContractorListFilter] = useState('');
   const csvFileInputRef = useRef(null);
+
+  const isAgentOrg = orgType === 'agent';
 
   const filteredOrgs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -132,13 +206,84 @@ export function AdminOrgSection({ orgType, label }) {
     setError('');
     try {
       const rows = await db.fetchOrganizationsWithMembers(orgType);
-      setOrgs(Array.isArray(rows) ? rows : []);
+      const list = Array.isArray(rows) ? rows : [];
+      setOrgs(list);
+
+      if (orgType === 'agent') {
+        const [allCustomers, links] = await Promise.all([
+          db.fetchCustomers(),
+          db.fetchAgentContractorLinksByAgentIds(
+            list.flatMap((o) => (o.members || []).map((m) => m.id)),
+          ),
+        ]);
+        const contractorList = (allCustomers || [])
+          .filter((c) => (c.role ?? 'contractor') === 'contractor')
+          .slice()
+          .sort((a, b) =>
+            String(a.company_name || a.name || '').localeCompare(
+              String(b.company_name || b.name || ''),
+              'ja',
+            ),
+          );
+        setContractors(contractorList);
+        const counts = {};
+        for (const link of links || []) {
+          const aid = String(link.agent_customer_id || '');
+          if (!aid) continue;
+          counts[aid] = (counts[aid] || 0) + 1;
+        }
+        setLinkCountByAgentId(counts);
+      } else {
+        setContractors([]);
+        setLinkCountByAgentId({});
+      }
     } catch (e) {
       setError(formatError(e, `${label}一覧の取得に失敗しました`));
     } finally {
       setLoading(false);
     }
   }, [orgType, label]);
+
+  const toggleLinkContractor = useCallback((contractorId) => {
+    const id = String(contractorId || '').trim();
+    if (!id) return;
+    setSelectedLinkContractorIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const resetMemberLinkState = useCallback(() => {
+    setSelectedLinkContractorIds(new Set());
+    setInitialLinkContractorIds(new Set());
+    setContractorListFilter('');
+  }, []);
+
+  const beginEditMember = useCallback(
+    async (member, orgName) => {
+      setEditingMember(memberToForm(member, orgName));
+      setAddingMemberId(null);
+      setError('');
+      setContractorListFilter('');
+      if (orgType !== 'agent') {
+        resetMemberLinkState();
+        return;
+      }
+      try {
+        const links = await db.fetchAgentContractorLinksByAgentIds([member.id]);
+        const ids = new Set((links || []).map((l) => String(l.contractor_customer_id)));
+        setSelectedLinkContractorIds(ids);
+        setInitialLinkContractorIds(new Set(ids));
+      } catch (e) {
+        setSelectedLinkContractorIds(new Set());
+        setInitialLinkContractorIds(new Set());
+        setError(formatError(e, '取引業者の取得に失敗しました'));
+      }
+    },
+    [orgType, resetMemberLinkState],
+  );
 
   useEffect(() => {
     void loadOrgs();
@@ -248,6 +393,18 @@ export function AdminOrgSection({ orgType, label }) {
         password: newMember.password,
         companyName: org?.name ?? '',
       });
+      let linkError = null;
+      if (isAgentOrg && selectedLinkContractorIds.size > 0) {
+        try {
+          await db.syncAgentContractorLinks(created.id, [...selectedLinkContractorIds]);
+          setLinkCountByAgentId((prev) => ({
+            ...prev,
+            [String(created.id)]: selectedLinkContractorIds.size,
+          }));
+        } catch (e) {
+          linkError = e;
+        }
+      }
       setOrgs((prev) =>
         prev.map((o) =>
           o.id === organizationId
@@ -257,7 +414,15 @@ export function AdminOrgSection({ orgType, label }) {
       );
       setAddingMemberId(null);
       setNewMember(emptyMember());
-      showNotice('担当者を登録しました');
+      resetMemberLinkState();
+      if (linkError) {
+        setError(
+          '担当者は保存されましたが、取引業者の更新に失敗しました: ' +
+            formatError(linkError, '不明なエラー'),
+        );
+      } else {
+        showNotice('担当者を登録しました');
+      }
     } catch (e) {
       setError(formatError(e, '担当者の登録に失敗しました'));
     } finally {
@@ -282,6 +447,24 @@ export function AdminOrgSection({ orgType, label }) {
         phone: editingMember.phone,
         password: editingMember.password,
       });
+      let linkError = null;
+      if (isAgentOrg) {
+        const nextIds = [...selectedLinkContractorIds];
+        const prevIds = initialLinkContractorIds;
+        const changed =
+          nextIds.length !== prevIds.size || nextIds.some((id) => !prevIds.has(id));
+        if (changed) {
+          try {
+            await db.syncAgentContractorLinks(editingMember.id, nextIds);
+            setLinkCountByAgentId((prev) => ({
+              ...prev,
+              [String(editingMember.id)]: nextIds.length,
+            }));
+          } catch (e) {
+            linkError = e;
+          }
+        }
+      }
       setOrgs((prev) =>
         prev.map((o) => ({
           ...o,
@@ -300,7 +483,15 @@ export function AdminOrgSection({ orgType, label }) {
         })),
       );
       setEditingMember(null);
-      showNotice('担当者を更新しました');
+      resetMemberLinkState();
+      if (linkError) {
+        setError(
+          '担当者は保存されましたが、取引業者の更新に失敗しました: ' +
+            formatError(linkError, '不明なエラー'),
+        );
+      } else {
+        showNotice('担当者を更新しました');
+      }
     } catch (e) {
       setError(formatError(e, '担当者の更新に失敗しました'));
     } finally {
@@ -349,8 +540,16 @@ export function AdminOrgSection({ orgType, label }) {
             : o,
         ),
       );
-      if (editingMember?.id === member.id) setEditingMember(null);
-      showNotice('担当者を削除しました');
+      setLinkCountByAgentId((prev) => {
+        const next = { ...prev };
+        delete next[String(member.id)];
+        return next;
+      });
+      if (editingMember?.id === member.id) {
+        setEditingMember(null);
+        resetMemberLinkState();
+      }
+      showNotice(`「${name}」を削除しました`);
     } catch (e) {
       setError(formatError(e, '担当者の削除に失敗しました'));
     } finally {
@@ -812,6 +1011,16 @@ export function AdminOrgSection({ orgType, label }) {
                               className={`${inputClass} mt-1 w-full`}
                             />
                           </label>
+                          {isAgentOrg ? (
+                            <ContractorLinksChecklist
+                              contractors={contractors}
+                              selectedIds={selectedLinkContractorIds}
+                              onToggle={toggleLinkContractor}
+                              filterText={contractorListFilter}
+                              onFilterChange={setContractorListFilter}
+                              inputClass={inputClass}
+                            />
+                          ) : null}
                         </div>
                         <div className="mt-3 flex gap-2">
                           <button
@@ -824,7 +1033,10 @@ export function AdminOrgSection({ orgType, label }) {
                           </button>
                           <button
                             type="button"
-                            onClick={() => setEditingMember(null)}
+                            onClick={() => {
+                              setEditingMember(null);
+                              resetMemberLinkState();
+                            }}
                             disabled={loading}
                             className="text-sm text-gray-600 hover:text-gray-800"
                           >
@@ -835,6 +1047,7 @@ export function AdminOrgSection({ orgType, label }) {
                     );
                   }
 
+                  const linkCount = linkCountByAgentId[String(member.id)] || 0;
                   return (
                     <div
                       key={member.id}
@@ -854,14 +1067,21 @@ export function AdminOrgSection({ orgType, label }) {
                       <span className="min-w-[7rem] text-gray-600">
                         {member.phone_number ? formatPhoneNumberJP(member.phone_number) : '—'}
                       </span>
+                      {isAgentOrg ? (
+                        <span
+                          className={
+                            linkCount > 0
+                              ? 'rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-bold text-indigo-800'
+                              : 'rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-500'
+                          }
+                        >
+                          {linkCount > 0 ? `取引業者 ${linkCount}` : '未設定'}
+                        </span>
+                      ) : null}
                       <div className="ml-auto flex gap-2">
                         <button
                           type="button"
-                          onClick={() => {
-                            setEditingMember(memberToForm(member, org.name));
-                            setAddingMemberId(null);
-                            setError('');
-                          }}
+                          onClick={() => void beginEditMember(member, org.name)}
                           disabled={loading}
                           className="text-sm text-indigo-600 hover:underline"
                         >
@@ -933,6 +1153,16 @@ export function AdminOrgSection({ orgType, label }) {
                           自動生成されています。先方の希望があれば書き換えてください。
                         </span>
                       </label>
+                      {isAgentOrg ? (
+                        <ContractorLinksChecklist
+                          contractors={contractors}
+                          selectedIds={selectedLinkContractorIds}
+                          onToggle={toggleLinkContractor}
+                          filterText={contractorListFilter}
+                          onFilterChange={setContractorListFilter}
+                          inputClass={inputClass}
+                        />
+                      ) : null}
                     </div>
                     <div className="mt-3 flex gap-2">
                       <button
@@ -948,6 +1178,7 @@ export function AdminOrgSection({ orgType, label }) {
                         onClick={() => {
                           setAddingMemberId(null);
                           setNewMember(emptyMember());
+                          resetMemberLinkState();
                         }}
                         disabled={loading}
                         className="text-sm text-gray-600 hover:text-gray-800"
@@ -963,6 +1194,7 @@ export function AdminOrgSection({ orgType, label }) {
                       setAddingMemberId(org.id);
                       setNewMember(newMemberWithGeneratedPassword());
                       setEditingMember(null);
+                      resetMemberLinkState();
                       setError('');
                     }}
                     disabled={loading}
