@@ -324,8 +324,12 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
       }
       if (activeTool === MAP_EDITOR_TOOLS.UNLOAD) {
         const id = createAnnotationId('unload');
+        // 複数納入先対応：既存の荷卸し地点を置き換えず配列に追加する
         patchAnnotations({
-          unloadPoints: [{ id, lat, lng, radiusM: defaultUnloadRadius }],
+          unloadPoints: [
+            ...(annotations.unloadPoints || []),
+            { id, lat, lng, radiusM: defaultUnloadRadius },
+          ],
         });
         setSelection({ kind: 'unload', id });
         return;
@@ -386,9 +390,14 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
   }, [deleteSelected, selection]);
 
   useImperativeHandle(ref, () => ({
-    async toDataURL() {
-      return renderAnnotationsSnapshot(annotations, {
-        baseImageUrl: annotations?.imageOverlay?.url || '',
+    /**
+     * @param {object} [annotationsOverride] 保存ペイロードそのもの。
+     * 渡された場合、PNG は保存されるデータと同じ bounds 基準で描画される。
+     */
+    async toDataURL(annotationsOverride) {
+      const source = annotationsOverride || annotations;
+      return renderAnnotationsSnapshot(source, {
+        baseImageUrl: source?.imageOverlay?.url || '',
       });
     },
     getMap: () => mapRef.current,

@@ -13,9 +13,25 @@ export function urlsReferToSameAsset(a, b) {
   }
 }
 
+const SAVED_MAP_STORAGE_PATH = '/storage/v1/object/public/maps/';
+
+/** maps バケットに保存された合成スナップショット PNG の URL かどうか */
+export function isSavedMapSnapshotUrl(url) {
+  const s = String(url ?? '').trim();
+  if (!s) return false;
+  try {
+    return new URL(s, 'https://local.invalid').pathname.includes(SAVED_MAP_STORAGE_PATH);
+  } catch {
+    return s.includes(SAVED_MAP_STORAGE_PATH);
+  }
+}
+
 /**
  * 保存済みの合成 PNG（override / default_map）は編集・印刷プレビューでは
  * Leaflet の ImageOverlay にしない。OSM タイルの上に重ねると荷下ろし周辺が白く隠れる。
+ * また、保存 PNG を imageOverlay に残したまま再保存すると古い PNG を背景として
+ * 再焼き込みしてしまうため、maps バケットの URL は表示中 URL と一致しなくても除去する
+ * （過去の保存で古い URL が残ったデータの自己修復）。
  */
 export function stripSavedSnapshotOverlay(annotations, displayImageUrl) {
   if (!annotations || typeof annotations !== 'object') return annotations;
@@ -25,6 +41,9 @@ export function stripSavedSnapshotOverlay(annotations, displayImageUrl) {
 
   const display = String(displayImageUrl ?? '').trim();
   if (display && urlsReferToSameAsset(overlayUrl, display)) {
+    return { ...annotations, imageOverlay: null };
+  }
+  if (isSavedMapSnapshotUrl(overlayUrl)) {
     return { ...annotations, imageOverlay: null };
   }
 

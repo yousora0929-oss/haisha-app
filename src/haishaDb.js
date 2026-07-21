@@ -7,6 +7,7 @@ import {
   getInitialMapViewFromAnnotations,
   normalizeMapAnnotations,
   pickCoordsFromMapAnnotations,
+  snapshotBoundsForAnnotations,
 } from './utils/mapAnnotations.js';
 import { stripSavedSnapshotOverlay } from './utils/mapEditorOverlay.js';
 import { normalizeExternalUrl } from './utils/urlValidation.js';
@@ -3438,14 +3439,20 @@ function withImageOverlay(annotations, imageUrl) {
   const url = String(imageUrl || '').trim();
   if (!url) return annotations;
   const center = annotations?.center;
+  // bounds は PNG 描画（renderAnnotationsSnapshot）と同じ基準を使う。
+  // アップロード図面の配置 bounds があればそれを優先する。
   const bounds =
     annotations?.imageOverlay?.bounds ||
+    snapshotBoundsForAnnotations(annotations) ||
     boundsFromCenter(center?.lat, center?.lng);
   if (!bounds) return annotations;
   return {
     ...annotations,
     imageOverlay: {
-      url: annotations?.imageOverlay?.url || url,
+      // 常に「今回保存した PNG」を指す。古い URL を引き継ぐと DB の
+      // default_map_image_url と食い違い、次回編集時に古い PNG を
+      // 背景として再焼き込みしてしまう
+      url,
       bounds,
     },
   };

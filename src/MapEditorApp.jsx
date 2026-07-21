@@ -386,10 +386,14 @@ export function MapEditorApp() {
     if (saveMode !== 'project' && !targetOrderId) return;
     setSaving(true);
     try {
-      const dataUrl = await editorRef.current?.toDataURL?.();
-      if (!dataUrl) throw new Error('画像の生成に失敗しました');
-
-      let payload = withImageOverlayLocal(annotations, baseImageUrl);
+      // 保存するデータを先に確定し、PNG も同じデータから生成する。
+      // imageOverlay に「保存済みスナップショットPNG」の URL を入れてしまうと、
+      // 次回保存時にその古い PNG を背景として再焼き込みしてしまう（余白や古い
+      // 内容が固定化される）ため、セッション内アップロード時のみ overlay を持たせる。
+      let payload =
+        mapSource === 'upload'
+          ? withImageOverlayLocal(annotations, baseImageUrl)
+          : { ...annotations, imageOverlay: null };
       const liveMap = editorRef.current?.getMap?.();
       if (liveMap && typeof liveMap.getCenter === 'function') {
         const c = liveMap.getCenter();
@@ -408,14 +412,25 @@ export function MapEditorApp() {
         }
       }
 
+      // PNG は保存ペイロードと同一のデータ・同一の bounds 基準で描画する
+      const dataUrl = await editorRef.current?.toDataURL?.(payload);
+      if (!dataUrl) throw new Error('画像の生成に失敗しました');
+
       if (saveMode === 'project') {
         const result = await saveProjectDefaultMap(targetProjectId, dataUrl, payload);
         publishMapEditorProjectSaved(targetProjectId);
         if (result.publicUrl) {
           setDefaultMapUrl(result.publicUrl);
           setLastSavedUrl(result.publicUrl);
+          if (mapSource === 'upload') {
+            // アップロード図面は保存 PNG に焼き込み済み。以後は保存済みマップ扱いにする
+            revokeLocalBlob();
+            setBaseImageUrl(result.publicUrl);
+            setMapSource('default');
+          }
         }
-        setAnnotations(result.map_annotations || payload);
+        // 保存 PNG の URL を imageOverlay に残すと再保存時に再焼き込みされるため除去
+        setAnnotations(stripSavedSnapshotOverlay(result.map_annotations || payload, result.publicUrl || ''));
         setConfirmMode(null);
         if (result.savedFully) {
           showToast('変更を保存しました（物件の基本現場地図）');
@@ -432,8 +447,10 @@ export function MapEditorApp() {
           setBaseImageUrl(result.publicUrl);
           setMapSource('override');
           setLastSavedUrl(result.publicUrl);
+          revokeLocalBlob();
         }
-        setAnnotations(result.map_annotations || payload);
+        // 保存 PNG の URL を imageOverlay に残すと再保存時に再焼き込みされるため除去
+        setAnnotations(stripSavedSnapshotOverlay(result.map_annotations || payload, result.publicUrl || ''));
         setConfirmMode(null);
         if (result.locationPendingCleared) {
           if (result.savedFully) {

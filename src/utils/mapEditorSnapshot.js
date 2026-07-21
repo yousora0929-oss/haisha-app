@@ -1,5 +1,5 @@
 import { MAP_STAMP_EMOJI } from '../mapEditorConstants.js';
-import { boundsFromCenter, latLngToRatio } from './mapAnnotations.js';
+import { boundsFromCenter, latLngToRatio, snapshotBoundsForAnnotations } from './mapAnnotations.js';
 
 const EXPORT_W = 800;
 const EXPORT_H = 600;
@@ -68,6 +68,10 @@ function geoToPixel(lat, lng, bounds, w, h) {
 // ---------------------------------------------------------------------------
 
 const MAX_SNAPSHOT_TILES = 32;
+// 全タイルを一斉に読み込むと、ブラウザの同時接続制限で後回しにされたタイルが
+// タイムアウトし、その領域だけ描画されず白い帯として残る。並列数を制限し、
+// 失敗タイルは1回だけ再試行する。
+const TILE_LOAD_CONCURRENCY = 6;
 
 function lngToTileX(lng, z) {
   return ((lng + 180) / 360) * 2 ** z;
@@ -114,24 +118,55 @@ async function drawOsmTileBackground(ctx, bounds, zoomHint, w, h) {
     z -= 1;
   }
 
-  const jobs = [];
+  const coords = [];
   for (let x = xMin; x <= xMax; x++) {
     for (let y = yMin; y <= yMax; y++) {
-      jobs.push(
-        loadImage(`https://tile.openstreetmap.org/${z}/${x}/${y}.png`).then((img) => ({ img, x, y })),
-      );
+      coords.push({ x, y });
     }
   }
-  const results = await Promise.allSettled(jobs);
+
+  const results = new Array(coords.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    for (;;) {
+      const idx = nextIndex;
+      if (idx >= coords.length) return;
+      nextIndex += 1;
+      const { x, y } = coords[idx];
+      const url = `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+      try {
+        results[idx] = { x, y, img: await loadImage(url) };
+      } catch {
+        try {
+          results[idx] = { x, y, img: await loadImage(url) };
+        } catch (err) {
+          results[idx] = { x, y, error: err };
+        }
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(TILE_LOAD_CONCURRENCY, coords.length) }, () => worker()),
+  );
+
   let drawn = 0;
+  const failedTiles = [];
   for (const r of results) {
-    if (r.status !== 'fulfilled') continue;
-    const { img, x, y } = r.value;
-    const nw = geoToPixelUnclamped(tileYToLat(y, z), tileXToLng(x, z), bounds, w, h);
-    const se = geoToPixelUnclamped(tileYToLat(y + 1, z), tileXToLng(x + 1, z), bounds, w, h);
+    if (!r || !r.img) {
+      if (r) failedTiles.push(`${z}/${r.x}/${r.y}`);
+      continue;
+    }
+    const nw = geoToPixelUnclamped(tileYToLat(r.y, z), tileXToLng(r.x, z), bounds, w, h);
+    const se = geoToPixelUnclamped(tileYToLat(r.y + 1, z), tileXToLng(r.x + 1, z), bounds, w, h);
     // タイル間の継ぎ目（サブピクセル空隙）を防ぐため僅かに重ねる
-    ctx.drawImage(img, nw.px, nw.py, se.px - nw.px + 0.75, se.py - nw.py + 0.75);
+    ctx.drawImage(r.img, nw.px, nw.py, se.px - nw.px + 0.75, se.py - nw.py + 0.75);
     drawn += 1;
+  }
+  if (failedTiles.length) {
+    console.warn(
+      `[renderAnnotationsSnapshot] OSMタイル ${failedTiles.length}/${coords.length} 枚の取得に失敗（該当領域は格子下地のまま）`,
+      failedTiles,
+    );
   }
   if (!drawn) return false;
 
@@ -156,26 +191,28 @@ export async function renderAnnotationsSnapshot(annotations, options = {}) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return '';
 
+  const imgUrl = String(annotations?.imageOverlay?.url || baseImageUrl || '').trim();
+
+  // ベース画像を描く場合はその配置基準（imageOverlay.bounds）を、
+  // OSM タイル背景の場合は全マーカーが収まる 4:3 の bounds を使う。
+  // タイル・マーカーとも同じ bounds を共有するため位置ズレは起きない。
   const bounds =
-    annotations?.imageOverlay?.bounds ||
+    (imgUrl && annotations?.imageOverlay?.bounds) ||
+    snapshotBoundsForAnnotations(annotations) ||
     boundsFromCenter(annotations?.center?.lat, annotations?.center?.lng);
 
   const drawFallbackBackground = async () => {
-    // ベース画像なし（OSM モード）ではタイル地図を背景として焼き込む。
-    // タイル取得に全滅した場合のみ従来の格子にフォールバック。
-    let ok = false;
-    if (bounds) {
-      try {
-        ok = await drawOsmTileBackground(ctx, bounds, annotations?.center?.zoom, EXPORT_W, EXPORT_H);
-      } catch (err) {
-        console.warn('[renderAnnotationsSnapshot] OSMタイル背景の描画に失敗（格子にフォールバック）', err);
-        ok = false;
-      }
+    // 先に格子を不透明の下地として敷く。タイルが部分的に取得失敗しても
+    // 透明（＝白い余白）ではなく格子が見えるだけで済む。
+    drawGrid(ctx, EXPORT_W, EXPORT_H);
+    if (!bounds) return;
+    try {
+      await drawOsmTileBackground(ctx, bounds, annotations?.center?.zoom, EXPORT_W, EXPORT_H);
+    } catch (err) {
+      console.warn('[renderAnnotationsSnapshot] OSMタイル背景の描画に失敗（格子にフォールバック）', err);
     }
-    if (!ok) drawGrid(ctx, EXPORT_W, EXPORT_H);
   };
 
-  const imgUrl = String(annotations?.imageOverlay?.url || baseImageUrl || '').trim();
   if (imgUrl) {
     try {
       const img = await loadImage(imgUrl);
@@ -209,11 +246,19 @@ export async function renderAnnotationsSnapshot(annotations, options = {}) {
 
 /** マーカー（荷卸し地点・スタンプ・コメント）をキャンバスに描画 */
 function drawAnnotationMarkers(ctx, annotations, bounds) {
+  // bounds の縦方向実距離（m）。円の見た目サイズを表示範囲に応じて変える
+  const spanM = (() => {
+    const sLat = Number(bounds?.[0]?.[0]);
+    const nLat = Number(bounds?.[1]?.[0]);
+    const span = Math.abs(nLat - sLat) * 111320;
+    return Number.isFinite(span) && span > 0 ? span : 180;
+  })();
+
   for (const u of annotations?.unloadPoints || []) {
     const p = geoToPixel(u.lat, u.lng, bounds, EXPORT_W, EXPORT_H);
     if (!p) continue;
     const radiusM = Number(u.radiusM) || 12;
-    const pxRadius = Math.max(12, Math.min(80, (radiusM / 180) * EXPORT_W * 0.35));
+    const pxRadius = Math.max(12, Math.min(80, (radiusM / spanM) * EXPORT_W * 0.35));
     ctx.beginPath();
     ctx.arc(p.px, p.py, pxRadius, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(239, 68, 68, 0.22)';

@@ -58,6 +58,47 @@ export function boundsFromCenter(lat, lng, aspect = 4 / 3, spanM = 180) {
   ];
 }
 
+const SNAPSHOT_MIN_SPAN_M = 180;
+const SNAPSHOT_MAX_SPAN_M = 4000;
+const SNAPSHOT_SPAN_PADDING = 1.3;
+
+/**
+ * 保存 PNG（800×600, 4:3）用の bounds を注釈データから算出する。
+ * - 中心は applyInitialViewCenter と同じ基準（荷卸し地点 → スタンプ → コメント → center）
+ * - すべてのマーカーが収まるよう表示範囲（spanM）を自動拡大する（最小180m）
+ * タイル背景・マーカー描画・保存される imageOverlay.bounds はすべてこの関数の
+ * 結果を共有することで、座標変換のズレを防ぐ。
+ */
+export function snapshotBoundsForAnnotations(annotations, aspect = 4 / 3) {
+  const first = firstAnnotationLatLng(annotations);
+  const centerLat = Number(first?.lat ?? annotations?.center?.lat);
+  const centerLng = Number(first?.lng ?? annotations?.center?.lng);
+  if (!Number.isFinite(centerLat) || !Number.isFinite(centerLng)) return null;
+
+  const cosLat = Math.cos((centerLat * Math.PI) / 180) || 1;
+  const widthRatio = Math.max(0.5, aspect);
+  let neededSpanM = 0;
+  const markers = [
+    ...(annotations?.unloadPoints || []),
+    ...(annotations?.stamps || []),
+    ...(annotations?.comments || []),
+  ];
+  for (const m of markers) {
+    const lat = Number(m?.lat);
+    const lng = Number(m?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    const dyM = Math.abs(lat - centerLat) * 111320;
+    const dxM = Math.abs(lng - centerLng) * 111320 * cosLat;
+    // spanM は縦方向の実距離。横方向は spanM * aspect まで収まる
+    neededSpanM = Math.max(neededSpanM, dyM * 2, (dxM * 2) / widthRatio);
+  }
+  const spanM = Math.min(
+    SNAPSHOT_MAX_SPAN_M,
+    Math.max(SNAPSHOT_MIN_SPAN_M, neededSpanM * SNAPSHOT_SPAN_PADDING),
+  );
+  return boundsFromCenter(centerLat, centerLng, aspect, spanM);
+}
+
 /** 正規化座標 0〜1 を bounds 内の緯度経度へ */
 export function ratioToLatLng(x, y, bounds) {
   const b = normalizeBounds(bounds);
