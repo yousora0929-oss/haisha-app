@@ -84,9 +84,33 @@ export function publishMapEditorOrderSaved(orderId) {
   }
 }
 
+/**
+ * ホーム画面追加 PWA（standalone 系表示モード）かどうか。
+ * Android では standalone で window.open すると別タスクとして起動し、
+ * 閉じる操作で元のアプリに戻れずホーム画面へ落ちるため、判定して同一ウィンドウ遷移に切り替える。
+ */
+export function isStandaloneDisplayMode() {
+  if (typeof window === 'undefined') return false;
+  try {
+    if (window.navigator?.standalone === true) return true; // iOS Safari
+    const mm = window.matchMedia;
+    if (typeof mm === 'function') {
+      return (
+        mm('(display-mode: standalone)').matches ||
+        mm('(display-mode: fullscreen)').matches ||
+        mm('(display-mode: minimal-ui)').matches
+      );
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
 /** 地図エディタを開く直前に呼び、保存後の戻り先 URL を記憶する */
-export function rememberMapEditorReturnUrl() {
+export function rememberMapEditorReturnUrl(options = {}) {
   if (typeof window === 'undefined') return;
+  const { sameWindow = false } = options;
   const href = window.location.href;
   try {
     sessionStorage.setItem(MAP_EDITOR_RETURN_SESSION_KEY, href);
@@ -96,10 +120,31 @@ export function rememberMapEditorReturnUrl() {
   stageMapEditorReturnUrl(href);
   stageMapEditorPanelAuth();
   try {
-    localStorage.setItem(MAP_EDITOR_OPENED_AS_POPUP_KEY, '1');
+    if (sameWindow) {
+      // 同一ウィンドウ遷移ではポップアップ扱いにしない（閉じる時は必ず戻り先 URL へ遷移）
+      localStorage.removeItem(MAP_EDITOR_OPENED_AS_POPUP_KEY);
+    } else {
+      localStorage.setItem(MAP_EDITOR_OPENED_AS_POPUP_KEY, '1');
+    }
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * 地図エディタを開く共通処理。
+ * standalone PWA では同一ウィンドウで遷移し、それ以外は従来どおり新規タブで開く。
+ */
+export function openMapEditorWindow(url) {
+  const target = String(url || '').trim();
+  if (!target || typeof window === 'undefined') return;
+  if (isStandaloneDisplayMode()) {
+    rememberMapEditorReturnUrl({ sameWindow: true });
+    window.location.assign(target);
+    return;
+  }
+  rememberMapEditorReturnUrl();
+  window.open(target, '_blank', 'noopener,noreferrer');
 }
 
 function isUsableMapEditorReturnUrl(raw) {
@@ -187,6 +232,9 @@ export function navigateBackFromMapEditor() {
   stageMapEditorPanelAuthForReturn();
 
   const openedAsPopup = consumeMapEditorPopupFlag();
+  // standalone PWA では window.close() が「タスク終了→ホーム画面」になるため、
+  // ポップアップ判定に関わらず常に戻り先 URL への同一ウィンドウ遷移で処理する。
+  const standalone = isStandaloneDisplayMode();
 
   try {
     sessionStorage.removeItem(MAP_EDITOR_RETURN_SESSION_KEY);
@@ -194,7 +242,7 @@ export function navigateBackFromMapEditor() {
     /* ignore */
   }
 
-  if (openedAsPopup) {
+  if (openedAsPopup && !standalone) {
     closeMapEditorPopupWindow();
     return true;
   }
@@ -205,13 +253,15 @@ export function navigateBackFromMapEditor() {
     return true;
   }
 
-  try {
-    if (window.opener && !window.opener.closed) {
-      window.close();
-      return true;
+  if (!standalone) {
+    try {
+      if (window.opener && !window.opener.closed) {
+        window.close();
+        return true;
+      }
+    } catch {
+      /* ignore */
     }
-  } catch {
-    /* ignore */
   }
 
   return false;

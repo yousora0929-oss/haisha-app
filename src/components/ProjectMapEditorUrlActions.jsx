@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { buildProjectMapEditorUrl, rememberMapEditorReturnUrl } from '../mapEditorConstants.js';
+import { buildProjectMapEditorUrl, openMapEditorWindow } from '../mapEditorConstants.js';
 
 /**
  * 物件マスタの基本現場地図エディタ（スポット注文と同じ MapEditor）
@@ -55,8 +55,7 @@ export function ProjectMapEditorUrlActions({
     e?.stopPropagation?.();
     const url = resolveMapEditorUrl();
     if (!url) return;
-    rememberMapEditorReturnUrl();
-    window.open(url, '_blank', 'noopener,noreferrer');
+    openMapEditorWindow(url);
   };
 
   const previewUrl = resolveMapEditorUrl();

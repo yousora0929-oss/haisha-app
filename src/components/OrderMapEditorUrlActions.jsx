@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { buildMapEditorUrl, rememberMapEditorReturnUrl } from '../mapEditorConstants.js';
+import { buildMapEditorUrl, openMapEditorWindow } from '../mapEditorConstants.js';
 import { resolveGuestSiteOrderToken } from '../supabaseClient.js';
 import { isLocationPendingOrder } from '../utils/orderWorkflow.js';
 
@@ -133,8 +133,7 @@ export function OrderMapEditorUrlActions({
     e?.stopPropagation?.();
     const url = resolveMapEditorUrl();
     if (!url) return;
-    rememberMapEditorReturnUrl();
-    window.open(url, '_blank', 'noopener,noreferrer');
+    openMapEditorWindow(url);
   };
 
   const openQrModal = (e) => {

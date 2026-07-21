@@ -40,6 +40,93 @@ function geoToPixel(lat, lng, bounds, w, h) {
   return { px: r.x * w, py: r.y * h };
 }
 
+// ---------------------------------------------------------------------------
+// OSM タイル背景（Web Mercator）
+// エディタは OSM タイル + ライブマーカー表示のため、保存 PNG にも同じ背景を焼き込む。
+// tile.openstreetmap.org は CORS 許可 (Access-Control-Allow-Origin: *) なので
+// crossOrigin='anonymous' で canvas 汚染なしに描画できる。
+// ---------------------------------------------------------------------------
+
+const MAX_SNAPSHOT_TILES = 32;
+
+function lngToTileX(lng, z) {
+  return ((lng + 180) / 360) * 2 ** z;
+}
+
+function latToTileY(lat, z) {
+  const rad = (lat * Math.PI) / 180;
+  return ((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * 2 ** z;
+}
+
+function tileXToLng(x, z) {
+  return (x / 2 ** z) * 360 - 180;
+}
+
+function tileYToLat(y, z) {
+  const n = Math.PI - (2 * Math.PI * y) / 2 ** z;
+  return (180 / Math.PI) * Math.atan(Math.sinh(n));
+}
+
+/** latLngToRatio と同じ線形補間だが、bounds 外でもクランプしない（タイル矩形の配置用） */
+function geoToPixelUnclamped(lat, lng, bounds, w, h) {
+  const [[sLat, sLng], [nLat, nLng]] = bounds;
+  const x = ((lng - sLng) / (nLng - sLng || 1)) * w;
+  const y = ((nLat - lat) / (nLat - sLat || 1)) * h;
+  return { px: x, py: y };
+}
+
+async function drawOsmTileBackground(ctx, bounds, zoomHint, w, h) {
+  const [[sLat, sLng], [nLat, nLng]] = bounds;
+  if (![sLat, sLng, nLat, nLng].every(Number.isFinite)) return false;
+
+  let z = Math.round(Number(zoomHint) || 17);
+  z = Math.max(3, Math.min(19, z));
+  let xMin;
+  let xMax;
+  let yMin;
+  let yMax;
+  for (;;) {
+    xMin = Math.floor(lngToTileX(sLng, z));
+    xMax = Math.floor(lngToTileX(nLng, z));
+    yMin = Math.floor(latToTileY(nLat, z));
+    yMax = Math.floor(latToTileY(sLat, z));
+    if ((xMax - xMin + 1) * (yMax - yMin + 1) <= MAX_SNAPSHOT_TILES || z <= 3) break;
+    z -= 1;
+  }
+
+  const jobs = [];
+  for (let x = xMin; x <= xMax; x++) {
+    for (let y = yMin; y <= yMax; y++) {
+      jobs.push(
+        loadImage(`https://tile.openstreetmap.org/${z}/${x}/${y}.png`).then((img) => ({ img, x, y })),
+      );
+    }
+  }
+  const results = await Promise.allSettled(jobs);
+  let drawn = 0;
+  for (const r of results) {
+    if (r.status !== 'fulfilled') continue;
+    const { img, x, y } = r.value;
+    const nw = geoToPixelUnclamped(tileYToLat(y, z), tileXToLng(x, z), bounds, w, h);
+    const se = geoToPixelUnclamped(tileYToLat(y + 1, z), tileXToLng(x + 1, z), bounds, w, h);
+    // タイル間の継ぎ目（サブピクセル空隙）を防ぐため僅かに重ねる
+    ctx.drawImage(img, nw.px, nw.py, se.px - nw.px + 0.75, se.py - nw.py + 0.75);
+    drawn += 1;
+  }
+  if (!drawn) return false;
+
+  const attribution = '© OpenStreetMap contributors';
+  ctx.font = '11px system-ui, sans-serif';
+  const tw = ctx.measureText(attribution).width;
+  ctx.fillStyle = 'rgba(255,255,255,0.75)';
+  ctx.fillRect(w - tw - 10, h - 18, tw + 10, 18);
+  ctx.fillStyle = '#334155';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(attribution, w - tw - 5, h - 9);
+  return true;
+}
+
 /** 注釈データから PNG 用キャンバスを生成 */
 export async function renderAnnotationsSnapshot(annotations, options = {}) {
   const { baseImageUrl = '' } = options;
@@ -53,16 +140,30 @@ export async function renderAnnotationsSnapshot(annotations, options = {}) {
     annotations?.imageOverlay?.bounds ||
     boundsFromCenter(annotations?.center?.lat, annotations?.center?.lng);
 
+  const drawFallbackBackground = async () => {
+    // ベース画像なし（OSM モード）ではタイル地図を背景として焼き込む。
+    // タイル取得に全滅した場合のみ従来の格子にフォールバック。
+    let ok = false;
+    if (bounds) {
+      try {
+        ok = await drawOsmTileBackground(ctx, bounds, annotations?.center?.zoom, EXPORT_W, EXPORT_H);
+      } catch {
+        ok = false;
+      }
+    }
+    if (!ok) drawGrid(ctx, EXPORT_W, EXPORT_H);
+  };
+
   const imgUrl = String(annotations?.imageOverlay?.url || baseImageUrl || '').trim();
   if (imgUrl) {
     try {
       const img = await loadImage(imgUrl);
       ctx.drawImage(img, 0, 0, EXPORT_W, EXPORT_H);
     } catch {
-      drawGrid(ctx, EXPORT_W, EXPORT_H);
+      await drawFallbackBackground();
     }
   } else {
-    drawGrid(ctx, EXPORT_W, EXPORT_H);
+    await drawFallbackBackground();
   }
 
   for (const u of annotations?.unloadPoints || []) {
