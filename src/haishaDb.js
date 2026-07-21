@@ -3559,9 +3559,25 @@ export async function fetchOrderForMapEditor(orderId) {
   const { url: displayImageUrl, source: mapSource } = resolveMapDisplayUrl(order, project, row);
   const legacyStamps = normalizeMapStamps(order.map_stamps ?? order.mapStamps);
   const projectCenter = pickMapEditorCenter(order, project);
-  const rawAnnotations = coerceMapAnnotationsRaw(
+  const overrideMapImageUrl = pickOrderOverrideMapUrl(order, row);
+  const defaultMapImageUrl = pickProjectDefaultMapUrl(project);
+  let rawAnnotations = coerceMapAnnotationsRaw(
     row.map_annotations ?? order.map_annotations ?? order.mapAnnotations ?? order.order_data?.map_annotations,
   );
+  // 注文専用の上書きマップも注文自身のマーカーも無い場合は、
+  // 物件基本マップの注釈（スタンプ・荷卸し地点）を初期状態として継承する。
+  // 保存時は saveOrderOverrideMap 経由で注文側にのみ書き込まれ、projects 側は変更されない。
+  const ownHasMarkers = Boolean(
+    (Array.isArray(rawAnnotations?.stamps) && rawAnnotations.stamps.length > 0) ||
+      (Array.isArray(rawAnnotations?.unloadPoints) && rawAnnotations.unloadPoints.length > 0) ||
+      (Array.isArray(rawAnnotations?.comments) && rawAnnotations.comments.length > 0),
+  );
+  if (!overrideMapImageUrl && !ownHasMarkers && !legacyStamps.length) {
+    const projectRawAnnotations = coerceMapAnnotationsRaw(project?.map_annotations);
+    if (projectRawAnnotations) {
+      rawAnnotations = projectRawAnnotations;
+    }
+  }
   let mapAnnotations = normalizeMapAnnotations(rawAnnotations, {
     legacyStamps,
     projectCenter,
@@ -3571,8 +3587,6 @@ export async function fetchOrderForMapEditor(orderId) {
   const { annotations: viewAnnotations, flyTarget: initialFlyTarget } =
     getInitialMapViewFromAnnotations(mapAnnotations);
   mapAnnotations = viewAnnotations;
-  const overrideMapImageUrl = pickOrderOverrideMapUrl(order, row);
-  const defaultMapImageUrl = pickProjectDefaultMapUrl(project);
 
   return {
     order,

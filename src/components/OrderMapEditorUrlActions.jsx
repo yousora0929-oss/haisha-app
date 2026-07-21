@@ -84,6 +84,7 @@ export function OrderMapEditorUrlActions({
   orderId,
   siteName,
   order,
+  project,
   variant = 'default',
   onCopied,
   guestToken,
@@ -99,10 +100,17 @@ export function OrderMapEditorUrlActions({
   }, [guestToken, id]);
 
   const mapPending = order ? isLocationPendingOrder(order) : false;
-  const mapImageUrl = String(
+  const overrideMapUrl = String(
     order?.override_map_image_url || order?.overrideMapImageUrl || order?.map_image_url || '',
   ).trim();
-  const hasOverride = Boolean(mapImageUrl);
+  // 注文専用の上書きが無ければ物件の基本マップへフォールバック
+  const projectDefaultMapUrl = String(
+    project?.default_map_image_url || project?.map_base_image_url || project?.mapBaseImageUrl || '',
+  ).trim();
+  const mapImageUrl = overrideMapUrl || projectDefaultMapUrl;
+  const hasOverride = Boolean(overrideMapUrl);
+  const usesProjectDefault = !hasOverride && Boolean(projectDefaultMapUrl);
+  const hasAnyMap = Boolean(mapImageUrl);
 
   if (!id) return null;
 
@@ -157,13 +165,15 @@ export function OrderMapEditorUrlActions({
             <p className="mt-0.5 text-xs font-bold text-amber-900">⚠️ 地図待ち — このURLから図面を送付してください</p>
           ) : hasOverride ? (
             <p className="mt-0.5 text-xs font-medium text-emerald-800">打設用マップ登録済み（再編集可）</p>
+          ) : usesProjectDefault ? (
+            <p className="mt-0.5 text-xs font-medium text-emerald-800">登録済み（物件の基本マップを使用中）</p>
           ) : (
             <p className="mt-0.5 text-xs font-medium text-slate-600">スタンプ配置用ページを開けます</p>
           )}
         </div>
       </div>
 
-      {hasOverride ? (
+      {hasAnyMap ? (
         <button
           type="button"
           onClick={openEditor}
@@ -172,11 +182,13 @@ export function OrderMapEditorUrlActions({
         >
           <img
             src={mapImageUrl}
-            alt="登録済みの現場地図"
+            alt={usesProjectDefault ? '物件の基本現場地図' : '登録済みの現場地図'}
             className="mx-auto h-28 w-full max-w-xs object-contain bg-slate-100 sm:h-32"
           />
           <span className="block border-t border-emerald-100 bg-emerald-50/80 px-2 py-1 text-center text-[10px] font-bold text-emerald-900">
-            サムネイルをタップして地図を開く
+            {usesProjectDefault
+              ? '物件の基本マップ — タップして地図を開く'
+              : 'サムネイルをタップして地図を開く'}
           </span>
         </button>
       ) : (

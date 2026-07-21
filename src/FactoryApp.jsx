@@ -461,14 +461,12 @@ function isUnreadForFactory(messages, readKey) {
 
     function FactoryOrderChatPanel({ order, orderId, messages, factoryName, onAfterSend }) {
       const [txt, setTxt] = useState('');
-      const messagesListRef = useRef(null);
-      const messagesEndRef = useRef(null);
       const list = Array.isArray(messages) ? messages : [];
       const customerSenderName = orderContactPersonName(order);
-      useEffect(() => {
-        // 内部スクロールは無いので、新規メッセージ時はページ側へ追従する
-        messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
-      }, [list.length, messages]);
+      // 注意: ここで scrollIntoView 等の自動スクロールを行わないこと。
+      // チャットパネルは折りたたみ中のカードにもマウントされており、
+      // ポーリング/Realtime 更新のたびに一覧全体が末尾へスクロールする不具合の原因になった。
+      // 新着はカード側の「💬 未読」バッジで通知する。
       if (!orderId) return null;
       const send = async () => {
         const t = txt.trim();
@@ -486,7 +484,6 @@ function isUnreadForFactory(messages, readKey) {
         <div className="rounded-lg border-2 border-slate-300 bg-[#e5ddd5] p-3 shadow-inner">
           <p className="text-xs font-black uppercase tracking-wider text-slate-700 sm:text-sm">質疑応答（チャット）</p>
           <ul
-            ref={messagesListRef}
             className="mt-2 space-y-2 rounded-md bg-[#e5ddd5]/90 px-1.5 py-2"
             aria-live="polite"
           >
@@ -535,7 +532,6 @@ function isUnreadForFactory(messages, readKey) {
                 );
               })
             )}
-            <li ref={messagesEndRef} aria-hidden="true" className="h-px" />
           </ul>
           <div className="mt-2 border-t border-slate-400/30 pt-2">
             <div className="flex gap-2">
@@ -1783,7 +1779,7 @@ function isUnreadForFactory(messages, readKey) {
 
           {!isToast && order.id ? (
             <div className="mt-3">
-              <OrderMapEditorUrlActions orderId={order.id} siteName={party.site} order={order} variant="compact" />
+              <OrderMapEditorUrlActions orderId={order.id} siteName={party.site} order={order} project={linkedProject} variant="compact" />
             </div>
           ) : null}
 

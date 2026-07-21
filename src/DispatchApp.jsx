@@ -1584,10 +1584,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return manager || '';
       }, []);
 
+      // 絞り込みキー: 組合ログイン時は選択した経由商社、商社ログイン時は自分自身
+      const contractorLinkAgentId = useMemo(() => {
+        if (currentCustomerRole === 'agent') return String(currentCustomer?.id || '').trim();
+        if (currentCustomerRole === 'cooperative') return String(tradingAgentCustomerId || '').trim();
+        return '';
+      }, [currentCustomerRole, currentCustomer, tradingAgentCustomerId]);
+
       useEffect(() => {
         let cancelled = false;
-        const agentId = String(tradingAgentCustomerId || '').trim();
-        if (currentCustomerRole !== 'cooperative' || !agentId) {
+        const agentId = contractorLinkAgentId;
+        if (!agentId) {
           setLinkedContractorIds([]);
           return undefined;
         }
@@ -1611,19 +1618,22 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return () => {
           cancelled = true;
         };
-      }, [tradingAgentCustomerId, currentCustomerRole]);
+      }, [contractorLinkAgentId]);
 
       const proxyContractorItems = useMemo(() => {
         const all = (customers || []).filter((c) => (c.role ?? 'contractor') === 'contractor');
-        if (currentCustomerRole !== 'cooperative' || linkedContractorIds.length === 0) {
+        if (!contractorLinkAgentId || linkedContractorIds.length === 0) {
           return all;
         }
         const allowed = new Set(linkedContractorIds.map(String));
         return all.filter((c) => allowed.has(String(c.id)));
-      }, [customers, currentCustomerRole, linkedContractorIds]);
+      }, [customers, contractorLinkAgentId, linkedContractorIds]);
 
       const tradingAgentFilterHint = useMemo(() => {
-        if (currentCustomerRole !== 'cooperative' || linkedContractorIds.length === 0) return '';
+        if (!contractorLinkAgentId || linkedContractorIds.length === 0) return '';
+        if (currentCustomerRole === 'agent') {
+          return '（自社の取引業者に絞り込み中）';
+        }
         const agent = (customers || []).find(
           (c) => String(c.id) === String(tradingAgentCustomerId || ''),
         );
@@ -1631,6 +1641,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return `（${name}の取引業者に絞り込み中）`;
       }, [
         currentCustomerRole,
+        contractorLinkAgentId,
         linkedContractorIds,
         customers,
         tradingAgentCustomerId,
@@ -1638,7 +1649,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       ]);
 
       useEffect(() => {
-        if (currentCustomerRole !== 'cooperative') return;
+        if (!contractorLinkAgentId) return;
         if (linkedContractorIds.length === 0) return;
         const cid = String(contractorCustomerId || '').trim();
         if (!cid) return;
@@ -1649,7 +1660,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         lastAutofillProjectIdRef.current = '';
         applyProjectSelection(null);
       }, [
-        currentCustomerRole,
+        contractorLinkAgentId,
         linkedContractorIds,
         contractorCustomerId,
         applyProjectSelection,
@@ -3876,11 +3887,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         name="contractor_customer"
                         value={contractorSearchText}
                         placeholder="業者名を入力して候補から選択"
-                        items={
-                          currentCustomerRole === 'cooperative'
-                            ? proxyContractorItems
-                            : (customers || []).filter((c) => (c.role ?? 'contractor') === 'contractor')
-                        }
+                        items={proxyContractorItems}
                         getItemKey={(c) => String(c.id)}
                         getItemLabel={(c) => String(c.company_name || c.name || '').trim()}
                         getSearchTexts={(c) => [
@@ -3890,12 +3897,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         ]}
                         onValueChange={(text) => {
                           setContractorSearchText(text);
-                          const pool =
-                            currentCustomerRole === 'cooperative'
-                              ? proxyContractorItems
-                              : (customers || []).filter(
-                                  (c) => (c.role ?? 'contractor') === 'contractor',
-                                );
+                          const pool = proxyContractorItems;
                           const hit = pool.find(
                             (c) =>
                               String(c.company_name || c.name || '')

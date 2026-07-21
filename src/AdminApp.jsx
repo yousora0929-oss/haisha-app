@@ -1846,6 +1846,7 @@ function AdminSettingsSection() {
 
 function AdminOrderDetailModal({
   order,
+  project,
   open,
   saving,
   savingReassign,
@@ -2026,7 +2027,7 @@ function AdminOrderDetailModal({
           ) : null}
 
           <div className="mt-4">
-            <OrderMapEditorUrlActions orderId={order.id} siteName={party.site} order={order} />
+            <OrderMapEditorUrlActions orderId={order.id} siteName={party.site} order={order} project={project} />
           </div>
 
           <dl className="mt-4 grid gap-2 rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-sm sm:grid-cols-2">
@@ -2840,6 +2841,13 @@ function OrdersMonitorSection({
       />
       <AdminOrderDetailModal
         order={detailOrder}
+        project={
+          detailOrder
+            ? projects.find(
+                (p) => String(p?.id) === String(detailOrder.project_id ?? detailOrder.projectId ?? ''),
+              ) || null
+            : null
+        }
         open={Boolean(detailOrder)}
         escalationCtx={escalationCtx}
         factoryNameById={factoryNameById}
