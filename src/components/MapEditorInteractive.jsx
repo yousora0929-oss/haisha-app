@@ -430,6 +430,7 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          crossOrigin="anonymous"
         />
         {blueprintUrl && overlayBounds ? (
           <ImageOverlay url={blueprintUrl} bounds={overlayBounds} opacity={0.85} />

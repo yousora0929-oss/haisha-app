@@ -100,6 +100,8 @@ function parseCsvRows(text) {
       managerName: (parts[1] ?? '').trim(),
       phone: (parts[2] ?? '').trim(),
       password: (parts[3] ?? '').trim(),
+      // 5列目は任意のフリガナ（旧4列フォーマットとの後方互換のため末尾に追加）
+      furigana: (parts[4] ?? '').trim(),
     });
   }
   return rows;
@@ -590,6 +592,7 @@ export function AdminOrgSection({ orgType, label }) {
           toImport.push({
             orgName: m.orgName,
             managerName: m.managerName,
+            furigana: m.furigana,
             phone: m.phone,
             password: m.password,
           });
@@ -647,7 +650,11 @@ export function AdminOrgSection({ orgType, label }) {
             <p className="mt-2 text-xs text-slate-600">
               フォーマット:
               <br />
-              <code className="text-xs">organization_name,manager_name,phone_number,password</code>
+              <code className="text-xs">organization_name,manager_name,phone_number,password,furigana</code>
+              <br />
+              <span className="text-[11px] text-slate-500">
+                furigana（フリガナ）列は任意です。無い・空のCSVも従来どおり取り込めます。
+              </span>
             </p>
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -676,7 +683,7 @@ export function AdminOrgSection({ orgType, label }) {
                 setCsvPreview(null);
               }}
               rows={6}
-              placeholder="organization_name,manager_name,phone_number,password"
+              placeholder="organization_name,manager_name,phone_number,password,furigana"
               className="mt-2 w-full rounded border border-gray-200 bg-white p-2 text-sm font-mono outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200"
               disabled={loading}
             />
@@ -717,7 +724,8 @@ export function AdminOrgSection({ orgType, label }) {
                             }
                           >
                             {m.phoneConflict ? '⚠️' : '✅'}{' '}
-                            {m.managerName || '—'} {m.phone || '—'}{' '}
+                            {m.managerName || '—'}
+                            {m.furigana ? `（${m.furigana}）` : ''} {m.phone || '—'}{' '}
                             {m.phoneConflict
                               ? '→ 電話番号重複・スキップ'
                               : group.orgIsNew

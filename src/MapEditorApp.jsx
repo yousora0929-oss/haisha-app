@@ -87,9 +87,11 @@ export function MapEditorApp() {
     [editorOrder, annotations],
   );
 
-  const showToast = useCallback((msg) => {
+  const showToast = useCallback((msg, { durationMs } = {}) => {
     setToast(msg);
-    const t = setTimeout(() => setToast(''), 2800);
+    // エラー系メッセージは長めに表示して見落としを防ぐ
+    const ms = Number(durationMs) || (String(msg).includes('失敗') ? 8000 : 2800);
+    const t = setTimeout(() => setToast(''), ms);
     return () => clearTimeout(t);
   }, []);
 
@@ -452,7 +454,9 @@ export function MapEditorApp() {
         }
       }
     } catch (err) {
-      showToast(err?.message || '保存に失敗しました');
+      console.error('[MapEditor] 保存に失敗しました', err);
+      const detail = err?.message ? String(err.message) : '不明なエラー';
+      showToast(`⚠️ 保存に失敗しました: ${detail}`);
     } finally {
       setSaving(false);
     }

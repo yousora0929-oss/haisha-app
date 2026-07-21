@@ -107,11 +107,14 @@ function normalizeUnload(raw) {
   const geo = clampLatLng(raw.lat, raw.lng);
   if (!geo) return null;
   const radiusM = Number(raw.radiusM ?? raw.radius);
+  // label（納入先名称・任意）は保存・読み込みの両方で保持する
+  const label = String(raw.label ?? '').trim();
   return {
     id: String(raw.id || '').trim() || createAnnotationId('unload'),
     lat: geo.lat,
     lng: geo.lng,
     radiusM: Number.isFinite(radiusM) && radiusM > 0 ? radiusM : DEFAULT_UNLOAD_RADIUS_M,
+    ...(label ? { label } : {}),
   };
 }
 

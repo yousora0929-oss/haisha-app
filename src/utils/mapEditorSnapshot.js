@@ -4,12 +4,32 @@ import { boundsFromCenter, latLngToRatio } from './mapAnnotations.js';
 const EXPORT_W = 800;
 const EXPORT_H = 600;
 
-function loadImage(url) {
+const IMAGE_LOAD_TIMEOUT_MS = 10000;
+
+function loadImage(url, timeoutMs = IMAGE_LOAD_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    // crossOrigin 無しで描画すると canvas が汚染され toDataURL が SecurityError になるため必須
     img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('画像の読み込みに失敗しました'));
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      img.src = '';
+      reject(new Error('画像の読み込みがタイムアウトしました'));
+    }, timeoutMs);
+    img.onload = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      resolve(img);
+    };
+    img.onerror = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      reject(new Error('画像の読み込みに失敗しました'));
+    };
     img.src = url;
   });
 }
@@ -147,7 +167,8 @@ export async function renderAnnotationsSnapshot(annotations, options = {}) {
     if (bounds) {
       try {
         ok = await drawOsmTileBackground(ctx, bounds, annotations?.center?.zoom, EXPORT_W, EXPORT_H);
-      } catch {
+      } catch (err) {
+        console.warn('[renderAnnotationsSnapshot] OSMタイル背景の描画に失敗（格子にフォールバック）', err);
         ok = false;
       }
     }
@@ -159,13 +180,35 @@ export async function renderAnnotationsSnapshot(annotations, options = {}) {
     try {
       const img = await loadImage(imgUrl);
       ctx.drawImage(img, 0, 0, EXPORT_W, EXPORT_H);
-    } catch {
+    } catch (err) {
+      console.warn('[renderAnnotationsSnapshot] ベース画像の読み込みに失敗（タイル/格子にフォールバック）', err);
       await drawFallbackBackground();
     }
   } else {
     await drawFallbackBackground();
   }
 
+  drawAnnotationMarkers(ctx, annotations, bounds);
+
+  try {
+    return canvas.toDataURL('image/png');
+  } catch (err) {
+    // canvas 汚染（SecurityError）等で書き出せない場合でも保存自体は成功させる。
+    // 外部画像を一切使わないクリーンなキャンバス（格子＋マーカーのみ）で再描画する。
+    console.error('[renderAnnotationsSnapshot] toDataURL に失敗。格子背景で再生成します', err);
+    const clean = document.createElement('canvas');
+    clean.width = EXPORT_W;
+    clean.height = EXPORT_H;
+    const cleanCtx = clean.getContext('2d');
+    if (!cleanCtx) return '';
+    drawGrid(cleanCtx, EXPORT_W, EXPORT_H);
+    drawAnnotationMarkers(cleanCtx, annotations, bounds);
+    return clean.toDataURL('image/png');
+  }
+}
+
+/** マーカー（荷卸し地点・スタンプ・コメント）をキャンバスに描画 */
+function drawAnnotationMarkers(ctx, annotations, bounds) {
   for (const u of annotations?.unloadPoints || []) {
     const p = geoToPixel(u.lat, u.lng, bounds, EXPORT_W, EXPORT_H);
     if (!p) continue;
@@ -225,8 +268,6 @@ export async function renderAnnotationsSnapshot(annotations, options = {}) {
     ctx.textBaseline = 'middle';
     ctx.fillText(text, bx + pad, by + bh / 2);
   }
-
-  return canvas.toDataURL('image/png');
 }
 
 function roundRect(ctx, x, y, w, h, r) {

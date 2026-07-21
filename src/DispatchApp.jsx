@@ -80,6 +80,10 @@ import {
 } from './utils/customerStatusLabels.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { orderPartyInfo as buildOrderPartyInfo } from './utils/orderPartyInfo.js';
+import {
+  groupOrdersBySiteForAssignedProjects,
+  resolveOrderDateTimeSortValue,
+} from './utils/orderGrouping.js';
 import { resolveSiteContactName } from './utils/orderContactInfo.js';
 import { formatPhoneNumberJP } from './utils/phoneFormat.js';
 import { resolveGuestPreferredFactoryId, resolveProjectMainFactoryId, getProjectDataGapWarnings } from './utils/projectFactory.js';
@@ -1139,19 +1143,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
     }
 
-    /** 実際の時刻値（分）で並べるためのキー。表示ラベルの文字列比較はしない */
-    function resolveOrderTimeMinutes(order) {
-      const candidates = [order?.timeSlotMinutes, order?.scheduleMatchMinutes, order?.timeSlot];
-      for (const c of candidates) {
-        const n = typeof c === 'string' ? parseInt(c, 10) : Number(c);
-        if (Number.isFinite(n)) return n;
-      }
-      const label = String(order?.timePointLabel || order?.timeSlotLabel || '').trim();
-      const m = label.match(/(\d{1,2}):(\d{2})/);
-      if (m) return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-      return Number.POSITIVE_INFINITY;
-    }
-
     function CustomerOrderCalendar({ orders, selectedDate, onSelectDate, currentMonth, onMonthChange, escalationCtx = null, projectById = {} }) {
       const [expandedStatusOrderId, setExpandedStatusOrderId] = useState('');
       const lastTapRef = useRef({ orderId: null, at: 0 });
@@ -1187,41 +1178,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const selectedOrders = ordersByDate[selectedDate] || [];
       // 割当物件（main_factory_id が設定された物件）に紐づく注文は現場名でグルーピングし、
       // スポット等はそのまま個別カード。いずれも実際の時刻値（分）で早い順に並べる。
-      const selectedOrderEntries = useMemo(() => {
-        const groupsBySite = new Map();
-        const entries = [];
-        for (const order of selectedOrders) {
-          const party = orderPartyInfo(order);
-          const projectId = String(order?.project_id ?? order?.projectId ?? '').trim();
-          const project = projectId ? projectById?.[projectId] : null;
-          const isSpot = Boolean(order?.is_spot ?? order?.isSpot);
-          const assignedFactoryId = String(
-            project?.main_factory_id ?? order?.main_factory_id ?? order?.mainFactoryId ?? '',
-          ).trim();
-          const site = String(party?.site || '').trim();
-          if (!isSpot && projectId && assignedFactoryId && site) {
-            let entry = groupsBySite.get(site);
-            if (!entry) {
-              entry = { type: 'group', key: `site:${site}`, site, orders: [] };
-              groupsBySite.set(site, entry);
-              entries.push(entry);
-            }
-            entry.orders.push(order);
-          } else {
-            entries.push({ type: 'single', key: `order:${order?.id}`, order });
-          }
-        }
-        for (const entry of entries) {
-          if (entry.type === 'group') {
-            entry.orders.sort((a, b) => resolveOrderTimeMinutes(a) - resolveOrderTimeMinutes(b));
-            entry.sortMinutes = resolveOrderTimeMinutes(entry.orders[0]);
-          } else {
-            entry.sortMinutes = resolveOrderTimeMinutes(entry.order);
-          }
-        }
-        entries.sort((a, b) => a.sortMinutes - b.sortMinutes);
-        return entries;
-      }, [selectedOrders, projectById]);
+      const selectedOrderEntries = useMemo(
+        () => groupOrdersBySiteForAssignedProjects(selectedOrders, projectById),
+        [selectedOrders, projectById],
+      );
       const statusClass = (order) => {
         const meta = historyStatusMeta(order, escalationCtx);
         if (meta.key === 'completed') return 'bg-slate-500 text-white';
@@ -2575,6 +2535,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             )
             .slice(0, 15),
         [dashboardOrders, inProgressSearchQuery, today],
+      );
+      // 進行中一覧も割当物件は現場名でグルーピング（検索フィルタ適用後の一覧をグループ化する）
+      const inProgressOrderEntries = useMemo(
+        () =>
+          groupOrdersBySiteForAssignedProjects(filteredInProgressOrders, projectById, {
+            sortValue: resolveOrderDateTimeSortValue,
+          }),
+        [filteredInProgressOrders, projectById],
       );
       const activeOrders = useMemo(
         () => (dashboardOrders || []).filter((o) => o && isOrderInProgressView(o, today)),
@@ -4896,25 +4864,47 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           </p>
                         ) : (
                           <div className="grid grid-cols-1 gap-6">
-                          {filteredInProgressOrders.map((ord, i) => (
-                            <InProgressOrderCard
-                              key={ord.id || `ord-${i}`}
-                              order={ord}
-                              project={projectById[String(ord?.project_id ?? ord?.projectId ?? '')] ?? null}
-                              hasUnreadChat={Boolean(
-                                unreadChatsByOrder[ord.id] ||
-                                  isUnreadForDispatch(chatThreads[ord.id], readChatKeys[ord.id]),
-                              )}
-                              onOpenChat={handleOpenChat}
-                              onAllowStatusReset={handleAllowStatusReset}
-                              guestToken={isGuestSiteOrder ? guestOrderToken : ''}
-                              escalationCtx={customerEscalationCtx}
-                              choiceSubmitting={choiceSubmitting}
-                              onEscalatePreferred={(o) => void runCustomerChoice(o, 'escalate')}
-                              onReschedulePreferred={(o) => void runCustomerChoice(o, 'reschedule')}
-                              onCancelPreferred={(o) => void runCustomerChoice(o, 'cancel')}
-                            />
-                          ))}
+                          {inProgressOrderEntries.map((entry) => {
+                            const renderCard = (ord) => (
+                              <InProgressOrderCard
+                                key={ord.id}
+                                order={ord}
+                                project={projectById[String(ord?.project_id ?? ord?.projectId ?? '')] ?? null}
+                                hasUnreadChat={Boolean(
+                                  unreadChatsByOrder[ord.id] ||
+                                    isUnreadForDispatch(chatThreads[ord.id], readChatKeys[ord.id]),
+                                )}
+                                onOpenChat={handleOpenChat}
+                                onAllowStatusReset={handleAllowStatusReset}
+                                guestToken={isGuestSiteOrder ? guestOrderToken : ''}
+                                escalationCtx={customerEscalationCtx}
+                                choiceSubmitting={choiceSubmitting}
+                                onEscalatePreferred={(o) => void runCustomerChoice(o, 'escalate')}
+                                onReschedulePreferred={(o) => void runCustomerChoice(o, 'reschedule')}
+                                onCancelPreferred={(o) => void runCustomerChoice(o, 'cancel')}
+                              />
+                            );
+                            if (entry.type === 'group') {
+                              return (
+                                <section
+                                  key={entry.key}
+                                  className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-3 dark:border-indigo-800 dark:bg-indigo-950/20"
+                                  aria-label={`現場「${entry.site}」の注文`}
+                                >
+                                  <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+                                    <p className="text-sm font-black text-slate-900 dark:text-gray-100">📍 {entry.site}</p>
+                                    <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-black text-white">
+                                      {entry.orders.length}便
+                                    </span>
+                                  </div>
+                                  <div className="mt-2 grid grid-cols-1 gap-4">
+                                    {entry.orders.map((ord) => renderCard(ord))}
+                                  </div>
+                                </section>
+                              );
+                            }
+                            return <React.Fragment key={entry.key}>{renderCard(entry.order)}</React.Fragment>;
+                          })}
                           </div>
                         )}
                       </>

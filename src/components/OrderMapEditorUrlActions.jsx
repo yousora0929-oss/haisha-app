@@ -182,7 +182,7 @@ export function OrderMapEditorUrlActions({
           <img
             src={mapImageUrl}
             alt={usesProjectDefault ? '物件の基本現場地図' : '登録済みの現場地図'}
-            className="mx-auto h-28 w-full max-w-xs object-contain bg-slate-100 sm:h-32"
+            className="h-32 w-full bg-slate-100 object-cover sm:h-36"
           />
           <span className="block border-t border-emerald-100 bg-emerald-50/80 px-2 py-1 text-center text-[10px] font-bold text-emerald-900">
             {usesProjectDefault

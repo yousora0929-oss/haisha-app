@@ -2535,6 +2535,7 @@ export async function bulkImportOrgMembers(rows, orgType, existingOrgs, existing
           organization_id: orgId,
           role: orgType,
           company_name: orgName,
+          furigana: m.furigana?.trim() || null,
           manager_name: m.managerName?.trim() ?? null,
           phone_number: phone || null,
           login_password: m.password?.trim() ?? null,
@@ -3721,6 +3722,33 @@ export async function saveProjectDefaultMap(projectId, imageDataUrl, mapAnnotati
     map_annotations: savedAnnotations,
     map_stamps: annotationsToLegacyStamps(savedAnnotations),
   };
+}
+
+/**
+ * 荷卸し地点（unloadPoints）の名称ラベルのみを軽量更新する。
+ * 画像PNGの再生成・Storageアップロードは行わず、projects.map_annotations のJSONだけを更新する。
+ * @param {string} projectId
+ * @param {Record<string, string>} labelsById unloadPoint.id -> label（空文字はラベル削除）
+ */
+export async function updateProjectUnloadPointLabels(projectId, labelsById) {
+  const pid = String(projectId || '').trim();
+  if (!pid) throw new Error('projectId が必要です');
+  const row = await fetchProjectMapRow(pid);
+  const annotations = coerceMapAnnotationsRaw(row?.map_annotations);
+  if (!annotations || !Array.isArray(annotations.unloadPoints) || annotations.unloadPoints.length === 0) {
+    throw new Error('荷卸し地点が登録されていません。現場地図エディタで赤〇を配置してください。');
+  }
+  const labels = labelsById && typeof labelsById === 'object' ? labelsById : {};
+  const nextUnloads = annotations.unloadPoints.map((u) => {
+    const id = String(u?.id || '');
+    if (!(id in labels)) return u;
+    const label = String(labels[id] ?? '').trim();
+    const { label: _omit, ...rest } = u || {};
+    return label ? { ...rest, label } : rest;
+  });
+  const nextAnnotations = { ...annotations, unloadPoints: nextUnloads };
+  const data = await updateProjectMapRow(pid, { map_annotations: nextAnnotations });
+  return { project: data, map_annotations: nextAnnotations };
 }
 
 /**

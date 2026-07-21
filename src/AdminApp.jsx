@@ -34,6 +34,8 @@ import { buildOrderVisibilityContext } from './utils/orderVisibilityScope.js';
 import {
   MAP_EDITOR_PROJECT_SAVED_DOM_EVENT,
   MAP_EDITOR_PROJECT_SAVED_EVENT_KEY,
+  buildProjectMapEditorUrl,
+  openMapEditorWindow,
 } from './mapEditorConstants.js';
 import {
   formatDeliveryAreasTextInput,
@@ -369,6 +371,153 @@ function FactoryAvailabilitySection({ factories, schedulesByFactoryId, scheduleD
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * 納入先（荷卸し地点）リスト
+ * 座標は現場地図エディタで管理（このフォームでは読み取り専用）。名称ラベルのみここで編集できる。
+ * ラベルの保存は map_annotations のJSONパッチのみで行い、画像PNGは再生成しない。
+ */
+function ProjectUnloadPointsField({ project, fieldClass }) {
+  const projectId = String(project?.id || '').trim();
+  const unloadPoints = useMemo(() => {
+    const list = project?.map_annotations?.unloadPoints;
+    return Array.isArray(list) ? list.filter((u) => u && typeof u === 'object') : [];
+  }, [project]);
+
+  const initialLabels = useMemo(() => {
+    const map = {};
+    for (const u of unloadPoints) {
+      map[String(u.id || '')] = String(u.label || '').trim();
+    }
+    return map;
+  }, [unloadPoints]);
+
+  const [labels, setLabels] = useState(initialLabels);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setLabels(initialLabels);
+    setNotice('');
+    setError('');
+  }, [initialLabels]);
+
+  const dirty = useMemo(
+    () =>
+      Object.keys(initialLabels).some(
+        (id) => String(labels[id] ?? '').trim() !== String(initialLabels[id] ?? '').trim(),
+      ),
+    [labels, initialLabels],
+  );
+
+  const openEditor = () => {
+    if (!projectId) return;
+    const url = buildProjectMapEditorUrl(projectId);
+    if (url) openMapEditorWindow(url);
+  };
+
+  const handleSaveLabels = async () => {
+    if (!projectId || saving) return;
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      await db.updateProjectUnloadPointLabels(projectId, labels);
+      setNotice('納入先の名称を保存しました');
+      window.setTimeout(() => setNotice(''), 3000);
+    } catch (e) {
+      console.error('納入先名称の保存に失敗', e);
+      setError(formatSupabaseError(e, '納入先名称の保存に失敗しました'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+          📦 納入先（荷卸し地点）
+          {unloadPoints.length > 0 ? (
+            <span className="ml-2 rounded-full bg-slate-700 px-2 py-0.5 text-[10px] font-black text-white">
+              {unloadPoints.length}件
+            </span>
+          ) : null}
+        </p>
+        {projectId ? (
+          <button
+            type="button"
+            onClick={openEditor}
+            className="min-h-[36px] rounded-lg border-2 border-emerald-600 bg-white px-3 text-xs font-black text-emerald-800 hover:bg-emerald-50"
+          >
+            ＋ 現場地図で納入先を追加
+          </button>
+        ) : null}
+      </div>
+      {!projectId ? (
+        <p className="mt-2 text-[11px] font-medium text-slate-500">
+          物件を一度保存すると、現場地図エディタで荷卸し地点（赤〇）を配置できます。
+        </p>
+      ) : unloadPoints.length === 0 ? (
+        <p className="mt-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-xs font-bold text-slate-600">
+          現場地図で荷卸し地点（赤〇）を配置してください
+        </p>
+      ) : (
+        <ul className="mt-2 grid gap-2">
+          {unloadPoints.map((u, index) => {
+            const id = String(u.id || '');
+            return (
+              <li
+                key={id || `unload-${index}`}
+                className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2 sm:grid-cols-[minmax(0,1fr)_auto]"
+              >
+                <div>
+                  <label className="text-[11px] font-bold text-slate-600" htmlFor={`proj-unload-label-${index}`}>
+                    名称ラベル（任意）
+                  </label>
+                  <input
+                    id={`proj-unload-label-${index}`}
+                    type="text"
+                    value={labels[id] ?? ''}
+                    onChange={(e) => setLabels((prev) => ({ ...prev, [id]: e.target.value }))}
+                    placeholder={`納入先 ${index + 1}（例: 第一プラント搬入口）`}
+                    className={fieldClass}
+                  />
+                </div>
+                <div className="self-end text-right font-mono text-[11px] font-bold text-slate-500">
+                  <p>緯度: {Number.isFinite(Number(u.lat)) ? Number(u.lat).toFixed(6) : '—'}</p>
+                  <p>経度: {Number.isFinite(Number(u.lng)) ? Number(u.lng).toFixed(6) : '—'}</p>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {unloadPoints.length > 0 ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void handleSaveLabels()}
+            disabled={saving || !dirty}
+            className="min-h-[40px] rounded-lg bg-indigo-600 px-4 text-xs font-black text-white hover:bg-indigo-700 disabled:opacity-40"
+          >
+            {saving ? '保存中…' : '納入先の名称を保存'}
+          </button>
+          <span className="text-[11px] font-medium text-slate-500">
+            座標（緯度・経度）は現場地図エディタで管理します。ここでは名称のみ編集できます。
+          </span>
+        </div>
+      ) : null}
+      {notice ? <p className="mt-2 text-xs font-bold text-emerald-700">{notice}</p> : null}
+      {error ? (
+        <p className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-bold text-red-800" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -1047,33 +1196,7 @@ function ProjectForm({
         project={initial}
         variant="default"
       />
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="text-xs font-bold text-slate-600" htmlFor="proj-lat">緯度（lat）</label>
-          <input
-            id="proj-lat"
-            type="text"
-            readOnly
-            value={lat}
-            placeholder="現場地図で設定"
-            className={fieldClass + ' bg-slate-50'}
-          />
-        </div>
-        <div>
-          <label className="text-xs font-bold text-slate-600" htmlFor="proj-lng">経度（lng）</label>
-          <input
-            id="proj-lng"
-            type="text"
-            readOnly
-            value={lng}
-            placeholder="現場地図で設定"
-            className={fieldClass + ' bg-slate-50'}
-          />
-        </div>
-      </div>
-      <p className="text-[11px] font-medium text-slate-500">
-        座標は現場地図エディタの保存時に自動反映されます（スポット注文と同じエディタ）。
-      </p>
+      <ProjectUnloadPointsField project={initial} fieldClass={fieldClass} />
       <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-3">
         <p className="text-xs font-black uppercase tracking-wide text-slate-500">外部リンク（Google Drive / スプレッドシート）</p>
         <div>
