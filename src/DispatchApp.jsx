@@ -49,7 +49,7 @@ import {
   validateCartLineForm,
   extractOrderFormDefaultsFromHistory,
 } from './utils/dispatchBulkOrder.js';
-import { buildMapEditorUrl, rememberMapEditorReturnUrl } from './mapEditorConstants.js';
+import { buildMapEditorUrl, openMapEditorWindow, rememberMapEditorReturnUrl } from './mapEditorConstants.js';
 import { combineDeliveryAddress, extractProjectAddressFields, normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
 import { resolveProjectTradingCompanyName } from './utils/projectTradingCompany.js';
 import { projectMatchRole } from './utils/projectCustomerMatch.js';
@@ -527,26 +527,26 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const mixDisp = mix && String(mix).trim() ? String(mix).trim() : '—';
       const isSnapshot = order.status === 'accepted' || order.factoryResponseStatus === 'accepted';
       return (
-        <div className="rounded-xl border border-slate-200 bg-slate-50/95 p-4">
-          <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">合意・確定内容（工場確認）</p>
+        <div className="rounded-xl border border-slate-200 bg-slate-50/95 p-4 dark:border-slate-600 dark:bg-slate-900/50">
+          <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-400">合意・確定内容（工場確認）</p>
           <dl className="mt-3 space-y-2 text-sm">
             <div className="flex justify-between gap-3">
-              <dt className="text-xs font-bold text-slate-400">数量（m³）</dt>
-              <dd className="font-mono text-sm font-black text-slate-900">{qtyDisp}</dd>
+              <dt className="text-xs font-bold text-slate-400 dark:text-slate-400">数量（m³）</dt>
+              <dd className="font-mono text-sm font-black text-slate-900 dark:text-slate-100">{qtyDisp}</dd>
             </div>
             <div className="flex justify-between gap-3">
-              <dt className="text-xs font-bold text-slate-400">配合</dt>
-              <dd className="text-right font-mono text-sm font-bold text-slate-900">{mixDisp}</dd>
+              <dt className="text-xs font-bold text-slate-400 dark:text-slate-400">配合</dt>
+              <dd className="text-right font-mono text-sm font-bold text-slate-900 dark:text-slate-100">{mixDisp}</dd>
             </div>
             <div className="flex justify-between gap-3">
-              <dt className="text-xs font-bold text-slate-400">車両</dt>
-              <dd className="text-sm font-bold text-slate-900">{order.vehicleLabel || '—'}</dd>
+              <dt className="text-xs font-bold text-slate-400 dark:text-slate-400">車両</dt>
+              <dd className="text-sm font-bold text-slate-900 dark:text-slate-100">{order.vehicleLabel || '—'}</dd>
             </div>
           </dl>
           {isSnapshot ? (
-            <p className="mt-3 text-[10px] font-bold text-emerald-700">受注確定時点の内容を表示しています</p>
+            <p className="mt-3 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">受注確定時点の内容を表示しています</p>
           ) : (
-            <p className="mt-3 text-[10px] text-slate-400">※受注後は工場側で確定した値が優先表示されます（未確定時は発注内容）</p>
+            <p className="mt-3 text-[10px] text-slate-400 dark:text-slate-400">※受注後は工場側で確定した値が優先表示されます（未確定時は発注内容）</p>
           )}
         </div>
       );
@@ -882,11 +882,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           e?.stopPropagation?.();
           if (!mapUrl) return;
           try {
-            rememberMapEditorReturnUrl();
+            openMapEditorWindow(mapUrl);
           } catch {
             /* ignore */
           }
-          window.open(mapUrl, '_blank', 'noopener,noreferrer');
         },
         [mapUrl],
       );
@@ -1117,7 +1116,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           ) : null}
 
           {order.factoryUnlockRequested ? (
-            <div className="border-t border-indigo-100 bg-indigo-50 px-4 py-3">
+            <div className="border-t border-indigo-100 bg-indigo-50 px-4 py-3 dark:border-indigo-800 dark:bg-indigo-950/40">
               <p className="text-xs font-black text-indigo-900 dark:text-indigo-100">工場からステータス変更のロック解除が依頼されています。</p>
               {typeof onAllowStatusReset === 'function' ? (
                 <button
@@ -1140,7 +1139,20 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
     }
 
-    function CustomerOrderCalendar({ orders, selectedDate, onSelectDate, currentMonth, onMonthChange, escalationCtx = null }) {
+    /** 実際の時刻値（分）で並べるためのキー。表示ラベルの文字列比較はしない */
+    function resolveOrderTimeMinutes(order) {
+      const candidates = [order?.timeSlotMinutes, order?.scheduleMatchMinutes, order?.timeSlot];
+      for (const c of candidates) {
+        const n = typeof c === 'string' ? parseInt(c, 10) : Number(c);
+        if (Number.isFinite(n)) return n;
+      }
+      const label = String(order?.timePointLabel || order?.timeSlotLabel || '').trim();
+      const m = label.match(/(\d{1,2}):(\d{2})/);
+      if (m) return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+      return Number.POSITIVE_INFINITY;
+    }
+
+    function CustomerOrderCalendar({ orders, selectedDate, onSelectDate, currentMonth, onMonthChange, escalationCtx = null, projectById = {} }) {
       const [expandedStatusOrderId, setExpandedStatusOrderId] = useState('');
       const lastTapRef = useRef({ orderId: null, at: 0 });
       const days = useMemo(() => {
@@ -1173,6 +1185,43 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return map;
       }, [orders]);
       const selectedOrders = ordersByDate[selectedDate] || [];
+      // 割当物件（main_factory_id が設定された物件）に紐づく注文は現場名でグルーピングし、
+      // スポット等はそのまま個別カード。いずれも実際の時刻値（分）で早い順に並べる。
+      const selectedOrderEntries = useMemo(() => {
+        const groupsBySite = new Map();
+        const entries = [];
+        for (const order of selectedOrders) {
+          const party = orderPartyInfo(order);
+          const projectId = String(order?.project_id ?? order?.projectId ?? '').trim();
+          const project = projectId ? projectById?.[projectId] : null;
+          const isSpot = Boolean(order?.is_spot ?? order?.isSpot);
+          const assignedFactoryId = String(
+            project?.main_factory_id ?? order?.main_factory_id ?? order?.mainFactoryId ?? '',
+          ).trim();
+          const site = String(party?.site || '').trim();
+          if (!isSpot && projectId && assignedFactoryId && site) {
+            let entry = groupsBySite.get(site);
+            if (!entry) {
+              entry = { type: 'group', key: `site:${site}`, site, orders: [] };
+              groupsBySite.set(site, entry);
+              entries.push(entry);
+            }
+            entry.orders.push(order);
+          } else {
+            entries.push({ type: 'single', key: `order:${order?.id}`, order });
+          }
+        }
+        for (const entry of entries) {
+          if (entry.type === 'group') {
+            entry.orders.sort((a, b) => resolveOrderTimeMinutes(a) - resolveOrderTimeMinutes(b));
+            entry.sortMinutes = resolveOrderTimeMinutes(entry.orders[0]);
+          } else {
+            entry.sortMinutes = resolveOrderTimeMinutes(entry.order);
+          }
+        }
+        entries.sort((a, b) => a.sortMinutes - b.sortMinutes);
+        return entries;
+      }, [selectedOrders, projectById]);
       const statusClass = (order) => {
         const meta = historyStatusMeta(order, escalationCtx);
         if (meta.key === 'completed') return 'bg-slate-500 text-white';
@@ -1243,37 +1292,72 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               <p className="mt-3 rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm font-bold text-slate-500">この日の注文はありません。</p>
             ) : (
               <ul className="mt-3 grid gap-3 lg:grid-cols-2">
-                {selectedOrders.map((order) => {
-                  const party = orderPartyInfo(order);
-                  const meta = historyStatusMeta(order, escalationCtx);
-                  return (
-                    <li
-                      key={order.id}
-                      onDoubleClick={() => toggleStatusCard(order.id)}
-                      onTouchEnd={() => handleCardTouchEnd(order.id)}
-                      className="cursor-pointer rounded-xl border border-slate-200 bg-white p-3 shadow-sm transition-all hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md active:scale-[0.99]"
-                      title="ダブルタップで現在のステータスを表示"
-                    >
-                      <span className={'inline-flex rounded-full px-3 py-1 text-xs font-black ' + statusClass(order)}>{meta.label}</span>
-                      <p className="mt-2 text-sm font-black text-slate-900">{party.site || '現場未設定'}</p>
-                      <p className="mt-1 text-xs font-bold text-slate-500">{order.timePointLabel || order.timeSlotLabel || '時刻未設定'} / {order.confirmedQuantityM3 ?? order.quantityM3 ?? '—'}m³ / {order.confirmedMixText || order.mixText || '配合未入力'}</p>
-                      <p className="mt-2 text-[10px] font-black text-indigo-600">ダブルタップで現在のステータス</p>
+                {selectedOrderEntries.map((entry) => {
+                  const renderOrderBody = (order, { showSite }) => {
+                    const party = orderPartyInfo(order);
+                    const meta = historyStatusMeta(order, escalationCtx);
+                    return (
                       <div
-                        className="grid transition-[grid-template-rows] duration-300 ease-out"
-                        style={{ gridTemplateRows: expandedStatusOrderId === order.id ? '1fr' : '0fr' }}
+                        onDoubleClick={() => toggleStatusCard(order.id)}
+                        onTouchEnd={() => handleCardTouchEnd(order.id)}
+                        className="cursor-pointer"
+                        title="ダブルタップで現在のステータスを表示"
                       >
-                        <div className="min-h-0 overflow-hidden">
-                          <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50 p-3">
-                            <p className="text-[10px] font-black uppercase tracking-wider text-indigo-600">現在のステータス</p>
-                            <div className="mt-2">
-                              <OrderStatusBadges order={order} escalationCtx={escalationCtx} />
-                            </div>
-                            <div className="mt-3">
-                              <ConfirmedDetailsBlock order={order} />
+                        <span className={'inline-flex rounded-full px-3 py-1 text-xs font-black ' + statusClass(order)}>{meta.label}</span>
+                        {showSite ? (
+                          <p className="mt-2 text-sm font-black text-slate-900">{party.site || '現場未設定'}</p>
+                        ) : null}
+                        <p className="mt-1 text-xs font-bold text-slate-500">{order.timePointLabel || order.timeSlotLabel || '時刻未設定'} / {order.confirmedQuantityM3 ?? order.quantityM3 ?? '—'}m³ / {order.confirmedMixText || order.mixText || '配合未入力'}</p>
+                        <p className="mt-2 text-[10px] font-black text-indigo-600">ダブルタップで現在のステータス</p>
+                        <div
+                          className="grid transition-[grid-template-rows] duration-300 ease-out"
+                          style={{ gridTemplateRows: expandedStatusOrderId === order.id ? '1fr' : '0fr' }}
+                        >
+                          <div className="min-h-0 overflow-hidden">
+                            <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50 p-3 dark:border-indigo-800 dark:bg-indigo-950/40">
+                              <p className="text-[10px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-300">現在のステータス</p>
+                              <div className="mt-2">
+                                <OrderStatusBadges order={order} escalationCtx={escalationCtx} />
+                              </div>
+                              <div className="mt-3">
+                                <ConfirmedDetailsBlock order={order} />
+                              </div>
                             </div>
                           </div>
                         </div>
                       </div>
+                    );
+                  };
+                  if (entry.type === 'group') {
+                    return (
+                      <li
+                        key={entry.key}
+                        className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-sm font-black text-slate-900">{entry.site}</p>
+                          <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-black text-white">{entry.orders.length}便</span>
+                        </div>
+                        <ul className="mt-2 space-y-2">
+                          {entry.orders.map((order) => (
+                            <li
+                              key={order.id}
+                              className="rounded-lg border border-slate-100 bg-slate-50/60 p-2.5 transition-colors hover:border-indigo-300"
+                            >
+                              {renderOrderBody(order, { showSite: false })}
+                            </li>
+                          ))}
+                        </ul>
+                      </li>
+                    );
+                  }
+                  const order = entry.order;
+                  return (
+                    <li
+                      key={entry.key}
+                      className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm transition-all hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md active:scale-[0.99]"
+                    >
+                      {renderOrderBody(order, { showSite: true })}
                     </li>
                   );
                 })}
@@ -3267,6 +3351,48 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setCartItems((prev) => prev.filter((item) => item.cartId !== cartId));
       }, []);
 
+      /** カート行の order から validateCartLineForm 用のコンテキストを組み立てる（一括確定時と同一ロジック） */
+      const buildCartLineContext = useCallback(
+        (order) => ({
+          ...orderFormContext,
+          orderKind: order.is_spot ? 'spot' : 'project',
+          selectedProjectId: String(order.project_id ?? order.projectId ?? '').trim(),
+          preferredFactoryId: String(order.preferred_factory_id ?? order.preferredFactoryId ?? '').trim(),
+          quantityM3: String(order.quantityM3 ?? '').trim(),
+          mixText: String(order.mixText ?? '').trim(),
+          timeSlot: String(order.timeSlot ?? '').trim(),
+          deliveryArea: String(order.deliveryArea ?? order.delivery_area ?? '').trim(),
+          siteAddressDetail: String(order.siteAddressDetail ?? order.site_address_detail ?? '').trim(),
+          siteAddress: String(order.siteAddress ?? '').trim(),
+          sitePhone: String(order.sitePhone ?? '').trim(),
+          contractorName: String(order.contractorName ?? '').trim(),
+          isLocationPending: Boolean(order.is_location_pending ?? order.isLocationPending),
+        }),
+        [orderFormContext],
+      );
+
+      const validateCartItemOrder = useCallback(
+        (order) => {
+          if (!order) return ['注文データ'];
+          const date = String(order.preferredDate ?? order.scheduleMatchDate ?? '').trim();
+          return validateCartLineForm(buildCartLineContext(order), date, {
+            today,
+            isPastPreferredDateTime,
+            isGuestSiteOrder,
+          });
+        },
+        [buildCartLineContext, today, isGuestSiteOrder],
+      );
+
+      const handleEditCartItem = useCallback((cartId, patch) => {
+        if (!cartId || !patch) return;
+        setCartItems((prev) =>
+          prev.map((item) =>
+            item.cartId === cartId ? { ...item, order: { ...(item.order || {}), ...patch } } : item,
+          ),
+        );
+      }, []);
+
       const handleCartBulkConfirm = useCallback(async () => {
         if (isSubmittingOrder) return;
         if (!cartItems.length) {
@@ -3284,22 +3410,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             return;
           }
           const date = String(order.preferredDate ?? order.scheduleMatchDate ?? '').trim();
-          const lineContext = {
-            ...orderFormContext,
-            orderKind: order.is_spot ? 'spot' : 'project',
-            selectedProjectId: String(order.project_id ?? order.projectId ?? '').trim(),
-            preferredFactoryId: String(order.preferred_factory_id ?? order.preferredFactoryId ?? '').trim(),
-            quantityM3: String(order.quantityM3 ?? '').trim(),
-            mixText: String(order.mixText ?? '').trim(),
-            timeSlot: String(order.timeSlot ?? '').trim(),
-            deliveryArea: String(order.deliveryArea ?? order.delivery_area ?? '').trim(),
-            siteAddressDetail: String(order.siteAddressDetail ?? order.site_address_detail ?? '').trim(),
-            siteAddress: String(order.siteAddress ?? '').trim(),
-            sitePhone: String(order.sitePhone ?? '').trim(),
-            contractorName: String(order.contractorName ?? '').trim(),
-            isLocationPending: Boolean(order.is_location_pending ?? order.isLocationPending),
-          };
-          const missing = validateCartLineForm(lineContext, date, {
+          const missing = validateCartLineForm(buildCartLineContext(order), date, {
             today,
             isPastPreferredDateTime,
             isGuestSiteOrder,
@@ -3415,7 +3526,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         currentCustomer,
         resetOrderForm,
         orderKind,
-        orderFormContext,
+        buildCartLineContext,
         today,
         isGuestSiteOrder,
         guestOrderToken,
@@ -4727,6 +4838,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 <OrderCartPreview
                   items={cartItems}
                   onRemove={handleRemoveFromCart}
+                  onEditItem={handleEditCartItem}
+                  validateItem={validateCartItemOrder}
                   onConfirmBulk={() => void handleCartBulkConfirm()}
                   bulkLoading={isSubmittingOrder}
                   siteAddressLabel={isGuestSiteOrder ? '物件住所' : '現場住所'}
@@ -4969,6 +5082,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 onSelectDate={setCustomerCalendarSelectedDate}
                 currentMonth={customerCalendarMonth}
                 escalationCtx={customerEscalationCtx}
+                projectById={projectById}
                 onMonthChange={(nextMonth) => {
                   const next = nextMonth instanceof Date && !Number.isNaN(nextMonth.getTime()) ? nextMonth : new Date();
                   const normalized = new Date(next.getFullYear(), next.getMonth(), 1);
