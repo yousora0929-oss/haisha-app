@@ -669,6 +669,39 @@ export async function updateFactoryPreferredTimeoutMinutes(factoryId, minutes) {
   return data;
 }
 
+const SELECTION_FREQUENCY_COLUMNS = new Set([
+  'contractor_customer_id',
+  'trading_agent_customer_id',
+]);
+
+/**
+ * ログイン中 customer の過去注文から、指定列の選択頻度を集計する。
+ * @param {{ customerId: string, column: 'contractor_customer_id' | 'trading_agent_customer_id' }} params
+ * @returns {Promise<Record<string, number>>} { [selectedCustomerId]: count }
+ */
+export async function fetchSelectionFrequency({ customerId, column }) {
+  const cid = String(customerId || '').trim();
+  const col = String(column || '').trim();
+  if (!cid || !SELECTION_FREQUENCY_COLUMNS.has(col)) return {};
+
+  // 全期間。必要列のみ SELECT（既存の顧客パネル RLS で自分の注文のみ見える）
+  const { data, error } = await supabase
+    .from('orders')
+    .select(col)
+    .eq('customer_id', cid)
+    .not(col, 'is', null);
+
+  if (error) throw error;
+
+  const counts = {};
+  for (const row of data || []) {
+    const id = String(row?.[col] ?? '').trim();
+    if (!id) continue;
+    counts[id] = (counts[id] || 0) + 1;
+  }
+  return counts;
+}
+
 export async function fetchOrdersWithChat() {
   const { data, error } = await supabase
     .from('orders')

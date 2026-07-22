@@ -43,7 +43,7 @@ import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
-import { customerSuggestTexts, organizationSuggestTexts, projectSuggestTexts } from './utils/masterSuggest.js';
+import { customerSuggestTexts, organizationSuggestTexts, projectSuggestTexts, sortCustomersByUsageFrequency } from './utils/masterSuggest.js';
 import {
   buildDispatchOrderForDate,
   validateCartLineForm,
@@ -1441,6 +1441,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [tradingAgentCustomerId, setTradingAgentCustomerId] = useState('');
       const [tradingAgentSearchText, setTradingAgentSearchText] = useState('');
       const [linkedContractorIds, setLinkedContractorIds] = useState([]);
+      const [contractorUsageCounts, setContractorUsageCounts] = useState({});
+      const [tradingAgentUsageCounts, setTradingAgentUsageCounts] = useState({});
       const [spotContractorOrgId, setSpotContractorOrgId] = useState('');
       const [projectSearchText, setProjectSearchText] = useState('');
       const [deliveryLat, setDeliveryLat] = useState('');
@@ -1664,14 +1666,54 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         };
       }, [contractorLinkAgentId]);
 
+      // 代理発注サジェスト用: 自分が過去に選んだ相手の利用頻度（失敗時は従来の並び順にフォールバック）
+      useEffect(() => {
+        let cancelled = false;
+        const cid = String(currentCustomerId || '').trim();
+        if (!cid || isGuestSiteOrder || !isAgentOrCooperative) {
+          setContractorUsageCounts({});
+          setTradingAgentUsageCounts({});
+          return undefined;
+        }
+        void (async () => {
+          try {
+            const [contractorCounts, tradingAgentCounts] = await Promise.all([
+              db.fetchSelectionFrequency({ customerId: cid, column: 'contractor_customer_id' }),
+              currentCustomerRole === 'cooperative'
+                ? db.fetchSelectionFrequency({ customerId: cid, column: 'trading_agent_customer_id' })
+                : Promise.resolve({}),
+            ]);
+            if (cancelled) return;
+            setContractorUsageCounts(contractorCounts || {});
+            setTradingAgentUsageCounts(tradingAgentCounts || {});
+          } catch (err) {
+            console.warn('[DispatchApp] selection frequency fetch failed', err);
+            if (!cancelled) {
+              setContractorUsageCounts({});
+              setTradingAgentUsageCounts({});
+            }
+          }
+        })();
+        return () => {
+          cancelled = true;
+        };
+      }, [currentCustomerId, currentCustomerRole, isAgentOrCooperative, isGuestSiteOrder]);
+
+      // リンクで絞り込み → その中で利用頻度順
       const proxyContractorItems = useMemo(() => {
         const all = (customers || []).filter((c) => (c.role ?? 'contractor') === 'contractor');
-        if (!contractorLinkAgentId || linkedContractorIds.length === 0) {
-          return all;
+        let filtered = all;
+        if (contractorLinkAgentId && linkedContractorIds.length > 0) {
+          const allowed = new Set(linkedContractorIds.map(String));
+          filtered = all.filter((c) => allowed.has(String(c.id)));
         }
-        const allowed = new Set(linkedContractorIds.map(String));
-        return all.filter((c) => allowed.has(String(c.id)));
-      }, [customers, contractorLinkAgentId, linkedContractorIds]);
+        return sortCustomersByUsageFrequency(filtered, contractorUsageCounts);
+      }, [customers, contractorLinkAgentId, linkedContractorIds, contractorUsageCounts]);
+
+      const tradingAgentItems = useMemo(() => {
+        const agents = (customers || []).filter((c) => (c.role ?? 'contractor') === 'agent');
+        return sortCustomersByUsageFrequency(agents, tradingAgentUsageCounts);
+      }, [customers, tradingAgentUsageCounts]);
 
       const tradingAgentFilterHint = useMemo(() => {
         if (!contractorLinkAgentId || linkedContractorIds.length === 0) return '';
@@ -3931,7 +3973,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         name="trading_agent_customer"
                         value={tradingAgentSearchText}
                         placeholder="商社担当者名を入力して候補から選択"
-                        items={(customers || []).filter((c) => (c.role ?? 'contractor') === 'agent')}
+                        items={tradingAgentItems}
                         getItemKey={(c) => String(c.id)}
                         getItemLabel={formatTradingAgentLabel}
                         getSearchTexts={(c) => [
@@ -3942,9 +3984,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         ]}
                         onValueChange={(text) => {
                           setTradingAgentSearchText(text);
-                          const hit = (customers || []).find(
+                          const hit = tradingAgentItems.find(
                             (c) =>
-                              (c.role ?? 'contractor') === 'agent' &&
                               formatTradingAgentLabel(c).toLowerCase() === text.trim().toLowerCase(),
                           );
                           if (hit) setTradingAgentCustomerId(String(hit.id));
