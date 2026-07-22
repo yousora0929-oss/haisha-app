@@ -2735,14 +2735,15 @@ function isUnreadForFactory(messages, readKey) {
         return null;
       };
       return (
-        <section className="grid gap-2 xl:grid-cols-[1fr_21rem]">
-          <div className="rounded-2xl border-2 border-slate-200 bg-white p-2.5 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-1.5">
+        <section className="grid min-h-0 gap-2 xl:h-full xl:grid-cols-[minmax(0,1fr)_20rem] xl:grid-rows-1">
+          <div className="flex min-h-[22rem] flex-col rounded-2xl border-2 border-slate-200 bg-white p-2 shadow-sm xl:min-h-0">
+            <div className="shrink-0">
+            <div className="flex flex-wrap items-center justify-between gap-1">
               <div>
-                <p className="text-xs font-black uppercase tracking-wider text-indigo-600">スケジュール設定</p>
-                <h2 className="text-lg font-black text-slate-900">{monthLabel}</h2>
+                <p className="text-[10px] font-black uppercase tracking-wider text-indigo-600">スケジュール設定</p>
+                <h2 className="text-base font-black leading-tight text-slate-900 sm:text-lg">{monthLabel}</h2>
               </div>
-              <div className="flex gap-1.5">
+              <div className="flex gap-1">
                 <button
                   type="button"
                   onClick={() => {
@@ -2750,7 +2751,7 @@ function isUnreadForFactory(messages, readKey) {
                     next.setMonth(next.getMonth() - 1);
                     onMonthChange(next);
                   }}
-                  className="min-h-[36px] rounded-lg border-2 border-slate-300 bg-white px-2.5 text-xs font-black text-slate-700"
+                  className="min-h-[32px] rounded-lg border-2 border-slate-300 bg-white px-2 text-xs font-black text-slate-700"
                 >
                   ◀ 前月
                 </button>
@@ -2761,15 +2762,15 @@ function isUnreadForFactory(messages, readKey) {
                     next.setMonth(next.getMonth() + 1);
                     onMonthChange(next);
                   }}
-                  className="min-h-[36px] rounded-lg border-2 border-slate-300 bg-white px-2.5 text-xs font-black text-slate-700"
+                  className="min-h-[32px] rounded-lg border-2 border-slate-300 bg-white px-2 text-xs font-black text-slate-700"
                 >
                   次月 ▶
                 </button>
               </div>
             </div>
 
-            <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50/90 p-2 dark:border-slate-600 dark:bg-slate-800/80">
-              <div className="flex flex-wrap items-stretch gap-1.5">
+            <div className="mt-1.5 rounded-xl border border-slate-200 bg-slate-50/90 p-1.5 dark:border-slate-600 dark:bg-slate-800/80">
+              <div className="flex flex-wrap items-stretch gap-1">
                 {SCHEDULE_STAMP_OPTIONS.map((opt) => {
                   const selected = activeStamp === opt.id;
                   return (
@@ -2779,7 +2780,7 @@ function isUnreadForFactory(messages, readKey) {
                       aria-pressed={selected}
                       onClick={() => toggleStamp(opt.id)}
                       className={
-                        'min-h-[44px] flex-1 basis-[5.5rem] rounded-lg border-2 px-2 py-2 text-xs font-black leading-tight transition active:scale-[0.98] sm:text-sm ' +
+                        'min-h-[40px] flex-1 basis-[5rem] rounded-lg border-2 px-1.5 py-1.5 text-[11px] font-black leading-tight transition active:scale-[0.98] sm:text-xs ' +
                         (selected ? opt.activeClass : opt.idleClass)
                       }
                     >
@@ -2792,7 +2793,7 @@ function isUnreadForFactory(messages, readKey) {
                   disabled={!stampUndoAvailable || typeof onStampUndo !== 'function'}
                   onClick={() => onStampUndo?.()}
                   className={
-                    'min-h-[44px] shrink-0 rounded-lg border-2 px-3 py-2 text-xs font-black transition sm:text-sm ' +
+                    'min-h-[40px] shrink-0 rounded-lg border-2 px-2.5 py-1.5 text-[11px] font-black transition sm:text-xs ' +
                     (stampUndoAvailable
                       ? 'border-amber-500 bg-amber-50 text-amber-950 hover:bg-amber-100 active:scale-[0.98] dark:border-amber-500 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/60'
                       : 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-500')
@@ -2802,20 +2803,21 @@ function isUnreadForFactory(messages, readKey) {
                 </button>
               </div>
               {activeStamp ? (
-                <p className="mt-1.5 text-[11px] font-bold leading-relaxed text-slate-600 dark:text-slate-300 sm:text-xs">
+                <p className="mt-1 text-[10px] font-bold leading-relaxed text-slate-600 dark:text-slate-300 sm:text-[11px]">
                   日付をタップまたはなぞって適用 · もう一度スタンプを押すと解除
                 </p>
               ) : null}
             </div>
 
-            <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[11px] font-black text-slate-500">
+            <div className="mt-1.5 grid grid-cols-7 gap-0.5 text-center text-[10px] font-black text-slate-500">
               {['日', '月', '火', '水', '木', '金', '土'].map((d) => (
-                <div key={d} className="rounded-lg bg-slate-100 py-1">{d}</div>
+                <div key={d} className="rounded-md bg-slate-100 py-0.5">{d}</div>
               ))}
+            </div>
             </div>
             <div
               ref={calendarGridRef}
-              className="mt-1.5 grid grid-cols-7 gap-1"
+              className="mt-1 grid min-h-0 flex-1 grid-cols-7 grid-rows-6 gap-0.5"
               style={{ touchAction: activeStamp ? 'none' : 'auto' }}
               onPointerDown={handleStampGridPointerDown}
               onPointerMove={handleStampGridPointerMove}
@@ -2841,7 +2843,7 @@ function isUnreadForFactory(messages, readKey) {
                       onSelectDate(day);
                     }}
                     className={
-                      'min-h-[4.8rem] rounded-lg border-2 p-1 text-left transition active:scale-[0.99] sm:min-h-[5.5rem] sm:p-1.5 ' +
+                      'flex h-full min-h-0 flex-col overflow-hidden rounded-lg border-2 p-0.5 text-left transition active:scale-[0.99] sm:p-1 ' +
                       (activeStamp && stampApplicable ? 'cursor-pointer hover:brightness-95 ' : '') +
                       (activeStamp && !stampApplicable ? 'opacity-40 ' : '') +
                       (active
@@ -2853,12 +2855,12 @@ function isUnreadForFactory(messages, readKey) {
                           : 'border-slate-100 bg-slate-50 opacity-45')
                     }
                   >
-                    <p className="text-xs font-black text-slate-600 dark:text-slate-300">{d.getDate()}</p>
-                    <div className="mt-1 space-y-0.5">
-                      {hasSpecialStatus ? <span className={'block rounded-md px-1.5 py-1 text-[10px] font-black ' + statusMeta.badgeClass}>{statusMeta.label}</span> : null}
+                    <p className="shrink-0 text-[11px] font-black leading-none text-slate-600 dark:text-slate-300">{d.getDate()}</p>
+                    <div className="mt-0.5 min-h-0 flex-1 space-y-0.5 overflow-hidden">
+                      {hasSpecialStatus ? <span className={'block truncate rounded-md px-1 py-0.5 text-[9px] font-black leading-tight ' + statusMeta.badgeClass}>{statusMeta.label}</span> : null}
                       {capacityMeta ? (
                         <span
-                          className={'block rounded-md px-1.5 py-1 text-[10px] font-black ' + capacityMeta.badgeClass}
+                          className={'block truncate rounded-md px-1 py-0.5 text-[9px] font-black leading-tight ' + capacityMeta.badgeClass}
                           title={capacityMeta.title || capacityMeta.label}
                         >
                           {capacityMeta.label}
@@ -2871,43 +2873,45 @@ function isUnreadForFactory(messages, readKey) {
             </div>
           </div>
 
-          <aside className="rounded-2xl border-2 border-slate-200 bg-white p-2.5 shadow-sm dark:border-slate-600 dark:bg-slate-800">
-            <p className="text-xs font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-300">選択中の日付</p>
-            <h3 className="text-base font-black text-slate-900 dark:text-slate-100">{selectedLabel}</h3>
-            <div className="mt-2 grid gap-2">
-              <label className="text-sm font-black text-slate-700 dark:text-slate-300">
+          <aside className="flex min-h-0 flex-col overflow-hidden rounded-2xl border-2 border-slate-200 bg-white p-2 shadow-sm dark:border-slate-600 dark:bg-slate-800 xl:max-h-full">
+            <div className="shrink-0">
+              <p className="text-[10px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-300">選択中の日付</p>
+              <h3 className="text-sm font-black leading-tight text-slate-900 dark:text-slate-100 sm:text-base">{selectedLabel}</h3>
+            </div>
+            <div className="mt-1.5 min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain pr-0.5">
+              <label className="block text-sm font-black text-slate-700 dark:text-slate-300">
                 工場の状況
                 <select
                   value={selectedFactoryStatus}
                   onChange={(e) => onFactoryStatusChange(e.target.value)}
-                  className="mt-1 min-h-[42px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-black text-slate-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-indigo-400 dark:focus:ring-indigo-800"
+                  className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-black text-slate-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-indigo-400 dark:focus:ring-indigo-800"
                 >
                   <option value="normal">通常営業</option>
                   <option value="stopped">休日</option>
                   <option value="maintenance">メンテナンス</option>
                 </select>
               </label>
-              <p className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-bold leading-relaxed text-slate-600 dark:border-slate-600 dark:bg-slate-900/50 dark:text-slate-300">
+              <p className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] font-bold leading-relaxed text-slate-600 dark:border-slate-600 dark:bg-slate-900/50 dark:text-slate-300">
                 選択すると左のカレンダーへ即時反映されます。
               </p>
-            </div>
-            <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 p-2 dark:border-slate-600 dark:bg-slate-900/50">
-              <p className="text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">選択日の受入枠</p>
-              <div className="mt-2">
-              <ScheduleBulkToolbar
-                selectedDate={selectedDate}
-                onFullDay={onFullDay}
-                onMorning={onMorning}
-                onAfternoon={onAfternoon}
-                onClearAll={onClearAll}
-                onFullDayLargeOnly={onFullDayLargeOnly}
-                onFullDaySmallOnly={onFullDaySmallOnly}
-              />
-              </div>
-              <div className="mt-2 grid grid-cols-2 gap-1.5">
-                {SCHEDULE_BLOCKS.map((bm) => (
-                  <ScheduleBlockCard key={bm.id} dateStr={selectedDate} blockMeta={bm} dayState={dayBlocks} onToggleVehicle={onToggleVehicle} />
-                ))}
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-2 dark:border-slate-600 dark:bg-slate-900/50">
+                <p className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">選択日の受入枠</p>
+                <div className="mt-1.5">
+                <ScheduleBulkToolbar
+                  selectedDate={selectedDate}
+                  onFullDay={onFullDay}
+                  onMorning={onMorning}
+                  onAfternoon={onAfternoon}
+                  onClearAll={onClearAll}
+                  onFullDayLargeOnly={onFullDayLargeOnly}
+                  onFullDaySmallOnly={onFullDaySmallOnly}
+                />
+                </div>
+                <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                  {SCHEDULE_BLOCKS.map((bm) => (
+                    <ScheduleBlockCard key={bm.id} dateStr={selectedDate} blockMeta={bm} dayState={dayBlocks} onToggleVehicle={onToggleVehicle} />
+                  ))}
+                </div>
               </div>
             </div>
           </aside>
@@ -3006,16 +3010,17 @@ function isUnreadForFactory(messages, readKey) {
         lastTapRef.current = { orderId: order.id, at: now };
       };
       return (
-        <section className="grid gap-2 lg:grid-cols-[1.35fr_0.9fr]">
-          <div className="rounded-2xl border-2 border-slate-200 bg-white p-2.5 shadow-sm">
-            <div className="flex items-center justify-between gap-3">
+        <section className="grid min-h-0 gap-2 lg:h-full lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.9fr)] lg:grid-rows-1">
+          <div className="flex min-h-[22rem] flex-col rounded-2xl border-2 border-slate-200 bg-white p-2 shadow-sm lg:min-h-0">
+            <div className="shrink-0">
+            <div className="flex items-center justify-between gap-2">
               <div>
-                <p className="text-xs font-black uppercase tracking-wider text-indigo-600">割当カレンダー</p>
-                <h2 className="text-lg font-black text-slate-900">月間配車予定</h2>
+                <p className="text-[10px] font-black uppercase tracking-wider text-indigo-600">割当カレンダー</p>
+                <h2 className="text-base font-black leading-tight text-slate-900 sm:text-lg">月間配車予定</h2>
               </div>
-              <span className="rounded-full bg-slate-900 px-3 py-1 text-xs font-black text-white">{selectedOrders.length}件</span>
+              <span className="rounded-full bg-slate-900 px-2.5 py-0.5 text-[11px] font-black text-white">{selectedOrders.length}件</span>
             </div>
-            <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 p-1.5">
+            <div className="mt-1.5 flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 p-1">
               <button
                 type="button"
                 onClick={() => {
@@ -3023,11 +3028,11 @@ function isUnreadForFactory(messages, readKey) {
                   next.setMonth(next.getMonth() - 1);
                   onMonthChange(next);
                 }}
-                className="min-h-[36px] rounded-lg border-2 border-slate-300 bg-white px-2.5 text-xs font-black text-slate-700 shadow-sm"
+                className="min-h-[32px] rounded-lg border-2 border-slate-300 bg-white px-2 text-xs font-black text-slate-700 shadow-sm"
               >
                 ◀ 前月
               </button>
-              <p className="text-base font-black text-slate-900">{monthLabel}</p>
+              <p className="text-sm font-black text-slate-900 sm:text-base">{monthLabel}</p>
               <button
                 type="button"
                 onClick={() => {
@@ -3035,17 +3040,18 @@ function isUnreadForFactory(messages, readKey) {
                   next.setMonth(next.getMonth() + 1);
                   onMonthChange(next);
                 }}
-                className="min-h-[36px] rounded-lg border-2 border-slate-300 bg-white px-2.5 text-xs font-black text-slate-700 shadow-sm"
+                className="min-h-[32px] rounded-lg border-2 border-slate-300 bg-white px-2 text-xs font-black text-slate-700 shadow-sm"
               >
                 次月 ▶
               </button>
             </div>
-            <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[11px] font-black text-slate-500">
+            <div className="mt-1.5 grid grid-cols-7 gap-0.5 text-center text-[10px] font-black text-slate-500">
               {['日', '月', '火', '水', '木', '金', '土'].map((d) => (
-                <div key={d} className="rounded-lg bg-slate-100 py-1">{d}</div>
+                <div key={d} className="rounded-md bg-slate-100 py-0.5">{d}</div>
               ))}
             </div>
-            <div className="mt-1.5 grid grid-cols-7 gap-1">
+            </div>
+            <div className="mt-1 grid min-h-0 flex-1 grid-cols-7 grid-rows-6 gap-0.5">
               {days.map((day) => {
                 const list = ordersByDate[day] || [];
                 const active = day === selectedDate;
@@ -3057,7 +3063,7 @@ function isUnreadForFactory(messages, readKey) {
                     type="button"
                     onClick={() => onSelectDate(day)}
                     className={
-                      'min-h-[4.8rem] rounded-lg border-2 p-1 text-left transition active:scale-[0.99] sm:min-h-[5.5rem] sm:p-1.5 ' +
+                      'flex h-full min-h-0 flex-col overflow-hidden rounded-lg border-2 p-0.5 text-left transition active:scale-[0.99] sm:p-1 ' +
                       (active
                         ? 'border-indigo-600 bg-indigo-50 ring-2 ring-indigo-200'
                         : inMonth
@@ -3065,33 +3071,35 @@ function isUnreadForFactory(messages, readKey) {
                           : 'border-slate-100 bg-slate-50 opacity-45')
                     }
                   >
-                    <p className="text-xs font-black text-slate-500">{d.getDate()}</p>
-                    <div className="mt-1 space-y-0.5">
+                    <p className="shrink-0 text-[11px] font-black leading-none text-slate-500">{d.getDate()}</p>
+                    <div className="mt-0.5 min-h-0 flex-1 space-y-0.5 overflow-hidden">
                       {list.slice(0, 3).map((order) => {
                         const party = orderPartyInfo(order, { preferSiteContact: true });
                         return (
-                          <span key={order.id} className={'block truncate rounded-md px-1.5 py-0.5 text-[10px] font-black ' + getOrderKindClass(order)}>
+                          <span key={order.id} className={'block truncate rounded-md px-1 py-0.5 text-[9px] font-black leading-tight ' + getOrderKindClass(order)}>
                             {party.site || '現場未設定'}: {factoryOrderQuantity(order)}㎡
                             {isLocationPendingOrder(order) ? ' ⚠️' : ''}
                           </span>
                         );
                       })}
-                      {list.length > 3 ? <span className="block text-[11px] font-black text-indigo-700">+{list.length - 3}件</span> : null}
+                      {list.length > 3 ? <span className="block text-[10px] font-black text-indigo-700">+{list.length - 3}件</span> : null}
                     </div>
                   </button>
                 );
               })}
             </div>
           </div>
-          <aside className="rounded-2xl border-2 border-slate-200 bg-white p-2.5 shadow-sm">
-            <p className="text-xs font-black uppercase tracking-wider text-indigo-600">日別タイムスケジュール</p>
-            <h3 className="text-base font-black text-slate-900">{selectedDate.replace(/-/g, '/')}</h3>
+          <aside className="flex min-h-0 flex-col overflow-hidden rounded-2xl border-2 border-slate-200 bg-white p-2 shadow-sm lg:max-h-full">
+            <div className="shrink-0">
+              <p className="text-[10px] font-black uppercase tracking-wider text-indigo-600">日別タイムスケジュール</p>
+              <h3 className="text-sm font-black leading-tight text-slate-900 sm:text-base">{selectedDate.replace(/-/g, '/')}</h3>
+            </div>
             {selectedOrders.length === 0 ? (
               <p className="mt-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-5 text-center text-sm font-bold text-slate-500">
                 この日の割当はありません
               </p>
             ) : (
-              <ol className="mt-2 space-y-2">
+              <ol className="mt-1.5 min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain pr-0.5">
                 {selectedOrders.map((order) => {
                   const party = orderPartyInfo(order, { preferSiteContact: true });
                   return (
@@ -3099,15 +3107,15 @@ function isUnreadForFactory(messages, readKey) {
                       key={order.id}
                       onDoubleClick={() => openOrder(order)}
                       onTouchEnd={() => handleOrderTouchEnd(order)}
-                      className="cursor-pointer rounded-xl border border-slate-200 bg-slate-50 p-2.5 transition-all hover:-translate-y-0.5 hover:scale-[1.01] hover:border-indigo-300 hover:bg-indigo-50 hover:shadow-md active:scale-[0.99]"
+                      className="cursor-pointer rounded-xl border border-slate-200 bg-slate-50 p-2 transition-all hover:-translate-y-0.5 hover:scale-[1.01] hover:border-indigo-300 hover:bg-indigo-50 hover:shadow-md active:scale-[0.99]"
                       title="ダブルタップで注文詳細へ移動"
                     >
                       <p className="text-sm font-black text-slate-900">{getOrderTimeDisplay(order)} ・ {party.site || '現場未設定'}</p>
-                      <p className="mt-1 text-xs font-bold text-slate-600">{party.contractor} / {factoryOrderQuantity(order)}㎡ / {order.mixText || order.confirmedMixText || '配合未入力'}</p>
+                      <p className="mt-0.5 text-xs font-bold text-slate-600">{party.contractor} / {factoryOrderQuantity(order)}㎡ / {order.mixText || order.confirmedMixText || '配合未入力'}</p>
                       <div className="mt-1">
                         <LocationPendingBadge order={order} />
                       </div>
-                      <p className="mt-2 text-[10px] font-black text-indigo-600">ダブルタップで注文詳細へ</p>
+                      <p className="mt-1.5 text-[10px] font-black text-indigo-600">ダブルタップで注文詳細へ</p>
                     </li>
                   );
                 })}
@@ -4812,8 +4820,18 @@ function isUnreadForFactory(messages, readKey) {
           <PullToRefresh
             onRefresh={handleFactoryRefresh}
             suspended={Boolean(activeStamp)}
-            className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 py-1"
-          >            <div className="mx-auto grid max-w-6xl gap-2">
+            className={
+              activeTab === 'calendar'
+                ? 'flex min-h-0 flex-1 flex-col overflow-hidden px-2 py-0.5'
+                : 'min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 py-1'
+            }
+          >            <div
+              className={
+                activeTab === 'calendar'
+                  ? 'mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col'
+                  : 'mx-auto grid max-w-6xl gap-2'
+              }
+            >
               {activeTab === 'news' ? (
                 <div className="py-2 sm:py-4">
                   <FactoryNewsPanel
@@ -4878,8 +4896,8 @@ function isUnreadForFactory(messages, readKey) {
                 </div>
               ) : null}
               {activeTab === 'calendar' ? (
-                <div>
-                  <div className="mb-3 flex gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-slate-100 p-1 dark:border-slate-600 dark:bg-slate-800">
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <div className="mb-1.5 flex shrink-0 gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-slate-100 p-0.5 dark:border-slate-600 dark:bg-slate-800">
                     {[
                       ['capacity', '受入枠設定'],
                       ['orders', '注文'],
@@ -4890,7 +4908,7 @@ function isUnreadForFactory(messages, readKey) {
                         type="button"
                         onClick={() => setCalendarMode(mode)}
                         className={
-                          'min-h-[40px] shrink-0 rounded-lg px-4 text-sm font-black transition ' +
+                          'min-h-[36px] shrink-0 rounded-lg px-3 text-xs font-black transition sm:px-4 sm:text-sm ' +
                           (calendarMode === mode
                             ? 'bg-white text-indigo-700 shadow-sm dark:bg-slate-900 dark:text-indigo-300'
                             : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100')
@@ -4901,6 +4919,7 @@ function isUnreadForFactory(messages, readKey) {
                     ))}
                   </div>
 
+                  <div className="min-h-0 flex-1 overflow-y-auto xl:overflow-hidden">
                   {calendarMode === 'capacity' ? (
                     <FactoryScheduleSettings
                       selectedDate={selectedDate}
@@ -4946,6 +4965,7 @@ function isUnreadForFactory(messages, readKey) {
                   {calendarMode === 'charterRequests' ? (
                     <FactoryCharterRequestCalendar factoryId={activeFactoryId} />
                   ) : null}
+                  </div>
                 </div>
               ) : null}
               {activeTab === 'history' ? (
