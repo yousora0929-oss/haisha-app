@@ -6,7 +6,10 @@ import {
 } from './orderContactInfo.js';
 import { formatPhoneNumberJP } from './phoneFormat.js';
 
-/** 帳票・一覧用の業者名（order_data.contractorName 優先、なければログイン業者名） */
+/**
+ * 帳票・一覧用の業者名。
+ * contractor_*（納品責任業者）を優先し、未設定時のみ customerName（発注者）へフォールバック。
+ */
 export function resolveOrderContractorDisplayName(order) {
   return String(
     order?.contractorName ??
@@ -16,6 +19,11 @@ export function resolveOrderContractorDisplayName(order) {
       order?.customer_name ??
       '',
   ).trim();
+}
+
+/** 発注者名（orders.customer_id 側。業者名と混同しない） */
+export function resolveOrderOrdererDisplayName(order) {
+  return String(order?.customerName ?? order?.customer_name ?? '').trim();
 }
 
 export function resolveOrderTradingCompanyDisplayName(order) {
@@ -38,6 +46,7 @@ export function resolveOrderTradingCompanyDisplayName(order) {
 export function orderPartyInfo(order, { preferSiteContact = false } = {}) {
   const tradingCompany = resolveOrderTradingCompanyDisplayName(order);
   const contractor = resolveOrderContractorDisplayName(order);
+  const orderer = resolveOrderOrdererDisplayName(order);
   const site = resolveOrderSiteDisplayName(order);
   const orderedBy = preferSiteContact
     ? resolveSiteContactName(order)
@@ -46,6 +55,8 @@ export function orderPartyInfo(order, { preferSiteContact = false } = {}) {
   const phone = formatPhoneNumberJP(phoneRaw);
   return {
     contractor: tradingCompany && contractor ? `${contractor} (商社: ${tradingCompany})` : contractor || '—',
+    /** 発注者（customer_id）。チャット相手表示などに使用。業者(contractor)とは別 */
+    orderer: orderer || '—',
     site: site || '—',
     orderedBy: orderedBy || '—',
     phone: phone || '—',

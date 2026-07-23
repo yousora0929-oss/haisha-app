@@ -2431,6 +2431,7 @@ function OrdersMonitorSection({
   const [adminName, setAdminName] = useState('管理者');
   /** 受注ボタン押下後の工場選択ドラフト { orderId, factoryId } */
   const [acceptDraft, setAcceptDraft] = useState(null);
+  const [ordersSearchQuery, setOrdersSearchQuery] = useState('');
 
   const load = useCallback(async () => {
     setError('');
@@ -2590,6 +2591,31 @@ function OrdersMonitorSection({
   const acceptedCount = visibleOrders.filter((o) => orderStatus(o) === 'accepted').length;
   const completedCount = visibleOrders.filter((o) => orderStatus(o) === 'completed').length;
   const cancelledCount = visibleOrders.filter((o) => orderStatus(o) === 'customer_cancelled').length;
+
+  /** 注文一覧テーブル／CSV用（集計カードは visibleOrders のまま） */
+  const filteredVisibleOrders = useMemo(() => {
+    const q = String(ordersSearchQuery || '')
+      .normalize('NFKC')
+      .toLowerCase()
+      .trim();
+    if (!q) return visibleOrders;
+    return visibleOrders.filter((o) => {
+      const party = orderPartyInfo(o, { preferSiteContact: true });
+      const haystack = [
+        resolveOrderPlacerLabel(o),
+        party.contractor,
+        party.site,
+        o?.id,
+      ]
+        .map((v) =>
+          String(v ?? '')
+            .normalize('NFKC')
+            .toLowerCase(),
+        )
+        .join('\n');
+      return haystack.includes(q);
+    });
+  }, [visibleOrders, ordersSearchQuery, resolveOrderPlacerLabel]);
 
   const handleSaveEdit = async (orderId, patch) => {
     setSavingEdit(true);
@@ -2772,7 +2798,7 @@ function OrdersMonitorSection({
   const handleDownloadOrdersCsv = () => {
     const rows = [
       ['注文ID', 'ステータス', '希望日', '希望時刻', '種別', '業者', '現場名', '担当者', '連絡先', '受注工場', '数量', '配合'],
-      ...visibleOrders.map((o) => {
+      ...filteredVisibleOrders.map((o) => {
         const fid = String(o.factory_site_id || '').trim();
         const party = orderPartyInfo(o, { preferSiteContact: true });
         return [
@@ -2916,7 +2942,27 @@ function OrdersMonitorSection({
       ) : null}
 
       {!loading && activeMonitorTab === 'orders' ? (
-        <div className="mt-4 overflow-x-auto">
+        <div className="mt-4">
+          <div className="mb-3">
+            <label htmlFor="orders-monitor-search" className="sr-only">
+              注文検索
+            </label>
+            <input
+              id="orders-monitor-search"
+              type="search"
+              value={ordersSearchQuery}
+              onChange={(e) => setOrdersSearchQuery(e.target.value)}
+              placeholder="発注者・業者・現場名・注文IDで検索"
+              className="min-h-[44px] w-full max-w-xl rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-800 shadow-inner outline-none placeholder:text-slate-400 focus:border-sky-300 focus:ring-2 focus:ring-sky-200/80 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500"
+              autoComplete="off"
+            />
+            {String(ordersSearchQuery || '').trim() ? (
+              <p className="mt-1.5 text-xs font-bold text-slate-500">
+                検索結果 {filteredVisibleOrders.length} / {visibleOrders.length} 件
+              </p>
+            ) : null}
+          </div>
+          <div className="overflow-x-auto">
           <table className="w-full min-w-[1500px] border-collapse text-left text-sm">
             <thead>
               <tr className="border-b-2 border-slate-200 bg-slate-50 dark:border-slate-600 dark:bg-slate-900">
@@ -2938,8 +2984,12 @@ function OrdersMonitorSection({
                 <tr>
                   <td colSpan={11} className="px-3 py-8 text-center text-slate-500">注文はありません。</td>
                 </tr>
+              ) : filteredVisibleOrders.length === 0 ? (
+                <tr>
+                  <td colSpan={11} className="px-3 py-8 text-center text-slate-500">該当する注文が見つかりません</td>
+                </tr>
               ) : (
-                visibleOrders.map((o) => {
+                filteredVisibleOrders.map((o) => {
                   const st = orderStatus(o);
                   const fid = String(o.factory_site_id || '').trim();
                   const party = orderPartyInfo(o, { preferSiteContact: true });
@@ -3074,6 +3124,7 @@ function OrdersMonitorSection({
               )}
             </tbody>
           </table>
+          </div>
         </div>
       ) : null}
 

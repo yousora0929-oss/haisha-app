@@ -462,7 +462,12 @@ function isUnreadForFactory(messages, readKey) {
     function FactoryOrderChatPanel({ order, orderId, messages, factoryName, onAfterSend }) {
       const [txt, setTxt] = useState('');
       const list = Array.isArray(messages) ? messages : [];
-      const customerSenderName = orderContactPersonName(order);
+      // 顧客側メッセージの表示名は発注者（customer_id）。業者名や現場担当者と混同しない。
+      const partyForChat = orderPartyInfo(order);
+      const customerSenderName =
+        partyForChat.orderer && partyForChat.orderer !== '—'
+          ? partyForChat.orderer
+          : orderContactPersonName(order);
       // 注意: ここで scrollIntoView 等の自動スクロールを行わないこと。
       // チャットパネルは折りたたみ中のカードにもマウントされており、
       // ポーリング/Realtime 更新のたびに一覧全体が末尾へスクロールする不具合の原因になった。
