@@ -2420,6 +2420,7 @@ function OrdersMonitorSection({
   const [savingAssociation, setSavingAssociation] = useState(false);
   const [savingReassign, setSavingReassign] = useState(false);
   const [projects, setProjects] = useState([]);
+  const [customers, setCustomers] = useState([]);
   const [holidays, setHolidays] = useState([]);
   const [systemSettings, setSystemSettings] = useState({});
   const [escalationStepsByFactoryId, setEscalationStepsByFactoryId] = useState({});
@@ -2428,14 +2429,17 @@ function OrdersMonitorSection({
   const [monthlyVolumeByFactory, setMonthlyVolumeByFactory] = useState({});
   const [chatThreads, setChatThreads] = useState({});
   const [adminName, setAdminName] = useState('管理者');
+  /** 受注ボタン押下後の工場選択ドラフト { orderId, factoryId } */
+  const [acceptDraft, setAcceptDraft] = useState(null);
 
   const load = useCallback(async () => {
     setError('');
     try {
-      const [{ orders: rows, chatThreads: threads }, projs, hols, settings, escalationSteps, adminSettings, poolSize, smallVehicleInfo, monthlyVolumes] =
+      const [{ orders: rows, chatThreads: threads }, projs, custs, hols, settings, escalationSteps, adminSettings, poolSize, smallVehicleInfo, monthlyVolumes] =
         await Promise.all([
         db.fetchOrdersWithChat(),
         db.fetchProjects(),
+        db.fetchCustomers(),
         db.fetchHolidays(),
         db.fetchSystemSettings(),
         db.fetchEscalationSteps(),
@@ -2456,6 +2460,7 @@ function OrdersMonitorSection({
       setOrders(rows);
       setChatThreads(threads || {});
       setProjects(projs);
+      setCustomers(Array.isArray(custs) ? custs : []);
       setHolidays(hols);
       setSystemSettings(settings || {});
       setEscalationStepsByFactoryId(escalationSteps || {});
@@ -2471,6 +2476,30 @@ function OrdersMonitorSection({
     }
   }, []);
 
+  /** customer_id → 表示名（会社名。担当者名があれば併記） */
+  const customerNameById = useMemo(() => {
+    const map = {};
+    for (const c of customers || []) {
+      const id = String(c?.id || '').trim();
+      if (!id) continue;
+      const company = String(c.company_name || c.name || '').trim();
+      const manager = String(c.manager_name || '').trim();
+      map[id] = company && manager ? `${company}（${manager}）` : company || manager || id;
+    }
+    return map;
+  }, [customers]);
+
+  const resolveOrderPlacerLabel = useCallback(
+    (order) => {
+      const cid = String(order?.customer_id || order?.customerId || '').trim();
+      if (cid && customerNameById[cid]) return customerNameById[cid];
+      // fetchOrdersWithChat が付与する customerName（company_name）をフォールバック
+      const fallback = String(order?.customerName || order?.customer_name || '').trim();
+      return fallback || '—';
+    },
+    [customerNameById],
+  );
+
   const escalationCtx = useMemo(
     () =>
       buildOrderVisibilityContext(
@@ -2481,11 +2510,11 @@ function OrdersMonitorSection({
         holidays,
         new Date(),
         escalationStepsByFactoryId,
-        [],
+        customers,
         factorySmallVehicleInfo,
         monthlyVolumeByFactory,
       ),
-    [orders, factories, projects, systemSettings, holidays, escalationStepsByFactoryId, nearPoolSize, factorySmallVehicleInfo, monthlyVolumeByFactory],
+    [orders, factories, projects, systemSettings, holidays, escalationStepsByFactoryId, customers, nearPoolSize, factorySmallVehicleInfo, monthlyVolumeByFactory],
   );
 
   useEffect(() => {
@@ -2678,6 +2707,68 @@ function OrdersMonitorSection({
     }
   };
 
+  const resolveDefaultAcceptFactoryId = useCallback(
+    (order) => {
+      const existing = String(order?.factory_site_id || order?.factorySiteId || '').trim();
+      if (existing) return existing;
+      const projectId = String(order?.project_id || order?.projectId || '').trim();
+      const project = projectId
+        ? (projects || []).find((p) => p && String(p.id) === projectId)
+        : null;
+      const mainFactoryId = String(project?.main_factory_id || '').trim();
+      if (mainFactoryId) return mainFactoryId;
+      const preferred = String(order?.preferred_factory_id || order?.preferredFactoryId || '').trim();
+      if (preferred) return preferred;
+      return String(factories?.[0]?.id || '').trim();
+    },
+    [projects, factories],
+  );
+
+  const beginAcceptWithFactory = (order) => {
+    if (!order?.id) return;
+    setAcceptDraft({
+      orderId: String(order.id),
+      factoryId: resolveDefaultAcceptFactoryId(order),
+    });
+  };
+
+  const cancelAcceptWithFactory = () => {
+    setAcceptDraft(null);
+  };
+
+  const handleAcceptOrderWithFactory = async (order, factoryId) => {
+    if (!order?.id) return;
+    const fid = String(factoryId || '').trim();
+    if (!fid) {
+      setError('受注工場を選択してください。');
+      return;
+    }
+    const factoryName = factoryNameById[fid] || fid;
+    setError('');
+    try {
+      const now = new Date().toISOString();
+      const patch = {
+        status: 'accepted',
+        factory_site_id: fid,
+        factorySiteId: fid,
+        factoryResponseStatus: 'accepted',
+        factoryResponseLocked: true,
+        factoryPendingStartedAt: undefined,
+        factoryPendingByName: undefined,
+        accepted_at: now,
+        acceptedAt: now,
+        acceptedFactoryLabel: `受注工場：${factoryName}`,
+        factorySiteName: factoryName,
+      };
+      const updated = await db.adminUpdateOrder(order.id, patch);
+      if (updated) setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === order.id ? updated : o)) : prev));
+      setAcceptDraft(null);
+    } catch (e) {
+      console.error(e);
+      setError('受注（工場指定）に失敗しました。');
+    }
+  };
+
   const handleDownloadOrdersCsv = () => {
     const rows = [
       ['注文ID', 'ステータス', '希望日', '希望時刻', '種別', '業者', '現場名', '担当者', '連絡先', '受注工場', '数量', '配合'],
@@ -2838,7 +2929,7 @@ function OrdersMonitorSection({
                 <th className="px-3 py-2 font-black text-slate-700">公開範囲</th>
                 <th className="px-3 py-2 font-black text-slate-700">status</th>
                 <th className="px-3 py-2 font-black text-slate-700">受注工場</th>
-                <th className="px-3 py-2 font-black text-slate-700">注文ID</th>
+                <th className="px-3 py-2 font-black text-slate-700">発注者</th>
                 <th className="px-3 py-2 font-black text-slate-700">操作</th>
               </tr>
             </thead>
@@ -2852,6 +2943,8 @@ function OrdersMonitorSection({
                   const st = orderStatus(o);
                   const fid = String(o.factory_site_id || '').trim();
                   const party = orderPartyInfo(o, { preferSiteContact: true });
+                  const placerLabel = resolveOrderPlacerLabel(o);
+                  const isAcceptingThis = acceptDraft?.orderId === String(o.id);
                   return (
                     <tr key={o.id} className="border-b border-slate-100 hover:bg-slate-50/80">
                       <td className="px-3 py-2.5">
@@ -2880,7 +2973,12 @@ function OrdersMonitorSection({
                         </div>
                       </td>
                       <td className="px-3 py-2.5 font-bold text-slate-700">{fid ? factoryNameById[fid] || fid : '—'}</td>
-                      <td className="max-w-[14rem] break-all px-3 py-2.5 font-mono text-xs text-slate-500" title={String(o.id || '')}>{o.id}</td>
+                      <td
+                        className="max-w-[14rem] break-words px-3 py-2.5 text-sm font-bold text-slate-800"
+                        title={String(o.id || '')}
+                      >
+                        {placerLabel}
+                      </td>
                       <td className="px-3 py-2.5">
                         <div className="flex flex-wrap gap-1">
                           {st === 'pending_association' ? (
@@ -2892,22 +2990,71 @@ function OrdersMonitorSection({
                               工場指定で承認
                             </button>
                           ) : null}
+                          {isAcceptingThis ? (
+                            <div className="flex w-full min-w-[14rem] flex-col gap-1 rounded-lg border border-emerald-300 bg-emerald-50 p-1.5 dark:border-emerald-700 dark:bg-emerald-950/40">
+                              <label className="text-[10px] font-black text-emerald-900 dark:text-emerald-200">
+                                受注工場
+                                <select
+                                  value={acceptDraft.factoryId || ''}
+                                  onChange={(e) =>
+                                    setAcceptDraft((prev) =>
+                                      prev ? { ...prev, factoryId: e.target.value } : prev,
+                                    )
+                                  }
+                                  className="mt-0.5 min-h-[32px] w-full rounded border border-emerald-400 bg-white px-1.5 text-xs font-bold text-slate-900 dark:border-emerald-600 dark:bg-slate-900 dark:text-slate-100"
+                                >
+                                  <option value="">選択してください</option>
+                                  {(factories || []).map((f) => (
+                                    <option key={f.id} value={f.id}>
+                                      {f.name || f.id}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <div className="flex flex-wrap gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => void handleAcceptOrderWithFactory(o, acceptDraft.factoryId)}
+                                  disabled={!String(acceptDraft.factoryId || '').trim()}
+                                  className="rounded border border-emerald-600 bg-emerald-600 px-2 py-1 text-xs font-black text-white hover:bg-emerald-700 disabled:cursor-default disabled:opacity-40"
+                                >
+                                  確定
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={cancelAcceptWithFactory}
+                                  className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-black text-slate-700 hover:bg-slate-100"
+                                >
+                                  キャンセル
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
                           {[
                             ['pending', '配車待ち'],
                             ['accepted', '受注'],
                             ['completed', '完了'],
                             ['customer_cancelled', 'キャンセル'],
-                          ].map(([nextStatus, label]) => (
-                            <button
-                              key={nextStatus}
-                              type="button"
-                              disabled={st === nextStatus}
-                              onClick={() => handleChangeOrderStatus(o, nextStatus)}
-                              className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-black text-slate-700 hover:bg-gray-100 disabled:cursor-default disabled:bg-slate-100 disabled:text-slate-400"
-                            >
-                              {label}
-                            </button>
-                          ))}
+                          ].map(([nextStatus, label]) => {
+                            if (nextStatus === 'accepted' && isAcceptingThis) return null;
+                            return (
+                              <button
+                                key={nextStatus}
+                                type="button"
+                                disabled={st === nextStatus}
+                                onClick={() => {
+                                  if (nextStatus === 'accepted') {
+                                    beginAcceptWithFactory(o);
+                                    return;
+                                  }
+                                  void handleChangeOrderStatus(o, nextStatus);
+                                }}
+                                className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-black text-slate-700 hover:bg-gray-100 disabled:cursor-default disabled:bg-slate-100 disabled:text-slate-400"
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
                           {String(o.factory_consult_status || '').trim() === 'consulting' ? (
                             <button
                               type="button"
