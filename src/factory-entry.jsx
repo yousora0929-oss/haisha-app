@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { FactoryApp } from './FactoryApp.jsx';
 import { ThemeProvider } from './components/ThemeProvider.jsx';
+import AppUpdateBanner from './components/AppUpdateBanner.jsx';
 import './theme.css';
 import { initTheme } from './utils/theme.js';
 import { initOneSignal, setupNotificationClickRedirect } from './utils/notification.js';
@@ -19,6 +20,7 @@ if (!rootEl) {
 createRoot(rootEl).render(
   <React.StrictMode>
     <ThemeProvider>
+      <AppUpdateBanner />
       <FactoryApp />
     </ThemeProvider>
   </React.StrictMode>,

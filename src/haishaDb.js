@@ -4127,23 +4127,18 @@ export async function saveEscalationSteps(factoryId, stepsArray) {
 }
 
 /**
- * 全工場の月次出荷量を factory_escalation_steps から取得
+ * 全工場の月次出荷量を SECURITY DEFINER RPC 経由で取得
+ * （customer ロールは factory_escalation_steps に SELECT できないため直接 select 不可）
  * 戻り値: { [factoryId: string]: number }  (未設定は 0)
  */
 export async function fetchMonthlyVolumeByFactory() {
-  const { data, error } = await supabase
-    .from('factory_escalation_steps')
-    .select('factory_id, monthly_volume_m3')
-    .order('step_number', { ascending: true });
+  const { data, error } = await supabase.rpc('get_factory_monthly_volume');
   if (error) throw error;
   const out = {};
   for (const row of data || []) {
     const fid = String(row.factory_id || '').trim();
     if (!fid) continue;
-    // factory_id ごとに最初に現れた値を採用（step_number最小）
-    if (out[fid] === undefined) {
-      out[fid] = row.monthly_volume_m3 != null ? Number(row.monthly_volume_m3) : 0;
-    }
+    out[fid] = row.monthly_volume_m3 != null ? Number(row.monthly_volume_m3) : 0;
   }
   return out;
 }
@@ -4315,6 +4310,46 @@ export async function saveNearPoolSize(size) {
     .upsert({ id: 1, near_pool_size: n, updated_at: new Date().toISOString() });
   if (error) throw error;
   return n;
+}
+
+/**
+ * アプリ配信バージョン管理を取得
+ * @returns {Promise<{ min_version: string, force_reload_at: string|null, message: string|null, updated_at?: string }|null>}
+ */
+export async function fetchAppReleaseControl() {
+  const { data, error } = await supabase
+    .from('app_release_control')
+    .select('min_version, force_reload_at, message, updated_at')
+    .eq('id', 1)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+/**
+ * アプリ配信バージョン管理を保存
+ * @param {{ min_version?: string, force_reload_at?: string|null, message?: string|null }} patch
+ */
+export async function saveAppReleaseControl(patch = {}) {
+  const row = {
+    id: 1,
+    updated_at: new Date().toISOString(),
+  };
+  if (patch.min_version != null) row.min_version = String(patch.min_version);
+  if ('force_reload_at' in patch) {
+    row.force_reload_at = patch.force_reload_at ? String(patch.force_reload_at) : null;
+  }
+  if ('message' in patch) {
+    row.message = patch.message != null ? String(patch.message) : null;
+  }
+  const { data, error } = await supabase
+    .from('app_release_control')
+    .update(row)
+    .eq('id', 1)
+    .select('min_version, force_reload_at, message, updated_at')
+    .maybeSingle();
+  if (error) throw error;
+  return data;
 }
 
 /**

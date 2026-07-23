@@ -683,6 +683,19 @@ export function rankFactoryIdsByDistance(
     factorySmallVehicleInfo,
   );
 
+  if (typeof console !== 'undefined' && typeof console.log === 'function') {
+    const missingCoordsCount = eligibleForRank.filter(
+      (f) => !Number.isFinite(Number(f.latitude)) || !Number.isFinite(Number(f.longitude)),
+    ).length;
+    console.log('【Escalation Debug】DISTANCE 座標確認', {
+      siteCoordsPresent: Boolean(siteCoords),
+      siteCoords,
+      工場数: eligibleForRank.length,
+      座標欠落工場数: missingCoordsCount,
+      出荷量マップ件数: Object.keys(monthlyVolumeByFactory || {}).length,
+    });
+  }
+
   const items = eligibleForRank
     .map((f) => {
       const id = f?.id != null ? String(f.id) : '';

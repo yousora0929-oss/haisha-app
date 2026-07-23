@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { AdminApp } from './AdminApp.jsx';
 import { ThemeProvider } from './components/ThemeProvider.jsx';
+import AppUpdateBanner from './components/AppUpdateBanner.jsx';
 import './theme.css';
 import { initTheme } from './utils/theme.js';
 import { restoreMapEditorPanelAuthFromStorage } from './supabaseClient.js';
@@ -17,6 +18,7 @@ if (!rootEl) {
 createRoot(rootEl).render(
   <React.StrictMode>
     <ThemeProvider>
+      <AppUpdateBanner />
       <AdminApp />
     </ThemeProvider>
   </React.StrictMode>,

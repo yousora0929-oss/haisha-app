@@ -18,6 +18,8 @@ import { OrderVisibilityScopePanel } from './components/OrderVisibilityScopePane
 import { OrderVisibilityScopeBadge } from './components/OrderVisibilityScopeBadge.jsx';
 import { AssociationOrderApproveModal } from './components/AssociationOrderApproveModal.jsx';
 import { OrderFactoryAssignmentForm } from './components/OrderFactoryAssignmentForm.jsx';
+import AdminAppReleaseSection from './components/AdminAppReleaseSection.jsx';
+import { setAutoReloadBlocked } from './hooks/useAppReleaseControl.js';
 import {
   associationAssignedFactoryIds,
 } from './utils/associationFactoryAssignment.js';
@@ -1963,6 +1965,7 @@ function AdminSettingsSection() {
           </div>
         </form>
       )}
+      <AdminAppReleaseSection />
     </section>
   );
 }
@@ -2433,6 +2436,12 @@ function OrdersMonitorSection({
   const [acceptDraft, setAcceptDraft] = useState(null);
   const [ordersSearchQuery, setOrdersSearchQuery] = useState('');
 
+  useEffect(() => {
+    const editing = Boolean(detailOrder || associationApproveOrder || acceptDraft || savingEdit || savingAssociation || savingReassign);
+    setAutoReloadBlocked(editing);
+    return () => setAutoReloadBlocked(false);
+  }, [detailOrder, associationApproveOrder, acceptDraft, savingEdit, savingAssociation, savingReassign]);
+
   const load = useCallback(async () => {
     setError('');
     try {
@@ -2446,15 +2455,15 @@ function OrdersMonitorSection({
         db.fetchEscalationSteps(),
         db.fetchAdminSettings(),
         db.fetchNearPoolSize().catch((e) => {
-          console.warn('[OrdersMonitor] near_pool_size fetch failed', e);
+          console.warn('【Escalation Debug】near_pool_size 取得失敗 → デフォルト5で続行', e);
           return 5;
         }),
         db.fetchFactorySmallVehicleInfo().catch((e) => {
-          console.warn('[OrdersMonitor] small vehicle info fetch failed', e);
+          console.warn('【Escalation Debug】小型車情報取得失敗 → 空マップで続行', e);
           return {};
         }),
         db.fetchMonthlyVolumeByFactory().catch((e) => {
-          console.warn('[OrdersMonitor] monthly volume fetch failed', e);
+          console.warn('【Escalation Debug】出荷量取得失敗 → 空マップで続行（中立扱いになります）', e);
           return {};
         }),
       ]);

@@ -25,6 +25,9 @@ function spaHtmlFallback() {
 
 export default defineConfig({
   plugins: [react(), spaHtmlFallback()],
+  define: {
+    __APP_VERSION__: JSON.stringify(String(Date.now())),
+  },
   build: {
     rollupOptions: {
       input: {

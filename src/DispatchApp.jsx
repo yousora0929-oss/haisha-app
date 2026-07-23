@@ -38,6 +38,7 @@ import {
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
+import { setAutoReloadBlocked } from './hooks/useAppReleaseControl.js';
 import { OrderCartPreview } from './components/OrderCartPreview.jsx';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
@@ -1410,6 +1411,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [adminNotice, setAdminNotice] = useState('');
       const [customerOrderTab, setCustomerOrderTab] = useState('active');
       const [newOrderMode, setNewOrderMode] = useState('');
+
+      useEffect(() => {
+        const blocking = newOrderMode === 'form' || cartItems.length > 0;
+        setAutoReloadBlocked(blocking);
+        return () => setAutoReloadBlocked(false);
+      }, [newOrderMode, cartItems.length]);
       const [customerCalendarSelectedDate, setCustomerCalendarSelectedDate] = useState(today);
       const [customerCalendarMonth, setCustomerCalendarMonth] = useState(() => {
         const now = new Date();
@@ -2265,15 +2272,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               db.fetchEscalationSteps().catch(() => ({})),
               db.fetchOrganizations().catch(() => []),
               db.fetchNearPoolSize().catch((e) => {
-                console.warn('[DispatchApp] near_pool_size fetch failed', e);
+                console.warn('【Escalation Debug】near_pool_size 取得失敗 → デフォルト5で続行', e);
                 return 5;
               }),
               db.fetchFactorySmallVehicleInfo().catch((e) => {
-                console.warn('[DispatchApp] small vehicle info fetch failed', e);
+                console.warn('【Escalation Debug】小型車情報取得失敗 → 空マップで続行', e);
                 return {};
               }),
               db.fetchMonthlyVolumeByFactory().catch((e) => {
-                console.warn('[DispatchApp] monthly volume fetch failed', e);
+                console.warn('【Escalation Debug】出荷量取得失敗 → 空マップで続行（中立扱いになります）', e);
                 return {};
               }),
             ]);

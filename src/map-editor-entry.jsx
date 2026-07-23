@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { MapEditorApp } from './MapEditorApp.jsx';
 import { ThemeProvider } from './components/ThemeProvider.jsx';
+import AppUpdateBanner from './components/AppUpdateBanner.jsx';
 import './theme.css';
 import './mapEditorPrint.css';
 import { initTheme } from './utils/theme.js';
@@ -16,6 +17,7 @@ if (!rootEl) {
 createRoot(rootEl).render(
   <React.StrictMode>
     <ThemeProvider>
+      <AppUpdateBanner />
       <MapEditorApp />
     </ThemeProvider>
   </React.StrictMode>,

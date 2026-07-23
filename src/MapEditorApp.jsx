@@ -22,6 +22,7 @@ import { MapEditorPrintModal } from './components/MapEditorPrintModal.jsx';
 import { MapEditorPrintSheet } from './components/MapEditorPrintSheet.jsx';
 import { resolvePrintMapViewport } from './utils/mapEditorPrintViewport.js';
 import { shouldShowBlueprintOverlay, stripSavedSnapshotOverlay } from './utils/mapEditorOverlay.js';
+import { setAutoReloadBlocked } from './hooks/useAppReleaseControl.js';
 
 const MAP_SOURCE_LABEL = {
   override: 'この打設日の専用マップ',
@@ -76,6 +77,12 @@ export function MapEditorApp() {
   useEffect(() => {
     markMapEditorOpenedAsPopup();
   }, []);
+
+  useEffect(() => {
+    setAutoReloadBlocked(true);
+    return () => setAutoReloadBlocked(false);
+  }, []);
+
   const [flyTarget, setFlyTarget] = useState(null);
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [printSession, setPrintSession] = useState(null);

@@ -64,6 +64,7 @@ import { isValidSiteOrderUrlToken } from './utils/urlValidation.js';
 import { isLocationPendingOrder } from './utils/orderWorkflow.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { orderPartyInfo } from './utils/orderPartyInfo.js';
+import { setAutoReloadBlocked } from './hooks/useAppReleaseControl.js';
 import {
   resolveOrdererName,
   resolveSiteContactName,
@@ -3199,6 +3200,11 @@ function isUnreadForFactory(messages, readKey) {
       const [toastIsReassignment, setToastIsReassignment] = useState(false);
       const [acceptModalOrder, setAcceptModalOrder] = useState(null);
       const [acceptSubmitting, setAcceptSubmitting] = useState(false);
+
+      useEffect(() => {
+        setAutoReloadBlocked(Boolean(acceptModalOrder) || acceptSubmitting);
+        return () => setAutoReloadBlocked(false);
+      }, [acceptModalOrder, acceptSubmitting]);
       const [actionNotice, setActionNotice] = useState('');
       const [chatThreads, setChatThreads] = useState({});
       const chatThreadsRef = useRef(chatThreads);
@@ -4042,15 +4048,15 @@ function isUnreadForFactory(messages, readKey) {
               db.fetchDispatchOperationalSettings(),
               db.fetchEscalationSteps(),
               db.fetchNearPoolSize().catch((e) => {
-                console.warn('[FactoryApp] near_pool_size fetch failed', e);
+                console.warn('【Escalation Debug】near_pool_size 取得失敗 → デフォルト5で続行', e);
                 return 5;
               }),
               db.fetchFactorySmallVehicleInfo().catch((e) => {
-                console.warn('[FactoryApp] small vehicle info fetch failed', e);
+                console.warn('【Escalation Debug】小型車情報取得失敗 → 空マップで続行', e);
                 return {};
               }),
               db.fetchMonthlyVolumeByFactory().catch((e) => {
-                console.warn('[FactoryApp] monthly volume fetch failed', e);
+                console.warn('【Escalation Debug】出荷量取得失敗 → 空マップで続行（中立扱いになります）', e);
                 return {};
               }),
             ]);
