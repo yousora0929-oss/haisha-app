@@ -1,5 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { getOrderVisibilityScope, chipRoleLabel } from '../utils/orderVisibilityScope.js';
+import {
+  getOrderVisibilityScope,
+  chipRoleLabel,
+  formatPriorityFactoryLabel,
+} from '../utils/orderVisibilityScope.js';
 
 let _popoverIdCounter = 0;
 function useStableId() {
@@ -85,7 +89,7 @@ export function OrderVisibilityScopePopover({ order, escalationCtx, factoryNameB
           className="absolute right-0 top-full z-[80] mt-1.5 w-[min(18rem,calc(100vw-2rem))] rounded-xl border-2 border-slate-200 bg-white p-3 text-left shadow-xl"
           onClick={(e) => e.stopPropagation()}
         >
-          <p className="text-xs font-black text-slate-900">表示中の工場</p>
+          <p className="text-xs font-black text-slate-900">表示中の工場（優先度順）</p>
           <p className="mt-1 text-[11px] font-medium leading-snug text-slate-600">{scope.summary}</p>
           {scope.escalationTierLabel && scope.escalationTierLabel !== '—' ? (
             <p className="mt-1 text-[10px] font-bold text-slate-500">{scope.escalationTierLabel}</p>
@@ -93,23 +97,45 @@ export function OrderVisibilityScopePopover({ order, escalationCtx, factoryNameB
           {factoryNames.length > 0 ? (
             <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto">
               {scope.chips.length > 0
-                ? scope.chips.map((chip) => (
+                ? scope.chips.map((chip, index) => {
+                    const isTop = Boolean(chip.isTopPriority) || index === 0;
+                    return (
+                      <li
+                        key={chip.id + (chip.role || '')}
+                        className={
+                          'flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-800 ' +
+                          (isTop
+                            ? 'border border-amber-300 bg-amber-50 ring-1 ring-amber-200/80'
+                            : 'bg-slate-50')
+                        }
+                      >
+                        <span className="min-w-0 truncate">
+                          {formatPriorityFactoryLabel(chip.priorityIndex ?? index, chip.name)}
+                        </span>
+                        <span className="flex shrink-0 items-center gap-1">
+                          {isTop ? (
+                            <span className="rounded bg-amber-200/90 px-1.5 py-0.5 text-[10px] font-black text-amber-950">
+                              最優先
+                            </span>
+                          ) : null}
+                          <span className="rounded bg-white px-1.5 py-0.5 text-[10px] font-black text-slate-500">
+                            {chipRoleLabel(chip.role)}
+                          </span>
+                        </span>
+                      </li>
+                    );
+                  })
+                : factoryNames.map((name, index) => (
                     <li
-                      key={chip.id + (chip.role || '')}
-                      className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-2 py-1.5 text-xs font-bold text-slate-800"
+                      key={`${name}-${index}`}
+                      className={
+                        'rounded-lg px-2 py-1.5 text-xs font-bold text-slate-800 ' +
+                        (index === 0
+                          ? 'border border-amber-300 bg-amber-50'
+                          : 'bg-slate-50')
+                      }
                     >
-                      <span className="min-w-0 truncate">{chip.name}</span>
-                      <span className="shrink-0 rounded bg-white px-1.5 py-0.5 text-[10px] font-black text-slate-500">
-                        {chipRoleLabel(chip.role)}
-                      </span>
-                    </li>
-                  ))
-                : factoryNames.map((name) => (
-                    <li
-                      key={name}
-                      className="rounded-lg bg-slate-50 px-2 py-1.5 text-xs font-bold text-slate-800"
-                    >
-                      {name}
+                      {formatPriorityFactoryLabel(index, name)}
                     </li>
                   ))}
             </ul>

@@ -40,6 +40,19 @@ function factoryName(factoryNameById, id) {
   return String(factoryNameById?.[fid] || fid).trim();
 }
 
+/** 優先度番号（①〜⑳、それ以降は N.） */
+export function priorityFactoryMark(index) {
+  const marks = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
+  const i = Math.max(0, Number(index) || 0);
+  if (i < marks.length) return marks[i];
+  return `${i + 1}.`;
+}
+
+export function formatPriorityFactoryLabel(index, name) {
+  const label = String(name || '').trim() || '—';
+  return `${priorityFactoryMark(index)} ${label}`;
+}
+
 /**
  * 注文の公開・エスカレーション範囲（管理画面表示用）
  * @returns {{
@@ -195,6 +208,7 @@ export function getOrderVisibilityScope(order, ctx, factoryNameById = {}) {
 
   const visibleFactoryIds = getVisibleFactoryIdsForOrder(order, ctx);
   const visibleFactoryNames = visibleFactoryIds.map((id) => factoryName(factoryNameById, id));
+  const rankedSummaryNames = visibleFactoryNames.map((name, i) => formatPriorityFactoryLabel(i, name));
   const allCount = (ctx?.allFactoryIds || []).length;
   const addrCtx = getOrderDeliveryAreaContext(order, ctx?.projectById);
   const areaBasedNote =
@@ -204,13 +218,19 @@ export function getOrderVisibilityScope(order, ctx, factoryNameById = {}) {
         ? '（地図待ち・代表座標から距離で工場を選定）'
         : '';
 
-  const chips = visibleFactoryIds.map((id) => {
+  const chips = visibleFactoryIds.map((id, index) => {
     let role = 'visible';
     if (id === assignedId) role = 'assigned';
     else if (id === preferredId && isUserSpecifiedPreferredFactory(order)) role = 'preferred';
     else if (id === mainId) role = 'main';
     else if (subIds.includes(id)) role = 'sub';
-    return { id, name: factoryName(factoryNameById, id), role };
+    return {
+      id,
+      name: factoryName(factoryNameById, id),
+      role,
+      priorityIndex: index,
+      isTopPriority: index === 0,
+    };
   });
 
   if (status === 'accepted' && assignedId) {
@@ -313,7 +333,7 @@ export function getOrderVisibilityScope(order, ctx, factoryNameById = {}) {
     return {
       ...base,
       kind: 'multi_factory',
-      summary: `${visibleFactoryNames.join('、')} の ${visibleFactoryIds.length} 工場に表示中`,
+      summary: `${rankedSummaryNames.join('、')} の ${visibleFactoryIds.length} 工場に表示中`,
       detail: `${isSpot ? 'スポット' : '物件'}注文 · ${escalationTierLabel}`,
       visibleFactoryIds,
       visibleFactoryNames,
@@ -326,7 +346,7 @@ export function getOrderVisibilityScope(order, ctx, factoryNameById = {}) {
     return {
       ...base,
       kind: 'single_factory',
-      summary: `${visibleFactoryNames[0]} 工場に表示中`,
+      summary: `${formatPriorityFactoryLabel(0, visibleFactoryNames[0])} 工場に表示中`,
       detail: escalationTierLabel,
       visibleFactoryIds,
       visibleFactoryNames,

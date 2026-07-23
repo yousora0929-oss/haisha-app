@@ -701,18 +701,98 @@ export function isOrderVisibleToFactory(order: OrderLike, factoryId: string, ctx
   return visibleIds.includes(fid);
 }
 
-function getVisibleFactoryIdsForOrder(order: OrderLike, ctx: EscalationPushContext): string[] {
+/**
+ * 現時点で注文を閲覧できる工場 ID（ランキング＝候補順を保持）。
+ * マスタ ID 順で filter しないこと（管理画面・new_order プッシュ共通）。
+ */
+export function getVisibleFactoryIdsForOrder(order: OrderLike, ctx: EscalationPushContext): string[] {
   const status = pickString(order?.status, orderData(order).status);
   if (status === 'deleted' || status === 'pending_association') return [];
 
-  const known = (ctx.factories || [])
-    .map((f) => pickString(f.id))
-    .filter(Boolean);
+  const od = orderData(order);
+  const assigned = pickString(order?.factory_site_id, od.factory_site_id, od.factorySiteId);
+  if (assigned) return [assigned];
 
-  return known.filter((fid) => isOrderVisibleToFactory(order, fid, ctx));
+  const consultStatus = pickString(
+    order?.factory_consult_status,
+    od.factory_consult_status,
+    od.factoryConsultStatus,
+  );
+  if (consultStatus === 'consulting' && status !== 'accepted') {
+    const consultBy = pickString(
+      order?.factory_consult_by_factory_id,
+      od.factory_consult_by_factory_id,
+      od.factoryConsultByFactoryId,
+    );
+    return consultBy ? [consultBy] : [];
+  }
+
+  const associationPool = associationAssignedFactoryIds(order);
+  if (associationPool.length > 0 && status === 'pending') {
+    return associationPool.filter((fid) => isOrderVisibleToFactory(order, fid, ctx));
+  }
+
+  const isSpot = Boolean(order?.is_spot ?? od.is_spot);
+  const pid = orderProjectId(order);
+  const project = pid && !isSpot ? ctx.projectById[pid] : null;
+
+  if (status === 'accepted') {
+    if (!assigned) return [];
+    if (!isSpot && project) {
+      const preferredId = orderPreferredFactoryId(order);
+      const mainId = pickString(project.main_factory_id);
+      const subIds = asArray(project.sub_factory_ids).map((x) => pickString(x)).filter(Boolean);
+      const related = [assigned, preferredId, mainId, ...subIds].filter(Boolean);
+      const seen = new Set<string>();
+      const ordered: string[] = [];
+      for (const id of related) {
+        if (seen.has(id)) continue;
+        if (!isOrderVisibleToFactory(order, id, ctx)) continue;
+        seen.add(id);
+        ordered.push(id);
+      }
+      return ordered;
+    }
+    return assigned ? [assigned] : [];
+  }
+
+  if (isAssignedProject(order, project) && status === 'pending' && project) {
+    const preferredId = orderPreferredFactoryId(order);
+    const mainId = pickString(project.main_factory_id);
+    const subIds = normalizeSubFactoryIds(project.sub_factory_ids);
+    const pool = [preferredId, mainId, ...subIds].filter(Boolean);
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    for (const id of pool) {
+      if (seen.has(id)) continue;
+      if (!isOrderVisibleToAssignedProjectFactory(order, project, id)) continue;
+      seen.add(id);
+      ordered.push(id);
+    }
+    return ordered;
+  }
+
+  const effectiveMinutes = getEffectiveEscalationMinutes(order, ctx);
+  if (effectiveMinutes == null) return [];
+
+  // ランキング順の候補を slice（マスタ順 filter 禁止）
+  const candidates = buildCandidateFactoryIds(order, ctx);
+  const anchorId = resolveEscalationAnchorFactoryId(order, project, candidates);
+  const steps = getEscalationStepsForAnchor(anchorId, ctx.escalationStepsByFactoryId);
+  const active = getActiveEscalationStep(steps, effectiveMinutes);
+  const visibleCount = Math.max(1, Number(active.target_factory_count) || 3);
+  return candidates.slice(0, visibleCount);
 }
 
-/** rejected_factory_ids 更新前後で新たに公開対象になった工場 ID */
+/** 新規注文プッシュ用: 作成直後の表示対象（getVisibleFactoryIdsForOrder と同一実装） */
+export function computeInitialVisibleFactoryIds(
+  order: OrderLike,
+  ctx: EscalationPushContext,
+): string[] {
+  return getVisibleFactoryIdsForOrder(order, ctx);
+}
+
+/** rejected_factory_ids 更新前後で新たに公開対象になった工場 ID（順序はランキング順） */
 export function computeNewlyVisibleFactoryIds(
   oldRow: OrderLike,
   newRow: OrderLike,

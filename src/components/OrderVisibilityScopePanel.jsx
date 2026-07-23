@@ -1,5 +1,9 @@
 import React, { useMemo } from 'react';
-import { getOrderVisibilityScope, chipRoleLabel } from '../utils/orderVisibilityScope.js';
+import {
+  getOrderVisibilityScope,
+  chipRoleLabel,
+  formatPriorityFactoryLabel,
+} from '../utils/orderVisibilityScope.js';
 import { OrderVisibilityScopePopover } from './OrderVisibilityScopePopover.jsx';
 
 const CHIP_CLASS =
@@ -54,14 +58,29 @@ export function OrderVisibilityScopePanel({ order, escalationCtx, factoryNameByI
       ) : null}
       {scope.chips.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-1.5">
-          {scope.chips.map((chip) => (
-            <span key={chip.id + (chip.role || '')} className={chipClassForRole(chip.role)} title={chip.id}>
-              {chip.name}
-              <span className="rounded bg-white/60 px-1 py-0.5 text-[10px] font-bold uppercase opacity-80">
-                {chipRoleLabel(chip.role)}
+          {scope.chips.map((chip, index) => {
+            const isTop = Boolean(chip.isTopPriority) || index === 0;
+            return (
+              <span
+                key={chip.id + (chip.role || '')}
+                className={
+                  chipClassForRole(chip.role) +
+                  (isTop ? ' ring-2 ring-amber-300/80 border-amber-400 bg-amber-50 text-amber-950' : '')
+                }
+                title={chip.id}
+              >
+                <span>{formatPriorityFactoryLabel(chip.priorityIndex ?? index, chip.name)}</span>
+                {isTop ? (
+                  <span className="rounded bg-amber-200/90 px-1 py-0.5 text-[10px] font-bold text-amber-950">
+                    最優先
+                  </span>
+                ) : null}
+                <span className="rounded bg-white/60 px-1 py-0.5 text-[10px] font-bold uppercase opacity-80">
+                  {chipRoleLabel(chip.role)}
+                </span>
               </span>
-            </span>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <p className="mt-2 text-xs font-bold text-slate-500">表示対象の工場はありません。</p>

@@ -325,6 +325,10 @@ function isOrderVisibleByEscalationSteps(order, factoryId, ctx, project, effecti
     ctx.factories || [],
     ctx.projectById,
     ctx.globalAllowedAreas,
+    ctx.monthlyVolumeByFactory || {},
+    0.7,
+    ctx.nearPoolSize ?? 5,
+    ctx.factorySmallVehicleInfo || {},
   );
   const anchorId = resolveEscalationAnchorFactoryId(order, project, candidates);
   const steps = getEscalationStepsForAnchor(anchorId, ctx.escalationStepsByFactoryId);
@@ -361,6 +365,10 @@ export function getOrderEscalationStepInfo(order, ctx) {
     ctx?.factories || [],
     ctx?.projectById,
     ctx?.globalAllowedAreas,
+    ctx?.monthlyVolumeByFactory || {},
+    0.7,
+    ctx?.nearPoolSize ?? 5,
+    ctx?.factorySmallVehicleInfo || {},
   );
   const anchorId = resolveEscalationAnchorFactoryId(order, project, candidates);
   const steps = getEscalationStepsForAnchor(anchorId, ctx?.escalationStepsByFactoryId);
@@ -960,10 +968,28 @@ export function filterOrdersForFactory(orders, factoryId, ctx) {
     .filter((o) => isOrderVisibleToFactory(o, factoryId, ctx));
 }
 
-/** 管理画面用: 現時点で当該注文を閲覧できる工場 ID 一覧 */
+/** 管理画面用: 現時点で当該注文を閲覧できる工場 ID 一覧（ランキング＝候補順を保持） */
 export function getVisibleFactoryIdsForOrder(order, ctx) {
   const status = order?.status != null ? String(order.status) : '';
   if (status === 'deleted' || status === 'pending_association') return [];
-  const ids = ctx?.allFactoryIds || [];
-  return ids.filter((fid) => isOrderVisibleToFactory(order, fid, ctx));
+
+  // buildEscalationContext が保持する距離→出荷量ランキング順を優先（マスタ ID 順で並べ替えない）
+  const oid = order?.id != null ? String(order.id) : '';
+  const ranked =
+    oid && ctx?.areaFactoryIdsByOrder instanceof Map
+      ? ctx.areaFactoryIdsByOrder.get(oid)
+      : null;
+  const pool =
+    Array.isArray(ranked) && ranked.length
+      ? ranked
+      : Array.isArray(ctx?.allFactoryIds)
+        ? ctx.allFactoryIds
+        : [];
+
+  return pool.filter((fid) => isOrderVisibleToFactory(order, fid, ctx));
+}
+
+/** 新規注文プッシュ用: 作成直後（経過0分相当）の表示対象。getVisibleFactoryIdsForOrder と同一 */
+export function computeInitialVisibleFactoryIds(order, ctx) {
+  return getVisibleFactoryIdsForOrder(order, ctx);
 }

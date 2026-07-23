@@ -3,6 +3,7 @@
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
   computeNewlyVisibleFactoryIds,
+  computeInitialVisibleFactoryIds,
   isUserSpecifiedPreferredFactory,
   orderEscalationApprovedAt,
   type EscalationPushContext,
@@ -10,7 +11,7 @@ import {
   rankFactoryIdsForOrder,
 } from '../_shared/escalationVisibility.ts';
 
-const FUNCTION_VERSION = 35;
+const FUNCTION_VERSION = 36;
 const PUSH_NOTIFY_COOLDOWN_MS = 60_000;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 /** プレフィックス導入前の端末向けに無印 ID へも送る期間（ISO8601） */
@@ -1453,18 +1454,66 @@ async function sendToFactoryAudience(
   const customerId = resolveOrderCustomerId(row, payload);
   const factoryIds = withoutExternalIds(resolveFactoryPushTargetIds(row, payload), customerId);
   let sent = false;
+  const orderId = pickString(options.orderId, data.orderId);
 
   if (factoryIds.length) {
     sent = await sendToExternalIds(factoryIds, message, data, {
-      orderId: pickString(data.orderId),
+      orderId,
       title: options.title,
     });
   } else {
-    const orderId = pickString(data.orderId);
-    sent = await sendToRole('factory', message, data, { orderId, title: options.title });
-    if (!sent) {
-      const adminSent = await sendToRole('admin', message, data, { orderId, title: options.title });
-      sent = adminSent;
+    // 確定工場・第一希望なし → 経過0分の表示対象（ランキング準拠）。全工場ブロードキャストは最終手段のみ。
+    let orderRow = row ?? null;
+    if (!orderRow && orderId) orderRow = await fetchOrderRow(orderId);
+    const pid = pickString(
+      orderRow?.project_id,
+      orderData(orderRow).project_id,
+      orderData(orderRow).projectId,
+    );
+    const supabaseClient = getSupabaseClient();
+    const [scoring, ctx] = await Promise.all([
+      fetchEscalationScoringConfig(supabaseClient),
+      fetchEscalationPushContext(pid || undefined),
+    ]);
+    if (ctx) {
+      ctx.monthlyVolumeByFactory = scoring.monthlyVolumeByFactory;
+      ctx.distanceWeight = scoring.distanceWeight;
+      ctx.nearPoolSize = scoring.nearPoolSize;
+      ctx.factorySmallVehicleInfo = scoring.factorySmallVehicleInfo;
+      const initialIds = orderRow ? computeInitialVisibleFactoryIds(orderRow, ctx) : [];
+      const rankedExternalIds = withoutExternalIds(
+        initialIds.map((fid) => onesignalFactoryExternalId(fid)),
+        customerId,
+        onesignalCustomerExternalId(customerId),
+      );
+      if (rankedExternalIds.length) {
+        console.log(`[new_order] ranked targets: ${initialIds.join(',')}`, {
+          orderId,
+          rankedExternalIds,
+          eventType: pickString(data.type),
+        });
+        sent = await sendToExternalIds(rankedExternalIds, message, data, {
+          orderId,
+          title: options.title,
+        });
+      } else {
+        console.warn('[new_order] no ranked candidates, falling back to role broadcast', {
+          orderId,
+          eventType: pickString(data.type),
+        });
+        sent = await sendToRole('factory', message, data, { orderId, title: options.title });
+        if (!sent) {
+          sent = await sendToRole('admin', message, data, { orderId, title: options.title });
+        }
+      }
+    } else {
+      console.warn('[onesignal-push] [new_order] escalation context unavailable, falling back to role broadcast', {
+        orderId,
+      });
+      sent = await sendToRole('factory', message, data, { orderId, title: options.title });
+      if (!sent) {
+        sent = await sendToRole('admin', message, data, { orderId, title: options.title });
+      }
     }
   }
 
