@@ -3171,6 +3171,9 @@ function isUnreadForFactory(messages, readKey) {
       const [systemSettings, setSystemSettings] = useState({ start_time: '08:00:00', end_time: '16:00:00' });
       const [operationalSettings, setOperationalSettings] = useState(null);
       const [escalationStepsByFactoryId, setEscalationStepsByFactoryId] = useState({});
+      const [nearPoolSize, setNearPoolSize] = useState(5);
+      const [factorySmallVehicleInfo, setFactorySmallVehicleInfo] = useState({});
+      const [monthlyVolumeByFactory, setMonthlyVolumeByFactory] = useState({});
       const masterDataReady = useMemo(
         () => factories.length > 0 && Object.keys(escalationStepsByFactoryId).length > 0,
         [factories, escalationStepsByFactoryId],
@@ -3182,8 +3185,9 @@ function isUnreadForFactory(messages, readKey) {
             operationalSettings?.allowed_delivery_areas ?? systemSettings?.allowed_delivery_areas,
           spot_threshold_volume:
             operationalSettings?.spot_threshold_volume ?? systemSettings?.spot_threshold_volume,
+          near_pool_size: nearPoolSize,
         }),
-        [systemSettings, operationalSettings],
+        [systemSettings, operationalSettings, nearPoolSize],
       );
       const [escalationTick, setEscalationTick] = useState(0);
       const [toastOrder, setToastOrder] = useState(null);
@@ -3512,10 +3516,12 @@ function isUnreadForFactory(messages, readKey) {
             new Date(),
             escalationStepsByFactoryId,
             customers,
+            factorySmallVehicleInfo,
+            monthlyVolumeByFactory,
           );
           return filterAndSortFactoryOrders(list, activeFactoryId, ctx).filter((o) => !hiddenOrderIds.has(String(o?.id || '')));
         },
-        [activeFactoryId, factories, projects, customers, escalationSettings, holidays, hiddenOrderIds, escalationStepsByFactoryId],
+        [activeFactoryId, factories, projects, customers, escalationSettings, holidays, hiddenOrderIds, escalationStepsByFactoryId, factorySmallVehicleInfo, monthlyVolumeByFactory],
       );
 
       const applyIncomingOrders = useCallback(
@@ -3685,6 +3691,8 @@ function isUnreadForFactory(messages, readKey) {
               new Date(),
               escalationStepsByFactoryId,
               customers,
+              factorySmallVehicleInfo,
+              monthlyVolumeByFactory,
             );
             const detected = detectFactoryNotifyOrderIds(prevOrders, list, activeFactoryId, ctx);
             for (const id of detected.notifyOrderIds) notifyOrderIds.add(id);
@@ -3734,7 +3742,7 @@ function isUnreadForFactory(messages, readKey) {
             });
           }
         },
-        [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById, factories, projects, customers, escalationSettings, holidays, enrichOrdersWithProjectFactory, escalationStepsByFactoryId, masterDataReady],
+        [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById, factories, projects, customers, escalationSettings, holidays, enrichOrdersWithProjectFactory, escalationStepsByFactoryId, masterDataReady, factorySmallVehicleInfo, monthlyVolumeByFactory],
       );
 
       const syncFromStorageRef = useRef(syncFromStorage);
@@ -3752,7 +3760,7 @@ function isUnreadForFactory(messages, readKey) {
         // マスタ再取得などに伴う再同期は既存注文の通知を出さない
         void syncFromStorage({ playSound: false, muteExisting: true });
         return undefined;
-      }, [activeFactoryId, masterDataReady, factories, projects, holidays, escalationSettings, escalationStepsByFactoryId, syncFromStorage]);
+      }, [activeFactoryId, masterDataReady, factories, projects, holidays, escalationSettings, escalationStepsByFactoryId, factorySmallVehicleInfo, monthlyVolumeByFactory, syncFromStorage]);
 
       useEffect(() => {
         if (!activeFactoryId) return undefined;
@@ -4016,7 +4024,7 @@ function isUnreadForFactory(messages, readKey) {
         let cancelled = false;
         (async () => {
           try {
-            const [rows, projs, hols, settings, customerRows, organizationRows, opSettings, escalationSteps] = await Promise.all([
+            const [rows, projs, hols, settings, customerRows, organizationRows, opSettings, escalationSteps, poolSize, smallVehicleInfo, monthlyVolumes] = await Promise.all([
               db.fetchFactories(),
               db.fetchProjects(),
               db.fetchHolidays(),
@@ -4028,6 +4036,18 @@ function isUnreadForFactory(messages, readKey) {
               }),
               db.fetchDispatchOperationalSettings(),
               db.fetchEscalationSteps(),
+              db.fetchNearPoolSize().catch((e) => {
+                console.warn('[FactoryApp] near_pool_size fetch failed', e);
+                return 5;
+              }),
+              db.fetchFactorySmallVehicleInfo().catch((e) => {
+                console.warn('[FactoryApp] small vehicle info fetch failed', e);
+                return {};
+              }),
+              db.fetchMonthlyVolumeByFactory().catch((e) => {
+                console.warn('[FactoryApp] monthly volume fetch failed', e);
+                return {};
+              }),
             ]);
             if (cancelled) return;
             setFactories(rows);
@@ -4038,6 +4058,9 @@ function isUnreadForFactory(messages, readKey) {
             setSystemSettings(settings);
             setOperationalSettings(opSettings);
             setEscalationStepsByFactoryId(escalationSteps || {});
+            setNearPoolSize(poolSize);
+            setFactorySmallVehicleInfo(smallVehicleInfo || {});
+            setMonthlyVolumeByFactory(monthlyVolumes || {});
             const nameMap = Object.fromEntries((rows || []).map((r) => [r.id, r.name]));
             const urlId = getFactoryIdFromUrl();
             const stored = readStoredFactoryId();

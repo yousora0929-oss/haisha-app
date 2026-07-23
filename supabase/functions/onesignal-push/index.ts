@@ -30,10 +30,12 @@ function getSupabaseClient(): SupabaseClient {
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
-/** エスカレーション容量スコアリング用の月次出荷量・距離ウェイト（注文処理前に一度だけ取得） */
+/** エスカレーション二段階ランキング用の月次出荷量・近い候補プール・小型車情報（注文処理前に一度だけ取得） */
 async function fetchEscalationScoringConfig(supabaseClient: SupabaseClient): Promise<{
   monthlyVolumeByFactory: Record<string, number>;
   distanceWeight: number;
+  nearPoolSize: number;
+  factorySmallVehicleInfo: Record<string, { hasAnyVehicle: boolean; hasSmallVehicle: boolean }>;
 }> {
   const { data: volRows } = await supabaseClient
     .from('factory_escalation_steps')
@@ -52,15 +54,36 @@ async function fetchEscalationScoringConfig(supabaseClient: SupabaseClient): Pro
 
   const { data: wRow } = await supabaseClient
     .from('factory_escalation_weight_config')
-    .select('distance_weight')
+    .select('distance_weight, near_pool_size')
     .eq('id', 1)
     .maybeSingle();
 
   const distanceWeight = wRow?.distance_weight != null
     ? Number(wRow.distance_weight)
     : 0.7;
+  const nearPoolSizeRaw = wRow?.near_pool_size != null ? Number(wRow.near_pool_size) : 5;
+  const nearPoolSize =
+    Number.isFinite(nearPoolSizeRaw) && nearPoolSizeRaw >= 1
+      ? Math.min(50, Math.floor(nearPoolSizeRaw))
+      : 5;
 
-  return { monthlyVolumeByFactory, distanceWeight };
+  const { data: vehicleRows } = await supabaseClient
+    .from('charter_vehicles')
+    .select('owner_id, vehicle_type')
+    .eq('owner_type', 'factory');
+
+  const factorySmallVehicleInfo: Record<string, { hasAnyVehicle: boolean; hasSmallVehicle: boolean }> = {};
+  for (const row of vehicleRows ?? []) {
+    const fid = String(row.owner_id ?? '').trim();
+    if (!fid) continue;
+    const prev = factorySmallVehicleInfo[fid] || { hasAnyVehicle: false, hasSmallVehicle: false };
+    factorySmallVehicleInfo[fid] = {
+      hasAnyVehicle: true,
+      hasSmallVehicle: prev.hasSmallVehicle || String(row.vehicle_type || '') === 'small',
+    };
+  }
+
+  return { monthlyVolumeByFactory, distanceWeight, nearPoolSize, factorySmallVehicleInfo };
 }
 
 type PushEvent =
@@ -1533,6 +1556,8 @@ async function fetchEscalationPushContext(projectId?: string): Promise<Escalatio
       escalationStepsByFactoryId,
       monthlyVolumeByFactory: {},
       distanceWeight: 0.7,
+      nearPoolSize: 5,
+      factorySmallVehicleInfo: {},
       now: new Date(),
     };
   } catch (error) {
@@ -1602,19 +1627,22 @@ async function sendEscalationExpandedNotifications(
     console.log('[onesignal-push] escalation_expanded skip: context unavailable', { orderId });
     return [];
   }
-  const { monthlyVolumeByFactory, distanceWeight } = scoring;
+  const { monthlyVolumeByFactory, distanceWeight, nearPoolSize, factorySmallVehicleInfo } = scoring;
   ctx.monthlyVolumeByFactory = monthlyVolumeByFactory;
   ctx.distanceWeight = distanceWeight;
+  ctx.nearPoolSize = nearPoolSize;
+  ctx.factorySmallVehicleInfo = factorySmallVehicleInfo;
 
   const rankedCandidates = rankFactoryIdsForOrder(
     newRow,
     ctx,
     monthlyVolumeByFactory,
     distanceWeight,
+    nearPoolSize,
   );
   console.log('[onesignal-push] escalation_expanded ranked', {
     orderId,
-    distanceWeight,
+    nearPoolSize,
     candidateCount: rankedCandidates.length,
     top: rankedCandidates.slice(0, 5),
   });

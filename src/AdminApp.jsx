@@ -2423,13 +2423,16 @@ function OrdersMonitorSection({
   const [holidays, setHolidays] = useState([]);
   const [systemSettings, setSystemSettings] = useState({});
   const [escalationStepsByFactoryId, setEscalationStepsByFactoryId] = useState({});
+  const [nearPoolSize, setNearPoolSize] = useState(5);
+  const [factorySmallVehicleInfo, setFactorySmallVehicleInfo] = useState({});
+  const [monthlyVolumeByFactory, setMonthlyVolumeByFactory] = useState({});
   const [chatThreads, setChatThreads] = useState({});
   const [adminName, setAdminName] = useState('管理者');
 
   const load = useCallback(async () => {
     setError('');
     try {
-      const [{ orders: rows, chatThreads: threads }, projs, hols, settings, escalationSteps, adminSettings] =
+      const [{ orders: rows, chatThreads: threads }, projs, hols, settings, escalationSteps, adminSettings, poolSize, smallVehicleInfo, monthlyVolumes] =
         await Promise.all([
         db.fetchOrdersWithChat(),
         db.fetchProjects(),
@@ -2437,6 +2440,18 @@ function OrdersMonitorSection({
         db.fetchSystemSettings(),
         db.fetchEscalationSteps(),
         db.fetchAdminSettings(),
+        db.fetchNearPoolSize().catch((e) => {
+          console.warn('[OrdersMonitor] near_pool_size fetch failed', e);
+          return 5;
+        }),
+        db.fetchFactorySmallVehicleInfo().catch((e) => {
+          console.warn('[OrdersMonitor] small vehicle info fetch failed', e);
+          return {};
+        }),
+        db.fetchMonthlyVolumeByFactory().catch((e) => {
+          console.warn('[OrdersMonitor] monthly volume fetch failed', e);
+          return {};
+        }),
       ]);
       setOrders(rows);
       setChatThreads(threads || {});
@@ -2445,6 +2460,9 @@ function OrdersMonitorSection({
       setSystemSettings(settings || {});
       setEscalationStepsByFactoryId(escalationSteps || {});
       setAdminName(String(adminSettings?.admin_name || '').trim() || '管理者');
+      setNearPoolSize(poolSize);
+      setFactorySmallVehicleInfo(smallVehicleInfo || {});
+      setMonthlyVolumeByFactory(monthlyVolumes || {});
     } catch (e) {
       console.error(e);
       setError('注文一覧の取得に失敗しました。');
@@ -2459,12 +2477,15 @@ function OrdersMonitorSection({
         orders,
         factories,
         projects,
-        systemSettings,
+        { ...(systemSettings || {}), near_pool_size: nearPoolSize },
         holidays,
         new Date(),
         escalationStepsByFactoryId,
+        [],
+        factorySmallVehicleInfo,
+        monthlyVolumeByFactory,
       ),
-    [orders, factories, projects, systemSettings, holidays, escalationStepsByFactoryId],
+    [orders, factories, projects, systemSettings, holidays, escalationStepsByFactoryId, nearPoolSize, factorySmallVehicleInfo, monthlyVolumeByFactory],
   );
 
   useEffect(() => {

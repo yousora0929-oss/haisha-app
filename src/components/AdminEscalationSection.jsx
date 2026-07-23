@@ -84,22 +84,25 @@ export function AdminEscalationSection({ factories = [] }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [tableReady, setTableReady] = useState(true);
-  const [distanceWeight, setDistanceWeight] = useState(0.7);
-  const [weightSaving, setWeightSaving] = useState(false);
+  const [nearPoolSize, setNearPoolSize] = useState(5);
+  const [poolSaving, setPoolSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const [meta, weight] = await Promise.all([
+      const [meta, poolSize] = await Promise.all([
         db.fetchEscalationStepsMeta(),
-        db.fetchEscalationDistanceWeight(),
+        db.fetchNearPoolSize().catch((e) => {
+          console.warn('[AdminEscalationSection] near_pool_size fetch failed', e);
+          return 5;
+        }),
       ]);
       setTableReady(Boolean(meta?.tableReady));
       if (!meta?.tableReady) {
         setError(db.ESCALATION_STEPS_MIGRATION_HINT);
       }
-      setDistanceWeight(weight);
+      setNearPoolSize(poolSize);
       setRows(buildFactoryDrafts(factories, meta?.byFactory || {}));
     } catch (e) {
       console.error('[AdminEscalationSection] load failed', e);
@@ -240,24 +243,22 @@ export function AdminEscalationSection({ factories = [] }) {
     }
   };
 
-  const handleSaveWeight = async () => {
-    setWeightSaving(true);
+  const handleSaveNearPoolSize = async () => {
+    setPoolSaving(true);
     setError('');
     setNotice('');
     try {
-      await db.saveEscalationDistanceWeight(distanceWeight);
-      setNotice('スコアリング重みを保存しました');
+      const saved = await db.saveNearPoolSize(nearPoolSize);
+      setNearPoolSize(saved);
+      setNotice('配車優先度設定を保存しました');
       window.setTimeout(() => setNotice(''), 4000);
     } catch (e) {
-      console.error('[AdminEscalationSection] weight save failed', e);
-      setError(e?.message || 'スコアリング重みの保存に失敗しました');
+      console.error('[AdminEscalationSection] near_pool_size save failed', e);
+      setError(e?.message || '近い候補プール数の保存に失敗しました');
     } finally {
-      setWeightSaving(false);
+      setPoolSaving(false);
     }
   };
-
-  const distanceWeightPercent = Math.round(distanceWeight * 100);
-  const capacityWeightPercent = 100 - distanceWeightPercent;
 
   const tabButtonClass = (tab) =>
     tab === activeTab
@@ -271,7 +272,7 @@ export function AdminEscalationSection({ factories = [] }) {
           エスカレーション設定
         </button>
         <button type="button" className={tabButtonClass('scoring-weight')} onClick={() => setActiveTab('scoring-weight')}>
-          スコアリング重み設定
+          配車優先度設定
         </button>
         <button
           type="button"
@@ -306,48 +307,51 @@ export function AdminEscalationSection({ factories = [] }) {
       {activeTab === 'scoring-weight' ? (
         <>
           <div>
-            <h2 className="text-lg font-black text-gray-900 dark:text-white">📊 スコアリング重み設定</h2>
+            <h2 className="text-lg font-black text-gray-900 dark:text-white">📊 配車優先度設定</h2>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              エスカレーション優先度の算出に使う、距離スコアと当月出荷量スコアの重みを設定します（管理者のみ）。
+              距離が近い上位N社を候補とし、その中で当月出荷量が少ない工場から優先的に配車依頼を表示・通知します（管理者のみ）。
             </p>
           </div>
           {loading ? (
             <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">読み込み中…</p>
           ) : (
             <article className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 dark:border-indigo-800 dark:bg-indigo-950/30">
-              <h3 className="text-sm font-black text-gray-900 dark:text-white">エスカレーション優先度スコアリング</h3>
-              <div className="mt-3 space-y-2">
-                <label className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-slate-700 dark:text-slate-300">
-                  <span className="shrink-0 font-bold">距離スコア重み:</span>
+              <h3 className="text-sm font-black text-gray-900 dark:text-white">近い候補プール数</h3>
+              <p className="mt-1 text-xs font-medium leading-relaxed text-slate-600 dark:text-slate-400">
+                距離が近い上位N社を候補とし、その中で当月出荷量が少ない工場から優先的に配車依頼を表示・通知します。N社の外側の工場は距離順で後続します。
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-slate-300">
+                  N =
                   <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    step={5}
-                    value={distanceWeightPercent}
-                    onChange={(e) => setDistanceWeight(Number(e.target.value) / 100)}
+                    type="number"
+                    min={1}
+                    max={50}
+                    step={1}
+                    value={nearPoolSize}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      if (!Number.isFinite(n)) return;
+                      setNearPoolSize(Math.max(1, Math.min(50, Math.floor(n))));
+                    }}
                     disabled={!tableReady}
-                    className="h-2 min-w-[12rem] flex-1 cursor-pointer accent-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
-                    aria-label="距離スコア重み"
+                    className={NUM_INPUT_CLASS + ' disabled:cursor-not-allowed disabled:opacity-50'}
+                    aria-label="近い候補プール数"
                   />
-                  <span className="w-10 shrink-0 text-right font-black text-indigo-700 dark:text-indigo-300">
-                    {distanceWeightPercent}%
-                  </span>
+                  <span className="font-medium text-slate-500">社（1〜50）</span>
                 </label>
-                <p className="text-xs font-medium text-slate-600 dark:text-slate-400">
-                  キャパスコア重み: {capacityWeightPercent}%（自動）
-                </p>
-              </div>
-              <div className="mt-3 flex justify-end">
                 <button
                   type="button"
-                  onClick={() => void handleSaveWeight()}
-                  disabled={weightSaving || !tableReady}
+                  onClick={() => void handleSaveNearPoolSize()}
+                  disabled={poolSaving || !tableReady}
                   className="rounded-lg border border-indigo-300 bg-white px-4 py-2 text-xs font-black text-indigo-900 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-600 dark:bg-slate-800 dark:text-indigo-200 dark:hover:bg-indigo-900/50"
                 >
-                  {weightSaving ? '保存中…' : '保存'}
+                  {poolSaving ? '保存中…' : '保存'}
                 </button>
               </div>
+              <p className="mt-4 rounded-lg border border-slate-200 bg-white/80 px-3 py-2 text-[11px] font-medium leading-relaxed text-slate-600 dark:border-slate-600 dark:bg-slate-900/50 dark:text-slate-300">
+                小型車の注文（スポット）は、車両登録済みで小型車を持たない工場には表示・通知されません。車両が未登録の工場は対象に含まれます。
+              </p>
             </article>
           )}
         </>

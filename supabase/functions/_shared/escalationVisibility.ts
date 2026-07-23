@@ -56,7 +56,10 @@ export type EscalationPushContext = {
   holidays: Array<{ holiday_date?: string } | string>;
   escalationStepsByFactoryId: Record<string, EscalationStep[]>;
   monthlyVolumeByFactory: Record<string, number>;
+  /** 【互換残置】二段階方式移行後は未使用 */
   distanceWeight: number;
+  nearPoolSize?: number;
+  factorySmallVehicleInfo?: Record<string, { hasAnyVehicle: boolean; hasSmallVehicle: boolean }>;
   now?: Date;
 };
 
@@ -342,14 +345,90 @@ export function buildMonthlyVolumeByFactoryFromRows(rows: unknown): Record<strin
   return out;
 }
 
-/** distance_weight 設定行からウェイトを取得（未設定時 0.7） */
+/** distance_weight 設定行からウェイトを取得（未設定時 0.7）【互換残置】 */
 export function parseEscalationDistanceWeight(row: unknown): number {
   const o = asObject(row);
   const w = o.distance_weight;
   return w != null && Number.isFinite(Number(w)) ? Number(w) : 0.7;
 }
 
-/** 距離・容量スコアの高い順に工場 ID を並べる（escalationUtils.rankFactoryIdsByDistance と同等） */
+/** near_pool_size 設定行からプール数を取得（未設定時 5） */
+export function parseNearPoolSize(row: unknown): number {
+  const o = asObject(row);
+  const n = Number(o.near_pool_size);
+  if (!Number.isFinite(n) || n < 1) return 5;
+  return Math.min(50, Math.floor(n));
+}
+
+function isSmallVehicleSpotOrder(order: OrderLike): boolean {
+  const od = orderData(order);
+  const isSpot = Boolean(order.is_spot ?? od.is_spot);
+  if (!isSpot) return false;
+  if (order.vehicleType === 'small' || od.vehicleType === 'small') return true;
+  if (String(order.vehicleLabel || od.vehicleLabel || '').trim() === '小型') return true;
+  return false;
+}
+
+/**
+ * 小型スポット注文向け: 車両登録済みかつ小型ゼロの工場を除外。
+ * 未登録工場は判定不能のため維持。フィルタ後0件ならフィルタ前へフォールバック。
+ */
+export function filterFactoriesForSmallVehicleOrder(
+  factories: FactoryLike[],
+  order: OrderLike,
+  infoMap: Record<string, { hasAnyVehicle: boolean; hasSmallVehicle: boolean }> = {},
+): FactoryLike[] {
+  const list = Array.isArray(factories) ? factories : [];
+  if (!isSmallVehicleSpotOrder(order)) return list;
+  const map = infoMap && typeof infoMap === 'object' ? infoMap : {};
+  const filtered = list.filter((f) => {
+    const id = pickString(f?.id);
+    if (!id) return false;
+    const info = map[id];
+    if (!info) return true;
+    if (info.hasAnyVehicle && !info.hasSmallVehicle) return false;
+    return true;
+  });
+  if (!filtered.length && list.length) {
+    console.log('[escalationVisibility] 小型車フィルタ後0件 → フィルタ前へフォールバック', {
+      orderId: pickString(order.id, orderData(order).id),
+      before: list.length,
+    });
+    return list;
+  }
+  return filtered;
+}
+
+/**
+ * 距離順上位N社を「近い候補」とし、その中を当月出荷量の少ない順に並べ替える。
+ * 出荷量未設定(null)の工場は既知データの中央に挿入（中立扱い）。N社の外側は距離順のまま後方連結。
+ */
+export function rankFactoryIdsNearestThenCheapest(
+  items: Array<{ id: string; dist: number; vol: number | null }>,
+  nearPoolSize: number,
+): string[] {
+  const byDistance = [...items].sort((a, b) => {
+    if (a.dist !== b.dist) return a.dist - b.dist;
+    return a.id.localeCompare(b.id);
+  });
+  const poolSize = Math.max(1, Number(nearPoolSize) || 5);
+  const near = byDistance.slice(0, poolSize);
+  const far = byDistance.slice(poolSize);
+  const known = near
+    .filter((x) => x.vol != null)
+    .sort((a, b) => (a.vol! - b.vol!) || a.id.localeCompare(b.id));
+  const unknown = near.filter((x) => x.vol == null);
+  let nearSorted: typeof items;
+  if (!unknown.length) nearSorted = known;
+  else if (!known.length) nearSorted = unknown;
+  else {
+    const mid = Math.floor(known.length / 2);
+    nearSorted = [...known.slice(0, mid), ...unknown, ...known.slice(mid)];
+  }
+  return [...nearSorted, ...far].map((x) => x.id);
+}
+
+/** 距離順上位N社 → 出荷量昇順（escalationUtils.rankFactoryIdsByDistance と同等） */
 export function rankFactoryIdsByDistance(
   order: OrderLike,
   projectById: Record<string, ProjectLike>,
@@ -357,11 +436,15 @@ export function rankFactoryIdsByDistance(
   factories: FactoryLike[],
   monthlyVolumeByFactory: Record<string, number> = {},
   distanceWeight = 0.7,
+  nearPoolSize = 5,
+  factorySmallVehicleInfo: Record<string, { hasAnyVehicle: boolean; hasSmallVehicle: boolean }> = {},
 ): string[] {
+  void distanceWeight;
+  void projectById;
   const list = Array.isArray(factories) ? factories : [];
-  const eligibleWithFallback = list;
+  const eligibleForRank = filterFactoriesForSmallVehicleOrder(list, order, factorySmallVehicleInfo);
 
-  const items = eligibleWithFallback
+  const items = eligibleForRank
     .map((f) => {
       const id = String(f?.id ?? '').trim();
       if (!id) return null;
@@ -370,36 +453,27 @@ export function rankFactoryIdsByDistance(
         : Infinity;
       const rawVol = monthlyVolumeByFactory[id];
       const vol = rawVol !== undefined && rawVol !== null ? Number(rawVol) : null;
-      return { id, dist, vol };
+      return { id, dist, vol: Number.isFinite(vol as number) ? (vol as number) : null };
     })
     .filter((x): x is { id: string; dist: number; vol: number | null } => Boolean(x));
 
-  const maxDist = Math.max(...items.map((x) => x.dist).filter(Number.isFinite), 1);
-  const volValues = items.map((x) => x.vol).filter((v): v is number => v != null);
-  const maxVol = volValues.length > 0 ? Math.max(...volValues) : 1;
-  const capWeight = 1 - distanceWeight;
+  const ids = rankFactoryIdsNearestThenCheapest(items, nearPoolSize);
+  const poolSize = Math.max(1, Number(nearPoolSize) || 5);
 
-  const scored = items
-    .map((x) => {
-      const dScore = Number.isFinite(x.dist) ? 1 - x.dist / maxDist : 0;
-      const cScore = x.vol != null ? 1 - x.vol / maxVol : 0.5;
-      const total = dScore * distanceWeight + cScore * capWeight;
-      return { ...x, total };
-    })
-    .sort((a, b) => b.total - a.total || a.id.localeCompare(b.id));
-
-  const ids = scored.map((x) => x.id);
-
-  console.log('[escalationVisibility] DISTANCE scored', {
+  console.log('[escalationVisibility] DISTANCE near-then-cheapest', {
     orderId: pickString(order.id, orderData(order).id),
-    distanceWeight,
-    capWeight,
-    top3: scored.slice(0, 3).map((x) => ({
-      id: x.id,
-      dist: Number.isFinite(x.dist) ? x.dist.toFixed(1) : x.dist,
-      vol: x.vol,
-      score: x.total?.toFixed(3),
-    })),
+    nearPoolSize: poolSize,
+    smallVehicleFilter: isSmallVehicleSpotOrder(order),
+    rankedCount: ids.length,
+    nearPool: ids.slice(0, poolSize),
+    top3: ids.slice(0, 3).map((id) => {
+      const it = items.find((x) => x.id === id);
+      return {
+        id,
+        dist: it && Number.isFinite(it.dist) ? it.dist.toFixed(1) : it?.dist,
+        vol: it?.vol ?? null,
+      };
+    }),
   });
 
   if (ids.length) return ids;
@@ -411,11 +485,22 @@ function sortFactoryIdsByDistance(
   ctx: EscalationPushContext,
   monthlyVolumeByFactory?: Record<string, number>,
   distanceWeight?: number,
+  nearPoolSize?: number,
 ): string[] {
   const vol = monthlyVolumeByFactory ?? ctx.monthlyVolumeByFactory ?? {};
   const weight = distanceWeight ?? ctx.distanceWeight ?? 0.7;
+  const pool = nearPoolSize ?? ctx.nearPoolSize ?? 5;
   const siteCoords = getOrderSiteCoords(order, ctx.projectById);
-  return rankFactoryIdsByDistance(order, ctx.projectById, siteCoords, ctx.factories, vol, weight);
+  return rankFactoryIdsByDistance(
+    order,
+    ctx.projectById,
+    siteCoords,
+    ctx.factories,
+    vol,
+    weight,
+    pool,
+    ctx.factorySmallVehicleInfo ?? {},
+  );
 }
 
 /** escalationUtils.rankFactoryIdsForOrder の Edge 向け簡易版（距離ベースのみ） */
@@ -424,8 +509,9 @@ export function rankFactoryIdsForOrder(
   ctx: EscalationPushContext,
   monthlyVolumeByFactory?: Record<string, number>,
   distanceWeight?: number,
+  nearPoolSize?: number,
 ): string[] {
-  return buildCandidateFactoryIds(order, ctx, monthlyVolumeByFactory, distanceWeight);
+  return buildCandidateFactoryIds(order, ctx, monthlyVolumeByFactory, distanceWeight, nearPoolSize);
 }
 
 /** escalationUtils.buildCandidateFactoryIds と同等 */
@@ -434,6 +520,7 @@ export function buildCandidateFactoryIds(
   ctx: EscalationPushContext,
   monthlyVolumeByFactory?: Record<string, number>,
   distanceWeight?: number,
+  nearPoolSize?: number,
 ): string[] {
   const rejectedIds = rejectedFactoryIdSet(order);
   const preferredId = orderPreferredFactoryId(order);
@@ -466,7 +553,8 @@ export function buildCandidateFactoryIds(
 
   const vol = monthlyVolumeByFactory ?? ctx.monthlyVolumeByFactory ?? {};
   const weight = distanceWeight ?? ctx.distanceWeight ?? 0.7;
-  const sortedByDistance = sortFactoryIdsByDistance(order, ctx, vol, weight);
+  const pool = nearPoolSize ?? ctx.nearPoolSize ?? 5;
+  const sortedByDistance = sortFactoryIdsByDistance(order, ctx, vol, weight, pool);
   const candidates: string[] = [];
   const seen = new Set<string>();
   for (const id of [...vipIds, ...subIds, ...sortedByDistance]) {

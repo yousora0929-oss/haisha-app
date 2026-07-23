@@ -168,6 +168,8 @@ function sortFactoryIdsByDistance(
   globalAllowedAreas,
   monthlyVolumeByFactory = {},
   distanceWeight = 0.7,
+  nearPoolSize = 5,
+  factorySmallVehicleInfo = {},
 ) {
   const siteCoords = getOrderSiteCoords(order, projectById);
   return rankFactoryIdsByDistance(
@@ -178,6 +180,8 @@ function sortFactoryIdsByDistance(
     globalAllowedAreas,
     monthlyVolumeByFactory,
     distanceWeight,
+    nearPoolSize,
+    factorySmallVehicleInfo,
   );
 }
 
@@ -191,6 +195,8 @@ export function buildCandidateFactoryIds(
   globalAllowedAreas,
   monthlyVolumeByFactory = {},
   distanceWeight = 0.7,
+  nearPoolSize = 5,
+  factorySmallVehicleInfo = {},
 ) {
   const rejectedIds = rejectedFactoryIdSet(order);
   const preferredId = orderPreferredFactoryId(order);
@@ -226,6 +232,8 @@ export function buildCandidateFactoryIds(
     globalAllowedAreas,
     monthlyVolumeByFactory,
     distanceWeight,
+    nearPoolSize,
+    factorySmallVehicleInfo,
   );
 
   const candidates = [];
@@ -500,6 +508,8 @@ export function rankFactoryIdsForOrder(
   globalAllowedAreas,
   monthlyVolumeByFactory = {},
   distanceWeight = 0.7,
+  nearPoolSize = 5,
+  factorySmallVehicleInfo = {},
 ) {
   const addrCtx = getOrderDeliveryAreaContext(order, projectById, globalAllowedAreas);
   const rankMode = resolveEscalationRankMode(order, projectById, globalAllowedAreas);
@@ -515,6 +525,7 @@ export function rankFactoryIdsForOrder(
       代表座標距離判定: rankMode.reason === 'location_pending_representative_coordinates',
       地図ピン座標: siteCoords || null,
       第一希望工場: orderPreferredFactoryId(order) || null,
+      nearPoolSize,
     });
   }
 
@@ -530,6 +541,8 @@ export function rankFactoryIdsForOrder(
       globalAllowedAreas,
       monthlyVolumeByFactory,
       distanceWeight,
+      nearPoolSize,
+      factorySmallVehicleInfo,
     );
   }
 
@@ -540,6 +553,8 @@ export function rankFactoryIdsForOrder(
     globalAllowedAreas,
     monthlyVolumeByFactory,
     distanceWeight,
+    nearPoolSize,
+    factorySmallVehicleInfo,
   );
 
   if (typeof console !== 'undefined' && typeof console.log === 'function') {
@@ -548,13 +563,82 @@ export function rankFactoryIdsForOrder(
       第一希望工場: orderPreferredFactoryId(order) || null,
       公開候補数: finalized.length,
       公開候補: finalized,
+      rankedPreview: Array.isArray(ranked) ? ranked.slice(0, 8) : [],
     });
   }
 
   return finalized;
 }
 
-/** 距離・容量スコアの高い順に工場 ID を並べる */
+/** スポット注文かつ小型車種か（getOrderVehicleScheduleKey と同等＋order_data） */
+export function isSmallVehicleSpotOrder(order) {
+  if (!order || typeof order !== 'object') return false;
+  const od = orderDataObject(order);
+  const isSpot = Boolean(order.is_spot ?? order.isSpot ?? od.is_spot ?? od.isSpot);
+  if (!isSpot) return false;
+  if (order.vehicleType === 'small' || od.vehicleType === 'small') return true;
+  if (String(order.vehicleLabel || od.vehicleLabel || '').trim() === '小型') return true;
+  return false;
+}
+
+/**
+ * 小型スポット注文向け: 車両登録済みかつ小型ゼロの工場を除外。
+ * 未登録工場は判定不能のため維持。フィルタ後0件ならフィルタ前へフォールバック。
+ */
+export function filterFactoriesForSmallVehicleOrder(factories, order, infoMap) {
+  const list = Array.isArray(factories) ? factories : [];
+  if (!isSmallVehicleSpotOrder(order)) return list;
+  const map = infoMap && typeof infoMap === 'object' ? infoMap : {};
+  const filtered = list.filter((f) => {
+    const id = f?.id != null ? String(f.id) : '';
+    if (!id) return false;
+    const info = map[id];
+    if (!info) return true; // 未登録＝判定不能 → 除外しない
+    if (info.hasAnyVehicle && !info.hasSmallVehicle) return false;
+    return true;
+  });
+  if (!filtered.length && list.length) {
+    if (typeof console !== 'undefined' && typeof console.log === 'function') {
+      console.log('【Escalation Debug】小型車フィルタ後0件 → フィルタ前へフォールバック', {
+        orderId: order?.id,
+        before: list.length,
+      });
+    }
+    return list;
+  }
+  return filtered;
+}
+
+/**
+ * 距離順上位N社を「近い候補」とし、その中を当月出荷量の少ない順に並べ替える。
+ * 出荷量未設定(null)の工場は既知データの中央に挿入（中立扱い）。N社の外側は距離順のまま後方連結。
+ */
+export function rankFactoryIdsNearestThenCheapest(items, nearPoolSize) {
+  const byDistance = [...items].sort((a, b) => {
+    if (a.dist !== b.dist) return a.dist - b.dist;
+    return a.id.localeCompare(b.id);
+  });
+  const poolSize = Math.max(1, Number(nearPoolSize) || 5);
+  const near = byDistance.slice(0, poolSize);
+  const far = byDistance.slice(poolSize);
+  const known = near
+    .filter((x) => x.vol != null)
+    .sort((a, b) => a.vol - b.vol || a.id.localeCompare(b.id));
+  const unknown = near.filter((x) => x.vol == null);
+  let nearSorted;
+  if (!unknown.length) nearSorted = known;
+  else if (!known.length) nearSorted = unknown;
+  else {
+    const mid = Math.floor(known.length / 2);
+    nearSorted = [...known.slice(0, mid), ...unknown, ...known.slice(mid)];
+  }
+  return [...nearSorted, ...far].map((x) => x.id);
+}
+
+/**
+ * 距離順上位N社 → その中を出荷量昇順（二段階方式）。
+ * distanceWeight はシグネチャ互換のため残置（未使用）。
+ */
 export function rankFactoryIdsByDistance(
   order,
   projectById,
@@ -563,7 +647,10 @@ export function rankFactoryIdsByDistance(
   globalAllowedAreas,
   monthlyVolumeByFactory = {},
   distanceWeight = 0.7,
+  nearPoolSize = 5,
+  factorySmallVehicleInfo = {},
 ) {
+  void distanceWeight;
   const list = Array.isArray(factories) ? factories : [];
   const addrCtx = getOrderDeliveryAreaContext(order, projectById, globalAllowedAreas);
   const hasAddress =
@@ -578,10 +665,17 @@ export function rankFactoryIdsByDistance(
     ? list.filter((f) => factoryCoversDeliveryArea(f, deliveryArea, addressText, globalAllowedAreas, addressDetail))
     : list;
 
-  // 空になった場合は安全のため全体へフォールバック（VIP/空配列回避は finalizeEscalationRank 側でも行う）
+  // 空になった場合は安全のため全体へフォールバック
   const eligibleWithFallback = eligible.length ? eligible : list;
 
-  const items = eligibleWithFallback
+  // 小型スポット: 車両登録済みかつ小型なし工場を除外（VIP枠はこの後段の距離ソート対象のみ）
+  const eligibleForRank = filterFactoriesForSmallVehicleOrder(
+    eligibleWithFallback,
+    order,
+    factorySmallVehicleInfo,
+  );
+
+  const items = eligibleForRank
     .map((f) => {
       const id = f?.id != null ? String(f.id) : '';
       if (!id) return null;
@@ -590,40 +684,31 @@ export function rankFactoryIdsByDistance(
         : Infinity;
       const rawVol = monthlyVolumeByFactory[id];
       const vol = rawVol !== undefined && rawVol !== null ? Number(rawVol) : null;
-      return { id, dist, vol };
+      return { id, dist, vol: Number.isFinite(vol) ? vol : null };
     })
     .filter(Boolean);
 
-  const maxDist = Math.max(...items.map((x) => x.dist).filter(Number.isFinite), 1);
-  const volValues = items.map((x) => x.vol).filter((v) => v != null);
-  const maxVol = volValues.length > 0 ? Math.max(...volValues) : 1;
-  const capWeight = 1 - distanceWeight;
-
-  const scored = items
-    .map((x) => {
-      const dScore = Number.isFinite(x.dist) ? 1 - x.dist / maxDist : 0;
-      const cScore = x.vol != null ? 1 - x.vol / maxVol : 0.5;
-      const total = dScore * distanceWeight + cScore * capWeight;
-      return { ...x, total };
-    })
-    .sort((a, b) => b.total - a.total || a.id.localeCompare(b.id));
-
-  const ids = scored.map((x) => x.id);
+  const ids = rankFactoryIdsNearestThenCheapest(items, nearPoolSize);
 
   if (typeof console !== 'undefined' && typeof console.log === 'function') {
-    console.log('【Escalation Debug】DISTANCE eligible', {
+    const poolSize = Math.max(1, Number(nearPoolSize) || 5);
+    console.log('【Escalation Debug】DISTANCE eligible（近い順→出荷量昇順）', {
       判定対象の市町村: deliveryArea,
       判定対象の町名: addressDetail,
       許容プール数: eligible.length,
       許容プールフォールバック: eligible.length === 0,
-      distanceWeight,
-      capWeight,
-      スコア上位3件: scored.slice(0, 3).map((x) => ({
-        id: x.id,
-        dist: Number.isFinite(x.dist) ? x.dist.toFixed(1) : x.dist,
-        vol: x.vol,
-        score: x.total?.toFixed(3),
-      })),
+      小型車フィルタ適用: isSmallVehicleSpotOrder(order),
+      ランキング対象数: eligibleForRank.length,
+      nearPoolSize: poolSize,
+      近い候補プール: ids.slice(0, poolSize),
+      全体上位8件: ids.slice(0, 8).map((id) => {
+        const it = items.find((x) => x.id === id);
+        return {
+          id,
+          dist: it && Number.isFinite(it.dist) ? Number(it.dist.toFixed(1)) : it?.dist,
+          vol: it?.vol ?? null,
+        };
+      }),
     });
   }
 
@@ -788,6 +873,10 @@ export function isOrderVisibleToFactory(order, factoryId, ctx) {
  * @param {object} settings
  * @param {Array} holidays
  * @param {Date} [now]
+ * @param {object} [escalationStepsByFactoryId]
+ * @param {object[]} [customers]
+ * @param {Record<string, { hasAnyVehicle: boolean, hasSmallVehicle: boolean }>} [factorySmallVehicleInfo]
+ * @param {Record<string, number>} [monthlyVolumeByFactory]
  */
 export function buildEscalationContext(
   orders,
@@ -798,6 +887,8 @@ export function buildEscalationContext(
   now = new Date(),
   escalationStepsByFactoryId = {},
   customers = [],
+  factorySmallVehicleInfo = {},
+  monthlyVolumeByFactory = {},
 ) {
   const projectById = Object.fromEntries(
     (projects || []).filter((p) => p && p.id).map((p) => [String(p.id), p]),
@@ -806,6 +897,22 @@ export function buildEscalationContext(
     (customers || []).filter((c) => c && c.id).map((c) => [String(c.id), c]),
   );
   const globalAllowedAreas = normalizeAllowedDeliveryAreas(settings?.allowed_delivery_areas);
+  const nearPoolSizeRaw = Number(settings?.near_pool_size);
+  const nearPoolSize =
+    Number.isFinite(nearPoolSizeRaw) && nearPoolSizeRaw >= 1
+      ? Math.min(50, Math.floor(nearPoolSizeRaw))
+      : 5;
+  const distanceWeightRaw = Number(settings?.distance_weight);
+  const distanceWeight =
+    Number.isFinite(distanceWeightRaw) ? distanceWeightRaw : 0.7;
+  const volumeMap =
+    monthlyVolumeByFactory && typeof monthlyVolumeByFactory === 'object'
+      ? monthlyVolumeByFactory
+      : {};
+  const smallVehicleMap =
+    factorySmallVehicleInfo && typeof factorySmallVehicleInfo === 'object'
+      ? factorySmallVehicleInfo
+      : {};
   const allFactoryIds = (factories || [])
     .map((f) => (f?.id != null ? String(f.id) : ''))
     .filter(Boolean);
@@ -813,7 +920,16 @@ export function buildEscalationContext(
   const areaFactoryIdsByOrder = new Map();
   for (const o of orders || []) {
     if (!o?.id) continue;
-    const ranked = rankFactoryIdsForOrder(o, projectById, factories, globalAllowedAreas);
+    const ranked = rankFactoryIdsForOrder(
+      o,
+      projectById,
+      factories,
+      globalAllowedAreas,
+      volumeMap,
+      distanceWeight,
+      nearPoolSize,
+      smallVehicleMap,
+    );
     topNByOrderId.set(o.id, { top3: ranked.slice(0, 3), top6: ranked.slice(0, 6) });
     areaFactoryIdsByOrder.set(o.id, ranked);
   }
@@ -828,6 +944,9 @@ export function buildEscalationContext(
     factories,
     allFactoryIds,
     globalAllowedAreas,
+    nearPoolSize,
+    factorySmallVehicleInfo: smallVehicleMap,
+    monthlyVolumeByFactory: volumeMap,
     escalationStepsByFactoryId:
       escalationStepsByFactoryId && typeof escalationStepsByFactoryId === 'object'
         ? escalationStepsByFactoryId

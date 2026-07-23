@@ -1423,6 +1423,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [holidays, setHolidays] = useState([]);
       const [systemSettings, setSystemSettings] = useState({ start_time: '08:00:00', end_time: '16:00:00' });
       const [escalationStepsByFactoryId, setEscalationStepsByFactoryId] = useState({});
+      const [nearPoolSize, setNearPoolSize] = useState(5);
+      const [factorySmallVehicleInfo, setFactorySmallVehicleInfo] = useState({});
+      const [monthlyVolumeByFactory, setMonthlyVolumeByFactory] = useState({});
       const [escalationTick, setEscalationTick] = useState(0);
       const [customers, setCustomers] = useState([]);
       const [agentOrganizations, setAgentOrganizations] = useState([]);
@@ -2222,7 +2225,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               setAdminSettings(adminSettingRows || { admin_name: '', phone_number: '' });
               return;
             }
-            const [rows, projs, customerRows, adminSettingRows, holidayRows, opSettings, escalationSteps, orgRows] = await Promise.all([
+            const [rows, projs, customerRows, adminSettingRows, holidayRows, opSettings, escalationSteps, orgRows, poolSize, smallVehicleInfo, monthlyVolumes] = await Promise.all([
               db.fetchFactories(),
               db.fetchProjects(),
               db.fetchCustomers(),
@@ -2231,6 +2234,18 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               db.fetchSystemSettings().catch(() => ({ start_time: '08:00:00', end_time: '16:00:00' })),
               db.fetchEscalationSteps().catch(() => ({})),
               db.fetchOrganizations().catch(() => []),
+              db.fetchNearPoolSize().catch((e) => {
+                console.warn('[DispatchApp] near_pool_size fetch failed', e);
+                return 5;
+              }),
+              db.fetchFactorySmallVehicleInfo().catch((e) => {
+                console.warn('[DispatchApp] small vehicle info fetch failed', e);
+                return {};
+              }),
+              db.fetchMonthlyVolumeByFactory().catch((e) => {
+                console.warn('[DispatchApp] monthly volume fetch failed', e);
+                return {};
+              }),
             ]);
             if (cancelled) return;
             setFactories(rows);
@@ -2241,6 +2256,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             setHolidays(Array.isArray(holidayRows) ? holidayRows : []);
             setSystemSettings(opSettings || { start_time: '08:00:00', end_time: '16:00:00' });
             setEscalationStepsByFactoryId(escalationSteps && typeof escalationSteps === 'object' ? escalationSteps : {});
+            setNearPoolSize(poolSize);
+            setFactorySmallVehicleInfo(smallVehicleInfo || {});
+            setMonthlyVolumeByFactory(monthlyVolumes || {});
             setCurrentCustomerId((cur) => {
               if (cur && customerRows.some((c) => c && c.id === cur)) return cur;
               return '';
@@ -2617,10 +2635,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               ...(adminSettings || {}),
               start_time: systemSettings?.start_time,
               end_time: systemSettings?.end_time,
+              near_pool_size: nearPoolSize,
             },
             holidays,
             new Date(),
             escalationStepsByFactoryId,
+            customers,
+            factorySmallVehicleInfo,
+            monthlyVolumeByFactory,
           ),
         [
           dashboardOrders,
@@ -2631,6 +2653,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           holidays,
           escalationStepsByFactoryId,
           escalationTick,
+          customers,
+          nearPoolSize,
+          factorySmallVehicleInfo,
+          monthlyVolumeByFactory,
         ],
       );
 

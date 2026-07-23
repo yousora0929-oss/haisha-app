@@ -355,8 +355,22 @@ export function buildOrderVisibilityContext(
   holidays,
   now = new Date(),
   escalationStepsByFactoryId = {},
+  customers = [],
+  factorySmallVehicleInfo = {},
+  monthlyVolumeByFactory = {},
 ) {
-  return buildEscalationContext(orders, factories, projects, settings, holidays, now, escalationStepsByFactoryId);
+  return buildEscalationContext(
+    orders,
+    factories,
+    projects,
+    settings,
+    holidays,
+    now,
+    escalationStepsByFactoryId,
+    customers,
+    factorySmallVehicleInfo,
+    monthlyVolumeByFactory,
+  );
 }
 
 export function chipRoleLabel(role) {

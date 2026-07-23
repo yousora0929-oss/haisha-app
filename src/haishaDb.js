@@ -4263,6 +4263,7 @@ export async function updateMonthlyVolume(factoryId, volumeM3) {
 /**
  * distance_weight 設定を取得（シングルトン行）
  * 戻り値: number (0.0〜1.0、未設定時は 0.7)
+ * 【互換残置】二段階方式移行後は計算未使用
  */
 export async function fetchEscalationDistanceWeight() {
   const { data, error } = await supabase
@@ -4278,6 +4279,7 @@ export async function fetchEscalationDistanceWeight() {
 /**
  * distance_weight 設定を保存（UPSERT）
  * @param {number} weight 0.0〜1.0
+ * 【互換残置】管理UIからは呼ばれない
  */
 export async function saveEscalationDistanceWeight(weight) {
   const w = Math.max(0, Math.min(1, Number(weight)));
@@ -4285,6 +4287,54 @@ export async function saveEscalationDistanceWeight(weight) {
     .from('factory_escalation_weight_config')
     .upsert({ id: 1, distance_weight: w, updated_at: new Date().toISOString() });
   if (error) throw error;
+}
+
+/**
+ * 近い候補プールN社数を取得（1〜50、未設定時は 5）
+ */
+export async function fetchNearPoolSize() {
+  const { data, error } = await supabase
+    .from('factory_escalation_weight_config')
+    .select('near_pool_size')
+    .eq('id', 1)
+    .maybeSingle();
+  if (error) throw error;
+  const n = Number(data?.near_pool_size);
+  if (!Number.isFinite(n) || n < 1) return 5;
+  return Math.min(50, Math.floor(n));
+}
+
+/**
+ * 近い候補プールN社数を保存（UPSERT）
+ * @param {number} size 1〜50
+ */
+export async function saveNearPoolSize(size) {
+  const n = Math.max(1, Math.min(50, Math.floor(Number(size) || 5)));
+  const { error } = await supabase
+    .from('factory_escalation_weight_config')
+    .upsert({ id: 1, near_pool_size: n, updated_at: new Date().toISOString() });
+  if (error) throw error;
+  return n;
+}
+
+/**
+ * 工場の小型車保有情報（SECURITY DEFINER RPC）
+ * @returns {Promise<Record<string, { hasAnyVehicle: boolean, hasSmallVehicle: boolean }>>}
+ */
+export async function fetchFactorySmallVehicleInfo() {
+  if (!supabase?.rpc) return {};
+  const { data, error } = await supabase.rpc('get_factory_small_vehicle_info');
+  if (error) throw error;
+  const map = {};
+  for (const row of data ?? []) {
+    const fid = String(row.factory_id || '').trim();
+    if (!fid) continue;
+    map[fid] = {
+      hasAnyVehicle: Boolean(row.has_any_vehicle),
+      hasSmallVehicle: Boolean(row.has_small_vehicle),
+    };
+  }
+  return map;
 }
 
 function mapCharterVehicleRow(row) {
