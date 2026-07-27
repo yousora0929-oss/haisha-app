@@ -4,7 +4,6 @@ import { downloadOrgMembersExportCsv } from '../utils/adminCsvImport.js';
 import { generateInitialMemberPassword } from '../utils/generatePassword.js';
 import { formatPhoneNumberJP } from '../utils/phoneFormat.js';
 import { normalizeSuggestSearchText } from '../utils/normalizeSuggestSearchText.js';
-import { SiteContactsEditor } from './SiteContactsEditor.jsx';
 
 const emptyMember = () => ({
   companyName: '',
@@ -187,7 +186,6 @@ export function AdminOrgSection({ orgType, label }) {
   const csvFileInputRef = useRef(null);
 
   const isAgentOrg = orgType === 'agent';
-  const isContractorOrg = orgType === 'contractor';
 
   const filteredOrgs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -1040,15 +1038,6 @@ export function AdminOrgSection({ orgType, label }) {
                               onFilterChange={setContractorListFilter}
                               inputClass={inputClass}
                             />
-                          ) : null}
-                          {isContractorOrg ? (
-                            <div className="sm:col-span-2">
-                              <SiteContactsEditor
-                                customerId={editingMember.id}
-                                disabled={loading}
-                                inputClassName={`${inputClass} mt-0 w-full`}
-                              />
-                            </div>
                           ) : null}
                         </div>
                         <div className="mt-3 flex gap-2">

@@ -44,7 +44,7 @@ import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
-import { SiteContactsEditor } from './components/SiteContactsEditor.jsx';
+import { CompanyMemberContactList } from './components/CompanyMemberContactList.jsx';
 import { customerSuggestTexts, organizationSuggestTexts, projectSuggestTexts, sortCustomersByUsageFrequency } from './utils/masterSuggest.js';
 import { resolveEffectiveContractorCustomerId } from './utils/resolveEffectiveContractorCustomerId.js';
 import {
@@ -1944,7 +1944,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         }
         let cancelled = false;
         void db
-          .listSiteContacts(cid)
+          .fetchCompanyMemberSuggestions(cid)
           .then((rows) => {
             if (cancelled) return;
             setSiteContactCandidates(Array.isArray(rows) ? rows : []);
@@ -5185,7 +5185,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   自社の現場担当者を登録すると、新規発注フォームで名前サジェストと電話番号の自動入力が使えます。
                 </p>
                 <div className="mt-4">
-                  <SiteContactsEditor customerId={currentCustomerId} />
+                  <CompanyMemberContactList customerId={currentCustomerId} />
                 </div>
               </section>
             ) : null}

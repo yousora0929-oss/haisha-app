@@ -709,72 +709,36 @@ export async function fetchSelectionFrequency({ customerId, column }) {
 }
 
 /**
- * 業者の現場担当者マスタ一覧
- * @param {string} customerId
- * @returns {Promise<Array<{ id: string, customer_id: string, name: string, phone_number: string }>>}
+ * 会社単位（company_name一致）の担当者候補を取得
+ * @param {string} contractorRefCustomerId
+ * @returns {Promise<Array<{ id: string, name: string, phone_number: string }>>}
  */
-export async function listSiteContacts(customerId) {
-  const cid = String(customerId || '').trim();
+export async function fetchCompanyMemberSuggestions(contractorRefCustomerId) {
+  const cid = String(contractorRefCustomerId || '').trim();
   if (!cid) return [];
-  const { data, error } = await supabase
-    .from('customer_site_contacts')
-    .select('id, customer_id, name, phone_number, created_at, updated_at')
-    .eq('customer_id', cid)
-    .order('name', { ascending: true });
+  const { data, error } = await supabase.rpc('get_company_members', {
+    p_contractor_ref_customer_id: cid,
+  });
   if (error) throw error;
   return (data || []).map((row) => ({
-    id: String(row.id),
-    customer_id: String(row.customer_id),
-    name: String(row.name || '').trim(),
-    phone_number: String(row.phone_number || '').trim(),
-    created_at: row.created_at,
-    updated_at: row.updated_at,
+    id: String(row?.id || ''),
+    name: String(row?.name || '').trim(),
+    phone_number: String(row?.phone_number || '').trim(),
   }));
 }
 
 /**
- * 現場担当者の追加／更新
- * @param {{ id?: string, customerId: string, name: string, phone: string }} params
+ * 会社担当者の氏名・電話番号のみ更新
+ * @param {{ id: string, name: string, phone: string }} params
  */
-export async function upsertSiteContact({ id, customerId, name, phone } = {}) {
-  const cid = String(customerId || '').trim();
-  const payload = {
-    customer_id: cid,
-    name: String(name ?? '').trim(),
-    phone_number: String(phone ?? '').trim(),
-  };
-  if (!cid) throw new Error('customerId が必要です');
-  if (!payload.name || !payload.phone_number) {
-    throw new Error('現場担当者の名前と携帯電話は必須です');
-  }
-  const existingId = String(id || '').trim();
-  if (existingId) {
-    const { data, error } = await supabase
-      .from('customer_site_contacts')
-      .update(payload)
-      .eq('id', existingId)
-      .select('id, customer_id, name, phone_number, created_at, updated_at')
-      .single();
-    if (error) throw error;
-    return data;
-  }
-  const { data, error } = await supabase
-    .from('customer_site_contacts')
-    .insert(payload)
-    .select('id, customer_id, name, phone_number, created_at, updated_at')
-    .single();
-  if (error) throw error;
-  return data;
-}
-
-/**
- * 現場担当者を削除
- * @param {string} id
- */
-export async function deleteSiteContact(id) {
-  const contactId = String(id || '').trim();
-  if (!contactId) throw new Error('id が必要です');
-  const { error } = await supabase.from('customer_site_contacts').delete().eq('id', contactId);
+export async function updateCompanyMemberContact({ id, name, phone } = {}) {
+  const memberId = String(id || '').trim();
+  if (!memberId) throw new Error('id が必要です');
+  const { error } = await supabase.rpc('update_company_member_contact', {
+    p_customer_id: memberId,
+    p_name: String(name ?? '').trim(),
+    p_phone: String(phone ?? '').trim(),
+  });
   if (error) throw error;
 }
 
