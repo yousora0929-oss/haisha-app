@@ -53,6 +53,7 @@ import {
 } from './utils/salesStaff.js';
 import { customerSuggestTexts, organizationSuggestTexts } from './utils/masterSuggest.js';
 import { dedupeCustomersByCompany } from './utils/dedupeCustomersByCompany.js';
+import { formatPhoneNumberJP } from './utils/phoneFormat.js';
 import { fetchTownLocationsForMunicipality, resolveDeliveryPrefecture } from './utils/heartrailsGeo.js';
 import { SCHEDULE_BLOCK_IDS, normalizeDayBlockSchedule, todayLocalISODate } from './haishaConstants.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
@@ -553,6 +554,7 @@ function ProjectForm({
     const list = Array.isArray(initial?.site_contacts) ? initial.site_contacts : [];
     return list.length ? list.map((c) => ({ name: c?.name || '', phone: c?.phone || '' })) : [{ name: '', phone: '' }];
   });
+  const [siteContactCandidates, setSiteContactCandidates] = useState([]);
   const [subContractor, setSubContractor] = useState(
     initial?.sub_contractor_name ?? initial?.contractor ?? '',
   );
@@ -702,6 +704,29 @@ function ProjectForm({
     setContractorName(String(customer.company_name || customer.name || '').trim());
   }, []);
 
+  // 業者（元請）に紐づく会社メンバーを現場担当者サジェスト候補にする（DispatchApp と同 RPC）
+  useEffect(() => {
+    const cid = String(customerId || '').trim();
+    if (!cid) {
+      setSiteContactCandidates([]);
+      return undefined;
+    }
+    let cancelled = false;
+    void db
+      .fetchCompanyMemberSuggestions(cid)
+      .then((rows) => {
+        if (cancelled) return;
+        setSiteContactCandidates(Array.isArray(rows) ? rows : []);
+      })
+      .catch((err) => {
+        console.warn('【SiteContactSuggest】物件フォームの現場担当者候補の取得に失敗 → 自由入力のみで続行', err);
+        if (!cancelled) setSiteContactCandidates([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [customerId]);
+
   useEffect(() => {
     const municipality = String(deliveryArea || '').trim();
     if (!municipality) {
@@ -819,6 +844,23 @@ function ProjectForm({
       prev.map((row, i) => (i === index ? { ...row, [key]: value } : row)),
     );
   };
+
+  const handleSiteContactSelect = useCallback((index, member) => {
+    const contactName = String(member?.name || '').trim();
+    const contactPhone = String(member?.phone_number || '').trim();
+    setSiteContacts((prev) =>
+      prev.map((row, i) =>
+        i === index
+          ? {
+              ...row,
+              name: contactName,
+              // 候補選択時は電話を上書き（DispatchApp の sitePhone と同様）
+              ...(contactPhone ? { phone: contactPhone } : {}),
+            }
+          : row,
+      ),
+    );
+  }, []);
 
   const addSiteContact = () => {
     setSiteContacts((prev) => [...prev, { name: '', phone: '' }]);
@@ -1046,20 +1088,39 @@ function ProjectForm({
         <legend className="px-1 text-xs font-bold text-slate-600">現場担当者（任意・複数可）</legend>
         <div className="mt-2 space-y-2">
           {siteContacts.map((row, index) => (
-            <div key={`site-contact-${index}`} className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
-              <input
-                type="text"
+            <div key={`site-contact-${index}`} className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-start">
+              <MasterSuggestInput
+                label=""
+                htmlFor={`proj-site-contact-name-${index}`}
+                name={`proj_site_contact_name_${index}`}
                 value={row.name}
-                onChange={(e) => updateSiteContact(index, 'name', e.target.value)}
-                className={fieldClass}
-                placeholder="担当者名"
+                onValueChange={(next) => updateSiteContact(index, 'name', next)}
+                onSelect={(member) => handleSiteContactSelect(index, member)}
+                items={siteContactCandidates}
+                getItemKey={(c) => String(c?.id || `${c?.name}::${c?.phone_number}`)}
+                getItemLabel={(c) => {
+                  const contactName = String(c?.name || '').trim();
+                  const contactPhone = formatPhoneNumberJP(String(c?.phone_number || '').trim());
+                  return contactPhone
+                    ? `${contactName || '—'}（${contactPhone}）`
+                    : contactName;
+                }}
+                getSearchTexts={(c) => [c?.name || '', c?.phone_number || '']}
+                placeholder="担当者名（候補から選択可）"
+                emptyHint={
+                  !String(customerId || '').trim()
+                    ? '業者（元請）を選ぶと担当者候補が表示されます（自由入力もできます）'
+                    : '登録された担当者がいません（自由入力もできます）'
+                }
+                inputClassName="min-h-[44px] rounded-lg border-2 border-slate-200 px-3 py-2 text-sm"
               />
               <input
                 type="tel"
                 value={row.phone}
                 onChange={(e) => updateSiteContact(index, 'phone', e.target.value)}
-                className={fieldClass}
+                className="min-h-[44px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
                 placeholder="電話番号"
+                aria-label={`現場担当者の電話番号 ${index + 1}`}
               />
               <button
                 type="button"
@@ -1077,6 +1138,9 @@ function ProjectForm({
           >
             ＋担当者を追加
           </button>
+          <p className="text-[11px] font-medium text-slate-500">
+            業者（元請）の担当者マスタから選ぶと、電話番号が自動入力されます（未登録名の自由入力も可）。
+          </p>
         </div>
       </fieldset>
       <fieldset>
