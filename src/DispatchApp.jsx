@@ -1768,7 +1768,76 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           }
         }
         const deduped = Array.from(byCompany.values());
-        return sortCustomersByUsageFrequency(deduped, contractorUsageCounts);
+        const sorted = sortCustomersByUsageFrequency(deduped, contractorUsageCounts);
+
+        // 診断: 「発注先業者」UI は items={proxyContractorItems} を参照。重複の正体を特定する。
+        if (typeof console !== 'undefined') {
+          const groupByRawName = (rows) => {
+            const map = new Map();
+            for (const c of rows) {
+              const raw = c?.company_name;
+              const key = JSON.stringify(raw);
+              if (!map.has(key)) map.set(key, []);
+              map.get(key).push(c);
+            }
+            return map;
+          };
+          const rawDupes = [...groupByRawName(filtered).entries()].filter(([, rows]) => rows.length > 1);
+          const afterDupes = [...groupByRawName(sorted).entries()].filter(([, rows]) => rows.length > 1);
+          console.log('[proxyContractorItems] source=proxyContractorItems (発注先業者 MasterSuggestInput)', {
+            filteredCount: filtered.length,
+            dedupedCount: sorted.length,
+            items: sorted.map((c) => ({
+              id: c.id,
+              company_name: c.company_name,
+              name: c.name,
+              manager_name: c.manager_name,
+              created_at: c.created_at,
+              company_name_json: JSON.stringify(c.company_name),
+            })),
+          });
+          if (rawDupes.length > 0) {
+            for (const [nameJson, rows] of rawDupes) {
+              const a = rows[0];
+              const b = rows[1];
+              console.log('[proxyContractorItems] pre-dedupe duplicate company_name pair', {
+                nameJson,
+                stringifyEqual:
+                  JSON.stringify(a?.company_name) === JSON.stringify(b?.company_name),
+                a: { id: a.id, company_name: a.company_name, created_at: a.created_at },
+                b: { id: b.id, company_name: b.company_name, created_at: b.created_at },
+                charCodesA: [...String(a?.company_name ?? '')].map((ch) => ch.charCodeAt(0)),
+                charCodesB: [...String(b?.company_name ?? '')].map((ch) => ch.charCodeAt(0)),
+              });
+            }
+          }
+          if (afterDupes.length > 0) {
+            console.warn(
+              '[proxyContractorItems] STILL duplicated after dedupe (trim key missed these)',
+              afterDupes.map(([nameJson, rows]) => ({
+                nameJson,
+                ids: rows.map((r) => r.id),
+                stringifyEqual:
+                  rows.length >= 2 &&
+                  JSON.stringify(rows[0]?.company_name) === JSON.stringify(rows[1]?.company_name),
+              })),
+            );
+          } else {
+            // trim後キーでの見かけ上の重複（表示ラベルが同じに見えるが生値が異なるケース）
+            const byTrimLabel = new Map();
+            for (const c of sorted) {
+              const label = String(c.company_name || c.name || '').trim();
+              if (!byTrimLabel.has(label)) byTrimLabel.set(label, []);
+              byTrimLabel.get(label).push(c);
+            }
+            const lookAlike = [...byTrimLabel.entries()].filter(([, rows]) => rows.length > 1);
+            if (lookAlike.length > 0) {
+              console.warn('[proxyContractorItems] same trimmed label still has multiple rows', lookAlike);
+            }
+          }
+        }
+
+        return sorted;
       }, [customers, contractorLinkAgentId, linkedContractorIds, contractorUsageCounts]);
 
       const tradingAgentItems = useMemo(() => {
