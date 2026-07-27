@@ -708,15 +708,31 @@ function ProjectForm({
   useEffect(() => {
     const cid = String(customerId || '').trim();
     if (!cid) {
+      console.log('[AdminSiteContactSuggest] skip fetch: customerId empty', {
+        contractorName: String(contractorName || ''),
+      });
       setSiteContactCandidates([]);
       return undefined;
     }
     let cancelled = false;
+    console.log('[AdminSiteContactSuggest] fetch start', {
+      customerId: cid,
+      contractorName: String(contractorName || ''),
+    });
     void db
       .fetchCompanyMemberSuggestions(cid)
       .then((rows) => {
-        if (cancelled) return;
-        setSiteContactCandidates(Array.isArray(rows) ? rows : []);
+        if (cancelled) {
+          console.log('[AdminSiteContactSuggest] fetch ignored (cancelled)', { customerId: cid });
+          return;
+        }
+        const list = Array.isArray(rows) ? rows : [];
+        console.log('[AdminSiteContactSuggest] fetch ok', {
+          customerId: cid,
+          count: list.length,
+          rows: list,
+        });
+        setSiteContactCandidates(list);
       })
       .catch((err) => {
         console.warn('【SiteContactSuggest】物件フォームの現場担当者候補の取得に失敗 → 自由入力のみで続行', err);
@@ -1140,6 +1156,13 @@ function ProjectForm({
           </button>
           <p className="text-[11px] font-medium text-slate-500">
             業者（元請）の担当者マスタから選ぶと、電話番号が自動入力されます（未登録名の自由入力も可）。
+          </p>
+          <p className="rounded border border-amber-200 bg-amber-50 px-2 py-1 font-mono text-[10px] text-amber-900" role="status">
+            [診断] customerId={String(customerId || '').trim() || '(empty)'} / candidates=
+            {siteContactCandidates.length}
+            {siteContactCandidates.length > 0
+              ? ` / ${siteContactCandidates.map((c) => c.name).join(', ')}`
+              : ''}
           </p>
         </div>
       </fieldset>
