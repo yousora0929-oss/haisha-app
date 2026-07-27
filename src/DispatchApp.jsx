@@ -46,6 +46,7 @@ import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { CompanyMemberContactList } from './components/CompanyMemberContactList.jsx';
 import { customerSuggestTexts, organizationSuggestTexts, projectSuggestTexts, sortCustomersByUsageFrequency } from './utils/masterSuggest.js';
+import { dedupeCustomersByCompany } from './utils/dedupeCustomersByCompany.js';
 import { resolveEffectiveContractorCustomerId } from './utils/resolveEffectiveContractorCustomerId.js';
 import {
   buildDispatchOrderForDate,
@@ -1744,30 +1745,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           const allowed = new Set(linkedContractorIds.map(String));
           filtered = all.filter((c) => allowed.has(String(c.id)));
         }
-        // 同じ会社（company_name）に複数の担当者アカウントがある場合、
-        // 発注先業者の候補としては会社単位で1件に集約する。
-        // 代表IDは「会社内で最も作成日時が早い」行に固定し、
-        // 選択のたびに違う担当者行が代表にならないようにする（履歴・集計の分断防止）。
-        // created_at は mapCustomerRow / fetchCustomers(select *) 経由で含まれる。
-        const byCompany = new Map();
-        for (const c of filtered) {
-          const key = String(c.company_name || c.name || '').trim();
-          if (!key) continue;
-          const existing = byCompany.get(key);
-          if (!existing) {
-            byCompany.set(key, c);
-            continue;
-          }
-          const existingTime = existing.created_at ? new Date(existing.created_at).getTime() : Infinity;
-          const currentTime = c.created_at ? new Date(c.created_at).getTime() : Infinity;
-          if (
-            currentTime < existingTime ||
-            (currentTime === existingTime && String(c.id) < String(existing.id))
-          ) {
-            byCompany.set(key, c);
-          }
-        }
-        const deduped = Array.from(byCompany.values());
+        const deduped = dedupeCustomersByCompany(filtered);
         const sorted = sortCustomersByUsageFrequency(deduped, contractorUsageCounts);
 
         // 診断: 「発注先業者」UI は items={proxyContractorItems} を参照。重複の正体を特定する。
@@ -1822,24 +1800,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   JSON.stringify(rows[0]?.company_name) === JSON.stringify(rows[1]?.company_name),
               })),
             );
-          } else {
-            // trim後キーでの見かけ上の重複（表示ラベルが同じに見えるが生値が異なるケース）
-            const byTrimLabel = new Map();
-            for (const c of sorted) {
-              const label = String(c.company_name || c.name || '').trim();
-              if (!byTrimLabel.has(label)) byTrimLabel.set(label, []);
-              byTrimLabel.get(label).push(c);
-            }
-            const lookAlike = [...byTrimLabel.entries()].filter(([, rows]) => rows.length > 1);
-            if (lookAlike.length > 0) {
-              console.warn('[proxyContractorItems] same trimmed label still has multiple rows', lookAlike);
-            }
           }
         }
 
         return sorted;
       }, [customers, contractorLinkAgentId, linkedContractorIds, contractorUsageCounts]);
 
+      // 業者ログイン時「業者（会社）」候補（会社単位で1件）
+      const companyCustomerItems = useMemo(
+        () => dedupeCustomersByCompany(customers),
+        [customers],
+      );
       const tradingAgentItems = useMemo(() => {
         const agents = (customers || []).filter((c) => (c.role ?? 'contractor') === 'agent');
         return sortCustomersByUsageFrequency(agents, tradingAgentUsageCounts);
@@ -4236,16 +4207,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     htmlFor={orderFieldId('dispatch-customer')}
                     name={orderFieldName('customer_company')}
                     value={customerSearchText}
-                    disabled={customers.length === 0}
+                    disabled={companyCustomerItems.length === 0}
                     placeholder="業者名を入力して候補から選択"
-                    items={customers}
+                    items={companyCustomerItems}
                     getItemKey={(c) => String(c.id)}
                     getItemLabel={(c) => String(c.company_name || c.name || c.id || '').trim()}
                     getSearchTexts={customerSuggestTexts}
                     onValueChange={(text) => {
                       setCustomerSearchText(text);
                       setSubmitError('');
-                      const hit = (customers || []).find(
+                      const hit = companyCustomerItems.find(
                         (c) =>
                           String(c.company_name || c.name || '')
                             .trim()

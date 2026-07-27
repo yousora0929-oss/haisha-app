@@ -52,6 +52,7 @@ import {
   normalizeSalesStaffList,
 } from './utils/salesStaff.js';
 import { customerSuggestTexts, organizationSuggestTexts } from './utils/masterSuggest.js';
+import { dedupeCustomersByCompany } from './utils/dedupeCustomersByCompany.js';
 import { fetchTownLocationsForMunicipality, resolveDeliveryPrefecture } from './utils/heartrailsGeo.js';
 import { SCHEDULE_BLOCK_IDS, normalizeDayBlockSchedule, todayLocalISODate } from './haishaConstants.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
@@ -588,8 +589,12 @@ function ProjectForm({
     [townList],
   );
   const staffOptions = useMemo(() => normalizeSalesStaffList(salesStaffList), [salesStaffList]);
+  // 物件の元請は会社単位で選ぶ（同一会社の担当者アカウントが複数あっても候補は1件）
   const contractorCustomers = useMemo(
-    () => (customers || []).filter((c) => (c?.role ?? 'contractor') === 'contractor'),
+    () =>
+      dedupeCustomersByCompany(
+        (customers || []).filter((c) => (c?.role ?? 'contractor') === 'contractor'),
+      ),
     [customers],
   );
 
