@@ -45,7 +45,7 @@ import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils
 import { generateInitialPassword } from './utils/initialPassword.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, is_admin_modified, is_factory_modified, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map';
+  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, site_history_contractor_id, is_admin_modified, is_factory_modified, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -298,6 +298,12 @@ export function normalizeOrderRow(row) {
         ? String(row.contractor_customer_id)
         : od.contractor_customer_id != null
           ? String(od.contractor_customer_id)
+          : null,
+    site_history_contractor_id:
+      row.site_history_contractor_id != null
+        ? String(row.site_history_contractor_id)
+        : od.site_history_contractor_id != null
+          ? String(od.site_history_contractor_id)
           : null,
     agent_organization_id:
       row.agent_organization_id != null
@@ -702,6 +708,30 @@ export async function fetchSelectionFrequency({ customerId, column }) {
   return counts;
 }
 
+/**
+ * スポット注文の現場名オートコンプリート候補
+ * （RPC 側で current_customer_panel_id による権限検証あり）
+ * @param {{ contractorRefCustomerId: string, limit?: number }} params
+ * @returns {Promise<Array<{ site_name: string, use_count: number, last_used_at: string|null }>>}
+ */
+export async function fetchSpotSiteNameSuggestions({ contractorRefCustomerId, limit = 8 } = {}) {
+  const cid = String(contractorRefCustomerId || '').trim();
+  if (!cid) return [];
+  const lim = Math.max(1, Math.min(20, Number(limit) || 8));
+  const { data, error } = await supabase.rpc('get_spot_site_name_suggestions', {
+    p_contractor_ref_customer_id: cid,
+    p_limit: lim,
+  });
+  if (error) throw error;
+  return (data || [])
+    .map((row) => ({
+      site_name: String(row?.site_name || '').trim(),
+      use_count: Number(row?.use_count) || 0,
+      last_used_at: row?.last_used_at != null ? String(row.last_used_at) : null,
+    }))
+    .filter((row) => row.site_name);
+}
+
 export async function fetchOrdersWithChat() {
   const { data, error } = await supabase
     .from('orders')
@@ -955,6 +985,8 @@ function buildOrderInsertRow(order) {
     rejected_factory_ids: [],
     contractor_customer_id: sanitizeRefId(order.contractor_customer_id) || null,
     agent_organization_id: sanitizeRefId(order.agent_organization_id) || null,
+    // 集計・サジェスト専用。プッシュ通知対象（contractor_customer_id）とは別物として扱う。
+    site_history_contractor_id: sanitizeRefId(order.site_history_contractor_id) || null,
     trading_agent_customer_id: sanitizeRefId(order.trading_agent_customer_id) || null,
   };
 }

@@ -393,6 +393,10 @@ export function buildDispatchOrderForDate(preferredDate, context) {
     isLocationPending: locationPending,
     contractor_customer_id: isAgentOrCooperative && !isSpot ? contractorCustomerId || null : null,
     agent_organization_id: isAgentOrCooperative && !isSpot ? agentOrganizationId || null : null,
+    // 集計・サジェスト専用。プッシュ通知対象（contractor_customer_id）とは別物として扱う。
+    site_history_contractor_id: isAgentOrCooperative
+      ? contractorCustomerId || currentCustomerId || null
+      : currentCustomerId || null,
     trading_agent_customer_id:
       currentCustomerRole === 'cooperative' ? tradingAgentCustomerId || null : null,
   };

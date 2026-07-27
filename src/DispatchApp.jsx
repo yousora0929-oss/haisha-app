@@ -1459,6 +1459,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [contractorUsageCounts, setContractorUsageCounts] = useState({});
       const [tradingAgentUsageCounts, setTradingAgentUsageCounts] = useState({});
       const [spotContractorOrgId, setSpotContractorOrgId] = useState('');
+      const [spotSiteNameSuggestions, setSpotSiteNameSuggestions] = useState([]);
       const [projectSearchText, setProjectSearchText] = useState('');
       const [deliveryLat, setDeliveryLat] = useState('');
       const [deliveryLng, setDeliveryLng] = useState('');
@@ -1838,10 +1839,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         contractorCustomer,
         currentCustomer,
       ]);
-      const spotContractorCustomers = useMemo(
-        () => (customers || []).filter((c) => (c?.role ?? 'contractor') === 'contractor'),
-        [customers],
-      );
       const siteContactOrgId = useMemo(() => {
         if (isGuestSiteOrder) return '';
         if (orderKind === 'spot' && isAgentOrCooperative) {
@@ -1850,61 +1847,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return String(contractorOrgId || '').trim();
       }, [isGuestSiteOrder, orderKind, isAgentOrCooperative, spotContractorOrgId, contractorOrgId]);
 
-      const findSpotContractorByExactName = useCallback(
-        (text) => {
-          const q = String(text || '').trim().toLowerCase();
-          if (!q) return null;
-          return (
-            spotContractorCustomers.find(
-              (c) => String(c?.company_name || c?.name || '').trim().toLowerCase() === q,
-            ) || null
-          );
-        },
-        [spotContractorCustomers],
-      );
-
       const resetSpotContractorSiteContact = useCallback(() => {
         setSiteContactName('');
         setSitePhone('');
       }, []);
-
-      const handleSpotAgentContractorChange = useCallback(
-        (text) => {
-          setContractorName(text);
-          setContractorSearchText(text);
-          setSubmitError('');
-          const trimmed = String(text || '').trim();
-          if (!trimmed) {
-            setContractorCustomerId('');
-            setSpotContractorOrgId('');
-            resetSpotContractorSiteContact();
-            return;
-          }
-          const hit = findSpotContractorByExactName(trimmed);
-          if (hit?.id) setContractorCustomerId(String(hit.id));
-          else setContractorCustomerId('');
-          const nextOrgId = hit?.organization_id ? String(hit.organization_id) : '';
-          setSpotContractorOrgId((prev) => {
-            if (prev === nextOrgId) return prev;
-            resetSpotContractorSiteContact();
-            return nextOrgId;
-          });
-        },
-        [findSpotContractorByExactName, resetSpotContractorSiteContact],
-      );
-
-      const handleSpotAgentContractorSelect = useCallback(
-        (customer) => {
-          const name = String(customer?.company_name || customer?.name || '').trim();
-          setContractorName(name);
-          setContractorSearchText(name);
-          setContractorCustomerId(customer?.id ? String(customer.id) : '');
-          setSpotContractorOrgId(customer?.organization_id ? String(customer.organization_id) : '');
-          resetSpotContractorSiteContact();
-          setSubmitError('');
-        },
-        [resetSpotContractorSiteContact],
-      );
       const sessionCustomerPhone = useMemo(() => {
         if (!isLoggedIn) return '';
         try {
@@ -2024,6 +1970,45 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       useEffect(() => {
         if (orderKind !== 'spot') setSpotContractorOrgId('');
       }, [orderKind]);
+
+      // スポット現場名サジェスト: 直接発注=自分 / 代理=選択業者（未選択時はログイン者へフォールバック）
+      const spotSiteHistoryContractorId = useMemo(() => {
+        if (orderKind !== 'spot' || isGuestSiteOrder) return '';
+        if (isAgentOrCooperative) {
+          return String(contractorCustomerId || currentCustomerId || '').trim();
+        }
+        return String(currentCustomerId || '').trim();
+      }, [
+        orderKind,
+        isGuestSiteOrder,
+        isAgentOrCooperative,
+        contractorCustomerId,
+        currentCustomerId,
+      ]);
+
+      useEffect(() => {
+        let cancelled = false;
+        const cid = spotSiteHistoryContractorId;
+        if (!cid || orderKind !== 'spot' || isGuestSiteOrder) {
+          setSpotSiteNameSuggestions([]);
+          return undefined;
+        }
+        void (async () => {
+          try {
+            const rows = await db.fetchSpotSiteNameSuggestions({
+              contractorRefCustomerId: cid,
+              limit: 8,
+            });
+            if (!cancelled) setSpotSiteNameSuggestions(Array.isArray(rows) ? rows : []);
+          } catch (err) {
+            console.warn('【SpotSiteSuggest】現場名候補の取得に失敗 → 自由入力のみで続行', err);
+            if (!cancelled) setSpotSiteNameSuggestions([]);
+          }
+        })();
+        return () => {
+          cancelled = true;
+        };
+      }, [spotSiteHistoryContractorId, orderKind, isGuestSiteOrder]);
 
       useEffect(() => {
         if (!isAgentOrCooperative || orderKind !== 'project') return;
@@ -4024,7 +4009,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </div>
               ) : null}
 
-              {isAgentOrCooperative && !isGuestSiteOrder && orderKind === 'project' ? (
+              {isAgentOrCooperative && !isGuestSiteOrder && (orderKind === 'project' || orderKind === 'spot') ? (
                 <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3">
                   <p className="text-xs font-black text-amber-900">代理発注モード</p>
                   <p className="text-xs text-amber-700 mt-0.5">
@@ -4032,6 +4017,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     発注先の業者を選択してください。
                     {currentCustomerRole === 'cooperative'
                       ? '必要に応じて経由商社の担当者を選択できます。'
+                      : ''}
+                    {orderKind === 'spot'
+                      ? ' スポット注文では未選択でも送信できます（現場名候補は選択した業者の履歴を使います）。'
                       : ''}
                   </p>
                   <div className="mt-3 space-y-3">
@@ -4095,17 +4083,35 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           );
                           if (hit) setContractorCustomerId(String(hit.id));
                           else setContractorCustomerId('');
-                          setSelectedProjectId('');
-                          lastAutofillProjectIdRef.current = '';
-                          applyProjectSelection(null);
+                          if (orderKind === 'spot') {
+                            setContractorName(text);
+                            const nextOrgId = hit?.organization_id ? String(hit.organization_id) : '';
+                            setSpotContractorOrgId((prev) => {
+                              if (prev === nextOrgId) return prev;
+                              resetSpotContractorSiteContact();
+                              return nextOrgId;
+                            });
+                            if (!String(text || '').trim()) resetSpotContractorSiteContact();
+                          } else {
+                            setSelectedProjectId('');
+                            lastAutofillProjectIdRef.current = '';
+                            applyProjectSelection(null);
+                          }
                           setSubmitError('');
                         }}
                         onSelect={(c) => {
+                          const name = String(c.company_name || c.name || '').trim();
                           setContractorCustomerId(String(c.id));
-                          setContractorSearchText(String(c.company_name || c.name || '').trim());
-                          setSelectedProjectId('');
-                          lastAutofillProjectIdRef.current = '';
-                          applyProjectSelection(null);
+                          setContractorSearchText(name);
+                          if (orderKind === 'spot') {
+                            setContractorName(name);
+                            setSpotContractorOrgId(c?.organization_id ? String(c.organization_id) : '');
+                            resetSpotContractorSiteContact();
+                          } else {
+                            setSelectedProjectId('');
+                            lastAutofillProjectIdRef.current = '';
+                            applyProjectSelection(null);
+                          }
                           setSubmitError('');
                         }}
                         emptyHint="該当する業者がありません"
@@ -4118,7 +4124,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     </div>
                     {!contractorCustomerId ? (
                       <p className="mt-2 text-xs font-bold text-amber-800">
-                        発注先の業者を選択してください。
+                        {orderKind === 'spot'
+                          ? '発注先業者を選ぶと、その業者の過去の現場名候補を表示します（未選択でも送信可）。'
+                          : '発注先の業者を選択してください。'}
                       </p>
                     ) : null}
                   </div>
@@ -4370,23 +4378,34 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               {orderKind === 'spot' ? (
                 <div className="flex flex-col gap-6">
                   <div className="flex flex-col gap-3">
-                    <Label htmlFor={orderFieldId('site-name')}>現場名</Label>
-                    <p className="text-xs leading-relaxed text-slate-500">
-                      現場の通称など。空欄のまま送信した場合は、下の「現場住所」の内容が現場名として保存されます。
-                    </p>
-                    <input
-                      id={orderFieldId('site-name')}
+                    <MasterSuggestInput
+                      label="現場名"
+                      htmlFor={orderFieldId('site-name')}
                       name="spot_site_name"
-                      type="text"
-                      autoComplete="off"
-                      placeholder="例：〇〇ビル新築工事"
                       value={siteName}
-                      onChange={(e) => {
-                        setSiteName(e.target.value);
+                      placeholder="例：〇〇ビル新築工事（候補から選択、または自由入力）"
+                      items={spotSiteNameSuggestions}
+                      getItemKey={(item) => String(item.site_name || '')}
+                      getItemLabel={(item) => String(item.site_name || '').trim()}
+                      getSearchTexts={(item) => [item.site_name || '']}
+                      onValueChange={(text) => {
+                        setSiteName(text);
                         setSubmitError('');
                       }}
-                      className={CUSTOMER_FIELD_CLASS + ' font-semibold'}
+                      onSelect={(item) => {
+                        setSiteName(String(item?.site_name || '').trim());
+                        setSubmitError('');
+                      }}
+                      emptyHint="該当する過去の現場名がありません（自由入力もできます）"
+                      emptyQueryShowsPinnedOnly
+                      pinnedItems={spotSiteNameSuggestions.slice(0, 5)}
+                      pinnedSectionLabel="⏱ 最近使った現場名"
+                      searchResultLimit={20}
                     />
+                    <p className="text-xs leading-relaxed text-slate-500">
+                      現場の通称など。空欄のまま送信した場合は、下の「現場住所」の内容が現場名として保存されます。
+                      候補は発注先業者の過去スポット注文から表示します（自由入力も可）。
+                    </p>
                   </div>
                   <DeliveryAreaAddressField
                     idPrefix="dispatch-spot"
@@ -4488,20 +4507,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       )}
 
                       {isAgentOrCooperative ? (
-                        <MasterSuggestInput
-                          label="発注先業者"
-                          name={orderFieldName('contractor_name')}
-                          value={contractorName}
-                          onValueChange={handleSpotAgentContractorChange}
-                          onSelect={handleSpotAgentContractorSelect}
-                          items={spotContractorCustomers}
-                          getItemKey={(c) => String(c.id)}
-                          getItemLabel={(c) => String(c.company_name || c.name || '').trim()}
-                          getSearchTexts={customerSuggestTexts}
-                          placeholder="発注先の業者名を入力して候補から選択"
-                          emptyHint="該当する業者がありません（自由入力もできます）"
-                          autoComplete="off"
-                        />
+                        <p className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs font-bold text-amber-900">
+                          発注先業者は上の「代理発注モード」で選択・入力してください
+                          {contractorName ? `（現在: ${contractorName}）` : ''}
+                        </p>
                       ) : (
                         <div className="flex flex-col gap-3">
                           <Label htmlFor={orderFieldId('contractor-name')}>業者名</Label>
