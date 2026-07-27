@@ -940,10 +940,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           <div className="flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between md:gap-4 md:py-2">
             {/* 左〜中央：情報セグメント */}
             <div className="min-w-0 flex-1 md:grid md:grid-cols-2 md:gap-4 2xl:flex 2xl:items-stretch 2xl:gap-0">
-              {/* 第一セグメント：日時とステータス */}
-              <div className="min-w-0 md:col-span-2 2xl:col-span-1 2xl:flex-[0.95] 2xl:pr-5 2xl:border-r 2xl:border-gray-200 dark:2xl:border-slate-600">
+              {/* 第一セグメント：日時とステータス（日時は省略しない） */}
+              <div className="min-w-0 md:col-span-2 2xl:min-w-max 2xl:flex-none 2xl:pr-5 2xl:border-r 2xl:border-gray-200 dark:2xl:border-slate-600">
                 <p
-                  className="truncate text-lg font-black text-gray-900 dark:text-gray-100 md:text-lg 2xl:text-xl"
+                  className="whitespace-nowrap text-lg font-black text-gray-900 dark:text-gray-100 md:text-lg 2xl:text-xl"
                   title={timeSummary}
                 >
                   {timeSummary}
@@ -1864,12 +1864,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           setTraderName('');
           return;
         }
-        if (role === 'agent') {
+        if (role === 'agent' || role === 'cooperative') {
+          // 代理発注時は商社欄を出さないため、ログイン組織名を traderName に保持して送信・表示に使う
           if (companyName) setTraderName(companyName);
           setContractorName('');
           return;
         }
-        // cooperative および未知ロール: 業者名は自動入力しない
+        // 未知ロール: 業者名は自動入力しない
         setTraderName('');
         setContractorName('');
       }, [isGuestSiteOrder, currentCustomer]);
@@ -1921,6 +1922,23 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [isLoggedIn]);
       const currentCustomerPhone = String(currentCustomer?.phone_number || sessionCustomerPhone || '').trim();
       const currentCustomerDisplayName = String(currentCustomer?.company_name || currentCustomer?.name || '').trim() || 'カスタマー';
+      // 代理発注時の商社スナップショット（UI非表示でも order_data.traderName / 表示用に使う）
+      const proxyTraderName = useMemo(() => {
+        if (!isAgentOrCooperative) return '';
+        return String(currentCustomer?.company_name || currentCustomer?.name || '').trim();
+      }, [isAgentOrCooperative, currentCustomer]);
+      const effectiveTraderName = useMemo(() => {
+        const typed = String(traderName || '').trim();
+        if (isAgentOrCooperative) return typed || proxyTraderName;
+        return typed;
+      }, [isAgentOrCooperative, traderName, proxyTraderName]);
+
+      // 代理発注で商社欄を隠すため、空のまま残らないよう組織名で埋める（物件の商社名が既にあれば尊重）
+      useEffect(() => {
+        if (isGuestSiteOrder || !isAgentOrCooperative) return;
+        if (!proxyTraderName) return;
+        setTraderName((cur) => (String(cur || '').trim() ? cur : proxyTraderName));
+      }, [isGuestSiteOrder, isAgentOrCooperative, proxyTraderName]);
       const isOrderForCurrentCustomer = useCallback(
         (order) => {
           if (!order) return false;
@@ -2985,7 +3003,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               setTraderName(companyName);
               setContractorName('');
             } else if (loginRole === 'cooperative') {
-              setTraderName('');
+              // 組合代理発注も商社自由入力欄は出さない。組織名をスナップショット用に保持する。
+              if (companyName) setTraderName(companyName);
+              else setTraderName('');
               setContractorName('');
             } else if (loginRole === 'contractor' && companyName) {
               setContractorName(companyName);
@@ -3313,7 +3333,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           projects,
           preferredFactoryId,
           factories,
-          traderName,
+          traderName: effectiveTraderName,
           contractorName: effectiveContractorName,
           siteName,
           siteAddress,
@@ -3351,7 +3371,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           projects,
           preferredFactoryId,
           factories,
-          traderName,
+          effectiveTraderName,
           effectiveContractorName,
           siteName,
           siteAddress,
@@ -4517,10 +4537,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
                   {!isGuestSiteOrder ? (
                     <>
-                      {currentCustomerRole === 'agent' ? (
+                      {isAgentOrCooperative ? (
                         <GuestLockedField
-                          label="商社名"
-                          value={traderName || currentCustomerDisplayName}
+                          label={currentCustomerRole === 'cooperative' ? '発注組織' : '商社名'}
+                          value={effectiveTraderName || currentCustomerDisplayName}
                         />
                       ) : (
                         <MasterSuggestInput
@@ -4728,7 +4748,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </div>
               </div>
 
-              {!isGuestSiteOrder && orderKind === 'project' ? (
+              {!isGuestSiteOrder && orderKind === 'project' && !isAgentOrCooperative ? (
                 <MasterSuggestInput
                   label="商社（任意）"
                   name={orderFieldName('trader_name')}
