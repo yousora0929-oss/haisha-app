@@ -44,7 +44,9 @@ import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
+import { SiteContactsEditor } from './components/SiteContactsEditor.jsx';
 import { customerSuggestTexts, organizationSuggestTexts, projectSuggestTexts, sortCustomersByUsageFrequency } from './utils/masterSuggest.js';
+import { resolveEffectiveContractorCustomerId } from './utils/resolveEffectiveContractorCustomerId.js';
 import {
   buildDispatchOrderForDate,
   validateCartLineForm,
@@ -160,6 +162,7 @@ const CUSTOMER_ORDER_TABS = [
   ['active', '進行中', '🚚'],
   ['history', '履歴', '📋'],
   ['calendar', 'カレンダー', '📅'],
+  ['siteContacts', '現場担当者', '👤'],
 ];
 
 const CUSTOMER_FIELD_CLASS =
@@ -1458,7 +1461,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [linkedContractorIds, setLinkedContractorIds] = useState([]);
       const [contractorUsageCounts, setContractorUsageCounts] = useState({});
       const [tradingAgentUsageCounts, setTradingAgentUsageCounts] = useState({});
-      const [spotContractorOrgId, setSpotContractorOrgId] = useState('');
       const [spotSiteNameSuggestions, setSpotSiteNameSuggestions] = useState([]);
       const [projectSearchText, setProjectSearchText] = useState('');
       const [deliveryLat, setDeliveryLat] = useState('');
@@ -1637,6 +1639,23 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         () => currentCustomerRole === 'agent' || currentCustomerRole === 'cooperative',
         [currentCustomerRole],
       );
+      const visibleCustomerOrderTabs = useMemo(() => {
+        if (isGuestSiteOrder || currentCustomerRole !== 'contractor') {
+          return CUSTOMER_ORDER_TABS.filter(([id]) => id !== 'siteContacts');
+        }
+        return CUSTOMER_ORDER_TABS;
+      }, [isGuestSiteOrder, currentCustomerRole]);
+
+      // 現場名サジェスト / 現場担当者サジェスト共通の実質業者ID
+      const effectiveContractorCustomerId = useMemo(
+        () =>
+          resolveEffectiveContractorCustomerId({
+            isAgentOrCooperative,
+            contractorCustomerId,
+            currentCustomerId,
+          }),
+        [isAgentOrCooperative, contractorCustomerId, currentCustomerId],
+      );
 
       const formatTradingAgentLabel = useCallback((customer) => {
         const company = String(customer?.company_name || customer?.name || '').trim();
@@ -1777,19 +1796,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         if (role === 'contractor') {
           if (companyName) setContractorName(companyName);
           setTraderName('');
-          setSpotContractorOrgId('');
           return;
         }
         if (role === 'agent') {
           if (companyName) setTraderName(companyName);
           setContractorName('');
-          setSpotContractorOrgId('');
           return;
         }
         // cooperative および未知ロール: 業者名は自動入力しない
         setTraderName('');
         setContractorName('');
-        setSpotContractorOrgId('');
       }, [isGuestSiteOrder, currentCustomer]);
       useEffect(() => {
         if (isGuestSiteOrder) return;
@@ -1824,28 +1840,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         () => String(currentCustomer?.manager_name ?? '').trim(),
         [currentCustomer],
       );
-      const contractorOrgId = useMemo(() => {
-        if (isGuestSiteOrder) {
-          return guestSiteOrderCtx?.customer?.organization_id ?? null;
-        }
-        if (isAgentOrCooperative) {
-          return contractorCustomer?.organization_id ?? null;
-        }
-        return currentCustomer?.organization_id ?? null;
-      }, [
-        isGuestSiteOrder,
-        guestSiteOrderCtx,
-        isAgentOrCooperative,
-        contractorCustomer,
-        currentCustomer,
-      ]);
-      const siteContactOrgId = useMemo(() => {
-        if (isGuestSiteOrder) return '';
-        if (orderKind === 'spot' && isAgentOrCooperative) {
-          return String(spotContractorOrgId || '').trim();
-        }
-        return String(contractorOrgId || '').trim();
-      }, [isGuestSiteOrder, orderKind, isAgentOrCooperative, spotContractorOrgId, contractorOrgId]);
 
       const resetSpotContractorSiteContact = useCallback(() => {
         setSiteContactName('');
@@ -1943,48 +1937,32 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           setSiteContactCandidates([]);
           return;
         }
-        const orgId = siteContactOrgId;
-        if (!orgId) {
+        const cid = effectiveContractorCustomerId;
+        if (!cid) {
           setSiteContactCandidates([]);
           return;
         }
         let cancelled = false;
         void db
-          .fetchCustomersByOrganizationId(orgId)
+          .listSiteContacts(cid)
           .then((rows) => {
             if (cancelled) return;
-            const list = (Array.isArray(rows) ? rows : []).filter(
-              (c) => c && String(c.manager_name || '').trim(),
-            );
-            setSiteContactCandidates(list);
+            setSiteContactCandidates(Array.isArray(rows) ? rows : []);
           })
           .catch((err) => {
-            console.warn('[DispatchApp] 現場担当者候補の取得に失敗', err);
+            console.warn('【SiteContactSuggest】現場担当者候補の取得に失敗 → 自由入力のみで続行', err);
             if (!cancelled) setSiteContactCandidates([]);
           });
         return () => {
           cancelled = true;
         };
-      }, [orderKind, siteContactOrgId, isGuestSiteOrder]);
+      }, [orderKind, effectiveContractorCustomerId, isGuestSiteOrder]);
 
-      useEffect(() => {
-        if (orderKind !== 'spot') setSpotContractorOrgId('');
-      }, [orderKind]);
-
-      // スポット現場名サジェスト: 直接発注=自分 / 代理=選択業者（未選択時はログイン者へフォールバック）
+      // スポット現場名サジェスト: 実質業者ID単位
       const spotSiteHistoryContractorId = useMemo(() => {
         if (orderKind !== 'spot' || isGuestSiteOrder) return '';
-        if (isAgentOrCooperative) {
-          return String(contractorCustomerId || currentCustomerId || '').trim();
-        }
-        return String(currentCustomerId || '').trim();
-      }, [
-        orderKind,
-        isGuestSiteOrder,
-        isAgentOrCooperative,
-        contractorCustomerId,
-        currentCustomerId,
-      ]);
+        return effectiveContractorCustomerId;
+      }, [orderKind, isGuestSiteOrder, effectiveContractorCustomerId]);
 
       useEffect(() => {
         let cancelled = false;
@@ -2011,7 +1989,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [spotSiteHistoryContractorId, orderKind, isGuestSiteOrder]);
 
       useEffect(() => {
-        if (!isAgentOrCooperative || orderKind !== 'project') return;
+        if (!isAgentOrCooperative) return;
+        if (orderKind !== 'project' && orderKind !== 'spot') return;
         setSiteContactName('');
         setSitePhone('');
       }, [contractorCustomerId, isAgentOrCooperative, orderKind]);
@@ -3348,7 +3327,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         spotFieldDefaultsKeyRef.current = '';
         setTraderName('');
         setContractorName('');
-        setSpotContractorOrgId('');
         setContractorDisplayMode('prime');
         setContractorDisplayCustomText('');
         setMixText('');
@@ -3760,7 +3738,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 <div className="px-4 pb-6">
                   <p className="px-2 text-[10px] font-black uppercase tracking-wider text-slate-400">メニュー</p>
                   <nav className="mt-2 flex flex-col gap-1" aria-label="メインメニュー">
-                    {CUSTOMER_ORDER_TABS.map(([id, label, icon]) => {
+                    {visibleCustomerOrderTabs.map(([id, label, icon]) => {
                       const active = customerOrderTab === id;
                       return (
                         <button
@@ -4085,13 +4063,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           else setContractorCustomerId('');
                           if (orderKind === 'spot') {
                             setContractorName(text);
-                            const nextOrgId = hit?.organization_id ? String(hit.organization_id) : '';
-                            setSpotContractorOrgId((prev) => {
-                              if (prev === nextOrgId) return prev;
+                            if (!hit || !String(text || '').trim()) {
                               resetSpotContractorSiteContact();
-                              return nextOrgId;
-                            });
-                            if (!String(text || '').trim()) resetSpotContractorSiteContact();
+                            }
                           } else {
                             setSelectedProjectId('');
                             lastAutofillProjectIdRef.current = '';
@@ -4105,7 +4079,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           setContractorSearchText(name);
                           if (orderKind === 'spot') {
                             setContractorName(name);
-                            setSpotContractorOrgId(c?.organization_id ? String(c.organization_id) : '');
                             resetSpotContractorSiteContact();
                           } else {
                             setSelectedProjectId('');
@@ -4830,14 +4803,18 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     getItemKey={(c) =>
                       usesProjectSiteContacts
                         ? `${String(c?.name || '')}::${String(c?.phone || '')}`
-                        : String(c?.id)
+                        : String(c?.id || `${c?.name}::${c?.phone_number}`)
                     }
                     getItemLabel={(c) => {
-                      if (!usesProjectSiteContacts) {
-                        return String(c?.manager_name || '').trim();
+                      if (usesProjectSiteContacts) {
+                        const contactName = String(c?.name || '').trim();
+                        const contactPhone = formatPhoneNumberJP(String(c?.phone || '').trim());
+                        return contactPhone
+                          ? `${contactName || '—'}（${contactPhone}）`
+                          : contactName;
                       }
                       const contactName = String(c?.name || '').trim();
-                      const contactPhone = formatPhoneNumberJP(String(c?.phone || '').trim());
+                      const contactPhone = formatPhoneNumberJP(String(c?.phone_number || '').trim());
                       return contactPhone
                         ? `${contactName || '—'}（${contactPhone}）`
                         : contactName;
@@ -4845,24 +4822,25 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     getSearchTexts={(c) =>
                       usesProjectSiteContacts
                         ? [c?.name || '', c?.phone || '']
-                        : [c?.manager_name || '', c?.phone_number || '']
+                        : [c?.name || '', c?.phone_number || '']
                     }
                     onSelect={(c) => {
                       setSiteContactName(
                         String(
-                          usesProjectSiteContacts ? c?.name || '' : c?.manager_name || '',
+                          usesProjectSiteContacts ? c?.name || '' : c?.name || '',
                         ).trim(),
                       );
                       const selectedPhone = String(
                         usesProjectSiteContacts ? c?.phone || '' : c?.phone_number || '',
                       ).trim();
+                      // 候補選択時は現場電話を上書き（自由入力の上書きでOK）
                       if (selectedPhone) setSitePhone(selectedPhone);
                       setSubmitError('');
                     }}
                     placeholder="現場担当者名を入力（候補から選択可）"
                     emptyHint={
-                      orderKind === 'spot' && isAgentOrCooperative && !spotContractorOrgId
-                        ? '業者名をマスタから選ぶと担当者候補が表示されます（自由入力もできます）'
+                      !effectiveContractorCustomerId
+                        ? '発注先業者を選ぶと担当者候補が表示されます（自由入力もできます）'
                         : '登録された担当者がいません（自由入力もできます）'
                     }
                     inputClassName="min-h-[56px] rounded-xl border-2 border-slate-200 px-4 py-3 text-base"
@@ -4871,11 +4849,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     <p className="text-xs leading-relaxed text-slate-500">
                       物件に登録された現場担当者から選ぶと、電話番号が自動入力されます。
                     </p>
-                  ) : orderKind === 'project' || !isAgentOrCooperative || spotContractorOrgId ? (
+                  ) : (
                     <p className="text-xs leading-relaxed text-slate-500">
-                      業者に登録された担当者から選ぶと、電話番号が自動入力されます。
+                      業者の現場担当者マスタから選ぶと、電話番号が自動入力されます（未登録名の自由入力も可）。
                     </p>
-                  ) : null}
+                  )}
                 </div>
               ) : null}
 
@@ -5200,14 +5178,30 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 }}
               />
             ) : null}
+            {customerOrderTab === 'siteContacts' && currentCustomerRole === 'contractor' ? (
+              <section className="rounded-2xl border-2 border-slate-200 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-slate-900 sm:p-6">
+                <h2 className="text-lg font-black text-slate-900 dark:text-white">現場担当者の登録</h2>
+                <p className="mt-1 text-xs font-medium text-slate-500">
+                  自社の現場担当者を登録すると、新規発注フォームで名前サジェストと電話番号の自動入力が使えます。
+                </p>
+                <div className="mt-4">
+                  <SiteContactsEditor customerId={currentCustomerId} />
+                </div>
+              </section>
+            ) : null}
               </PullToRefresh>
             </main>
 
             {!isGuestSiteOrder ? (
               <nav className="block lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200" aria-label="カスタマー画面ナビゲーション">
                 <div className="px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2">
-                  <div className="mx-auto grid max-w-lg grid-cols-4 gap-1">
-                    {CUSTOMER_ORDER_TABS.map(([id, label, icon]) => {
+                  <div
+                    className={
+                      'mx-auto grid max-w-lg gap-1 ' +
+                      (visibleCustomerOrderTabs.length >= 5 ? 'grid-cols-5' : 'grid-cols-4')
+                    }
+                  >
+                    {visibleCustomerOrderTabs.map(([id, label, icon]) => {
                       const active = customerOrderTab === id;
                       return (
                         <button

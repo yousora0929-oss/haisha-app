@@ -709,6 +709,76 @@ export async function fetchSelectionFrequency({ customerId, column }) {
 }
 
 /**
+ * 業者の現場担当者マスタ一覧
+ * @param {string} customerId
+ * @returns {Promise<Array<{ id: string, customer_id: string, name: string, phone_number: string }>>}
+ */
+export async function listSiteContacts(customerId) {
+  const cid = String(customerId || '').trim();
+  if (!cid) return [];
+  const { data, error } = await supabase
+    .from('customer_site_contacts')
+    .select('id, customer_id, name, phone_number, created_at, updated_at')
+    .eq('customer_id', cid)
+    .order('name', { ascending: true });
+  if (error) throw error;
+  return (data || []).map((row) => ({
+    id: String(row.id),
+    customer_id: String(row.customer_id),
+    name: String(row.name || '').trim(),
+    phone_number: String(row.phone_number || '').trim(),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
+}
+
+/**
+ * 現場担当者の追加／更新
+ * @param {{ id?: string, customerId: string, name: string, phone: string }} params
+ */
+export async function upsertSiteContact({ id, customerId, name, phone } = {}) {
+  const cid = String(customerId || '').trim();
+  const payload = {
+    customer_id: cid,
+    name: String(name ?? '').trim(),
+    phone_number: String(phone ?? '').trim(),
+  };
+  if (!cid) throw new Error('customerId が必要です');
+  if (!payload.name || !payload.phone_number) {
+    throw new Error('現場担当者の名前と携帯電話は必須です');
+  }
+  const existingId = String(id || '').trim();
+  if (existingId) {
+    const { data, error } = await supabase
+      .from('customer_site_contacts')
+      .update(payload)
+      .eq('id', existingId)
+      .select('id, customer_id, name, phone_number, created_at, updated_at')
+      .single();
+    if (error) throw error;
+    return data;
+  }
+  const { data, error } = await supabase
+    .from('customer_site_contacts')
+    .insert(payload)
+    .select('id, customer_id, name, phone_number, created_at, updated_at')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * 現場担当者を削除
+ * @param {string} id
+ */
+export async function deleteSiteContact(id) {
+  const contactId = String(id || '').trim();
+  if (!contactId) throw new Error('id が必要です');
+  const { error } = await supabase.from('customer_site_contacts').delete().eq('id', contactId);
+  if (error) throw error;
+}
+
+/**
  * スポット注文の現場名オートコンプリート候補
  * （RPC 側で current_customer_panel_id による権限検証あり）
  * @param {{ contractorRefCustomerId: string, limit?: number }} params
