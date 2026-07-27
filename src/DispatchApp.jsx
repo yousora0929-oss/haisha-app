@@ -1522,8 +1522,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             .filter((contact) => contact.name || contact.phone),
         [selectedProject],
       );
+      // ゲスト現場URLのみ物件JSONの担当者を使う。通常の物件/スポット注文は
+      // 会社メンバー候補（siteContactCandidates）を共有する。
       const usesProjectSiteContacts =
-        orderKind === 'project' && selectedProjectSiteContacts.length > 0;
+        isGuestSiteOrder && selectedProjectSiteContacts.length > 0;
       const allowedDeliveryAreas = useMemo(
         () => normalizeAllowedDeliveryAreas(adminSettings?.allowed_delivery_areas),
         [adminSettings],
@@ -1734,7 +1736,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         };
       }, [currentCustomerId, currentCustomerRole, isAgentOrCooperative, isGuestSiteOrder]);
 
-      // リンクで絞り込み → その中で利用頻度順
+      // リンクで絞り込み → 会社名単位で代表1件に集約 → 利用頻度順
       const proxyContractorItems = useMemo(() => {
         const all = (customers || []).filter((c) => (c.role ?? 'contractor') === 'contractor');
         let filtered = all;
@@ -1742,7 +1744,31 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           const allowed = new Set(linkedContractorIds.map(String));
           filtered = all.filter((c) => allowed.has(String(c.id)));
         }
-        return sortCustomersByUsageFrequency(filtered, contractorUsageCounts);
+        // 同じ会社（company_name）に複数の担当者アカウントがある場合、
+        // 発注先業者の候補としては会社単位で1件に集約する。
+        // 代表IDは「会社内で最も作成日時が早い」行に固定し、
+        // 選択のたびに違う担当者行が代表にならないようにする（履歴・集計の分断防止）。
+        // created_at は mapCustomerRow / fetchCustomers(select *) 経由で含まれる。
+        const byCompany = new Map();
+        for (const c of filtered) {
+          const key = String(c.company_name || c.name || '').trim();
+          if (!key) continue;
+          const existing = byCompany.get(key);
+          if (!existing) {
+            byCompany.set(key, c);
+            continue;
+          }
+          const existingTime = existing.created_at ? new Date(existing.created_at).getTime() : Infinity;
+          const currentTime = c.created_at ? new Date(c.created_at).getTime() : Infinity;
+          if (
+            currentTime < existingTime ||
+            (currentTime === existingTime && String(c.id) < String(existing.id))
+          ) {
+            byCompany.set(key, c);
+          }
+        }
+        const deduped = Array.from(byCompany.values());
+        return sortCustomersByUsageFrequency(deduped, contractorUsageCounts);
       }, [customers, contractorLinkAgentId, linkedContractorIds, contractorUsageCounts]);
 
       const tradingAgentItems = useMemo(() => {
@@ -4851,7 +4877,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     </p>
                   ) : (
                     <p className="text-xs leading-relaxed text-slate-500">
-                      業者の現場担当者マスタから選ぶと、電話番号が自動入力されます（未登録名の自由入力も可）。
+                      業者の担当者マスタから選ぶと、電話番号が自動入力されます（物件注文・スポット注文共通。未登録名の自由入力も可）。
                     </p>
                   )}
                 </div>
