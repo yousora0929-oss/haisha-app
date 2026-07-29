@@ -347,6 +347,90 @@ function isRejectedByFactory(order, factoryId) {
   return ids.map((x) => String(x).trim()).includes(fid);
 }
 
+function isScheduleAutoRejectedByFactory(order, factoryId) {
+  const fid = String(factoryId || '').trim();
+  if (!fid || !order) return false;
+  const ids =
+    order.schedule_auto_rejected_factory_ids ?? order.scheduleAutoRejectedFactoryIds ?? [];
+  if (Array.isArray(ids) && ids.map((x) => String(x).trim()).includes(fid)) return true;
+  // 旧データ互換: 自動拒否ID配列が保存される前の単一工場拒否は source から判定する。
+  const rejectedIds = Array.isArray(order.rejected_factory_ids)
+    ? order.rejected_factory_ids.map((x) => String(x).trim()).filter(Boolean)
+    : [];
+  return (
+    String(order.factoryRejectSource ?? order.factory_reject_source ?? '').trim() ===
+      'schedule_auto' &&
+    rejectedIds.length === 1 &&
+    rejectedIds[0] === fid
+  );
+}
+
+function formatFactoryDeclinedAt(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '日時不明';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return '日時不明';
+  return d.toLocaleString('ja-JP', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function resolveFactoryDeclineMeta(order, messages, factoryId, factoryName) {
+  const storedAsAuto = isScheduleAutoRejectedByFactory(order, factoryId);
+  const name = String(factoryName || '').trim();
+  const factoryTag = name ? `【${name}】` : '';
+  const list = Array.isArray(messages) ? messages.filter(Boolean) : [];
+  const newestFirst = [...list].reverse();
+  const matchesFactory = (message) => {
+    const body = String(message?.body || '');
+    return factoryTag ? body.includes(factoryTag) : true;
+  };
+  let autoMessage =
+    newestFirst.find(
+      (m) => String(m?.body || '').includes('【自動】') && matchesFactory(m),
+    ) || null;
+  if (!autoMessage && storedAsAuto) {
+    const autoMessages = newestFirst.filter((m) =>
+      String(m?.body || '').includes('【自動】'),
+    );
+    if (autoMessages.length === 1) autoMessage = autoMessages[0];
+  }
+  const auto = storedAsAuto || Boolean(autoMessage);
+  let message = autoMessage;
+  if (!auto) {
+    message =
+      newestFirst.find((m) => {
+        const body = String(m?.body || '');
+        return body.includes('今回はご対応が難しい状況です') && matchesFactory(m);
+      }) || null;
+  }
+
+  const preferredId = String(
+    order?.preferred_factory_id ?? order?.preferredFactoryId ?? '',
+  ).trim();
+  const fallbackDeclinedAt =
+    !auto && preferredId === String(factoryId || '').trim()
+      ? order?.preferred_factory_declined_at ?? order?.preferredFactoryDeclinedAt
+      : '';
+  const autoDetail = auto
+    ? String(message?.body || '')
+        .split('\n')
+        .find((line) => line.includes('【自動】'))
+        ?.replace('【自動】', '')
+        .trim() || ''
+    : '';
+  return {
+    auto,
+    label: auto ? '満車のため自動拒否' : '手動で見送り',
+    detail: autoDetail,
+    declinedAt: message?.createdAt || message?.created_at || fallbackDeclinedAt || '',
+  };
+}
+
 function normalizeFactoryIdForCompare(value) {
   if (value == null) return '';
   const s = String(value).trim();
@@ -630,6 +714,7 @@ function isUnreadForFactory(messages, readKey) {
     function factorySearchHaystack(order, factoryLabel) {
       if (!order) return '';
       const fl = factoryLabel != null ? String(factoryLabel) : '';
+      const deliveryDate = factoryOrderDate(order);
       const parts = [
         order.siteName,
         order.siteAddress,
@@ -639,6 +724,8 @@ function isUnreadForFactory(messages, readKey) {
         order.acceptedFactoryLabel,
         order.factoryPendingByName,
         orderContactPersonName(order, ''),
+        deliveryDate,
+        deliveryDate ? deliveryDate.replace(/-/g, '/') : '',
         fl,
       ];
       return parts.map((p) => (p == null ? '' : String(p))).join(' ').toLowerCase();
@@ -953,6 +1040,14 @@ function isUnreadForFactory(messages, readKey) {
         mixText: '',
         hasTest: false,
       });
+      const [submitting, setSubmitting] = useState(false);
+      const submittingRef = useRef(false);
+
+      useEffect(() => {
+        if (open) return;
+        submittingRef.current = false;
+        setSubmitting(false);
+      }, [open]);
 
       useEffect(() => {
         if (!order || !open) return;
@@ -1026,8 +1121,9 @@ function isUnreadForFactory(messages, readKey) {
         setEditData((prev) => ({ ...prev, [name]: value }));
       };
 
-      const handleSubmit = (e) => {
+      const handleSubmit = async (e) => {
         e.preventDefault();
+        if (submittingRef.current) return;
         const slotMeta = TIME_SLOTS.find((s) => s.value === editData.timeSlot);
         const timeMinutes = parseInt(editData.timeSlot, 10);
         const slotLabel = slotMeta?.label ?? '';
@@ -1053,7 +1149,14 @@ function isUnreadForFactory(messages, readKey) {
           mixText: editData.mixText.trim(),
           has_test: editData.hasTest,
         };
-        onSave(order.id, patch);
+        submittingRef.current = true;
+        setSubmitting(true);
+        try {
+          await onSave(order.id, patch);
+        } finally {
+          submittingRef.current = false;
+          setSubmitting(false);
+        }
       };
 
       return (
@@ -1206,15 +1309,18 @@ function isUnreadForFactory(messages, readKey) {
                 <button
                   type="button"
                   onClick={onClose}
-                  className="min-h-[52px] flex-1 rounded-xl border-2 border-slate-300 bg-white text-base font-black text-slate-800 hover:bg-slate-50 sm:text-lg"
+                  disabled={submitting}
+                  className="min-h-[52px] flex-1 rounded-xl border-2 border-slate-300 bg-white text-base font-black text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg"
                 >
                   キャンセル
                 </button>
                 <button
                   type="submit"
-                  className="min-h-[52px] flex-1 rounded-xl border-2 border-indigo-700 bg-indigo-600 text-base font-black text-white shadow hover:bg-indigo-700 sm:text-lg"
+                  disabled={submitting}
+                  aria-busy={submitting}
+                  className="min-h-[52px] flex-1 rounded-xl border-2 border-indigo-700 bg-indigo-600 text-base font-black text-white shadow hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg"
                 >
-                  保存
+                  {submitting ? '保存中…' : '保存'}
                 </button>
               </div>
             </form>
@@ -3165,6 +3271,8 @@ function isUnreadForFactory(messages, readKey) {
       const activeStampRef = useRef(null);
       const [rawOrders, setRawOrders] = useState([]);
       const rawOrdersRef = useRef([]);
+      // 保存中の注文ID。二重送信で【内容変更】チャットが重複追記されるのを防ぐ
+      const orderPatchInFlightRef = useRef(new Set());
       const [orders, setOrders] = useState([]);
       const [readOrderIds, setReadOrderIds] = useState(() => new Set());
       const [hiddenOrderIds, setHiddenOrderIds] = useState(() => new Set());
@@ -3954,6 +4062,15 @@ function isUnreadForFactory(messages, readKey) {
         [orders, todaySchedule, activeFactoryId],
       );
 
+      // 能動的な配車画面では非表示のまま、履歴参照に限って生データから自社見送り分を復元する。
+      const factoryDeclinedByMeOrders = useMemo(
+        () =>
+          sortOrdersForHistory(
+            (rawOrders || []).filter((o) => isRejectedByFactory(o, activeFactoryId)),
+          ),
+        [rawOrders, activeFactoryId],
+      );
+
       const filteredFactoryHistoryOrders = useMemo(() => {
         const from = String(historyDateFrom || '').slice(0, 10);
         const to = String(historyDateTo || '').slice(0, 10);
@@ -3965,6 +4082,24 @@ function isUnreadForFactory(messages, readKey) {
           return true;
         });
       }, [factoryHistoryOrders, historySearchQuery, historyDateFrom, historyDateTo, activeFactoryName]);
+
+      const filteredFactoryDeclinedByMeOrders = useMemo(() => {
+        const from = String(historyDateFrom || '').slice(0, 10);
+        const to = String(historyDateTo || '').slice(0, 10);
+        return factoryDeclinedByMeOrders.filter((order) => {
+          if (!orderMatchesFactorySearch(order, historySearchQuery, activeFactoryName)) return false;
+          const d = factoryOrderDate(order);
+          if (from && (!d || d < from)) return false;
+          if (to && (!d || d > to)) return false;
+          return true;
+        });
+      }, [
+        factoryDeclinedByMeOrders,
+        historySearchQuery,
+        historyDateFrom,
+        historyDateTo,
+        activeFactoryName,
+      ]);
 
       const newOrdersCount = useMemo(
         () =>
@@ -4239,6 +4374,9 @@ function isUnreadForFactory(messages, readKey) {
             window.alert('自分が受注済みの注文のみ編集できます。');
             return false;
           }
+          const inFlightKey = String(orderId);
+          if (orderPatchInFlightRef.current.has(inFlightKey)) return false;
+          orderPatchInFlightRef.current.add(inFlightKey);
           try {
             const nextPatch = { ...patch, is_factory_modified: true };
             // 受注済み: カスタマー表示用の確定値も同期する
@@ -4276,6 +4414,8 @@ function isUnreadForFactory(messages, readKey) {
             console.error('handleOrderFullPatch failed', e);
             window.alert('注文の更新に失敗しました。通信状態を確認してください。');
             return false;
+          } finally {
+            orderPatchInFlightRef.current.delete(inFlightKey);
           }
         },
         [activeFactoryId, activeFactoryName, rawOrders, orders, appendOrderChatMessage, refreshChatThreads],
@@ -5037,6 +5177,104 @@ function isUnreadForFactory(messages, readKey) {
                       </label>
                     </div>
                   </div>
+                  <section className="space-y-2 rounded-2xl border-2 border-amber-300 bg-amber-50/70 p-3 dark:border-amber-700 dark:bg-amber-950/20">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h3 className="text-base font-black text-amber-950 dark:text-amber-100">
+                          自社が見送った注文
+                        </h3>
+                        <p className="mt-0.5 text-xs font-bold text-amber-800 dark:text-amber-200">
+                          新着一覧・カレンダーには表示されない参照専用の履歴です。
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-amber-600 px-2.5 py-1 text-xs font-black text-white">
+                        {filteredFactoryDeclinedByMeOrders.length}件
+                      </span>
+                    </div>
+                    {filteredFactoryDeclinedByMeOrders.length === 0 ? (
+                      <p className="rounded-xl border border-dashed border-amber-300 bg-white/70 px-4 py-6 text-center text-sm font-bold text-amber-800 dark:border-amber-700 dark:bg-slate-900/40 dark:text-amber-200">
+                        {String(historySearchQuery || '').trim() || historyDateFrom || historyDateTo
+                          ? '条件に一致する見送り注文はありません'
+                          : '自社が見送った注文はありません'}
+                      </p>
+                    ) : (
+                      <ul className="max-h-[min(55vh,520px)] space-y-2 overflow-y-auto">
+                        {filteredFactoryDeclinedByMeOrders.map((order) => {
+                          const party = orderPartyInfo(order, { preferSiteContact: true });
+                          const delivery = factoryOrderDate(order);
+                          const qtyRaw =
+                            order.confirmedQuantityM3 ?? order.quantityM3 ?? order.quantityCube;
+                          const qtyText =
+                            qtyRaw !== undefined && qtyRaw !== null && String(qtyRaw).trim() !== ''
+                              ? `${String(qtyRaw).trim()} m³`
+                              : '—';
+                          const vehicleLabel =
+                            order.vehicleLabel || (order.vehicleType === 'small' ? '小型車' : '大型車');
+                          const decline = resolveFactoryDeclineMeta(
+                            order,
+                            chatThreads[order.id],
+                            activeFactoryId,
+                            activeFactoryName,
+                          );
+                          const isOtherAccepted = isOrderAcceptedByOtherFactory(order, activeFactoryId);
+                          const otherFactoryLabel =
+                            String(order.factorySiteName || '').trim() ||
+                            String(order.acceptedFactoryLabel || '').replace(/^受注工場：/, '').trim() ||
+                            '他工場';
+                          return (
+                            <li
+                              key={order.id}
+                              className="rounded-xl border border-amber-200 bg-white px-4 py-3 shadow-sm dark:border-amber-800 dark:bg-slate-900/70"
+                            >
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <p className="text-sm font-black tabular-nums text-slate-700 dark:text-slate-300">
+                                  予定日 {delivery ? delivery.replace(/-/g, '/') : '—'}
+                                </p>
+                                <div className="flex flex-wrap gap-1">
+                                  <span className="rounded-full bg-amber-600 px-2 py-0.5 text-[10px] font-black text-white">
+                                    見送り済み
+                                  </span>
+                                  {decline.auto ? (
+                                    <span className="rounded-full bg-slate-700 px-2 py-0.5 text-[10px] font-black text-white">
+                                      自動
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <p className="mt-1 text-base font-black text-slate-900 dark:text-gray-100">
+                                {party.site || '現場未設定'}
+                              </p>
+                              <p className="mt-1 text-sm font-bold text-slate-600 dark:text-gray-300">
+                                納入 {formatPreferredDateJp(delivery)} {getOrderTimeDisplay(order)} · {qtyText} / {vehicleLabel}
+                              </p>
+                              <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm dark:bg-amber-950/30">
+                                <p className="font-black text-amber-950 dark:text-amber-100">
+                                  理由：{decline.label}
+                                </p>
+                                {decline.detail ? (
+                                  <p className="mt-0.5 font-bold text-amber-800 dark:text-amber-200">
+                                    {decline.detail}
+                                  </p>
+                                ) : null}
+                                <p className="mt-0.5 font-bold tabular-nums text-slate-600 dark:text-slate-300">
+                                  見送り日時：{formatFactoryDeclinedAt(decline.declinedAt)}
+                                </p>
+                              </div>
+                              {isOtherAccepted ? (
+                                <p className="mt-2 text-sm font-black text-sky-700 dark:text-sky-300">
+                                  見送り後、{otherFactoryLabel}が受注（{formatAcceptedAtDateTimeJp(order)}）
+                                </p>
+                              ) : null}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </section>
+                  <section className="space-y-2">
+                    <h3 className="text-base font-black text-slate-900 dark:text-slate-100">
+                      完了・過去・他工場受注
+                    </h3>
                   {filteredFactoryHistoryOrders.length === 0 ? (
                     <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm font-bold text-slate-500 dark:border-slate-600 dark:bg-slate-900/50 dark:text-slate-300">
                       {String(historySearchQuery || '').trim() || historyDateFrom || historyDateTo
@@ -5100,6 +5338,7 @@ function isUnreadForFactory(messages, readKey) {
                       })}
                     </ul>
                   )}
+                  </section>
                 </section>
               ) : null}
               {activeTab === 'settings' ? (

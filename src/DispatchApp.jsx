@@ -3,8 +3,13 @@ import {
   DISPATCH_DEFAULT_FACTORY_SITE_NAME,
   DISPATCH_DEFAULT_FACTORY_SITE_ID,
   TIME_SLOTS,
+  SCHEDULE_BLOCKS,
   pad2,
   todayLocalISODate,
+  normalizeDayBlockSchedule,
+  computeScheduleAutoRejectReason,
+  getScheduleBlockIdForMinutes,
+  getOrderVehicleScheduleKey,
 } from './haishaConstants.js';
 import * as db from './haishaDb.js';
 import {
@@ -3294,6 +3299,47 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           setIsSubmittingOrder(true);
           setSubmitError('');
           try {
+            // 第一希望工場がある場合、選択日時がその工場の満車枠でないか事前チェックする。
+            // 満車のまま作成するとサーバー側自動拒否で行き止まりになるため、ここで止める。
+            if (prefFid) {
+              try {
+                const { data: scheduleRow, error: scheduleErr } = await supabase
+                  .from('schedules')
+                  .select('blocks')
+                  .eq('factory_site_id', prefFid)
+                  .eq('date', repeatPreferredDate)
+                  .maybeSingle();
+                if (scheduleErr) throw scheduleErr;
+                // 行が無い＝未設定＝全枠 available。存在する場合のみ満車判定する。
+                if (scheduleRow) {
+                  const dayBlocks = normalizeDayBlockSchedule(scheduleRow.blocks);
+                  const rejectReason = computeScheduleAutoRejectReason(repeatOrder, dayBlocks);
+                  if (rejectReason) {
+                    const factoryName =
+                      (Array.isArray(factories) ? factories : []).find(
+                        (f) => String(f?.id) === String(prefFid),
+                      )?.name || '選択した工場';
+                    const bid = getScheduleBlockIdForMinutes(
+                      Number.isFinite(timeMinutes) ? timeMinutes : NaN,
+                    );
+                    const windowLabel =
+                      SCHEDULE_BLOCKS.find((b) => b.id === bid)?.label || slotLabel || '選択した時間帯';
+                    const vj = getOrderVehicleScheduleKey(repeatOrder) === 'small' ? '小型' : '大型';
+                    const message = `選択した工場（${factoryName}）はこの日時（${windowLabel}・${vj}）は満車です。日時を変更するか、フォームから別の工場を選んで発注してください。`;
+                    setSubmitError(message);
+                    window.alert(message);
+                    return;
+                  }
+                }
+              } catch (scheduleCheckErr) {
+                // 取得失敗時は誤って正常発注を止めない（サーバー側自動拒否が保険になる）
+                console.warn(
+                  '[confirmRepeatOrder] schedule pre-check failed; allowing submit',
+                  scheduleCheckErr,
+                );
+              }
+            }
+
             await db.insertOrdersBulk([repeatOrder], { factories, projects });
             await refreshDashboard();
             setCustomerOrderTab('active');
@@ -3312,7 +3358,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             setIsSubmittingOrder(false);
           }
         },
-        [currentCustomer, currentCustomerId, orderPlacerName, repeatPreferredDate, repeatTimeSlot, refreshDashboard],
+        [
+          currentCustomer,
+          currentCustomerId,
+          factories,
+          orderPlacerName,
+          repeatPreferredDate,
+          repeatTimeSlot,
+          refreshDashboard,
+        ],
       );
 
       const orderFormContext = useMemo(
