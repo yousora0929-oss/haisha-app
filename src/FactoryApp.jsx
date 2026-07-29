@@ -94,6 +94,8 @@ import {
   isOrderInHistoryView,
   isOrderInProgressView,
   isOrderManuallyCompleted,
+  isOrderVisibleToFactoryHistory,
+  isOtherFactoryAcceptedPastHistoryCutoff,
   sortOrdersForHistory,
 } from './utils/orderDeliverySchedule.js';
 import { resolveFactoryIdFromProject } from './utils/dispatchBulkOrder.js';
@@ -106,6 +108,8 @@ import {
 import { normalizeFactoryRefId } from './utils/escalationUtils.js';
 
 const FACTORY_SPLIT_STORAGE_KEY = 'haisha_factory_split_left_pct_v1';
+const factoryHistoryHideOtherStorageKey = (factoryId) =>
+  `haisha_factory_history_hide_other_${String(factoryId || '').trim()}`;
 
 /** 依頼一覧 1 行目：希望日 | 希望時刻 | 荷卸し | 車種 | 数量 | 試験（最小幅を確保し、狭いときは横スクロール） */
 const ORDER_GRID_TOP =
@@ -3323,9 +3327,39 @@ function isUnreadForFactory(messages, readKey) {
       const [historySearchQuery, setHistorySearchQuery] = useState('');
       const [historyDateFrom, setHistoryDateFrom] = useState('');
       const [historyDateTo, setHistoryDateTo] = useState('');
+      const [hideOtherFactoryAcceptedInHistory, setHideOtherFactoryAcceptedInHistory] = useState(false);
       const [factoryNewsUnread, setFactoryNewsUnread] = useState(0);
       const [charterPendingCount, setCharterPendingCount] = useState(0);
       const [focusedOrderId, setFocusedOrderId] = useState('');
+
+      useEffect(() => {
+        const fid = String(activeFactoryId || '').trim();
+        if (!fid) {
+          setHideOtherFactoryAcceptedInHistory(false);
+          return;
+        }
+        try {
+          const raw = window.localStorage.getItem(factoryHistoryHideOtherStorageKey(fid));
+          setHideOtherFactoryAcceptedInHistory(raw === '1' || raw === 'true');
+        } catch {
+          setHideOtherFactoryAcceptedInHistory(false);
+        }
+      }, [activeFactoryId]);
+
+      const setHideOtherFactoryAcceptedInHistoryPersist = useCallback(
+        (next) => {
+          const value = Boolean(next);
+          setHideOtherFactoryAcceptedInHistory(value);
+          const fid = String(activeFactoryId || '').trim();
+          if (!fid) return;
+          try {
+            window.localStorage.setItem(factoryHistoryHideOtherStorageKey(fid), value ? '1' : '0');
+          } catch {
+            /* ignore */
+          }
+        },
+        [activeFactoryId],
+      );
       const applyFactoryPushRedirect = useCallback((payload) => {
         const id = String(payload?.orderId || '').trim();
         if (!id) return;
@@ -4056,20 +4090,17 @@ function isUnreadForFactory(messages, readKey) {
         return base;
       }, [factoryInProgressOrders, exitingOrderIds]);
 
-      const factoryHistoryOrders = useMemo(
-        () =>
-          sortOrdersForHistory((orders || []).filter((o) => isOrderInHistoryView(o, todaySchedule, activeFactoryId))),
-        [orders, todaySchedule, activeFactoryId],
-      );
-
-      // 能動的な配車画面では非表示のまま、履歴参照に限って生データから自社見送り分を復元する。
-      const factoryDeclinedByMeOrders = useMemo(
-        () =>
-          sortOrdersForHistory(
-            (rawOrders || []).filter((o) => isRejectedByFactory(o, activeFactoryId)),
-          ),
-        [rawOrders, activeFactoryId],
-      );
+      const factoryHistoryOrders = useMemo(() => {
+        // 履歴タブだけ rawOrders + 専用可視性を使う（新着/カレンダーの isOrderVisibleToFactory は変更しない）
+        return sortOrdersForHistory(
+          (rawOrders || []).filter((o) => {
+            if (!isOrderVisibleToFactoryHistory(o, activeFactoryId)) return false;
+            // 自社見送りは予定日が先でも電話対応のため履歴へ出す
+            if (isRejectedByFactory(o, activeFactoryId)) return true;
+            return isOrderInHistoryView(o, todaySchedule, activeFactoryId);
+          }),
+        );
+      }, [rawOrders, todaySchedule, activeFactoryId]);
 
       const filteredFactoryHistoryOrders = useMemo(() => {
         const from = String(historyDateFrom || '').slice(0, 10);
@@ -4083,23 +4114,26 @@ function isUnreadForFactory(messages, readKey) {
         });
       }, [factoryHistoryOrders, historySearchQuery, historyDateFrom, historyDateTo, activeFactoryName]);
 
-      const filteredFactoryDeclinedByMeOrders = useMemo(() => {
-        const from = String(historyDateFrom || '').slice(0, 10);
-        const to = String(historyDateTo || '').slice(0, 10);
-        return factoryDeclinedByMeOrders.filter((order) => {
-          if (!orderMatchesFactorySearch(order, historySearchQuery, activeFactoryName)) return false;
-          const d = factoryOrderDate(order);
-          if (from && (!d || d < from)) return false;
-          if (to && (!d || d > to)) return false;
+      const otherFactoryAcceptedHistoryCount = useMemo(
+        () =>
+          filteredFactoryHistoryOrders.filter(
+            (order) =>
+              isOrderAcceptedByOtherFactory(order, activeFactoryId) &&
+              !isRejectedByFactory(order, activeFactoryId),
+          ).length,
+        [filteredFactoryHistoryOrders, activeFactoryId],
+      );
+
+      const visibleFactoryHistoryOrders = useMemo(() => {
+        if (!hideOtherFactoryAcceptedInHistory) return filteredFactoryHistoryOrders;
+        return filteredFactoryHistoryOrders.filter((order) => {
+          // 自社見送りはトグル対象外。他工場受注だけ隠す。
+          if (isRejectedByFactory(order, activeFactoryId)) return true;
+          if (isOtherFactoryAcceptedPastHistoryCutoff(order, activeFactoryId)) return false;
+          if (isOrderAcceptedByOtherFactory(order, activeFactoryId)) return false;
           return true;
         });
-      }, [
-        factoryDeclinedByMeOrders,
-        historySearchQuery,
-        historyDateFrom,
-        historyDateTo,
-        activeFactoryName,
-      ]);
+      }, [filteredFactoryHistoryOrders, hideOtherFactoryAcceptedInHistory, activeFactoryId]);
 
       const newOrdersCount = useMemo(
         () =>
@@ -5144,11 +5178,36 @@ function isUnreadForFactory(messages, readKey) {
               ) : null}
               {activeTab === 'history' ? (
                 <section className="space-y-3 pb-8">
-                  <header>
-                    <h2 className="text-xl font-black text-slate-900 dark:text-slate-100">注文履歴</h2>
-                    <p className="mt-1 text-sm font-medium text-slate-600 dark:text-slate-300">
-                      手動完了・予定日経過・他工場受注（受注日の翌日0時以降）の注文を表示します（予定日の新しい順）。
-                    </p>
+                  <header className="space-y-2">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <h2 className="text-xl font-black text-slate-900 dark:text-slate-100">注文履歴</h2>
+                        <p className="mt-1 text-sm font-medium text-slate-600 dark:text-slate-300">
+                          手動完了・予定日経過・自社見送り・他工場受注（受注日の翌日0時以降）を表示します（予定日の新しい順）。
+                        </p>
+                      </div>
+                      <div className="flex flex-col items-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setHideOtherFactoryAcceptedInHistoryPersist(!hideOtherFactoryAcceptedInHistory)
+                          }
+                          aria-pressed={hideOtherFactoryAcceptedInHistory}
+                          className={
+                            'min-h-[40px] rounded-xl border-2 px-3 py-2 text-xs font-black transition sm:text-sm ' +
+                            (hideOtherFactoryAcceptedInHistory
+                              ? 'border-slate-700 bg-slate-700 text-white'
+                              : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100')
+                          }
+                        >
+                          {hideOtherFactoryAcceptedInHistory ? '他工場受注を表示する' : '他工場受注を非表示'}
+                        </button>
+                        <p className="text-xs font-bold text-slate-500 dark:text-slate-300">
+                          他工場受注 {otherFactoryAcceptedHistoryCount}件
+                          {hideOtherFactoryAcceptedInHistory ? '（非表示中）' : ''}
+                        </p>
+                      </div>
+                    </div>
                   </header>
                   <div className="shrink-0 space-y-2 rounded-lg border border-slate-200 bg-slate-50/95 px-2 py-2 dark:border-slate-600 dark:bg-slate-800/80">
                     <OrderListSearchInput
@@ -5177,119 +5236,33 @@ function isUnreadForFactory(messages, readKey) {
                       </label>
                     </div>
                   </div>
-                  <section className="space-y-2 rounded-2xl border-2 border-amber-300 bg-amber-50/70 p-3 dark:border-amber-700 dark:bg-amber-950/20">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <h3 className="text-base font-black text-amber-950 dark:text-amber-100">
-                          自社が見送った注文
-                        </h3>
-                        <p className="mt-0.5 text-xs font-bold text-amber-800 dark:text-amber-200">
-                          新着一覧・カレンダーには表示されない参照専用の履歴です。
-                        </p>
-                      </div>
-                      <span className="rounded-full bg-amber-600 px-2.5 py-1 text-xs font-black text-white">
-                        {filteredFactoryDeclinedByMeOrders.length}件
-                      </span>
-                    </div>
-                    {filteredFactoryDeclinedByMeOrders.length === 0 ? (
-                      <p className="rounded-xl border border-dashed border-amber-300 bg-white/70 px-4 py-6 text-center text-sm font-bold text-amber-800 dark:border-amber-700 dark:bg-slate-900/40 dark:text-amber-200">
-                        {String(historySearchQuery || '').trim() || historyDateFrom || historyDateTo
-                          ? '条件に一致する見送り注文はありません'
-                          : '自社が見送った注文はありません'}
-                      </p>
-                    ) : (
-                      <ul className="max-h-[min(55vh,520px)] space-y-2 overflow-y-auto">
-                        {filteredFactoryDeclinedByMeOrders.map((order) => {
-                          const party = orderPartyInfo(order, { preferSiteContact: true });
-                          const delivery = factoryOrderDate(order);
-                          const qtyRaw =
-                            order.confirmedQuantityM3 ?? order.quantityM3 ?? order.quantityCube;
-                          const qtyText =
-                            qtyRaw !== undefined && qtyRaw !== null && String(qtyRaw).trim() !== ''
-                              ? `${String(qtyRaw).trim()} m³`
-                              : '—';
-                          const vehicleLabel =
-                            order.vehicleLabel || (order.vehicleType === 'small' ? '小型車' : '大型車');
-                          const decline = resolveFactoryDeclineMeta(
-                            order,
-                            chatThreads[order.id],
-                            activeFactoryId,
-                            activeFactoryName,
-                          );
-                          const isOtherAccepted = isOrderAcceptedByOtherFactory(order, activeFactoryId);
-                          const otherFactoryLabel =
-                            String(order.factorySiteName || '').trim() ||
-                            String(order.acceptedFactoryLabel || '').replace(/^受注工場：/, '').trim() ||
-                            '他工場';
-                          return (
-                            <li
-                              key={order.id}
-                              className="rounded-xl border border-amber-200 bg-white px-4 py-3 shadow-sm dark:border-amber-800 dark:bg-slate-900/70"
-                            >
-                              <div className="flex flex-wrap items-start justify-between gap-2">
-                                <p className="text-sm font-black tabular-nums text-slate-700 dark:text-slate-300">
-                                  予定日 {delivery ? delivery.replace(/-/g, '/') : '—'}
-                                </p>
-                                <div className="flex flex-wrap gap-1">
-                                  <span className="rounded-full bg-amber-600 px-2 py-0.5 text-[10px] font-black text-white">
-                                    見送り済み
-                                  </span>
-                                  {decline.auto ? (
-                                    <span className="rounded-full bg-slate-700 px-2 py-0.5 text-[10px] font-black text-white">
-                                      自動
-                                    </span>
-                                  ) : null}
-                                </div>
-                              </div>
-                              <p className="mt-1 text-base font-black text-slate-900 dark:text-gray-100">
-                                {party.site || '現場未設定'}
-                              </p>
-                              <p className="mt-1 text-sm font-bold text-slate-600 dark:text-gray-300">
-                                納入 {formatPreferredDateJp(delivery)} {getOrderTimeDisplay(order)} · {qtyText} / {vehicleLabel}
-                              </p>
-                              <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm dark:bg-amber-950/30">
-                                <p className="font-black text-amber-950 dark:text-amber-100">
-                                  理由：{decline.label}
-                                </p>
-                                {decline.detail ? (
-                                  <p className="mt-0.5 font-bold text-amber-800 dark:text-amber-200">
-                                    {decline.detail}
-                                  </p>
-                                ) : null}
-                                <p className="mt-0.5 font-bold tabular-nums text-slate-600 dark:text-slate-300">
-                                  見送り日時：{formatFactoryDeclinedAt(decline.declinedAt)}
-                                </p>
-                              </div>
-                              {isOtherAccepted ? (
-                                <p className="mt-2 text-sm font-black text-sky-700 dark:text-sky-300">
-                                  見送り後、{otherFactoryLabel}が受注（{formatAcceptedAtDateTimeJp(order)}）
-                                </p>
-                              ) : null}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </section>
-                  <section className="space-y-2">
-                    <h3 className="text-base font-black text-slate-900 dark:text-slate-100">
-                      完了・過去・他工場受注
-                    </h3>
-                  {filteredFactoryHistoryOrders.length === 0 ? (
+                  {visibleFactoryHistoryOrders.length === 0 ? (
                     <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm font-bold text-slate-500 dark:border-slate-600 dark:bg-slate-900/50 dark:text-slate-300">
-                      {String(historySearchQuery || '').trim() || historyDateFrom || historyDateTo
+                      {String(historySearchQuery || '').trim() ||
+                      historyDateFrom ||
+                      historyDateTo ||
+                      hideOtherFactoryAcceptedInHistory
                         ? '条件に一致する注文はありません'
                         : '履歴に表示する注文はありません'}
                     </p>
                   ) : (
                     <ul className="max-h-[min(70vh,640px)] space-y-2 overflow-y-auto rounded-2xl border-2 border-slate-200 bg-white p-2 dark:border-slate-600 dark:bg-slate-800">
-                      {filteredFactoryHistoryOrders.map((order) => {
+                      {visibleFactoryHistoryOrders.map((order) => {
                         const party = orderPartyInfo(order, { preferSiteContact: true });
                         const delivery = factoryOrderDate(order);
                         const autoPast =
                           !isOrderManuallyCompleted(order) &&
                           !['customer_cancelled', 'cancelled', 'deleted'].includes(String(order?.status || ''));
+                        const declinedByMe = isRejectedByFactory(order, activeFactoryId);
                         const isOtherAccepted = isOrderAcceptedByOtherFactory(order, activeFactoryId);
+                        const decline = declinedByMe
+                          ? resolveFactoryDeclineMeta(
+                              order,
+                              chatThreads[order.id],
+                              activeFactoryId,
+                              activeFactoryName,
+                            )
+                          : null;
                         const otherFactoryLabel =
                           String(order.factorySiteName || '').trim() ||
                           String(order.acceptedFactoryLabel || '').replace(/^受注工場：/, '').trim() ||
@@ -5304,33 +5277,73 @@ function isUnreadForFactory(messages, readKey) {
                         return (
                           <li
                             key={order.id}
-                            className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-600 dark:bg-slate-900/50"
+                            className={
+                              'rounded-xl border px-4 py-3 dark:bg-slate-900/50 ' +
+                              (declinedByMe
+                                ? 'border-amber-300 bg-amber-50/80 dark:border-amber-700'
+                                : 'border-slate-200 bg-slate-50 dark:border-slate-600')
+                            }
                           >
                             <div className="flex flex-wrap items-start justify-between gap-2">
                               <p className="text-sm font-black tabular-nums text-slate-700 dark:text-slate-300">
-                                予定日 {delivery.replace(/-/g, '/')}
+                                予定日 {delivery ? delivery.replace(/-/g, '/') : '—'}
                               </p>
                               <div className="flex flex-wrap gap-1">
-                                {isOtherAccepted ? (
-                                  <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                                {declinedByMe ? (
+                                  <>
+                                    <span className="rounded-full bg-amber-600 px-2 py-0.5 text-[10px] font-black text-white">
+                                      見送り済み
+                                    </span>
+                                    {decline?.auto ? (
+                                      <span className="rounded-full bg-slate-700 px-2 py-0.5 text-[10px] font-black text-white">
+                                        自動
+                                      </span>
+                                    ) : null}
+                                  </>
+                                ) : null}
+                                {!declinedByMe && isOtherAccepted ? (
+                                  <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-black text-sky-800 dark:bg-sky-900/50 dark:text-sky-200">
                                     {otherFactoryLabel}が受注（{formatAcceptedAtDateTimeJp(order)}）
                                   </span>
-                                ) : (
+                                ) : null}
+                                {!declinedByMe && !isOtherAccepted ? (
                                   <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black text-slate-700 dark:bg-slate-700 dark:text-slate-200">
                                     {autoPast ? '自動履歴' : '完了'}
                                   </span>
-                                )}
+                                ) : null}
                               </div>
                             </div>
                             <p className="mt-1 text-base font-black text-slate-900 dark:text-gray-100">
                               {party.site || '現場未設定'}
                             </p>
                             <p className="mt-1 text-sm font-bold text-slate-600 dark:text-gray-300">
-                              納入 {formatPreferredDateJp(delivery)} {getOrderTimeDisplay(order)} · {qtyText} / {vehicleLabel}
+                              納入 {formatPreferredDateJp(delivery)} {getOrderTimeDisplay(order)} · {qtyText} /{' '}
+                              {vehicleLabel}
                             </p>
-                            {!isOtherAccepted ? (
+                            {declinedByMe && decline ? (
+                              <div className="mt-2 rounded-lg bg-amber-100/80 px-3 py-2 text-sm dark:bg-amber-950/40">
+                                <p className="font-black text-amber-950 dark:text-amber-100">
+                                  理由：{decline.label}
+                                </p>
+                                {decline.detail ? (
+                                  <p className="mt-0.5 font-bold text-amber-800 dark:text-amber-200">
+                                    {decline.detail}
+                                  </p>
+                                ) : null}
+                                <p className="mt-0.5 font-bold tabular-nums text-slate-600 dark:text-slate-300">
+                                  見送り日時：{formatFactoryDeclinedAt(decline.declinedAt)}
+                                </p>
+                              </div>
+                            ) : null}
+                            {declinedByMe && isOtherAccepted ? (
+                              <p className="mt-2 text-sm font-black text-sky-700 dark:text-sky-300">
+                                見送り後、{otherFactoryLabel}が受注（{formatAcceptedAtDateTimeJp(order)}）
+                              </p>
+                            ) : null}
+                            {!declinedByMe && !isOtherAccepted ? (
                               <p className="mt-1 text-sm font-bold text-slate-600 dark:text-gray-300">
-                                {party.contractor || '—'} · {getOrderTimeDisplay(order)} · {factoryOrderQuantity(order)}㎡
+                                {party.contractor || '—'} · {getOrderTimeDisplay(order)} ·{' '}
+                                {factoryOrderQuantity(order)}㎡
                               </p>
                             ) : null}
                           </li>
@@ -5338,7 +5351,6 @@ function isUnreadForFactory(messages, readKey) {
                       })}
                     </ul>
                   )}
-                  </section>
                 </section>
               ) : null}
               {activeTab === 'settings' ? (

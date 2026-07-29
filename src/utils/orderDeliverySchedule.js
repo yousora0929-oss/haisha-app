@@ -92,6 +92,40 @@ export function isOrderAcceptedByOtherFactory(order, viewerFactoryId) {
   return assigned !== viewer;
 }
 
+function rejectedFactoryIds(order) {
+  const ids = Array.isArray(order?.rejected_factory_ids)
+    ? order.rejected_factory_ids
+    : Array.isArray(order?.rejectedFactoryIds)
+      ? order.rejectedFactoryIds
+      : [];
+  return ids.map((x) => String(x).trim()).filter(Boolean);
+}
+
+/**
+ * 履歴タブ専用の可視性（配車対応中の isOrderVisibleToFactory とは別）。
+ * 見送り済み・他工場受注も参照できるよう、能動対応用より緩く判定する。
+ */
+export function isOrderVisibleToFactoryHistory(order, factoryId) {
+  const fid = String(factoryId || '').trim();
+  if (!fid || !order) return false;
+
+  const status = String(order.status ?? order.factoryResponseStatus ?? '').trim();
+  if (status === 'deleted' || status === 'pending_association') return false;
+
+  const assigned = getAssignedFactoryId(order);
+  if (assigned && assigned === fid) return true;
+
+  if (rejectedFactoryIds(order).includes(fid)) return true;
+
+  const preferred = String(order.preferred_factory_id ?? order.preferredFactoryId ?? '').trim();
+  if (preferred && preferred === fid) return true;
+
+  // 他工場が受注確定済み。候補工場だったかの厳密判定は困難なため、受注済みは広く履歴対象にする。
+  if (assigned && assigned !== fid) return true;
+
+  return false;
+}
+
 function tokyoYmdFromTimestamp(ts) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo' }).format(new Date(ts));
 }

@@ -4,6 +4,7 @@ import {
   isOrderAcceptedByOtherFactory,
   isOrderInHistoryView,
   isOrderInProgressView,
+  isOrderVisibleToFactoryHistory,
   isOtherFactoryAcceptedPastHistoryCutoff,
   sortOrdersForHistory,
 } from './orderDeliverySchedule.js';
@@ -82,5 +83,38 @@ describe('orderDeliverySchedule', () => {
     expect(isOtherFactoryAcceptedPastHistoryCutoff(order, factoryA)).toBe(false);
     expect(isOrderInProgressView(order, today, factoryA)).toBe(true);
     expect(isOrderInHistoryView(order, today, factoryA)).toBe(false);
+  });
+
+  it('keeps declined and other-factory accepted visible in history source filter', () => {
+    expect(
+      isOrderVisibleToFactoryHistory(
+        { status: 'pending', rejected_factory_ids: [factoryA], preferredDate: '2026-06-10' },
+        factoryA,
+      ),
+    ).toBe(true);
+    expect(
+      isOrderVisibleToFactoryHistory(
+        { status: 'accepted', factory_site_id: factoryB, preferredDate: '2026-06-10' },
+        factoryA,
+      ),
+    ).toBe(true);
+    expect(
+      isOrderVisibleToFactoryHistory(
+        { status: 'accepted', factory_site_id: factoryA, preferredDate: '2026-06-10' },
+        factoryA,
+      ),
+    ).toBe(true);
+    expect(
+      isOrderVisibleToFactoryHistory(
+        { status: 'deleted', factory_site_id: factoryA },
+        factoryA,
+      ),
+    ).toBe(false);
+    expect(
+      isOrderVisibleToFactoryHistory(
+        { status: 'pending_association', preferred_factory_id: factoryA },
+        factoryA,
+      ),
+    ).toBe(false);
   });
 });
