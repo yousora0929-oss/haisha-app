@@ -14,6 +14,7 @@ import { ProjectMapEditorUrlActions } from './components/ProjectMapEditorUrlActi
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
+import { PhoneOrderBadge } from './components/PhoneOrderBadge.jsx';
 import { OrderVisibilityScopePanel } from './components/OrderVisibilityScopePanel.jsx';
 import { OrderVisibilityScopeBadge } from './components/OrderVisibilityScopeBadge.jsx';
 import { AssociationOrderApproveModal } from './components/AssociationOrderApproveModal.jsx';
@@ -2121,6 +2122,7 @@ function AdminOrderDetailModal({
               </span>
               <span className={'inline-flex rounded-full border px-2 py-0.5 text-xs font-black ' + statusBadgeClass(st)}>{orderStatusLabel(st)}</span>
               <LocationPendingBadge order={order} />
+              <PhoneOrderBadge order={order} />
             </div>
           </div>
 
@@ -3098,6 +3100,7 @@ function OrdersMonitorSection({
                             <span className="inline-flex rounded-full border border-violet-300 bg-violet-50 px-2 py-0.5 text-xs font-black text-violet-800">管理者変更</span>
                           ) : null}
                           <LocationPendingBadge order={o} className="text-xs" />
+                          <PhoneOrderBadge order={o} className="text-xs" />
                         </div>
                       </td>
                       <td className="px-3 py-2.5 font-bold text-slate-700">{fid ? factoryNameById[fid] || fid : '—'}</td>

@@ -47,6 +47,7 @@ import { setAutoReloadBlocked } from './hooks/useAppReleaseControl.js';
 import { OrderCartPreview } from './components/OrderCartPreview.jsx';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
+import { PhoneOrderBadge } from './components/PhoneOrderBadge.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { CompanyMemberContactList } from './components/CompanyMemberContactList.jsx';
@@ -989,6 +990,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   <OrderStatusBadges order={order} escalationCtx={escalationCtx} />
                   <LocationPendingBadge order={order} />
+                  <PhoneOrderBadge order={order} />
                 </div>
               </div>
 

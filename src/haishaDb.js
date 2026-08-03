@@ -45,7 +45,7 @@ import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils
 import { generateInitialPassword } from './utils/initialPassword.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, site_history_contractor_id, is_admin_modified, is_factory_modified, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map';
+  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, site_history_contractor_id, is_admin_modified, is_factory_modified, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -595,6 +595,46 @@ export function normalizeOrderRow(row) {
         : od.adminFollowupStartedAt != null
           ? String(od.adminFollowupStartedAt)
           : '',
+    is_phone_order: row.is_phone_order === true || od.is_phone_order === true,
+    isPhoneOrder: row.is_phone_order === true || od.is_phone_order === true || od.isPhoneOrder === true,
+    phone_order_factory_id: sanitizeRefId(
+      row.phone_order_factory_id ?? od.phone_order_factory_id ?? od.phoneOrderFactoryId,
+    ),
+    phoneOrderFactoryId: sanitizeRefId(
+      row.phone_order_factory_id ?? od.phone_order_factory_id ?? od.phoneOrderFactoryId,
+    ),
+    phone_order_registered_by:
+      row.phone_order_registered_by != null
+        ? String(row.phone_order_registered_by).trim()
+        : od.phone_order_registered_by != null
+          ? String(od.phone_order_registered_by).trim()
+          : od.phoneOrderRegisteredBy != null
+            ? String(od.phoneOrderRegisteredBy).trim()
+            : '',
+    phoneOrderRegisteredBy:
+      row.phone_order_registered_by != null
+        ? String(row.phone_order_registered_by).trim()
+        : od.phoneOrderRegisteredBy != null
+          ? String(od.phoneOrderRegisteredBy).trim()
+          : od.phone_order_registered_by != null
+            ? String(od.phone_order_registered_by).trim()
+            : '',
+    phone_order_registered_at:
+      row.phone_order_registered_at != null
+        ? String(row.phone_order_registered_at)
+        : od.phone_order_registered_at != null
+          ? String(od.phone_order_registered_at)
+          : od.phoneOrderRegisteredAt != null
+            ? String(od.phoneOrderRegisteredAt)
+            : '',
+    phoneOrderRegisteredAt:
+      row.phone_order_registered_at != null
+        ? String(row.phone_order_registered_at)
+        : od.phoneOrderRegisteredAt != null
+          ? String(od.phoneOrderRegisteredAt)
+          : od.phone_order_registered_at != null
+            ? String(od.phone_order_registered_at)
+            : '',
   };
 }
 
@@ -1362,6 +1402,109 @@ export async function markOrderCustomerCancelled(orderId) {
     factoryPendingByName: undefined,
     factory_consult_status: '',
   });
+}
+
+/**
+ * 工場が電話で受けた注文を代理登録（即受注確定）
+ * @param {object} params
+ */
+export async function registerPhoneOrderByFactory(params) {
+  const {
+    factoryId,
+    factoryName,
+    customerId,
+    projectId,
+    quantityM3,
+    mixText,
+    preferredDate,
+    timeSlot,
+    timeSlotLabel,
+    siteName,
+    siteAddress,
+    deliveryArea,
+    siteAddressDetail,
+    orderedByName,
+    sitePhone,
+    vehicleType,
+    unloadDuration,
+    registeredByName,
+  } = params || {};
+  const fid = sanitizeRefId(factoryId);
+  if (!fid) throw new Error('factoryId が必要です');
+  const cid = sanitizeRefId(customerId);
+  if (!cid) throw new Error('customerId が必要です（既存登録顧客のみ対象）');
+  const qty = Number(quantityM3);
+  if (!Number.isFinite(qty) || qty <= 0) throw new Error('数量（m³）が不正です');
+  const { data, error } = await supabase.rpc('register_phone_order_by_factory', {
+    p_factory_id: fid,
+    p_factory_name: String(factoryName || '').trim() || fid,
+    p_customer_id: cid,
+    p_project_id: projectId ? sanitizeRefId(projectId) : null,
+    p_quantity_m3: qty,
+    p_mix_text: String(mixText || '').trim(),
+    p_preferred_date: preferredDate || null,
+    p_time_slot: String(timeSlot || '').trim(),
+    p_time_slot_label: String(timeSlotLabel || '').trim(),
+    p_site_name: String(siteName || '').trim(),
+    p_site_address: String(siteAddress || '').trim(),
+    p_delivery_area: String(deliveryArea || '').trim(),
+    p_site_address_detail: String(siteAddressDetail || '').trim(),
+    p_ordered_by_name: String(orderedByName || '').trim(),
+    p_site_phone: String(sitePhone || '').trim(),
+    p_vehicle_type: vehicleType === 'small' ? 'small' : 'large',
+    p_unload_duration: String(unloadDuration || '30').trim(),
+    p_registered_by_name: String(registeredByName || '').trim() || null,
+  });
+  if (error) {
+    console.error('registerPhoneOrderByFactory failed', error);
+    throw error;
+  }
+  return normalizeOrderRow(data);
+}
+
+/** 工場に紐づく登録済み顧客一覧（電話注文モーダルの顧客選択用） */
+export async function fetchCustomersForPhoneOrder(_factoryId) {
+  const { data, error } = await supabase.rpc('list_customers_for_phone_order');
+  if (error) {
+    console.error('fetchCustomersForPhoneOrder failed', error);
+    throw error;
+  }
+  return (data || [])
+    .map((row) => ({
+      id: row?.id != null ? String(row.id) : '',
+      company_name: row?.company_name != null ? String(row.company_name) : '',
+      manager_name: row?.manager_name != null ? String(row.manager_name) : '',
+      phone_number: row?.phone_number != null ? String(row.phone_number) : '',
+      organization_id: row?.organization_id != null ? String(row.organization_id) : null,
+      furigana: row?.furigana != null ? String(row.furigana) : '',
+    }))
+    .filter((c) => c.id);
+}
+
+/** 電話注文用：選択顧客に紐づく物件一覧 */
+export async function fetchProjectsForPhoneOrder(customerId) {
+  const cid = sanitizeRefId(customerId);
+  if (!cid) return [];
+  const { data, error } = await supabase.rpc('list_projects_for_phone_order', {
+    p_customer_id: cid,
+  });
+  if (error) {
+    console.error('fetchProjectsForPhoneOrder failed', error);
+    throw error;
+  }
+  return (data || [])
+    .map((row) => ({
+      id: row?.id != null ? String(row.id) : '',
+      name: row?.name != null ? String(row.name) : '',
+      customer_id: row?.customer_id != null ? String(row.customer_id) : null,
+      site_address: row?.site_address != null ? String(row.site_address) : '',
+      delivery_area: row?.delivery_area != null ? String(row.delivery_area) : '',
+      contractor: row?.contractor != null ? String(row.contractor) : '',
+      sub_contractor_name: row?.sub_contractor_name != null ? String(row.sub_contractor_name) : '',
+      main_factory_id: row?.main_factory_id != null ? String(row.main_factory_id) : '',
+      billing_target: row?.billing_target != null ? String(row.billing_target) : '',
+    }))
+    .filter((p) => p.id);
 }
 
 export async function acceptOrderForFactory(order, factorySiteId, factorySiteName) {

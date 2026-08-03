@@ -57,12 +57,14 @@ import {
   isSystemChatSender,
 } from './utils/chatMessageSenders.js';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
+import { PhoneOrderBadge } from './components/PhoneOrderBadge.jsx';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
 import { isValidSiteOrderUrlToken } from './utils/urlValidation.js';
 import { isLocationPendingOrder } from './utils/orderWorkflow.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
+import { normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
 import { orderPartyInfo } from './utils/orderPartyInfo.js';
 import { setAutoReloadBlocked } from './hooks/useAppReleaseControl.js';
 import {
@@ -182,6 +184,502 @@ function orderContactPersonName(order, fallback = '担当者') {
       fallback ??
       '',
   ).trim() || '担当者';
+}
+
+function PhoneOrderRegisterModal({
+  open,
+  onClose,
+  activeFactoryId,
+  activeFactoryName,
+  allowedDeliveryAreas = [],
+  onRegistered,
+}) {
+  const emptyForm = {
+    quantityM3: '',
+    mixText: '',
+    preferredDate: todayLocalISODate(),
+    timeSlot: String(TIME_SLOTS[0]?.value ?? '480'),
+    siteName: '',
+    siteAddress: '',
+    deliveryArea: '',
+    siteAddressDetail: '',
+    orderedByName: '',
+    sitePhone: '',
+    vehicleType: 'large',
+    unloadDuration: '30',
+    registeredByName: '',
+  };
+  const [customers, setCustomers] = useState([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState('');
+  const [customerProjects, setCustomerProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState('');
+  const [form, setForm] = useState(emptyForm);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const submittingRef = useRef(false);
+
+  useEffect(() => {
+    if (!open) {
+      submittingRef.current = false;
+      setSubmitting(false);
+      setError('');
+      setSelectedCustomerId('');
+      setSelectedProjectId('');
+      setCustomerProjects([]);
+      setForm(emptyForm);
+      return;
+    }
+    let cancelled = false;
+    setError('');
+    db.fetchCustomersForPhoneOrder(activeFactoryId)
+      .then((rows) => {
+        if (!cancelled) setCustomers(Array.isArray(rows) ? rows : []);
+      })
+      .catch((e) => {
+        console.error(e);
+        if (!cancelled) setError('顧客一覧の取得に失敗しました');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, activeFactoryId]);
+
+  useEffect(() => {
+    if (!open || !selectedCustomerId) {
+      setCustomerProjects([]);
+      setSelectedProjectId('');
+      return;
+    }
+    let cancelled = false;
+    db.fetchProjectsForPhoneOrder(selectedCustomerId)
+      .then((rows) => {
+        if (!cancelled) setCustomerProjects(Array.isArray(rows) ? rows : []);
+      })
+      .catch((e) => {
+        console.error(e);
+        if (!cancelled) {
+          setCustomerProjects([]);
+          setError('物件一覧の取得に失敗しました');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, selectedCustomerId]);
+
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    const selectedProject = customerProjects.find((p) => String(p.id) === String(selectedProjectId));
+    if (!selectedProject) return;
+    setForm((prev) => ({
+      ...prev,
+      siteName: prev.siteName || String(selectedProject.name || ''),
+      siteAddress: prev.siteAddress || String(selectedProject.site_address || ''),
+      deliveryArea: prev.deliveryArea || String(selectedProject.delivery_area || ''),
+    }));
+  }, [selectedProjectId, customerProjects]);
+
+  if (!open) return null;
+
+  const fieldLabel = 'mb-1 block text-sm font-bold text-slate-600 dark:text-slate-300 sm:text-base';
+  const fieldInput =
+    'mt-1 min-h-[48px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 sm:text-lg';
+
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const setFormField = (name, value) => {
+    setForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (submittingRef.current) return;
+    if (!selectedCustomerId) {
+      window.alert('顧客を選択してください');
+      return;
+    }
+    if (!form.quantityM3 || Number(form.quantityM3) <= 0) {
+      window.alert('数量を入力してください');
+      return;
+    }
+    if (!form.preferredDate) {
+      window.alert('納入日を入力してください');
+      return;
+    }
+    if (!window.confirm('この内容で電話注文を登録し、即受注確定にしますか？')) return;
+
+    const selectedProject = customerProjects.find((p) => String(p.id) === String(selectedProjectId));
+    submittingRef.current = true;
+    setSubmitting(true);
+    setError('');
+    try {
+      const registered = await db.registerPhoneOrderByFactory({
+        factoryId: activeFactoryId,
+        factoryName: activeFactoryName,
+        customerId: selectedCustomerId,
+        projectId: selectedProjectId || null,
+        quantityM3: form.quantityM3,
+        mixText: form.mixText,
+        preferredDate: form.preferredDate,
+        timeSlot: form.timeSlot,
+        timeSlotLabel: TIME_SLOTS.find((s) => s.value === form.timeSlot)?.label || '',
+        siteName: sanitizeSiteNameValue(form.siteName || selectedProject?.name || ''),
+        siteAddress: form.siteAddress || selectedProject?.site_address || '',
+        deliveryArea: form.deliveryArea,
+        siteAddressDetail: form.siteAddressDetail,
+        orderedByName: form.orderedByName,
+        sitePhone: form.sitePhone,
+        vehicleType: form.vehicleType,
+        unloadDuration: form.unloadDuration,
+        registeredByName: form.registeredByName,
+      });
+      onRegistered?.(registered);
+      onClose();
+      window.alert('電話注文を登録しました（受注確定）');
+    } catch (err) {
+      console.error(err);
+      setError('登録に失敗しました。入力内容と通信状態を確認してください。');
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-black bg-opacity-50 p-4"
+      role="presentation"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && !submitting) onClose();
+      }}
+    >
+      <div
+        className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="factory-phone-order-title"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
+          <h2 id="factory-phone-order-title" className="text-lg font-black text-slate-900 sm:text-xl">
+            ☎ 電話注文を登録
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 hover:bg-slate-100 sm:text-base disabled:opacity-50"
+          >
+            閉じる
+          </button>
+        </div>
+        <form className="flex min-h-0 flex-1 flex-col" onSubmit={handleSubmit}>
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pr-2">
+            <p className="mb-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-bold text-sky-900">
+              既存登録顧客のみ対象です。登録すると自工場の受注確定になります。
+            </p>
+            {error ? (
+              <p className="mb-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-bold text-red-800">
+                {error}
+              </p>
+            ) : null}
+
+            <section className="space-y-4 rounded-xl border-2 border-sky-300 bg-sky-50 p-3 shadow-inner">
+              <div>
+                <label className={fieldLabel} htmlFor="por-customer">
+                  顧客（必須）
+                </label>
+                <select
+                  id="por-customer"
+                  value={selectedCustomerId}
+                  onChange={(e) => {
+                    setSelectedCustomerId(e.target.value);
+                    setSelectedProjectId('');
+                    setForm((prev) => ({
+                      ...prev,
+                      siteName: '',
+                      siteAddress: '',
+                      deliveryArea: '',
+                    }));
+                  }}
+                  className={fieldInput}
+                  required
+                >
+                  <option value="">選択してください</option>
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.company_name || c.id}
+                      {c.manager_name ? `（${c.manager_name}）` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className={fieldLabel} htmlFor="por-project">
+                  物件（任意・未選択はスポット）
+                </label>
+                <select
+                  id="por-project"
+                  value={selectedProjectId}
+                  onChange={(e) => setSelectedProjectId(e.target.value)}
+                  className={fieldInput}
+                  disabled={!selectedCustomerId}
+                >
+                  <option value="">スポット入力（物件なし）</option>
+                  {customerProjects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name || p.id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className={fieldLabel} htmlFor="por-registered-by">
+                  工場側登録担当者名（内部記録）
+                </label>
+                <input
+                  id="por-registered-by"
+                  name="registeredByName"
+                  type="text"
+                  value={form.registeredByName}
+                  onChange={handleInputChange}
+                  className={fieldInput}
+                  placeholder="例：山田"
+                />
+              </div>
+            </section>
+
+            <section className="mt-4 space-y-4 rounded-xl border-2 border-indigo-300 bg-indigo-50 p-3 shadow-inner">
+              <div>
+                <label className={fieldLabel} htmlFor="por-date">
+                  日付（納入日）
+                </label>
+                <input
+                  id="por-date"
+                  name="preferredDate"
+                  type="date"
+                  value={form.preferredDate}
+                  onChange={handleInputChange}
+                  className={fieldInput}
+                  required
+                />
+              </div>
+              <div>
+                <label className={fieldLabel} htmlFor="por-slot">
+                  時間（出荷時間）
+                </label>
+                <select
+                  id="por-slot"
+                  name="timeSlot"
+                  value={form.timeSlot}
+                  onChange={handleInputChange}
+                  className={fieldInput}
+                >
+                  {TIME_SLOTS.map((s) => (
+                    <option key={s.value} value={s.value}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className={fieldLabel} htmlFor="por-unload">
+                  1台あたりの荷卸し予定時間
+                </label>
+                <select
+                  id="por-unload"
+                  name="unloadDuration"
+                  value={form.unloadDuration}
+                  onChange={handleInputChange}
+                  className={fieldInput}
+                >
+                  <option value="15">15分</option>
+                  <option value="30">30分（標準）</option>
+                  <option value="45">45分</option>
+                  <option value="60">60分（手押し車など時間要）</option>
+                  <option value="95_plus">95分以上（要相談）</option>
+                </select>
+              </div>
+              <div>
+                <span className={fieldLabel}>車両（車種）</span>
+                <div className="mt-2 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setFormField('vehicleType', 'large')}
+                    className={
+                      'min-h-[48px] flex-1 rounded-lg border-2 text-base font-black sm:text-lg ' +
+                      (form.vehicleType === 'large'
+                        ? 'border-indigo-600 bg-indigo-600 text-white'
+                        : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50')
+                    }
+                  >
+                    大型
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormField('vehicleType', 'small')}
+                    className={
+                      'min-h-[48px] flex-1 rounded-lg border-2 text-base font-black sm:text-lg ' +
+                      (form.vehicleType === 'small'
+                        ? 'border-indigo-600 bg-indigo-600 text-white'
+                        : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50')
+                    }
+                  >
+                    小型
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className={fieldLabel} htmlFor="por-qty">
+                  数量（m³）
+                </label>
+                <input
+                  id="por-qty"
+                  name="quantityM3"
+                  type="text"
+                  inputMode="decimal"
+                  value={form.quantityM3}
+                  onChange={handleInputChange}
+                  className={fieldInput}
+                  required
+                />
+              </div>
+              <div>
+                <label className={fieldLabel} htmlFor="por-mix">
+                  配合
+                </label>
+                <input
+                  id="por-mix"
+                  name="mixText"
+                  type="text"
+                  value={form.mixText}
+                  onChange={handleInputChange}
+                  className={fieldInput}
+                  placeholder="例：27-18-20 N"
+                />
+              </div>
+            </section>
+
+            <section className="mt-4 space-y-4 rounded-xl border border-slate-200 bg-white p-3">
+              <p className="text-xs font-black uppercase tracking-wider text-slate-500">現場情報</p>
+              <div>
+                <label className={fieldLabel} htmlFor="por-site">
+                  現場名
+                </label>
+                <input
+                  id="por-site"
+                  name="siteName"
+                  type="text"
+                  value={form.siteName}
+                  onChange={handleInputChange}
+                  className={fieldInput}
+                />
+              </div>
+              {Array.isArray(allowedDeliveryAreas) && allowedDeliveryAreas.length > 0 ? (
+                <div>
+                  <label className={fieldLabel} htmlFor="por-area">
+                    配送エリア
+                  </label>
+                  <select
+                    id="por-area"
+                    name="deliveryArea"
+                    value={form.deliveryArea}
+                    onChange={handleInputChange}
+                    className={fieldInput}
+                  >
+                    <option value="">未選択</option>
+                    {allowedDeliveryAreas.map((area) => (
+                      <option key={area} value={area}>
+                        {area}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div>
+                  <label className={fieldLabel} htmlFor="por-area-text">
+                    配送エリア
+                  </label>
+                  <input
+                    id="por-area-text"
+                    name="deliveryArea"
+                    type="text"
+                    value={form.deliveryArea}
+                    onChange={handleInputChange}
+                    className={fieldInput}
+                  />
+                </div>
+              )}
+              <div>
+                <label className={fieldLabel} htmlFor="por-address">
+                  現場住所
+                </label>
+                <input
+                  id="por-address"
+                  name="siteAddress"
+                  type="text"
+                  value={form.siteAddress}
+                  onChange={handleInputChange}
+                  className={fieldInput}
+                />
+              </div>
+              <div>
+                <label className={fieldLabel} htmlFor="por-address-detail">
+                  住所補足
+                </label>
+                <input
+                  id="por-address-detail"
+                  name="siteAddressDetail"
+                  type="text"
+                  value={form.siteAddressDetail}
+                  onChange={handleInputChange}
+                  className={fieldInput}
+                />
+              </div>
+              <div>
+                <label className={fieldLabel} htmlFor="por-contact">
+                  現場担当者名（帳票表示）
+                </label>
+                <input
+                  id="por-contact"
+                  name="orderedByName"
+                  type="text"
+                  value={form.orderedByName}
+                  onChange={handleInputChange}
+                  className={fieldInput}
+                />
+              </div>
+              <div>
+                <label className={fieldLabel} htmlFor="por-phone">
+                  現場電話番号
+                </label>
+                <input
+                  id="por-phone"
+                  name="sitePhone"
+                  type="tel"
+                  value={form.sitePhone}
+                  onChange={handleInputChange}
+                  className={fieldInput}
+                />
+              </div>
+            </section>
+          </div>
+          <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3">
+            <button
+              type="submit"
+              disabled={submitting}
+              className="min-h-[48px] w-full rounded-xl bg-sky-600 px-4 text-base font-black text-white shadow hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {submitting ? '登録中…' : '電話注文を登録（即受注確定）'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
 }
 
 function FactoryResizablePanels({ defaultLeftPercent = 48, children }) {
@@ -1863,6 +2361,7 @@ function isUnreadForFactory(messages, readKey) {
               </span>
             ) : null}
             <LocationPendingBadge order={order} />
+            <PhoneOrderBadge order={order} />
           </div>
         </div>
         );
@@ -3228,8 +3727,9 @@ function isUnreadForFactory(messages, readKey) {
                     >
                       <p className="text-sm font-black text-slate-900">{getOrderTimeDisplay(order)} ・ {party.site || '現場未設定'}</p>
                       <p className="mt-0.5 text-xs font-bold text-slate-600">{party.contractor} / {factoryOrderQuantity(order)}㎡ / {order.mixText || order.confirmedMixText || '配合未入力'}</p>
-                      <div className="mt-1">
+                      <div className="mt-1 flex flex-wrap items-center gap-1">
                         <LocationPendingBadge order={order} />
+                        <PhoneOrderBadge order={order} />
                       </div>
                       <p className="mt-1.5 text-[10px] font-black text-indigo-600">ダブルタップで注文詳細へ</p>
                     </li>
@@ -3307,16 +3807,24 @@ function isUnreadForFactory(messages, readKey) {
         }),
         [systemSettings, operationalSettings, nearPoolSize],
       );
+      const phoneOrderAllowedDeliveryAreas = useMemo(
+        () =>
+          normalizeAllowedDeliveryAreas(
+            operationalSettings?.allowed_delivery_areas ?? systemSettings?.allowed_delivery_areas,
+          ),
+        [operationalSettings, systemSettings],
+      );
       const [escalationTick, setEscalationTick] = useState(0);
       const [toastOrder, setToastOrder] = useState(null);
       const [toastIsReassignment, setToastIsReassignment] = useState(false);
       const [acceptModalOrder, setAcceptModalOrder] = useState(null);
       const [acceptSubmitting, setAcceptSubmitting] = useState(false);
+      const [showPhoneOrderModal, setShowPhoneOrderModal] = useState(false);
 
       useEffect(() => {
-        setAutoReloadBlocked(Boolean(acceptModalOrder) || acceptSubmitting);
+        setAutoReloadBlocked(Boolean(acceptModalOrder) || acceptSubmitting || showPhoneOrderModal);
         return () => setAutoReloadBlocked(false);
-      }, [acceptModalOrder, acceptSubmitting]);
+      }, [acceptModalOrder, acceptSubmitting, showPhoneOrderModal]);
       const [actionNotice, setActionNotice] = useState('');
       const [chatThreads, setChatThreads] = useState({});
       const chatThreadsRef = useRef(chatThreads);
@@ -5009,20 +5517,29 @@ function isUnreadForFactory(messages, readKey) {
             </div>
 
             {activeTab === 'orders' ? (
-              <button
-                type="button"
-                disabled={hiddenOrderIds.size === 0}
-                onClick={showAllHiddenOrders}
-                className={
-                  'mt-1 min-h-[36px] rounded-lg border-2 px-2 py-1 text-[11px] font-black shadow-sm sm:text-xs ' +
-                  (hiddenOrderIds.size === 0
-                    ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
-                    : 'border-indigo-500 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 active:scale-95 active:bg-indigo-200')
-                }
-              >
-                非表示にした注文を一括再表示
-                {hiddenOrderIds.size > 0 ? `（${hiddenOrderIds.size}件）` : ''}
-              </button>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setShowPhoneOrderModal(true)}
+                  className="min-h-[36px] rounded-lg border-2 border-sky-500 bg-sky-50 px-2 py-1 text-[11px] font-black text-sky-900 shadow-sm hover:bg-sky-100 active:scale-95 sm:text-xs"
+                >
+                  ☎ 電話注文を登録
+                </button>
+                <button
+                  type="button"
+                  disabled={hiddenOrderIds.size === 0}
+                  onClick={showAllHiddenOrders}
+                  className={
+                    'min-h-[36px] rounded-lg border-2 px-2 py-1 text-[11px] font-black shadow-sm sm:text-xs ' +
+                    (hiddenOrderIds.size === 0
+                      ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
+                      : 'border-indigo-500 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 active:scale-95 active:bg-indigo-200')
+                  }
+                >
+                  非表示にした注文を一括再表示
+                  {hiddenOrderIds.size > 0 ? `（${hiddenOrderIds.size}件）` : ''}
+                </button>
+              </div>
             ) : null}
           </header>
           <PullToRefresh
@@ -5311,6 +5828,7 @@ function isUnreadForFactory(messages, readKey) {
                                     {autoPast ? '自動履歴' : '完了'}
                                   </span>
                                 ) : null}
+                                <PhoneOrderBadge order={order} />
                               </div>
                             </div>
                             <p className="mt-1 text-base font-black text-slate-900 dark:text-gray-100">
@@ -5395,6 +5913,33 @@ function isUnreadForFactory(messages, readKey) {
               if (!acceptSubmitting) setAcceptModalOrder(null);
             }}
             onConfirm={() => void executeAcceptOrder()}
+          />
+          <PhoneOrderRegisterModal
+            open={showPhoneOrderModal}
+            onClose={() => setShowPhoneOrderModal(false)}
+            activeFactoryId={activeFactoryId}
+            activeFactoryName={activeFactoryName}
+            allowedDeliveryAreas={phoneOrderAllowedDeliveryAreas}
+            onRegistered={async (registered) => {
+              if (!registered?.id) return;
+              setRawOrders((prev) => {
+                const list = Array.isArray(prev) ? prev : [];
+                if (list.some((o) => o?.id === registered.id)) {
+                  return list.map((o) => (o?.id === registered.id ? registered : o));
+                }
+                return [registered, ...list];
+              });
+              setOrders((prev) => {
+                const list = Array.isArray(prev) ? prev : [];
+                if (list.some((o) => o?.id === registered.id)) {
+                  return list.map((o) => (o?.id === registered.id ? registered : o));
+                }
+                return [registered, ...list];
+              });
+              setActionNotice('電話注文を登録しました（受注確定）');
+              window.setTimeout(() => setActionNotice(''), 4500);
+              await syncFromStorage({ playSound: false });
+            }}
           />
           {actionNotice ? (
             <div
