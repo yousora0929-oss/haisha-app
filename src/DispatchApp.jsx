@@ -5189,7 +5189,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                 >
                                   <button
                                     type="button"
-                                    className="flex w-full flex-wrap items-center gap-2 rounded-xl px-1 py-1 text-left transition hover:bg-indigo-100/60 dark:hover:bg-indigo-900/30"
+                                    className="flex w-full flex-nowrap items-center gap-2 rounded-xl px-1 py-1 text-left transition hover:bg-indigo-100/60 dark:hover:bg-indigo-900/30"
                                     onClick={() => toggleInProgressGroupCollapsed(groupStorageId)}
                                     aria-expanded={!collapsed}
                                   >
@@ -5199,18 +5199,21 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                     >
                                       {collapsed ? '▶' : '▼'}
                                     </span>
-                                    <p className="min-w-0 flex-1 text-sm font-black text-slate-900 dark:text-gray-100">
+                                    <p
+                                      className="min-w-0 flex-1 truncate text-sm font-black text-slate-900 dark:text-gray-100"
+                                      title={entry.site}
+                                    >
                                       📍 {entry.site}
                                     </p>
                                     {collapsed && nextLabel ? (
                                       <span
-                                        className="whitespace-nowrap rounded-lg bg-white/80 px-2 py-0.5 text-xs font-black tabular-nums text-indigo-800 dark:bg-slate-900/60 dark:text-indigo-200"
+                                        className="shrink-0 whitespace-nowrap rounded-lg bg-white/80 px-2 py-0.5 text-xs font-black tabular-nums text-indigo-800 dark:bg-slate-900/60 dark:text-indigo-200"
                                         title={`次回：${nextLabel}`}
                                       >
                                         次回：{nextLabel}
                                       </span>
                                     ) : null}
-                                    <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-black text-white">
+                                    <span className="shrink-0 whitespace-nowrap rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-black text-white">
                                       {entry.orders.length}便
                                     </span>
                                   </button>
