@@ -1481,6 +1481,38 @@ export async function fetchCustomersForPhoneOrder(_factoryId) {
     .filter((c) => c.id);
 }
 
+/**
+ * 電話注文用の顧客一覧（フラット）を会社ごとにグループ化する。
+ * @returns {{ companyId: string, companyName: string, sortKey: string, customers: object[] }[]}
+ */
+export function groupCustomersByCompany(customers) {
+  const list = Array.isArray(customers) ? customers : [];
+  const groups = new Map();
+  for (const c of list) {
+    const companyName = String(c?.company_name || '').trim() || '(会社名未設定)';
+    const groupKey = c?.organization_id ? `org:${c.organization_id}` : `name:${companyName}`;
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, {
+        companyId: groupKey,
+        companyName,
+        sortKey: '',
+        customers: [],
+      });
+    }
+    groups.get(groupKey).customers.push(c);
+  }
+  const result = Array.from(groups.values());
+  for (const g of result) {
+    g.customers.sort((a, b) =>
+      String(a?.manager_name || '').localeCompare(String(b?.manager_name || ''), 'ja'),
+    );
+    const rep = g.customers.find((c) => c?.furigana) || g.customers[0];
+    g.sortKey = String(rep?.furigana || g.companyName || '');
+  }
+  result.sort((a, b) => a.sortKey.localeCompare(b.sortKey, 'ja'));
+  return result;
+}
+
 /** 電話注文用：選択顧客に紐づく物件一覧 */
 export async function fetchProjectsForPhoneOrder(customerId) {
   const cid = sanitizeRefId(customerId);

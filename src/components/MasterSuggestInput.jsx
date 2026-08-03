@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { filterSuggestItems } from '../utils/masterSuggest.js';
 
 // useId の代替（React 18未満 / Chrome 109 対応）
@@ -12,7 +12,12 @@ function useStableId() {
 }
 
 const LIST_CLASS =
-  'absolute left-0 right-0 top-full z-[9999] mt-1 max-h-[40vh] touch-pan-y overscroll-contain overflow-y-auto rounded-md border border-gray-200 bg-white pb-2 text-gray-900 shadow-2xl dark:border-gray-700 dark:bg-gray-800 dark:text-white';
+  'absolute left-0 right-0 z-[9999] touch-pan-y overscroll-contain overflow-y-auto rounded-md border border-gray-200 bg-white pb-2 text-gray-900 shadow-2xl dark:border-gray-700 dark:bg-gray-800 dark:text-white';
+
+const DEFAULT_LIST_MAX_HEIGHT_PX = 240; // 従来の max-h-60 相当（フォールバック用）
+const MIN_USABLE_SPACE_PX = 120; // これ未満のスペースなら反転を検討
+const VIEWPORT_EDGE_MARGIN_PX = 8;
+const FOCUS_SCROLL_DELAY_MS = 250; // キーボードのアニメーション待ち（保険）
 
 const INPUT_CLASS =
   'min-h-[56px] w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-base text-gray-900 placeholder:text-slate-400 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300 dark:border-slate-600 dark:bg-slate-900 dark:text-gray-100 dark:placeholder:text-slate-500 dark:focus:border-slate-500';
@@ -50,7 +55,7 @@ export function MasterSuggestInput({
   disabled = false,
   autoComplete = 'off',
   required = false,
-  emptyHint = '該当する候補がありません',
+  emptyHint = '一致する候補がありません',
   inputClassName = '',
   /** 空欄フォーカス時のみ表示するピン留め候補（よく使う地名など） */
   pinnedItems = [],
@@ -65,6 +70,13 @@ export function MasterSuggestInput({
   const blurTimerRef = useRef(null);
   const pointerRef = useRef(emptyPointerState());
   const pickItemRef = useRef(null);
+  const wrapperRef = useRef(null);
+  const inputRef = useRef(null);
+  const focusScrollCleanupRef = useRef(null);
+  const [placement, setPlacement] = useState({
+    openUp: false,
+    maxHeight: DEFAULT_LIST_MAX_HEIGHT_PX,
+  });
 
   const queryTrimmed = String(value ?? '').trim();
   const isEmptyQuery = queryTrimmed.length === 0;
@@ -111,17 +123,112 @@ export function MasterSuggestInput({
     !(emptyQueryShowsPinnedOnly && pinnedList.length > 0);
   const showList = showPinned || showFiltered || showEmpty;
 
-  const openPanel = () => {
+  const openPanel = useCallback(() => {
     if (blurTimerRef.current) {
       window.clearTimeout(blurTimerRef.current);
       blurTimerRef.current = null;
     }
     setPanelOpen(true);
-  };
+  }, []);
 
   const closePanelSoon = () => {
     blurTimerRef.current = window.setTimeout(() => setPanelOpen(false), 220);
   };
+
+  const handleFocus = useCallback(() => {
+    openPanel();
+
+    if (typeof focusScrollCleanupRef.current === 'function') {
+      focusScrollCleanupRef.current();
+      focusScrollCleanupRef.current = null;
+    }
+
+    const scrollToTop = () => {
+      const el = inputRef.current;
+      if (!el || typeof el.scrollIntoView !== 'function') return;
+      el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    };
+
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+    if (vv) {
+      let done = false;
+      const onceResize = () => {
+        if (done) return;
+        done = true;
+        scrollToTop();
+        vv.removeEventListener('resize', onceResize);
+      };
+      vv.addEventListener('resize', onceResize);
+      const timerId = window.setTimeout(() => {
+        vv.removeEventListener('resize', onceResize);
+        if (!done) {
+          done = true;
+          scrollToTop();
+        }
+      }, FOCUS_SCROLL_DELAY_MS);
+      focusScrollCleanupRef.current = () => {
+        done = true;
+        vv.removeEventListener('resize', onceResize);
+        window.clearTimeout(timerId);
+      };
+    } else {
+      const timerId = window.setTimeout(scrollToTop, FOCUS_SCROLL_DELAY_MS);
+      focusScrollCleanupRef.current = () => {
+        window.clearTimeout(timerId);
+      };
+    }
+  }, [openPanel]);
+
+  useEffect(() => {
+    return () => {
+      if (typeof focusScrollCleanupRef.current === 'function') {
+        focusScrollCleanupRef.current();
+        focusScrollCleanupRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!showList) return undefined;
+
+    function recalcPlacement() {
+      const wrapperEl = wrapperRef.current;
+      if (!wrapperEl) return;
+
+      const rect = wrapperEl.getBoundingClientRect();
+      const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+      const viewportHeight = vv ? vv.height : window.innerHeight;
+      const viewportOffsetTop = vv ? vv.offsetTop : 0;
+
+      const spaceBelow = viewportOffsetTop + viewportHeight - rect.bottom;
+      const spaceAbove = rect.top - viewportOffsetTop;
+
+      if (spaceBelow < MIN_USABLE_SPACE_PX && spaceAbove > spaceBelow) {
+        setPlacement({
+          openUp: true,
+          maxHeight: Math.max(120, Math.floor(spaceAbove - VIEWPORT_EDGE_MARGIN_PX)),
+        });
+      } else {
+        setPlacement({
+          openUp: false,
+          maxHeight: Math.max(120, Math.floor(spaceBelow - VIEWPORT_EDGE_MARGIN_PX)),
+        });
+      }
+    }
+
+    recalcPlacement();
+
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+    vv?.addEventListener('resize', recalcPlacement);
+    vv?.addEventListener('scroll', recalcPlacement);
+    window.addEventListener('resize', recalcPlacement);
+
+    return () => {
+      vv?.removeEventListener('resize', recalcPlacement);
+      vv?.removeEventListener('scroll', recalcPlacement);
+      window.removeEventListener('resize', recalcPlacement);
+    };
+  }, [showList]);
 
   const pickItem = useCallback(
     (item) => {
@@ -198,9 +305,10 @@ export function MasterSuggestInput({
           {label}
         </label>
       ) : null}
-      <div className="relative">
+      <div className="relative" ref={wrapperRef}>
         <input
           id={inputId}
+          ref={inputRef}
           name={name}
           type="text"
           autoComplete={autoComplete}
@@ -212,7 +320,7 @@ export function MasterSuggestInput({
             onValueChange(e.target.value);
             openPanel();
           }}
-          onFocus={openPanel}
+          onFocus={handleFocus}
           onBlur={closePanelSoon}
           className={INPUT_CLASS + (inputClassName ? ` ${inputClassName}` : '')}
           aria-autocomplete="list"
@@ -226,6 +334,12 @@ export function MasterSuggestInput({
             role="listbox"
             aria-label={typeof label === 'string' ? `${label}の候補` : '候補一覧'}
             onPointerMove={(e) => markPointerMoved(e.clientX, e.clientY)}
+            style={{
+              maxHeight: `${placement.maxHeight}px`,
+              ...(placement.openUp
+                ? { top: 'auto', bottom: '100%', marginBottom: '4px' }
+                : { top: '100%', marginTop: '4px' }),
+            }}
           >
             {showPinned ? (
               <>

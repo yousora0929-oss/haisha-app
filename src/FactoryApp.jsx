@@ -210,6 +210,8 @@ function PhoneOrderRegisterModal({
     registeredByName: '',
   };
   const [customers, setCustomers] = useState([]);
+  const [companyGroups, setCompanyGroups] = useState([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState('');
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [customerProjects, setCustomerProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState('');
@@ -223,9 +225,12 @@ function PhoneOrderRegisterModal({
       submittingRef.current = false;
       setSubmitting(false);
       setError('');
+      setSelectedCompanyId('');
       setSelectedCustomerId('');
       setSelectedProjectId('');
       setCustomerProjects([]);
+      setCompanyGroups([]);
+      setCustomers([]);
       setForm(emptyForm);
       return;
     }
@@ -233,7 +238,10 @@ function PhoneOrderRegisterModal({
     setError('');
     db.fetchCustomersForPhoneOrder(activeFactoryId)
       .then((rows) => {
-        if (!cancelled) setCustomers(Array.isArray(rows) ? rows : []);
+        if (cancelled) return;
+        const list = Array.isArray(rows) ? rows : [];
+        setCustomers(list);
+        setCompanyGroups(db.groupCustomersByCompany(list));
       })
       .catch((e) => {
         console.error(e);
@@ -285,6 +293,12 @@ function PhoneOrderRegisterModal({
   const fieldInput =
     'mt-1 min-h-[48px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 sm:text-lg';
 
+  const selectedCompanyGroup = companyGroups.find((g) => g.companyId === selectedCompanyId) || null;
+  const autoSelectedContact =
+    selectedCustomerId && selectedCompanyGroup && selectedCompanyGroup.customers.length === 1
+      ? selectedCompanyGroup.customers.find((c) => String(c.id) === String(selectedCustomerId))
+      : null;
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setForm((prev) => ({ ...prev, [name]: value }));
@@ -294,11 +308,36 @@ function PhoneOrderRegisterModal({
     setForm((prev) => ({ ...prev, [name]: value }));
   };
 
+  const clearSiteFields = () => {
+    setSelectedProjectId('');
+    setForm((prev) => ({
+      ...prev,
+      siteName: '',
+      siteAddress: '',
+      deliveryArea: '',
+    }));
+  };
+
+  const handleCompanyChange = (companyId) => {
+    setSelectedCompanyId(companyId);
+    clearSiteFields();
+    const group = companyGroups.find((g) => g.companyId === companyId);
+    if (!group || group.customers.length === 0) {
+      setSelectedCustomerId('');
+      return;
+    }
+    if (group.customers.length === 1) {
+      setSelectedCustomerId(String(group.customers[0].id));
+    } else {
+      setSelectedCustomerId('');
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (submittingRef.current) return;
     if (!selectedCustomerId) {
-      window.alert('顧客を選択してください');
+      window.alert(selectedCompanyId ? '担当者を選択してください' : '会社を選択してください');
       return;
     }
     if (!form.quantityM3 || Number(form.quantityM3) <= 0) {
@@ -389,34 +428,54 @@ function PhoneOrderRegisterModal({
 
             <section className="space-y-4 rounded-xl border-2 border-sky-300 bg-sky-50 p-3 shadow-inner">
               <div>
-                <label className={fieldLabel} htmlFor="por-customer">
-                  顧客（必須）
+                <label className={fieldLabel} htmlFor="por-company">
+                  会社（必須）
                 </label>
                 <select
-                  id="por-customer"
-                  value={selectedCustomerId}
-                  onChange={(e) => {
-                    setSelectedCustomerId(e.target.value);
-                    setSelectedProjectId('');
-                    setForm((prev) => ({
-                      ...prev,
-                      siteName: '',
-                      siteAddress: '',
-                      deliveryArea: '',
-                    }));
-                  }}
+                  id="por-company"
+                  value={selectedCompanyId}
+                  onChange={(e) => handleCompanyChange(e.target.value)}
                   className={fieldInput}
                   required
                 >
                   <option value="">選択してください</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.company_name || c.id}
-                      {c.manager_name ? `（${c.manager_name}）` : ''}
+                  {companyGroups.map((g) => (
+                    <option key={g.companyId} value={g.companyId}>
+                      {g.companyName}
+                      {g.customers.length > 1 ? `（${g.customers.length}名）` : ''}
                     </option>
                   ))}
                 </select>
               </div>
+              {selectedCompanyGroup && selectedCompanyGroup.customers.length > 1 ? (
+                <div>
+                  <label className={fieldLabel} htmlFor="por-manager">
+                    担当者（必須）
+                  </label>
+                  <select
+                    id="por-manager"
+                    value={selectedCustomerId}
+                    onChange={(e) => {
+                      setSelectedCustomerId(e.target.value);
+                      clearSiteFields();
+                    }}
+                    className={fieldInput}
+                    required
+                  >
+                    <option value="">選択してください</option>
+                    {selectedCompanyGroup.customers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.manager_name || '(担当者名未設定)'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+              {autoSelectedContact ? (
+                <p className="text-xs font-bold text-slate-500">
+                  担当者：{autoSelectedContact.manager_name || '(担当者名未設定)'}（自動選択）
+                </p>
+              ) : null}
               <div>
                 <label className={fieldLabel} htmlFor="por-project">
                   物件（任意・未選択はスポット）
