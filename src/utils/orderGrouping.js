@@ -77,3 +77,53 @@ export function groupOrdersBySiteForAssignedProjects(orders, projectById = {}, o
   entries.sort((a, b) => a.sortMinutes - b.sortMinutes);
   return entries;
 }
+
+/** 進行中グループの開閉状態を localStorage に保存するときの安定キー（物件ID優先） */
+export function resolveInProgressGroupStorageId(entry) {
+  if (!entry || entry.type !== 'group') return '';
+  const projectIds = [
+    ...new Set(
+      (Array.isArray(entry.orders) ? entry.orders : [])
+        .map((o) => String(o?.project_id ?? o?.projectId ?? '').trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (projectIds.length === 1) return `project:${projectIds[0]}`;
+  return String(entry.key || (entry.site ? `site:${entry.site}` : '')).trim();
+}
+
+/** カード表示と同じ日付ラベル（例: 2026/7/28） */
+export function formatOrderDateLabel(order) {
+  const iso = String(order?.preferredDate || order?.preferred_date || order?.scheduleMatchDate || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '—';
+  const p = iso.split('-');
+  return `${p[0]}/${Number(p[1])}/${Number(p[2])}`;
+}
+
+/** カード表示と同じ日時サマリ（例: 2026/7/28 · 10:30） */
+export function formatOrderDateTimeSummary(order) {
+  if (!order) return '';
+  const time = order.timePointLabel || order.timeSlotLabel || '—';
+  return `${formatOrderDateLabel(order)} · ${time}`;
+}
+
+/**
+ * 配下注文から「いまから見て最も近い予定」の注文を返す。
+ * 現在以降で最も早いものを優先し、すべて過去なら直近（最も新しい）を返す。
+ */
+export function resolveNearestUpcomingOrder(orders, nowMs = Date.now()) {
+  const list = (Array.isArray(orders) ? orders : []).filter(Boolean);
+  if (!list.length) return null;
+  const scored = list.map((order) => ({
+    order,
+    ts: resolveOrderDateTimeSortValue(order),
+  }));
+  const upcoming = scored
+    .filter((row) => Number.isFinite(row.ts) && row.ts >= nowMs)
+    .sort((a, b) => a.ts - b.ts);
+  if (upcoming.length) return upcoming[0].order;
+  const pastOrUnknown = scored
+    .filter((row) => Number.isFinite(row.ts))
+    .sort((a, b) => b.ts - a.ts);
+  return pastOrUnknown[0]?.order || list[0];
+}

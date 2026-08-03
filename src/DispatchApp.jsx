@@ -92,6 +92,9 @@ import { orderPartyInfo as buildOrderPartyInfo } from './utils/orderPartyInfo.js
 import {
   groupOrdersBySiteForAssignedProjects,
   resolveOrderDateTimeSortValue,
+  resolveInProgressGroupStorageId,
+  resolveNearestUpcomingOrder,
+  formatOrderDateTimeSummary,
 } from './utils/orderGrouping.js';
 import { resolveSiteContactName } from './utils/orderContactInfo.js';
 import { formatPhoneNumberJP } from './utils/phoneFormat.js';
@@ -170,6 +173,36 @@ const CUSTOMER_ORDER_TABS = [
   ['calendar', 'カレンダー', '📅'],
   ['siteContacts', '現場担当者', '👤'],
 ];
+
+/** 進行中タブの物件グループ折りたたみ（true = 折りたたみ）。物件ID単位で保持。 */
+const INPROGRESS_GROUP_COLLAPSED_STORAGE_PREFIX = 'haisha_dispatch_inprogress_group_collapsed_v1';
+
+function inProgressGroupCollapsedStorageKey(customerId) {
+  const cid = String(customerId || '').trim() || 'anon';
+  return `${INPROGRESS_GROUP_COLLAPSED_STORAGE_PREFIX}_${cid}`;
+}
+
+function readInProgressGroupCollapsedMap(customerId) {
+  try {
+    const raw = window.localStorage.getItem(inProgressGroupCollapsedStorageKey(customerId));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeInProgressGroupCollapsedMap(customerId, map) {
+  try {
+    window.localStorage.setItem(
+      inProgressGroupCollapsedStorageKey(customerId),
+      JSON.stringify(map && typeof map === 'object' ? map : {}),
+    );
+  } catch {
+    /* ignore */
+  }
+}
 
 const CUSTOMER_FIELD_CLASS =
   'min-h-[52px] w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-base font-medium text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-300 lg:min-h-[48px] lg:py-2.5';
@@ -1437,6 +1470,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return initialOrderDateTime.slot;
       });
       const [inProgressSearchQuery, setInProgressSearchQuery] = useState('');
+      const [collapsedInProgressGroups, setCollapsedInProgressGroups] = useState({});
       const [historyStatusFilter, setHistoryStatusFilter] = useState('all');
       const [historyCustomerFilter, setHistoryCustomerFilter] = useState('all');
       const [factories, setFactories] = useState([]);
@@ -2693,6 +2727,25 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             sortValue: resolveOrderDateTimeSortValue,
           }),
         [filteredInProgressOrders, projectById],
+      );
+
+      useEffect(() => {
+        setCollapsedInProgressGroups(readInProgressGroupCollapsedMap(currentCustomerId));
+      }, [currentCustomerId]);
+
+      const toggleInProgressGroupCollapsed = useCallback(
+        (groupStorageId) => {
+          const id = String(groupStorageId || '').trim();
+          if (!id) return;
+          setCollapsedInProgressGroups((prev) => {
+            const next = { ...(prev && typeof prev === 'object' ? prev : {}) };
+            if (next[id]) delete next[id];
+            else next[id] = true;
+            writeInProgressGroupCollapsedMap(currentCustomerId, next);
+            return next;
+          });
+        },
+        [currentCustomerId],
       );
       const activeOrders = useMemo(
         () => (dashboardOrders || []).filter((o) => o && isOrderInProgressView(o, today)),
@@ -5122,20 +5175,54 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                               />
                             );
                             if (entry.type === 'group') {
+                              const groupStorageId = resolveInProgressGroupStorageId(entry);
+                              const collapsed = Boolean(
+                                groupStorageId && collapsedInProgressGroups?.[groupStorageId],
+                              );
+                              const nextOrder = resolveNearestUpcomingOrder(entry.orders);
+                              const nextLabel = nextOrder ? formatOrderDateTimeSummary(nextOrder) : '';
                               return (
                                 <section
                                   key={entry.key}
                                   className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-3 dark:border-indigo-800 dark:bg-indigo-950/20"
                                   aria-label={`現場「${entry.site}」の注文`}
                                 >
-                                  <div className="flex flex-wrap items-center justify-between gap-2 px-1">
-                                    <p className="text-sm font-black text-slate-900 dark:text-gray-100">📍 {entry.site}</p>
+                                  <button
+                                    type="button"
+                                    className="flex w-full flex-wrap items-center gap-2 rounded-xl px-1 py-1 text-left transition hover:bg-indigo-100/60 dark:hover:bg-indigo-900/30"
+                                    onClick={() => toggleInProgressGroupCollapsed(groupStorageId)}
+                                    aria-expanded={!collapsed}
+                                  >
+                                    <span
+                                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center text-sm font-black text-indigo-700 dark:text-indigo-300"
+                                      aria-hidden="true"
+                                    >
+                                      {collapsed ? '▶' : '▼'}
+                                    </span>
+                                    <p className="min-w-0 flex-1 text-sm font-black text-slate-900 dark:text-gray-100">
+                                      📍 {entry.site}
+                                    </p>
+                                    {collapsed && nextLabel ? (
+                                      <span
+                                        className="whitespace-nowrap rounded-lg bg-white/80 px-2 py-0.5 text-xs font-black tabular-nums text-indigo-800 dark:bg-slate-900/60 dark:text-indigo-200"
+                                        title={`次回：${nextLabel}`}
+                                      >
+                                        次回：{nextLabel}
+                                      </span>
+                                    ) : null}
                                     <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-black text-white">
                                       {entry.orders.length}便
                                     </span>
-                                  </div>
-                                  <div className="mt-2 grid grid-cols-1 gap-4">
-                                    {entry.orders.map((ord) => renderCard(ord))}
+                                  </button>
+                                  <div
+                                    className="grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none"
+                                    style={{ gridTemplateRows: collapsed ? '0fr' : '1fr' }}
+                                  >
+                                    <div className="min-h-0 overflow-hidden">
+                                      <div className="mt-2 grid grid-cols-1 gap-4">
+                                        {entry.orders.map((ord) => renderCard(ord))}
+                                      </div>
+                                    </div>
                                   </div>
                                 </section>
                               );
