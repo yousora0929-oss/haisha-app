@@ -795,7 +795,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             ) : null}
             <li ref={messagesEndRef} aria-hidden="true" className="h-px" />
           </ul>
-          <div className="shrink-0 border-t border-slate-200 bg-white px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.08)] dark:border-slate-700 dark:bg-slate-900">
+          <div className="shrink-0 border-t border-slate-200 bg-white px-3 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] shadow-[0_-8px_24px_rgba(15,23,42,0.08)] dark:border-slate-700 dark:bg-slate-900">
             <div className="mx-auto flex w-full max-w-md items-center gap-2">
             <input
               type="text"
@@ -3962,7 +3962,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </aside>
             ) : null}
 
-            <main id="dispatch-dashboard" className="flex-1 min-w-0 flex flex-col p-4 md:p-6 lg:p-8 pb-24 lg:pb-8">
+            <main id="dispatch-dashboard" className="flex-1 min-w-0 flex flex-col p-4 md:p-6 lg:p-8 pb-[calc(6rem+env(safe-area-inset-bottom,0px))] lg:pb-8">
               <header className="mb-6 flex flex-col gap-4 border-b border-gray-200 pb-4">
                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
                   <div className="min-w-0">
@@ -5428,7 +5428,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
             {!isGuestSiteOrder ? (
               <nav className="block lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200" aria-label="カスタマー画面ナビゲーション">
-                <div className="px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2">
+                <div className="px-2 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] pt-2">
                   <div
                     className={
                       'mx-auto grid max-w-lg gap-1 ' +
