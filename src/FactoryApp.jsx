@@ -84,6 +84,7 @@ import { FactoryNewsPanel } from './components/FactoryNewsPanel.jsx';
 import { countUnreadNewsForFactory } from './utils/factoryNews.js';
 import { countPendingCharterResponses } from './utils/charterBadges.js';
 import { OrderAcceptModal } from './components/OrderAcceptModal.jsx';
+import { FactoryScheduleChangeProposalsPanel } from './components/FactoryScheduleChangeProposalsPanel.jsx';
 import {
   detectFactoryNotifyOrderIds,
   analyzeFactoryOrderRealtimePayload,
@@ -3896,6 +3897,7 @@ function isUnreadForFactory(messages, readKey) {
       const [historyDateTo, setHistoryDateTo] = useState('');
       const [hideOtherFactoryAcceptedInHistory, setHideOtherFactoryAcceptedInHistory] = useState(false);
       const [factoryNewsUnread, setFactoryNewsUnread] = useState(0);
+      const [scheduleChangePendingCount, setScheduleChangePendingCount] = useState(0);
       const [charterPendingCount, setCharterPendingCount] = useState(0);
       const [focusedOrderId, setFocusedOrderId] = useState('');
 
@@ -4757,15 +4759,35 @@ function isUnreadForFactory(messages, readKey) {
         }
       }, [activeFactoryId]);
 
+      const refreshScheduleChangePendingCount = useCallback(async () => {
+        if (!activeFactoryId) {
+          setScheduleChangePendingCount(0);
+          return;
+        }
+        try {
+          const rows = await db.fetchPendingOrderChangeProposals(activeFactoryId);
+          setScheduleChangePendingCount(Array.isArray(rows) ? rows.length : 0);
+        } catch (e) {
+          console.error('[FactoryApp] schedule change pending count failed', e);
+        }
+      }, [activeFactoryId]);
+
       useEffect(() => {
         void refreshFactoryNewsUnread();
       }, [refreshFactoryNewsUnread]);
 
       useEffect(() => {
+        void refreshScheduleChangePendingCount();
+      }, [refreshScheduleChangePendingCount]);
+
+      useEffect(() => {
         if (activeTab === 'news') {
           void refreshFactoryNewsUnread();
         }
-      }, [activeTab, refreshFactoryNewsUnread]);
+        if (activeTab === 'scheduleChanges') {
+          void refreshScheduleChangePendingCount();
+        }
+      }, [activeTab, refreshFactoryNewsUnread, refreshScheduleChangePendingCount]);
 
       useEffect(() => {
         let cancelled = false;
@@ -5516,6 +5538,7 @@ function isUnreadForFactory(messages, readKey) {
                 {[
                   ['news', '📢 お知らせ'],
                   ['orders', '🚚 注文'],
+                  ['scheduleChanges', '予定変更'],
                   ['assignments', '割当物件'],
                   ['calendar', '📅 カレンダー'],
                   ['history', '📋 履歴'],
@@ -5541,6 +5564,11 @@ function isUnreadForFactory(messages, readKey) {
                         {id === 'news' && factoryNewsUnread > 0 ? (
                           <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm">
                             {factoryNewsUnread}
+                          </span>
+                        ) : null}
+                        {id === 'scheduleChanges' && scheduleChangePendingCount > 0 ? (
+                          <span className="rounded-full bg-amber-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
+                            {scheduleChangePendingCount}
                           </span>
                         ) : null}
                         {id === 'charterRespond' && charterPendingCount > 0 ? (
@@ -5624,6 +5652,15 @@ function isUnreadForFactory(messages, readKey) {
                     onUnreadChange={refreshFactoryNewsUnread}
                   />
                 </div>
+              ) : null}
+              {activeTab === 'scheduleChanges' ? (
+                <FactoryScheduleChangeProposalsPanel
+                  factoryId={activeFactoryId}
+                  onApplied={() => {
+                    void refreshScheduleChangePendingCount();
+                    void syncFromStorage({ playSound: false });
+                  }}
+                />
               ) : null}
               {activeTab === 'assignments' ? (
                 <FactoryAssignedProjectsTab

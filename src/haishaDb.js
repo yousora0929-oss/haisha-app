@@ -1539,6 +1539,123 @@ export async function fetchProjectsForPhoneOrder(customerId) {
     .filter((p) => p.id);
 }
 
+function mapOrderChangeProposalRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const changes = Array.isArray(row.proposed_changes) ? row.proposed_changes : [];
+  return {
+    id: row.id != null ? String(row.id) : '',
+    order_id: row.order_id != null ? String(row.order_id) : '',
+    schedule_import_row_id:
+      row.schedule_import_row_id != null ? String(row.schedule_import_row_id) : null,
+    factory_id: row.factory_id != null ? String(row.factory_id) : '',
+    proposed_changes: changes,
+    status: row.status != null ? String(row.status) : '',
+    created_at: row.created_at != null ? String(row.created_at) : '',
+    responded_at: row.responded_at != null ? String(row.responded_at) : '',
+    responded_by: row.responded_by != null ? String(row.responded_by) : '',
+    order: row.orders ? normalizeOrderRow(row.orders) : null,
+  };
+}
+
+/** 工場向け：未応答の予定変更提案一覧 */
+export async function fetchPendingOrderChangeProposals(factoryId) {
+  const fid = sanitizeRefId(factoryId);
+  if (!fid) return [];
+  const { data, error } = await supabase
+    .from('order_change_proposals')
+    .select('*')
+    .eq('factory_id', fid)
+    .eq('status', 'pending_factory_response')
+    .order('created_at', { ascending: false });
+  if (error) {
+    console.error('fetchPendingOrderChangeProposals failed', error);
+    throw error;
+  }
+  const list = (data || []).map(mapOrderChangeProposalRow).filter(Boolean);
+  const orderIds = [...new Set(list.map((p) => p.order_id).filter(Boolean))];
+  if (!orderIds.length) return list;
+
+  const { data: orderRows, error: orderErr } = await supabase
+    .from('orders')
+    .select(ORDER_SELECT)
+    .in('id', orderIds);
+  if (orderErr) {
+    console.warn('fetchPendingOrderChangeProposals orders fetch failed', orderErr);
+    return list;
+  }
+  const orderById = new Map(
+    (orderRows || []).map((row) => [String(row.id), normalizeOrderRow(row)]).filter(([, o]) => o),
+  );
+  return list.map((p) => ({
+    ...p,
+    order: orderById.get(String(p.order_id)) || null,
+  }));
+}
+
+export async function applyOrderChangeProposal(proposalId) {
+  const id = String(proposalId || '').trim();
+  if (!id) throw new Error('proposalId が必要です');
+  const { data, error } = await supabase.rpc('apply_order_change_proposal', {
+    p_proposal_id: id,
+  });
+  if (error) {
+    console.error('applyOrderChangeProposal failed', error);
+    throw error;
+  }
+  return data;
+}
+
+export async function rejectOrderChangeProposal(proposalId) {
+  const id = String(proposalId || '').trim();
+  if (!id) throw new Error('proposalId が必要です');
+  const { data, error } = await supabase.rpc('reject_order_change_proposal', {
+    p_proposal_id: id,
+  });
+  if (error) {
+    console.error('rejectOrderChangeProposal failed', error);
+    throw error;
+  }
+  return data;
+}
+
+export async function subscribeOrderChangeProposalsRealtime(factoryId, onEvent) {
+  const fid = sanitizeRefId(factoryId);
+  const route = createIsolatedRealtimeHandler(onEvent);
+  try {
+    await ensurePanelRealtimeAuth?.();
+  } catch (e) {
+    console.warn('[subscribeOrderChangeProposalsRealtime] panel auth skipped', e);
+  }
+  if (!supabase?.channel || !fid) {
+    return () => {};
+  }
+  const channelName = `haisha-order-change-proposals-${fid}-${Date.now()}`;
+  const channel = supabase
+    .channel(channelName)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'order_change_proposals',
+        filter: `factory_id=eq.${fid}`,
+      },
+      (payload) => route(payload, 'order_change_proposals'),
+    )
+    .subscribe((status, err) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.error('[subscribeOrderChangeProposalsRealtime] channel error', status, err);
+      }
+    });
+  return () => {
+    try {
+      void supabase?.removeChannel?.(channel);
+    } catch {
+      /* ignore */
+    }
+  };
+}
+
 export async function acceptOrderForFactory(order, factorySiteId, factorySiteName) {
   if (!order?.id) throw new Error('order.id が必要です');
   const id = String(order.id);
