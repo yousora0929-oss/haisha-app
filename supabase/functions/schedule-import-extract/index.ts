@@ -4,7 +4,7 @@
  * schedule_import_batches / rows / order_change_proposals を作成する。
  */
 
-import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 const FUNCTION_VERSION = 1;
 const CLAUDE_MODEL = 'claude-sonnet-4-6';
