@@ -1656,6 +1656,401 @@ export async function subscribeOrderChangeProposalsRealtime(factoryId, onEvent) 
   };
 }
 
+function mapScheduleImportBatchRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    id: row.id != null ? String(row.id) : '',
+    source_file_name: row.source_file_name != null ? String(row.source_file_name) : '',
+    source_storage_path: row.source_storage_path != null ? String(row.source_storage_path) : '',
+    uploaded_by: row.uploaded_by != null ? String(row.uploaded_by) : '',
+    status: row.status != null ? String(row.status) : '',
+    header_raw: row.header_raw && typeof row.header_raw === 'object' ? row.header_raw : {},
+    site_contacts_raw: Array.isArray(row.site_contacts_raw) ? row.site_contacts_raw : [],
+    extraction_notes: Array.isArray(row.extraction_notes) ? row.extraction_notes : [],
+    project_id: row.project_id != null ? String(row.project_id) : null,
+    contractor_customer_id:
+      row.contractor_customer_id != null ? String(row.contractor_customer_id) : null,
+    agent_organization_id:
+      row.agent_organization_id != null ? String(row.agent_organization_id) : null,
+    created_at: row.created_at != null ? String(row.created_at) : '',
+    reviewed_at: row.reviewed_at != null ? String(row.reviewed_at) : '',
+    reviewed_by: row.reviewed_by != null ? String(row.reviewed_by) : '',
+  };
+}
+
+function mapScheduleImportRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    id: row.id != null ? String(row.id) : '',
+    batch_id: row.batch_id != null ? String(row.batch_id) : '',
+    row_date: row.row_date != null ? String(row.row_date) : '',
+    weekday_raw: row.weekday_raw != null ? String(row.weekday_raw) : '',
+    delivery_time: row.delivery_time != null ? String(row.delivery_time) : '',
+    factory_name_raw: row.factory_name_raw != null ? String(row.factory_name_raw) : '',
+    factory_id: row.factory_id != null ? String(row.factory_id) : null,
+    factory_phone_raw: row.factory_phone_raw != null ? String(row.factory_phone_raw) : '',
+    quantity_m3: row.quantity_m3 != null && row.quantity_m3 !== '' ? Number(row.quantity_m3) : null,
+    vehicle_type: row.vehicle_type != null ? String(row.vehicle_type) : '',
+    mix_design: row.mix_design != null ? String(row.mix_design) : '',
+    has_test: typeof row.has_test === 'boolean' ? row.has_test : null,
+    notes: row.notes != null ? String(row.notes) : '',
+    row_confidence: row.row_confidence === 'low' ? 'low' : 'high',
+    row_confidence_reason:
+      row.row_confidence_reason != null ? String(row.row_confidence_reason) : '',
+    row_status: row.row_status != null ? String(row.row_status) : '',
+    match_type: row.match_type != null ? String(row.match_type) : null,
+    matched_order_id: row.matched_order_id != null ? String(row.matched_order_id) : null,
+    resulting_order_id: row.resulting_order_id != null ? String(row.resulting_order_id) : null,
+    created_at: row.created_at != null ? String(row.created_at) : '',
+  };
+}
+
+/** スケジュールPDF抽出 Edge Function 呼び出し（管理者ヘッダーは supabaseClient が付与） */
+export async function invokeScheduleImportExtract({ pdfBase64, sourceFileName, uploadedBy } = {}) {
+  const pdf = String(pdfBase64 || '').replace(/^data:application\/pdf;base64,/, '').trim();
+  if (!pdf) throw new Error('PDFデータが必要です');
+  const { data, error } = await supabase.functions.invoke('schedule-import-extract', {
+    body: {
+      pdf_base64: pdf,
+      source_file_name: String(sourceFileName || '').trim() || null,
+      uploaded_by: String(uploadedBy || '').trim() || null,
+    },
+  });
+  if (error) {
+    console.error('invokeScheduleImportExtract failed', error);
+    throw error;
+  }
+  if (data && data.ok === false) {
+    throw new Error(data.error || 'スケジュール抽出に失敗しました');
+  }
+  return data;
+}
+
+export async function fetchScheduleImportBatches() {
+  const { data, error } = await supabase
+    .from('schedule_import_batches')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) {
+    console.error('fetchScheduleImportBatches failed', error);
+    throw error;
+  }
+  return (data || []).map(mapScheduleImportBatchRow).filter(Boolean);
+}
+
+export async function fetchScheduleImportBatchById(batchId) {
+  const id = String(batchId || '').trim();
+  if (!id) return null;
+  const { data, error } = await supabase
+    .from('schedule_import_batches')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) {
+    console.error('fetchScheduleImportBatchById failed', error);
+    throw error;
+  }
+  return mapScheduleImportBatchRow(data);
+}
+
+export async function fetchScheduleImportRowsByBatchId(batchId) {
+  const id = String(batchId || '').trim();
+  if (!id) return [];
+  const { data, error } = await supabase
+    .from('schedule_import_rows')
+    .select('*')
+    .eq('batch_id', id)
+    .order('row_date', { ascending: true })
+    .order('delivery_time', { ascending: true });
+  if (error) {
+    console.error('fetchScheduleImportRowsByBatchId failed', error);
+    throw error;
+  }
+  return (data || []).map(mapScheduleImportRow).filter(Boolean);
+}
+
+export async function fetchScheduleImportBatchSummaries() {
+  const batches = await fetchScheduleImportBatches();
+  if (!batches.length) return [];
+  const ids = batches.map((b) => b.id);
+  const { data, error } = await supabase
+    .from('schedule_import_rows')
+    .select('id, batch_id, match_type, row_status, factory_id')
+    .in('batch_id', ids);
+  if (error) {
+    console.error('fetchScheduleImportBatchSummaries rows failed', error);
+    throw error;
+  }
+  const byBatch = new Map();
+  for (const id of ids) {
+    byBatch.set(id, {
+      newCount: 0,
+      changeProposedCount: 0,
+      needsReviewCount: 0,
+      confirmedCount: 0,
+      totalCount: 0,
+    });
+  }
+  for (const row of data || []) {
+    const bid = String(row.batch_id || '');
+    const summary = byBatch.get(bid);
+    if (!summary) continue;
+    summary.totalCount += 1;
+    const status = String(row.row_status || '');
+    const matchType = String(row.match_type || '');
+    if (
+      row.factory_id &&
+      (matchType === 'new' || !matchType) &&
+      (status === 'pending' || status === 'new_confirmed')
+    ) {
+      summary.newCount += 1;
+    }
+    if (status === 'change_proposed') summary.changeProposedCount += 1;
+    if (status === 'pending' || status === 'needs_admin_review') summary.needsReviewCount += 1;
+    if (status === 'new_confirmed') summary.confirmedCount += 1;
+  }
+  return batches.map((b) => ({
+    ...b,
+    summary: byBatch.get(b.id) || {
+      newCount: 0,
+      changeProposedCount: 0,
+      needsReviewCount: 0,
+      confirmedCount: 0,
+      totalCount: 0,
+    },
+  }));
+}
+
+export async function updateScheduleImportBatch(batchId, patch) {
+  const id = String(batchId || '').trim();
+  if (!id) throw new Error('batchId が必要です');
+  const next = patch && typeof patch === 'object' ? patch : {};
+  const updateRow = {};
+  if (Object.prototype.hasOwnProperty.call(next, 'project_id')) {
+    updateRow.project_id = sanitizeRefId(next.project_id);
+  }
+  if (Object.prototype.hasOwnProperty.call(next, 'contractor_customer_id')) {
+    updateRow.contractor_customer_id = sanitizeRefId(next.contractor_customer_id);
+  }
+  if (Object.prototype.hasOwnProperty.call(next, 'agent_organization_id')) {
+    updateRow.agent_organization_id = sanitizeRefId(next.agent_organization_id);
+  }
+  if (Object.prototype.hasOwnProperty.call(next, 'status')) {
+    updateRow.status = String(next.status || '').trim() || undefined;
+  }
+  if (Object.prototype.hasOwnProperty.call(next, 'reviewed_by')) {
+    updateRow.reviewed_by = String(next.reviewed_by || '').trim() || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(next, 'reviewed_at')) {
+    updateRow.reviewed_at = next.reviewed_at;
+  }
+  const { data, error } = await supabase
+    .from('schedule_import_batches')
+    .update(updateRow)
+    .eq('id', id)
+    .select('*')
+    .maybeSingle();
+  if (error) {
+    console.error('updateScheduleImportBatch failed', error);
+    throw error;
+  }
+  return mapScheduleImportBatchRow(data);
+}
+
+export async function updateScheduleImportRow(rowId, patch) {
+  const id = String(rowId || '').trim();
+  if (!id) throw new Error('rowId が必要です');
+  const next = patch && typeof patch === 'object' ? patch : {};
+  const updateRow = {};
+  const assignText = (key) => {
+    if (Object.prototype.hasOwnProperty.call(next, key)) {
+      const v = next[key];
+      updateRow[key] = v == null ? null : String(v);
+    }
+  };
+  assignText('delivery_time');
+  assignText('vehicle_type');
+  assignText('mix_design');
+  assignText('notes');
+  assignText('row_status');
+  assignText('match_type');
+  assignText('factory_id');
+  assignText('resulting_order_id');
+  assignText('matched_order_id');
+  if (Object.prototype.hasOwnProperty.call(next, 'quantity_m3')) {
+    const n = Number(next.quantity_m3);
+    updateRow.quantity_m3 = Number.isFinite(n) ? n : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(next, 'has_test')) {
+    updateRow.has_test =
+      next.has_test === null || next.has_test === undefined ? null : Boolean(next.has_test);
+  }
+  const { data, error } = await supabase
+    .from('schedule_import_rows')
+    .update(updateRow)
+    .eq('id', id)
+    .select('*')
+    .maybeSingle();
+  if (error) {
+    console.error('updateScheduleImportRow failed', error);
+    throw error;
+  }
+  return mapScheduleImportRow(data);
+}
+
+/** 工場エイリアス学習（既存があれば何もしない） */
+export async function upsertFactoryAlias(factoryId, aliasText) {
+  const fid = sanitizeRefId(factoryId);
+  const alias = String(aliasText || '').trim();
+  if (!fid || !alias) throw new Error('factoryId と alias_text が必要です');
+  const { error } = await supabase.from('entity_aliases').upsert(
+    {
+      entity_type: 'factory',
+      entity_id: fid,
+      alias_text: alias,
+    },
+    { onConflict: 'entity_type,alias_text', ignoreDuplicates: true },
+  );
+  if (error) {
+    console.error('upsertFactoryAlias failed', error);
+    throw error;
+  }
+  return true;
+}
+
+/** スケジュール取込行の vehicle_type を large/small に正規化 */
+export function normalizeScheduleVehicleType(raw) {
+  const text = String(raw || '').trim().toLowerCase();
+  if (!text) return 'large';
+  if (text.includes('small') || text.includes('小型')) return 'small';
+  if (text.includes('large') || text.includes('大型')) return 'large';
+  return 'large';
+}
+
+/** HH:MM → TIME_SLOTS 相当の分・ラベル */
+export function scheduleDeliveryTimeToSlot(raw) {
+  const text = String(raw || '').trim().replace('：', ':');
+  const m = text.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) {
+    return { timeSlot: '480', timeSlotMinutes: 480, timeSlotLabel: '8:00', timePointLabel: '8:00' };
+  }
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  const minutes = h * 60 + min;
+  const label = `${h}:${String(min).padStart(2, '0')}`;
+  return {
+    timeSlot: String(minutes),
+    timeSlotMinutes: minutes,
+    timeSlotLabel: label,
+    timePointLabel: label,
+  };
+}
+
+/**
+ * 新規候補行を orders に一括確定
+ * @returns {{ created: object[], rowResults: { rowId: string, orderId: string }[] }}
+ */
+export async function confirmScheduleImportNewRows({
+  batch,
+  rows,
+  projects = [],
+  factories = [],
+  customers = [],
+} = {}) {
+  const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
+  if (!list.length) throw new Error('確定する行がありません');
+  const projectId = sanitizeRefId(batch?.project_id);
+  if (!projectId) throw new Error('物件（project_id）を先に解決してください');
+  const project = (projects || []).find((p) => String(p.id) === String(projectId)) || null;
+  const contractorId = sanitizeRefId(batch?.contractor_customer_id);
+  const agentOrgId = sanitizeRefId(batch?.agent_organization_id);
+  const customerId =
+    contractorId ||
+    sanitizeRefId(project?.customer_id) ||
+    null;
+  if (!customerId) throw new Error('業者（customer_id）を先に解決してください');
+  const customer =
+    (customers || []).find((c) => String(c.id) === String(customerId)) || null;
+  const header = batch?.header_raw && typeof batch.header_raw === 'object' ? batch.header_raw : {};
+  const contacts = Array.isArray(batch?.site_contacts_raw)
+    ? batch.site_contacts_raw
+    : Array.isArray(header.site_contacts)
+      ? header.site_contacts
+      : [];
+  const primaryContact = contacts[0] || {};
+  const siteName = String(header.site_name || project?.name || '').trim();
+  const siteAddress = String(header.site_address || project?.site_address || '').trim();
+
+  const orders = list.map((row) => {
+    const factoryId = sanitizeRefId(row.factory_id);
+    if (!factoryId) throw new Error(`工場未解決の行があります: ${row.factory_name_raw || row.id}`);
+    const factory = (factories || []).find((f) => String(f.id) === String(factoryId));
+    const vehicleType = normalizeScheduleVehicleType(row.vehicle_type);
+    const slot = scheduleDeliveryTimeToSlot(row.delivery_time);
+    const qty =
+      row.quantity_m3 != null && Number.isFinite(Number(row.quantity_m3))
+        ? String(row.quantity_m3)
+        : '';
+    return {
+      is_spot: false,
+      project_id: projectId,
+      projectName: project?.name || '',
+      customer_id: customerId,
+      customerName: customer?.company_name || customer?.name || String(header.contractor_name || ''),
+      phone_number: customer?.phone_number || '',
+      customerPhone: customer?.phone_number || '',
+      contractor_customer_id: contractorId || customerId,
+      agent_organization_id: agentOrgId,
+      site_history_contractor_id: contractorId || customerId,
+      ordered_by: String(customer?.manager_name || '').trim(),
+      orderPlacerName: String(customer?.manager_name || '').trim(),
+      orderedBy: String(primaryContact.name || '').trim(),
+      siteContactName: String(primaryContact.name || '').trim(),
+      sitePhone: String(primaryContact.phone || '').trim(),
+      preferred_factory_id: factoryId,
+      preferredFactoryId: factoryId,
+      preferred_factory_user_specified: true,
+      preferredFactoryUserSpecified: true,
+      preferredFactoryName: factory?.name || row.factory_name_raw || factoryId,
+      main_factory_id: sanitizeRefId(project?.main_factory_id) || factoryId,
+      mainFactoryId: sanitizeRefId(project?.main_factory_id) || factoryId,
+      preferredDate: String(row.row_date || '').trim(),
+      ...slot,
+      scheduleMatchDate: String(row.row_date || '').trim(),
+      scheduleMatchMinutes: slot.timeSlotMinutes,
+      vehicleType,
+      vehicleLabel: vehicleType === 'small' ? '小型' : '大型',
+      quantityM3: qty,
+      mixText: String(row.mix_design || '').trim(),
+      has_test: Boolean(row.has_test),
+      siteName,
+      siteAddress,
+      site_address: siteAddress,
+      deliveryArea: String(project?.delivery_area || '').trim(),
+      unloadDuration: '30',
+      unloadDurationMinutes: '30',
+      status: 'pending',
+      notes: String(row.notes || '').trim(),
+      scheduleImportNotes: String(row.notes || '').trim(),
+    };
+  });
+
+  const created = await insertOrdersBulk(orders, { factories, projects });
+  const rowResults = [];
+  for (let i = 0; i < list.length; i += 1) {
+    const row = list[i];
+    const order = created[i];
+    if (!order?.id) continue;
+    await updateScheduleImportRow(row.id, {
+      row_status: 'new_confirmed',
+      match_type: row.match_type || 'new',
+      resulting_order_id: order.id,
+    });
+    rowResults.push({ rowId: row.id, orderId: order.id });
+  }
+  return { created, rowResults };
+}
+
 export async function acceptOrderForFactory(order, factorySiteId, factorySiteName) {
   if (!order?.id) throw new Error('order.id が必要です');
   const id = String(order.id);

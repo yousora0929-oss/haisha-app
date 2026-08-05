@@ -20,6 +20,7 @@ import { OrderVisibilityScopeBadge } from './components/OrderVisibilityScopeBadg
 import { AssociationOrderApproveModal } from './components/AssociationOrderApproveModal.jsx';
 import { OrderFactoryAssignmentForm } from './components/OrderFactoryAssignmentForm.jsx';
 import AdminAppReleaseSection from './components/AdminAppReleaseSection.jsx';
+import { AdminScheduleImportSection } from './components/AdminScheduleImportSection.jsx';
 import { setAutoReloadBlocked } from './hooks/useAppReleaseControl.js';
 import {
   associationAssignedFactoryIds,
@@ -3405,6 +3406,7 @@ function readAdminTabFromUrl() {
     'factoryNews',
     'adminSettings',
     'projects',
+    'scheduleImport',
     'agents',
     'cooperatives',
     'customers',
@@ -3589,6 +3591,7 @@ export function AdminApp() {
             {tabBtn('factoryNews', 'ニュース配信')}
             {tabBtn('adminSettings', '管理者情報設定')}
             {tabBtn('projects', '物件管理')}
+            {tabBtn('scheduleImport', 'スケジュール取込')}
             {tabBtn('agents', '商社')}
             {tabBtn('cooperatives', '組合員')}
             {tabBtn('customers', '業者管理')}
@@ -3620,6 +3623,7 @@ export function AdminApp() {
         {tab === 'factoryNews' ? <AdminFactoryNewsSection factories={factories} /> : null}
         {tab === 'adminSettings' ? <AdminSettingsSection /> : null}
         {tab === 'projects' ? <ProjectsSection factories={factories} factoryNameById={factoryNameById} /> : null}
+        {tab === 'scheduleImport' ? <AdminScheduleImportSection factories={factories} /> : null}
         {tab === 'agents' ? <AdminOrgSection orgType="agent" label="商社" /> : null}
         {tab === 'cooperatives' ? <AdminOrgSection orgType="cooperative" label="組合員" /> : null}
         {tab === 'customers' ? <AdminOrgSection orgType="contractor" label="業者" /> : null}
