@@ -1946,6 +1946,46 @@ export function scheduleDeliveryTimeToSlot(raw) {
   };
 }
 
+/** 組合名末尾などから発注担当者名らしき文字列を推定 */
+export function guessOrderPlacerNameFromHeader(header = {}) {
+  const coordinator = String(header?.coordinator_name || '').trim();
+  if (coordinator) return coordinator;
+  const raw = String(header?.cooperative_name || '').trim();
+  if (!raw) return '';
+  const parts = raw.split(/[\s　]+/).filter(Boolean);
+  if (parts.length < 2) return '';
+  const last = parts[parts.length - 1];
+  // 組織名っぽい末尾は除外。2〜5文字程度の人名候補のみ採用
+  if (/組合|会社|協業|センター|事務所|生コン|工業|建設/.test(last)) return '';
+  if (last.length < 2 || last.length > 5) return '';
+  return last;
+}
+
+/**
+ * 行の notes に含まれる氏名と site_contacts を照合し、一致した担当者を返す。
+ * 一致しない場合は空（フォールバックなし）。
+ */
+export function matchSiteContactFromNotes(notes, contacts = []) {
+  const text = String(notes || '');
+  const list = Array.isArray(contacts) ? contacts.filter((c) => c && String(c.name || '').trim()) : [];
+  if (!text || !list.length) return { name: '', phone: '' };
+  const sorted = [...list].sort(
+    (a, b) => String(b.name || '').trim().length - String(a.name || '').trim().length,
+  );
+  for (const c of sorted) {
+    const name = String(c.name || '').trim();
+    if (!name) continue;
+    if (text.includes(name)) {
+      return { name, phone: String(c.phone || '').trim() };
+    }
+    const base = name.replace(/(?:氏|さん|様)$/u, '');
+    if (base && base !== name && text.includes(base)) {
+      return { name, phone: String(c.phone || '').trim() };
+    }
+  }
+  return { name: '', phone: '' };
+}
+
 /**
  * 新規候補行を orders に一括確定
  * @returns {{ created: object[], rowResults: { rowId: string, orderId: string }[] }}
@@ -1956,6 +1996,7 @@ export async function confirmScheduleImportNewRows({
   projects = [],
   factories = [],
   customers = [],
+  orderedBy = '',
 } = {}) {
   const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
   if (!list.length) throw new Error('確定する行がありません');
@@ -1977,7 +2018,7 @@ export async function confirmScheduleImportNewRows({
     : Array.isArray(header.site_contacts)
       ? header.site_contacts
       : [];
-  const primaryContact = contacts[0] || {};
+  const orderPlacerName = String(orderedBy || '').trim();
   const siteName = String(header.site_name || project?.name || '').trim();
   const siteAddress = String(header.site_address || project?.site_address || '').trim();
 
@@ -1991,6 +2032,7 @@ export async function confirmScheduleImportNewRows({
       row.quantity_m3 != null && Number.isFinite(Number(row.quantity_m3))
         ? String(row.quantity_m3)
         : '';
+    const siteContact = matchSiteContactFromNotes(row.notes, contacts);
     return {
       is_spot: false,
       project_id: projectId,
@@ -2002,11 +2044,11 @@ export async function confirmScheduleImportNewRows({
       contractor_customer_id: contractorId || customerId,
       agent_organization_id: agentOrgId,
       site_history_contractor_id: contractorId || customerId,
-      ordered_by: String(customer?.manager_name || '').trim(),
-      orderPlacerName: String(customer?.manager_name || '').trim(),
-      orderedBy: String(primaryContact.name || '').trim(),
-      siteContactName: String(primaryContact.name || '').trim(),
-      sitePhone: String(primaryContact.phone || '').trim(),
+      ordered_by: orderPlacerName,
+      orderPlacerName,
+      orderedBy: siteContact.name,
+      siteContactName: siteContact.name,
+      sitePhone: siteContact.phone,
       preferred_factory_id: factoryId,
       preferredFactoryId: factoryId,
       preferred_factory_user_specified: true,

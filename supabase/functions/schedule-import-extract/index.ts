@@ -14,6 +14,7 @@ type ExtractHeader = {
   contractor_name?: string | null;
   trading_company_name?: string | null;
   cooperative_name?: string | null;
+  coordinator_name?: string | null;
   site_name?: string | null;
   site_address?: string | null;
   site_contacts?: { name?: string; phone?: string | null }[];
@@ -282,9 +283,12 @@ ${factoryList}
    保持し、日付から推測した曜日で上書きしないこと。
 8. 工場名・商社名・業者名などの固有名詞は、原文の表記をそのまま保持すること
    （略称・表記ゆれを推測で正式名称に統一しない）。
-9. 読み取りに自信が持てない項目がある行は row_confidence を "low" にし、
+9. 組合名（cooperative_name）の末尾に個人名が続いている場合は分離すること。
+   例: 「○○生コン協同組合　山田太郎」→ cooperative_name="○○生コン協同組合"、
+   coordinator_name="山田太郎"。個人名が無い場合は coordinator_name は null。
+10. 読み取りに自信が持てない項目がある行は row_confidence を "low" にし、
    row_confidence_reason に理由を一言添えること。
-10. 除外した行や判断に迷った点があれば extraction_notes に日本語で簡潔に記録すること。
+11. 除外した行や判断に迷った点があれば extraction_notes に日本語で簡潔に記録すること。
 
 出力は下記スキーマに厳密に従ったJSONオブジェクト1つのみとしてください。
 
@@ -294,6 +298,7 @@ ${factoryList}
     "contractor_name": string | null,
     "trading_company_name": string | null,
     "cooperative_name": string | null,
+    "coordinator_name": string | null,
     "site_name": string | null,
     "site_address": string | null,
     "site_contacts": [{ "name": string, "phone": string | null }]

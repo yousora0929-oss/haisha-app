@@ -71,6 +71,7 @@ export function AdminScheduleImportSection({ factories = [] }) {
   const [contractorQuery, setContractorQuery] = useState('');
   const [orgQuery, setOrgQuery] = useState('');
   const [factoryQueryByRowId, setFactoryQueryByRowId] = useState({});
+  const [orderPlacerName, setOrderPlacerName] = useState('');
 
   const factoryNameById = useMemo(
     () => Object.fromEntries((factories || []).map((f) => [String(f.id), f.name || f.id])),
@@ -120,6 +121,7 @@ export function AdminScheduleImportSection({ factories = [] }) {
         setProjectQuery(String(header.project_name || '').trim());
         setContractorQuery(String(header.contractor_name || '').trim());
         setOrgQuery(String(header.trading_company_name || '').trim());
+        setOrderPlacerName(db.guessOrderPlacerNameFromHeader(header));
         const drafts = {};
         const selected = new Set();
         for (const row of r) {
@@ -329,6 +331,7 @@ export function AdminScheduleImportSection({ factories = [] }) {
         projects,
         factories,
         customers,
+        orderedBy: orderPlacerName,
       });
       setNotice(`${result.created.length} 件の注文を作成しました`);
       await openBatchDetail(batch.id);
@@ -544,6 +547,12 @@ export function AdminScheduleImportSection({ factories = [] }) {
                   {batch.header_raw?.cooperative_name || '—'}
                 </dd>
               </div>
+              <div>
+                <dt className="font-bold text-slate-500">抽出・発注担当者（coordinator）</dt>
+                <dd className="font-black text-slate-900">
+                  {batch.header_raw?.coordinator_name || '—'}
+                </dd>
+              </div>
               <div className="sm:col-span-2">
                 <dt className="font-bold text-slate-500">現場住所</dt>
                 <dd className="font-black text-slate-900">{batch.header_raw?.site_address || '—'}</dd>
@@ -637,6 +646,22 @@ export function AdminScheduleImportSection({ factories = [] }) {
                   <p className="mt-1 text-xs font-bold text-emerald-700">選択中: {selectedOrg.name}</p>
                 ) : null}
               </div>
+            </div>
+
+            <div className="mt-4 max-w-md">
+              <label className="block text-xs font-black text-slate-600">
+                発注担当者名
+                <input
+                  type="text"
+                  value={orderPlacerName}
+                  onChange={(e) => setOrderPlacerName(e.target.value)}
+                  placeholder="確定時に全行共通の ordered_by として設定"
+                  className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-slate-200 px-3 py-2 text-sm font-bold text-slate-900 outline-none focus:border-indigo-400"
+                />
+              </label>
+              <p className="mt-1 text-[11px] font-bold text-slate-500">
+                組合名末尾の氏名や抽出結果から初期値を入れています。必要に応じて修正してください（空欄のままでも確定できます）。
+              </p>
             </div>
           </div>
 
