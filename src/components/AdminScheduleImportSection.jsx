@@ -20,7 +20,9 @@ function projectSuggestTexts(p) {
 }
 
 function customerSuggestTexts(c) {
-  return [c?.company_name, c?.name, c?.furigana, c?.manager_name, c?.id].filter(Boolean);
+  return [c?.company_name, c?.name, c?.furigana, c?.manager_name, c?.phone_number, c?.id].filter(
+    Boolean,
+  );
 }
 
 function orgSuggestTexts(o) {
@@ -611,7 +613,13 @@ export function AdminScheduleImportSection({ factories = [] }) {
                   onValueChange={setContractorQuery}
                   items={customers}
                   getItemKey={(c) => String(c.id)}
-                  getItemLabel={(c) => String(c.company_name || c.name || c.id)}
+                  getItemLabel={(c) => {
+                    const company = String(c.company_name || c.name || '').trim();
+                    const manager = String(c.manager_name || '').trim();
+                    const phone = String(c.phone_number || '').trim();
+                    const suffix = [manager, phone].filter(Boolean).join(' / ');
+                    return suffix ? `${company}（${suffix}）` : company || String(c.id);
+                  }}
                   getSearchTexts={customerSuggestTexts}
                   onSelect={(c) => {
                     setContractorQuery(String(c.company_name || c.name || ''));
