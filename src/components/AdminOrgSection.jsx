@@ -11,6 +11,7 @@ const emptyMember = () => ({
   managerName: '',
   phone: '',
   password: '',
+  canImportSchedule: false,
 });
 
 const newMemberWithGeneratedPassword = () => ({
@@ -151,6 +152,7 @@ function memberToForm(member, orgName = '') {
     managerName: member.manager_name ?? '',
     phone: member.phone_number ?? '',
     password: member.login_password ?? '',
+    canImportSchedule: Boolean(member.can_import_schedule),
   };
 }
 
@@ -394,6 +396,7 @@ export function AdminOrgSection({ orgType, label }) {
         phone: newMember.phone,
         password: newMember.password,
         companyName: org?.name ?? '',
+        canImportSchedule: newMember.canImportSchedule,
       });
       let linkError = null;
       if (isAgentOrg && selectedLinkContractorIds.size > 0) {
@@ -448,6 +451,7 @@ export function AdminOrgSection({ orgType, label }) {
         managerName: editingMember.managerName,
         phone: editingMember.phone,
         password: editingMember.password,
+        canImportSchedule: editingMember.canImportSchedule,
       });
       let linkError = null;
       if (isAgentOrg) {
@@ -479,6 +483,7 @@ export function AdminOrgSection({ orgType, label }) {
                   manager_name: editingMember.managerName?.trim() ?? null,
                   phone_number: editingMember.phone?.trim() ?? null,
                   login_password: editingMember.password?.trim() ?? null,
+                  can_import_schedule: Boolean(editingMember.canImportSchedule),
                 }
               : m,
           ),
@@ -1029,6 +1034,24 @@ export function AdminOrgSection({ orgType, label }) {
                               className={`${inputClass} mt-1 w-full`}
                             />
                           </label>
+                          <label className="flex items-start gap-2 text-xs font-bold text-slate-700 sm:col-span-2">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4"
+                              checked={Boolean(editingMember.canImportSchedule)}
+                              onChange={(e) =>
+                                setEditingMember((cur) =>
+                                  cur ? { ...cur, canImportSchedule: e.target.checked } : cur,
+                                )
+                              }
+                            />
+                            <span>
+                              スケジュール取込を許可する
+                              <span className="mt-0.5 block font-medium text-slate-500">
+                                ON のとき DispatchApp に「スケジュール取込」タブが表示されます
+                              </span>
+                            </span>
+                          </label>
                           {isAgentOrg ? (
                             <ContractorLinksChecklist
                               contractors={contractors}
@@ -1190,6 +1213,22 @@ export function AdminOrgSection({ orgType, label }) {
                         />
                         <span className="mt-1 block text-[11px] leading-relaxed text-slate-500">
                           自動生成されています。先方の希望があれば書き換えてください。
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-2 text-xs font-bold text-slate-700 sm:col-span-2">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4"
+                          checked={Boolean(newMember.canImportSchedule)}
+                          onChange={(e) =>
+                            setNewMember((m) => ({ ...m, canImportSchedule: e.target.checked }))
+                          }
+                        />
+                        <span>
+                          スケジュール取込を許可する
+                          <span className="mt-0.5 block font-medium text-slate-500">
+                            ON のとき DispatchApp に「スケジュール取込」タブが表示されます
+                          </span>
                         </span>
                       </label>
                       {isAgentOrg ? (

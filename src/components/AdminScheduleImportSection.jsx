@@ -52,9 +52,19 @@ function statusBadge(status) {
 }
 
 /**
- * Admin: スケジュールPDF取込（アップロード / 一覧 / 詳細）
+ * スケジュールPDF取込（Admin / Dispatch 共通）
+ * @param {'admin'|'customer'} mode
+ * @param {string|null} uploadedBy customer id（customer モードで Edge に渡す）
+ * @param {string|null} lockedOrderPlacerName 指定時は発注担当者欄を隠し、この値で確定
  */
-export function AdminScheduleImportSection({ factories = [] }) {
+export function AdminScheduleImportSection({
+  factories = [],
+  mode = 'admin',
+  uploadedBy = null,
+  lockedOrderPlacerName = null,
+}) {
+  const isCustomerMode = mode === 'customer';
+  const showOrderPlacerInput = !isCustomerMode && lockedOrderPlacerName == null;
   const [view, setView] = useState('list'); // upload | list | detail
   const [batches, setBatches] = useState([]);
   const [batch, setBatch] = useState(null);
@@ -123,7 +133,11 @@ export function AdminScheduleImportSection({ factories = [] }) {
         setProjectQuery(String(header.project_name || '').trim());
         setContractorQuery(String(header.contractor_name || '').trim());
         setOrgQuery(String(header.trading_company_name || '').trim());
-        setOrderPlacerName(db.guessOrderPlacerNameFromHeader(header));
+        setOrderPlacerName(
+          lockedOrderPlacerName != null
+            ? String(lockedOrderPlacerName)
+            : db.guessOrderPlacerNameFromHeader(header),
+        );
         const drafts = {};
         const selected = new Set();
         for (const row of r) {
@@ -154,7 +168,7 @@ export function AdminScheduleImportSection({ factories = [] }) {
         setLoading(false);
       }
     },
-    [loadMasters],
+    [loadMasters, lockedOrderPlacerName],
   );
 
   useEffect(() => {
@@ -206,6 +220,7 @@ export function AdminScheduleImportSection({ factories = [] }) {
       const result = await db.invokeScheduleImportExtract({
         pdfBase64,
         sourceFileName: file.name,
+        uploadedBy: uploadedBy || undefined,
       });
       const batchId = result?.batch_id;
       if (!batchId) throw new Error('バッチIDが返りませんでした');
@@ -333,7 +348,9 @@ export function AdminScheduleImportSection({ factories = [] }) {
         projects,
         factories,
         customers,
-        orderedBy: orderPlacerName,
+        orderedBy:
+          lockedOrderPlacerName != null ? String(lockedOrderPlacerName) : orderPlacerName,
+        actingCustomerId: isCustomerMode ? uploadedBy : null,
       });
       setNotice(`${result.created.length} 件の注文を作成しました`);
       await openBatchDetail(batch.id);
@@ -376,7 +393,9 @@ export function AdminScheduleImportSection({ factories = [] }) {
         <div>
           <h2 className="text-lg font-black text-slate-900 dark:text-white">スケジュール取込</h2>
           <p className="mt-1 text-sm font-medium text-slate-500">
-            配車スケジュールPDFを読み取り、新規注文の一括確定と工場エイリアス学習を行います（元PDFは保存しません）。
+            {isCustomerMode
+              ? '配車スケジュールPDFを読み取り、新規注文の一括確定と工場エイリアス学習を行います（元PDFは保存しません）。発注担当者はログイン中のあなたになります。'
+              : '配車スケジュールPDFを読み取り、新規注文の一括確定と工場エイリアス学習を行います（元PDFは保存しません）。'}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -656,6 +675,7 @@ export function AdminScheduleImportSection({ factories = [] }) {
               </div>
             </div>
 
+            {showOrderPlacerInput ? (
             <div className="mt-4 max-w-md">
               <label className="block text-xs font-black text-slate-600">
                 発注担当者名
@@ -671,6 +691,11 @@ export function AdminScheduleImportSection({ factories = [] }) {
                 組合名末尾の氏名や抽出結果から初期値を入れています。必要に応じて修正してください（空欄のままでも確定できます）。
               </p>
             </div>
+            ) : isCustomerMode ? (
+              <p className="mt-4 text-xs font-bold text-slate-600">
+                発注担当者（ordered_by）: {lockedOrderPlacerName || orderPlacerName || '（ログイン中の担当者名）'}
+              </p>
+            ) : null}
           </div>
 
           {/* Unresolved factories */}

@@ -1997,6 +1997,8 @@ export async function confirmScheduleImportNewRows({
   factories = [],
   customers = [],
   orderedBy = '',
+  /** DispatchApp: ログイン中カスタマーID（orders.customer_id / RLS 用）。未指定時は業者紐づけを使う */
+  actingCustomerId = null,
 } = {}) {
   const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
   if (!list.length) throw new Error('確定する行がありません');
@@ -2005,7 +2007,9 @@ export async function confirmScheduleImportNewRows({
   const project = (projects || []).find((p) => String(p.id) === String(projectId)) || null;
   const contractorId = sanitizeRefId(batch?.contractor_customer_id);
   const agentOrgId = sanitizeRefId(batch?.agent_organization_id);
+  const actingId = sanitizeRefId(actingCustomerId);
   const customerId =
+    actingId ||
     contractorId ||
     sanitizeRefId(project?.customer_id) ||
     null;
@@ -3108,7 +3112,9 @@ export async function fetchOrganizationsWithMembers(type) {
   if (orgIds.length > 0) {
     const { data, error: ce } = await supabase
       .from('customers')
-      .select('id, company_name, furigana, manager_name, phone_number, login_password, organization_id')
+      .select(
+        'id, company_name, furigana, manager_name, phone_number, login_password, organization_id, can_import_schedule',
+      )
       .eq('role', type)
       .in('organization_id', orgIds)
       .order('manager_name');
@@ -3141,7 +3147,16 @@ export async function createOrganization(name, type, { furigana } = {}) {
 }
 
 /** 担当者を新規作成（customers に INSERT） */
-export async function createOrgMember({ organizationId, role, companyName, managerName, phone, password, furigana }) {
+export async function createOrgMember({
+  organizationId,
+  role,
+  companyName,
+  managerName,
+  phone,
+  password,
+  furigana,
+  canImportSchedule,
+}) {
   let resolvedCompanyName = String(companyName ?? '').trim();
   if (!resolvedCompanyName && organizationId) {
     const { data: org, error: orgError } = await supabase
@@ -3163,6 +3178,7 @@ export async function createOrgMember({ organizationId, role, companyName, manag
       manager_name: managerName?.trim() ?? null,
       phone_number: phone?.trim() ?? null,
       login_password: password?.trim() ?? null,
+      can_import_schedule: Boolean(canImportSchedule),
     })
     .select()
     .single();
@@ -3171,7 +3187,10 @@ export async function createOrgMember({ organizationId, role, companyName, manag
 }
 
 /** 担当者を更新 */
-export async function updateOrgMember(id, { organizationId, companyName, managerName, phone, password, furigana }) {
+export async function updateOrgMember(
+  id,
+  { organizationId, companyName, managerName, phone, password, furigana, canImportSchedule },
+) {
   let resolvedCompanyName = String(companyName ?? '').trim();
   if (!resolvedCompanyName && organizationId) {
     const { data: org, error: orgError } = await supabase
@@ -3183,16 +3202,18 @@ export async function updateOrgMember(id, { organizationId, companyName, manager
     resolvedCompanyName = String(org?.name ?? '').trim();
   }
 
-  const { error } = await supabase
-    .from('customers')
-    .update({
-      company_name: resolvedCompanyName || null,
-      furigana: furigana?.trim() ?? null,
-      manager_name: managerName?.trim() ?? null,
-      phone_number: phone?.trim() ?? null,
-      login_password: password?.trim() ?? null,
-    })
-    .eq('id', id);
+  const updateRow = {
+    company_name: resolvedCompanyName || null,
+    furigana: furigana?.trim() ?? null,
+    manager_name: managerName?.trim() ?? null,
+    phone_number: phone?.trim() ?? null,
+    login_password: password?.trim() ?? null,
+  };
+  if (canImportSchedule !== undefined) {
+    updateRow.can_import_schedule = Boolean(canImportSchedule);
+  }
+
+  const { error } = await supabase.from('customers').update(updateRow).eq('id', id);
   if (error) throw error;
 }
 
@@ -3395,6 +3416,7 @@ function mapCustomerRow(row) {
         : '',
     role: String(row.role ?? 'contractor'),
     organization_id: row.organization_id != null ? String(row.organization_id) : null,
+    can_import_schedule: Boolean(row.can_import_schedule),
     created_at: row.created_at,
   };
 }

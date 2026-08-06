@@ -6,7 +6,7 @@
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
-const FUNCTION_VERSION = 1;
+const FUNCTION_VERSION = 3;
 const CLAUDE_MODEL = 'claude-sonnet-4-6';
 
 type ExtractHeader = {
@@ -45,6 +45,7 @@ type OrderRow = {
   id: string;
   project_id?: string | null;
   factory_site_id?: string | null;
+  preferred_factory_id?: string | null;
   has_test?: boolean | null;
   status?: string | null;
   order_data?: Record<string, unknown> | null;
@@ -111,11 +112,37 @@ async function isAdminAuthorized(req: Request, client: SupabaseClient): Promise<
   return Boolean(data?.id);
 }
 
+/**
+ * カスタマーパネル認証 + can_import_schedule
+ * @returns customer id (uuid text) or null if unauthenticated; throws on forbidden
+ */
+async function resolveAuthorizedCustomerId(
+  req: Request,
+  client: SupabaseClient,
+): Promise<{ customerId: string | null; forbidden: boolean }> {
+  const phone = pickString(req.headers.get('x-customer-phone'));
+  const pass = pickString(req.headers.get('x-customer-password'));
+  if (!phone || !pass) return { customerId: null, forbidden: false };
+  const { data, error } = await client
+    .from('customers')
+    .select('id, can_import_schedule')
+    .eq('phone_number', phone)
+    .eq('login_password', pass)
+    .maybeSingle();
+  if (error) {
+    console.warn('[schedule-import-extract] customer auth check failed', error);
+    return { customerId: null, forbidden: false };
+  }
+  if (!data?.id) return { customerId: null, forbidden: false };
+  if (!data.can_import_schedule) return { customerId: null, forbidden: true };
+  return { customerId: pickString(data.id), forbidden: false };
+}
+
 function corsHeaders(origin = '*'): HeadersInit {
   return {
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Headers':
-      'authorization, x-client-info, apikey, content-type, x-admin-phone, x-admin-password',
+      'authorization, x-client-info, apikey, content-type, x-admin-phone, x-admin-password, x-customer-phone, x-customer-password',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
   };
 }
@@ -198,6 +225,46 @@ function orderHasTest(order: OrderRow): boolean | null {
 function orderPreferredDate(order: OrderRow): string {
   const od = asObject(order.order_data);
   return pickString(od.preferredDate, od.scheduleMatchDate, od.delivery_date);
+}
+
+/** 受注工場ID: factory_site_id（確定後）→ preferred_factory_id（希望）の順 */
+function orderFactoryId(order: OrderRow): string {
+  const od = asObject(order.order_data);
+  return pickString(
+    order.factory_site_id,
+    order.preferred_factory_id,
+    od.preferredFactoryId,
+    od.preferred_factory_id,
+    od.factorySiteId,
+    od.factory_site_id,
+  );
+}
+
+/** 全角英数・空白などを正規化して物件名比較用にする */
+function normalizeProjectNameKey(raw: unknown): string {
+  return pickString(raw)
+    .normalize('NFKC')
+    .replace(/[\s　]+/g, '')
+    .toLowerCase();
+}
+
+function longestCommonSubstringLength(a: string, b: string): number {
+  if (!a || !b) return 0;
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const prev = new Array<number>(cols).fill(0);
+  let max = 0;
+  for (let i = 1; i < rows; i += 1) {
+    const curr = new Array<number>(cols).fill(0);
+    for (let j = 1; j < cols; j += 1) {
+      if (a[i - 1] === b[j - 1]) {
+        curr[j] = prev[j - 1] + 1;
+        if (curr[j] > max) max = curr[j];
+      }
+    }
+    for (let j = 0; j < cols; j += 1) prev[j] = curr[j];
+  }
+  return max;
 }
 
 function normalizeVehicleType(raw: unknown): string {
@@ -398,12 +465,69 @@ async function resolveAliasId(
   return pickString(data?.entity_id) || null;
 }
 
-async function resolveProjectId(client: SupabaseClient, projectName: string): Promise<string | null> {
+/**
+ * 物件名解決。完全一致 → NFKC正規化一致 → 最長共通部分文字列の一意最良一致。
+ * @returns {{ id: string | null, note: string | null }}
+ */
+async function resolveProjectId(
+  client: SupabaseClient,
+  projectName: string,
+): Promise<{ id: string | null; note: string | null }> {
   const name = pickString(projectName);
-  if (!name) return null;
-  const { data } = await client.from('projects').select('id, name').ilike('name', name).limit(5);
-  const exact = (data || []).find((p) => pickString(p.name).toLowerCase() === name.toLowerCase());
-  return pickString(exact?.id) || null;
+  if (!name) return { id: null, note: null };
+
+  const { data: exactRows, error: exactErr } = await client
+    .from('projects')
+    .select('id, name')
+    .ilike('name', name)
+    .limit(5);
+  if (exactErr) {
+    console.error('[schedule-import-extract] resolveProjectId exact failed', exactErr);
+  }
+  const exact = (exactRows || []).find(
+    (p) => pickString(p.name).toLowerCase() === name.toLowerCase(),
+  );
+  if (exact?.id) return { id: pickString(exact.id) || null, note: null };
+
+  const { data: allRows, error: allErr } = await client.from('projects').select('id, name').limit(2000);
+  if (allErr) {
+    console.error('[schedule-import-extract] resolveProjectId list failed', allErr);
+    return {
+      id: null,
+      note: `物件名「${name}」の自動解決に失敗しました（マスタ参照エラー）。マッチングをスキップします。`,
+    };
+  }
+  const projects = allRows || [];
+  const key = normalizeProjectNameKey(name);
+
+  const normalizedHits = projects.filter((p) => normalizeProjectNameKey(p.name) === key);
+  if (normalizedHits.length === 1) {
+    return {
+      id: pickString(normalizedHits[0].id) || null,
+      note: `物件名を正規化一致で解決: 「${name}」→「${pickString(normalizedHits[0].name)}」`,
+    };
+  }
+
+  const scored = projects
+    .map((p) => ({
+      id: pickString(p.id),
+      name: pickString(p.name),
+      score: longestCommonSubstringLength(key, normalizeProjectNameKey(p.name)),
+    }))
+    .filter((p) => p.id && p.score >= 6)
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name, 'ja'));
+
+  if (scored.length >= 1 && (scored.length === 1 || scored[0].score > scored[1].score)) {
+    return {
+      id: scored[0].id || null,
+      note: `物件名をあいまい一致で解決: 「${name}」→「${scored[0].name}」（共通${scored[0].score}文字）`,
+    };
+  }
+
+  return {
+    id: null,
+    note: `物件名「${name}」を自動解決できませんでした。マッチングをスキップします（管理画面で物件を紐づけた後、再取込してください）。`,
+  };
 }
 
 async function sendFactoryPush(factoryId: string, title: string, message: string, orderId?: string) {
@@ -467,9 +591,20 @@ Deno.serve(async (req) => {
   }
 
   const client = getServiceClient();
-  const authorized =
-    isServiceRoleAuthorized(req) || (await isAdminAuthorized(req, client));
-  if (!authorized) {
+  const serviceOk = isServiceRoleAuthorized(req);
+  const adminOk = !serviceOk && (await isAdminAuthorized(req, client));
+  const customerAuth = !serviceOk && !adminOk ? await resolveAuthorizedCustomerId(req, client) : {
+    customerId: null,
+    forbidden: false,
+  };
+  if (customerAuth.forbidden) {
+    return jsonResponse(
+      { ok: false, error: 'Forbidden: schedule import not permitted', v: FUNCTION_VERSION },
+      403,
+      origin,
+    );
+  }
+  if (!serviceOk && !adminOk && !customerAuth.customerId) {
     return jsonResponse({ ok: false, error: 'Unauthorized', v: FUNCTION_VERSION }, 401, origin);
   }
 
@@ -478,11 +613,11 @@ Deno.serve(async (req) => {
     const pdfBase64 = pickString(body?.pdf_base64, body?.pdfBase64).replace(/^data:application\/pdf;base64,/, '');
     const sourceFileName = pickString(body?.source_file_name, body?.fileName) || null;
     const sourceStoragePath = pickString(body?.source_storage_path, body?.storagePath) || null;
-    const uploadedBy = pickString(
-      body?.uploaded_by,
-      body?.uploadedBy,
-      req.headers.get('x-admin-phone'),
-    ) || null;
+    const uploadedBy =
+      pickString(body?.uploaded_by, body?.uploadedBy) ||
+      customerAuth.customerId ||
+      pickString(req.headers.get('x-admin-phone')) ||
+      null;
 
     if (!pdfBase64) {
       return jsonResponse({ ok: false, error: 'pdf_base64 is required', v: FUNCTION_VERSION }, 400, origin);
@@ -504,7 +639,10 @@ Deno.serve(async (req) => {
       ? extracted.extraction_notes.map((n) => String(n))
       : [];
 
-    const projectId = await resolveProjectId(client, pickString(header.project_name));
+    const projectResolved = await resolveProjectId(client, pickString(header.project_name));
+    const projectId = projectResolved.id;
+    if (projectResolved.note) extractionNotes.push(projectResolved.note);
+
     const contractorCustomerId = await resolveAliasId(
       client,
       'customer',
@@ -593,7 +731,7 @@ Deno.serve(async (req) => {
     }
 
     // Match only when project + factory resolved
-    const matchable = prepared.filter((r) => projectId && r.factory_id);
+    const matchable = prepared.filter((r) => Boolean(projectId) && Boolean(r.factory_id));
     const unmatchedOrderIds = new Set<string>();
     const matchedOrderIds = new Set<string>();
 
@@ -601,18 +739,30 @@ Deno.serve(async (req) => {
     if (projectId && matchable.length) {
       const factoryIds = [...new Set(matchable.map((r) => r.factory_id!).filter(Boolean))];
       const dates = [...new Set(matchable.map((r) => r.row_date))];
+      // factory_site_id だけで絞ると希望工場のみの pending 注文を取りこぼすため、
+      // project 単位で取得し、preferred_factory_id / order_data も見て絞り込む。
       const { data: orders, error: ordersErr } = await client
         .from('orders')
-        .select('id, project_id, factory_site_id, has_test, status, order_data')
+        .select('id, project_id, factory_site_id, preferred_factory_id, has_test, status, order_data')
         .eq('project_id', projectId)
-        .in('factory_site_id', factoryIds)
-        .not('status', 'in', '("deleted","customer_cancelled","cancelled")');
-      if (ordersErr) throw ordersErr;
+        .not('status', 'in', '(deleted,customer_cancelled,cancelled)');
+      if (ordersErr) {
+        console.error('[schedule-import-extract] candidate orders query failed', ordersErr);
+        extractionNotes.push(`既存注文の取得に失敗したためマッチングをスキップ: ${ordersErr.message}`);
+        throw ordersErr;
+      }
       candidateOrders = (orders || []).filter((o) => {
+        const fid = orderFactoryId(o as OrderRow);
+        if (!fid || !factoryIds.includes(fid)) return false;
         const d = orderPreferredDate(o as OrderRow);
         return dates.includes(d);
       }) as OrderRow[];
       for (const o of candidateOrders) unmatchedOrderIds.add(o.id);
+      extractionNotes.push(
+        `マッチング候補注文: ${candidateOrders.length}件（project=${projectId}, factories=${factoryIds.join(',')}, dates=${dates.join(',')}）`,
+      );
+    } else if (!projectId) {
+      extractionNotes.push('project_id 未解決のため既存注文マッチングをスキップしました。');
     }
 
     // Stage 1: exact time match
@@ -624,7 +774,7 @@ Deno.serve(async (req) => {
       }
       const hits = candidateOrders.filter((o) => {
         if (matchedOrderIds.has(o.id)) return false;
-        if (pickString(o.factory_site_id) !== row.factory_id) return false;
+        if (orderFactoryId(o) !== row.factory_id) return false;
         if (orderPreferredDate(o) !== row.row_date) return false;
         return normalizeTimeLabel(orderDeliveryTimeLabel(o)) === normalizeTimeLabel(row.delivery_time);
       });
@@ -665,7 +815,7 @@ Deno.serve(async (req) => {
       const unmatchedOrders = candidateOrders.filter(
         (o) =>
           unmatchedOrderIds.has(o.id) &&
-          pickString(o.factory_site_id) === factoryId &&
+          orderFactoryId(o) === factoryId &&
           orderPreferredDate(o) === rowDate,
       );
 
@@ -689,6 +839,26 @@ Deno.serve(async (req) => {
           row.row_status = 'needs_admin_review';
         }
       }
+    }
+
+    // Safety net: project+factory 解決済みなのに match_type が残っている行は新規扱い
+    for (const row of prepared) {
+      if (projectId && row.factory_id && row.match_type == null) {
+        row.match_type = 'new';
+        row.row_status = 'pending';
+        extractionNotes.push(
+          `行 ${row.row_date} ${row.factory_name_raw} の match_type が未設定だったため new に補正しました`,
+        );
+      }
+    }
+
+    // マッチング中に追記した notes をバッチへ反映
+    const { error: notesErr } = await client
+      .from('schedule_import_batches')
+      .update({ extraction_notes: extractionNotes })
+      .eq('id', batch.id);
+    if (notesErr) {
+      console.error('[schedule-import-extract] extraction_notes update failed', notesErr);
     }
 
     const insertRows = prepared.map((r) => ({

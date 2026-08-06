@@ -51,6 +51,7 @@ import { PhoneOrderBadge } from './components/PhoneOrderBadge.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { CompanyMemberContactList } from './components/CompanyMemberContactList.jsx';
+import { AdminScheduleImportSection } from './components/AdminScheduleImportSection.jsx';
 import { customerSuggestTexts, organizationSuggestTexts, projectSuggestTexts, sortCustomersByUsageFrequency } from './utils/masterSuggest.js';
 import { dedupeCustomersByCompany } from './utils/dedupeCustomersByCompany.js';
 import { resolveEffectiveContractorCustomerId } from './utils/resolveEffectiveContractorCustomerId.js';
@@ -174,6 +175,8 @@ const CUSTOMER_ORDER_TABS = [
   ['calendar', 'カレンダー', '📅'],
   ['siteContacts', '現場担当者', '👤'],
 ];
+
+const SCHEDULE_IMPORT_TAB = ['scheduleImport', '取込', '📄'];
 
 /** 進行中タブの物件グループ折りたたみ（true = 折りたたみ）。物件ID単位で保持。 */
 const INPROGRESS_GROUP_COLLAPSED_STORAGE_PREFIX = 'haisha_dispatch_inprogress_group_collapsed_v1';
@@ -1683,12 +1686,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         () => currentCustomerRole === 'agent' || currentCustomerRole === 'cooperative',
         [currentCustomerRole],
       );
+      const canImportSchedule = Boolean(currentCustomer?.can_import_schedule);
       const visibleCustomerOrderTabs = useMemo(() => {
-        if (isGuestSiteOrder || currentCustomerRole !== 'contractor') {
-          return CUSTOMER_ORDER_TABS.filter(([id]) => id !== 'siteContacts');
+        let tabs =
+          isGuestSiteOrder || currentCustomerRole !== 'contractor'
+            ? CUSTOMER_ORDER_TABS.filter(([id]) => id !== 'siteContacts')
+            : CUSTOMER_ORDER_TABS;
+        if (canImportSchedule && !isGuestSiteOrder) {
+          tabs = [...tabs, SCHEDULE_IMPORT_TAB];
         }
-        return CUSTOMER_ORDER_TABS;
-      }, [isGuestSiteOrder, currentCustomerRole]);
+        return tabs;
+      }, [isGuestSiteOrder, currentCustomerRole, canImportSchedule]);
 
       // 現場名サジェスト / 現場担当者サジェスト共通の実質業者ID
       const effectiveContractorCustomerId = useMemo(
@@ -5425,6 +5433,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </div>
               </section>
             ) : null}
+            {customerOrderTab === 'scheduleImport' && canImportSchedule ? (
+              <AdminScheduleImportSection
+                factories={factories}
+                mode="customer"
+                uploadedBy={currentCustomerId}
+                lockedOrderPlacerName={String(currentCustomer?.manager_name || '').trim()}
+              />
+            ) : null}
               </PullToRefresh>
             </main>
 
@@ -5434,7 +5450,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   <div
                     className={
                       'mx-auto grid max-w-lg gap-1 ' +
-                      (visibleCustomerOrderTabs.length >= 5 ? 'grid-cols-5' : 'grid-cols-4')
+                      (visibleCustomerOrderTabs.length >= 6
+                        ? 'grid-cols-6'
+                        : visibleCustomerOrderTabs.length >= 5
+                          ? 'grid-cols-5'
+                          : 'grid-cols-4')
                     }
                   >
                     {visibleCustomerOrderTabs.map(([id, label, icon]) => {
