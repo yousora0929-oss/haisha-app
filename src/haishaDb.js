@@ -2008,14 +2008,21 @@ export async function confirmScheduleImportNewRows({
   const contractorId = sanitizeRefId(batch?.contractor_customer_id);
   const agentOrgId = sanitizeRefId(batch?.agent_organization_id);
   const actingId = sanitizeRefId(actingCustomerId);
+  // Dispatch 通常発注と同様:
+  // - customer_id / customerName = ログイン（または確定操作）主体
+  // - contractor_customer_id / contractorName = 元請業者
   const customerId =
     actingId ||
     contractorId ||
     sanitizeRefId(project?.customer_id) ||
     null;
   if (!customerId) throw new Error('業者（customer_id）を先に解決してください');
-  const customer =
+  const orderCustomer =
     (customers || []).find((c) => String(c.id) === String(customerId)) || null;
+  const contractorCustomer =
+    (contractorId &&
+      (customers || []).find((c) => String(c.id) === String(contractorId))) ||
+    null;
   const header = batch?.header_raw && typeof batch.header_raw === 'object' ? batch.header_raw : {};
   const contacts = Array.isArray(batch?.site_contacts_raw)
     ? batch.site_contacts_raw
@@ -2025,6 +2032,22 @@ export async function confirmScheduleImportNewRows({
   const orderPlacerName = String(orderedBy || '').trim();
   const siteName = String(header.site_name || project?.name || '').trim();
   const siteAddress = String(header.site_address || project?.site_address || '').trim();
+  const customerName = String(
+    orderCustomer?.company_name ||
+      orderCustomer?.name ||
+      header.contractor_name ||
+      '',
+  ).trim();
+  const contractorName = String(
+    contractorCustomer?.company_name ||
+      contractorCustomer?.name ||
+      header.contractor_name ||
+      '',
+  ).trim();
+  const traderName = String(
+    resolveProjectTradingCompanyName(project) || header.trading_company_name || '',
+  ).trim();
+  const customerPhone = String(orderCustomer?.phone_number || '').trim();
 
   const orders = list.map((row) => {
     const factoryId = sanitizeRefId(row.factory_id);
@@ -2038,19 +2061,26 @@ export async function confirmScheduleImportNewRows({
         : '';
     const siteContact = matchSiteContactFromNotes(row.notes, contacts);
     return {
+      createdAt: new Date().toISOString(),
       is_spot: false,
       project_id: projectId,
       projectName: project?.name || '',
       customer_id: customerId,
-      customerName: customer?.company_name || customer?.name || String(header.contractor_name || ''),
-      phone_number: customer?.phone_number || '',
-      customerPhone: customer?.phone_number || '',
+      customerName,
+      phone_number: customerPhone,
+      customerPhone,
+      contractorName,
       contractor_customer_id: contractorId || customerId,
       agent_organization_id: agentOrgId,
       site_history_contractor_id: contractorId || customerId,
+      trading_company_name: traderName,
+      projectTradingCompanyName: traderName,
+      traderName,
       ordered_by: orderPlacerName,
+      order_placer_name: orderPlacerName,
       orderPlacerName,
       orderedBy: siteContact.name,
+      site_contact_name: siteContact.name,
       siteContactName: siteContact.name,
       sitePhone: siteContact.phone,
       preferred_factory_id: factoryId,
@@ -2075,6 +2105,7 @@ export async function confirmScheduleImportNewRows({
       deliveryArea: String(project?.delivery_area || '').trim(),
       unloadDuration: '30',
       unloadDurationMinutes: '30',
+      unloadDurationLabel: '30分',
       status: 'pending',
       notes: String(row.notes || '').trim(),
       scheduleImportNotes: String(row.notes || '').trim(),
