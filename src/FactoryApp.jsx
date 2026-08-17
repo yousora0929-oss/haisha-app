@@ -2718,7 +2718,7 @@ function isUnreadForFactory(messages, readKey) {
                   {canEditOrder && typeof onOrderFullPatch === 'function' ? (
                     <button
                       type="button"
-                      className="w-full rounded-lg px-3 py-2 text-left text-sm font-black text-slate-800 hover:bg-slate-100"
+                      className="w-full rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-left text-sm font-black text-emerald-700 hover:bg-emerald-100"
                       onClick={() => {
                         setActionMenuOpen(false);
                         setEditOpen(true);
