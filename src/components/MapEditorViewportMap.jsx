@@ -7,7 +7,7 @@ import {
   DEFAULT_MAP_CENTER,
   DEFAULT_UNLOAD_RADIUS_M,
 } from '../utils/mapAnnotations.js';
-import { createStampDivIcon, LEAFLET_DIV_ICON_CLASS } from '../utils/mapEditorStampIcon.js';
+import { createCommentDivIcon, createStampDivIcon, LEAFLET_DIV_ICON_CLASS } from '../utils/mapEditorStampIcon.js';
 
 function MapZoomSync({ onZoomChange }) {
   const map = useMap();
@@ -39,12 +39,25 @@ function ViewportStampMarkers({ annotations, mapZoom }) {
   ));
 }
 
-function ViewportStampLayer({ annotations }) {
+function ViewportCommentMarkers({ annotations, mapZoom }) {
+  return (annotations?.comments || []).map((c) => (
+    <Marker
+      key={c.id}
+      position={[c.lat, c.lng]}
+      icon={createCommentDivIcon(c.text, c.scale, mapZoom, false)}
+      interactive={false}
+    />
+  ));
+}
+
+/** 印刷・プレビュー用：スタンプ＋コメント（表示専用・選択なし） */
+function ViewportAnnotationLayer({ annotations }) {
   const [mapZoom, setMapZoom] = useState(null);
   return (
     <>
       <MapZoomSync onZoomChange={setMapZoom} />
       <ViewportStampMarkers annotations={annotations} mapZoom={mapZoom} />
+      <ViewportCommentMarkers annotations={annotations} mapZoom={mapZoom} />
     </>
   );
 }
@@ -194,7 +207,7 @@ export function MapEditorViewportMap({
             }}
           />
         ))}
-        <ViewportStampLayer annotations={annotations} />
+        <ViewportAnnotationLayer annotations={annotations} />
       </MapContainer>
     </div>
   );

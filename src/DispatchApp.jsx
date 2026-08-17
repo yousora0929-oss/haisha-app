@@ -98,7 +98,7 @@ import {
   resolveNearestUpcomingOrder,
   formatOrderDateTimeSummary,
 } from './utils/orderGrouping.js';
-import { resolveSiteContactName } from './utils/orderContactInfo.js';
+import { resolveOrderContactPersonName, resolveSiteContactName } from './utils/orderContactInfo.js';
 import { formatPhoneNumberJP } from './utils/phoneFormat.js';
 import { resolveGuestPreferredFactoryId, resolveProjectMainFactoryId, getProjectDataGapWarnings } from './utils/projectFactory.js';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
@@ -304,16 +304,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       return buildOrderPartyInfo(order, { preferSiteContact: true });
     }
 
-    function orderContactPersonName(order, fallback = '担当者') {
-      return String(
-        order?.manager_name ??
-          order?.contact_person ??
-          order?.contactPerson ??
-          order?.ordered_by ??
-          order?.orderedBy ??
-          fallback ??
-          '',
-      ).trim() || '担当者';
+    function orderContactPersonName(order, fallback = '担当者', customer = null) {
+      return resolveOrderContactPersonName(order, { customer, fallback });
     }
 
     function OrderListSearchInput({ id, value, onChange }) {
@@ -659,6 +651,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       onMarkChatRead,
       onPreferredFactoryChoice,
       escalationCtx = null,
+      orderCustomer = null,
     }) {
       const [draft, setDraft] = useState('');
       const [choiceSubmitting, setChoiceSubmitting] = useState(false);
@@ -667,12 +660,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const messagesEndRef = useRef(null);
       const list = Array.isArray(messages) ? messages : [];
       const orderId = order?.id;
-      // FactoryApp のチャット表示と揃える: 発注者（customer_id）名を優先
-      const partyForChat = orderPartyInfo(order);
-      const senderName =
-        partyForChat.orderer && partyForChat.orderer !== '—'
-          ? partyForChat.orderer
-          : orderContactPersonName(order);
+      // 業者マスタの代表担当者名。未登録時は「担当者」（発注担当者名へ落とさない）
+      const senderName = orderContactPersonName(order, '担当者', orderCustomer);
       const factoryName = getDefaultFactoryDisplayName(order);
       const showPreferredChoice = needsPreferredCustomerChoice(order) && !choiceHiddenLocally;
       const showFullRejectChoice =
@@ -5504,6 +5493,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               onMarkChatRead={markChatRead}
               onPreferredFactoryChoice={handlePreferredFactoryChoice}
               escalationCtx={customerEscalationCtx}
+              orderCustomer={currentCustomer}
             />
           ) : null}
         </div>

@@ -70,6 +70,7 @@ import { orderPartyInfo } from './utils/orderPartyInfo.js';
 import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.js';
 import { setAutoReloadBlocked } from './hooks/useAppReleaseControl.js';
 import {
+  resolveOrderContactPersonName,
   resolveOrdererName,
   resolveSiteContactName,
   resolveSitePhone,
@@ -178,15 +179,8 @@ function factoryUnloadDurationLabel(order) {
   return String(raw || '30分（標準）');
 }
 
-function orderContactPersonName(order, fallback = '担当者') {
-  return String(
-    order?.manager_name ??
-      order?.contact_person ??
-      order?.contactPerson ??
-      resolveSiteContactName(order) ??
-      fallback ??
-      '',
-  ).trim() || '担当者';
+function orderContactPersonName(order, fallback = '担当者', customer = null) {
+  return resolveOrderContactPersonName(order, { customer, fallback });
 }
 
 function PhoneOrderRegisterModal({
@@ -1108,15 +1102,20 @@ function isUnreadForFactory(messages, readKey) {
       return db.appendChatMessage(orderId, from, body);
     }
 
-    function FactoryOrderChatPanel({ order, orderId, messages, factoryName, onAfterSend }) {
+    function FactoryOrderChatPanel({
+      order,
+      orderId,
+      messages,
+      factoryName,
+      onAfterSend,
+      customerById,
+    }) {
       const [txt, setTxt] = useState('');
       const list = Array.isArray(messages) ? messages : [];
-      // 顧客側メッセージの表示名は発注者（customer_id）。業者名や現場担当者と混同しない。
-      const partyForChat = orderPartyInfo(order);
-      const customerSenderName =
-        partyForChat.orderer && partyForChat.orderer !== '—'
-          ? partyForChat.orderer
-          : orderContactPersonName(order);
+      // 顧客側メッセージ: 業者マスタの代表担当者名。未登録時は「担当者」（発注担当者名へ落とさない）
+      const orderCustomerId = String(order?.customer_id ?? order?.customerId ?? '').trim();
+      const orderCustomer = orderCustomerId ? customerById?.[orderCustomerId] : null;
+      const customerSenderName = orderContactPersonName(order, '担当者', orderCustomer);
       // 注意: ここで scrollIntoView 等の自動スクロールを行わないこと。
       // チャットパネルは折りたたみ中のカードにもマウントされており、
       // ポーリング/Realtime 更新のたびに一覧全体が末尾へスクロールする不具合の原因になった。
@@ -1275,10 +1274,12 @@ function isUnreadForFactory(messages, readKey) {
       return null;
     }
 
-    function factorySearchHaystack(order, factoryLabel) {
+    function factorySearchHaystack(order, factoryLabel, customerById) {
       if (!order) return '';
       const fl = factoryLabel != null ? String(factoryLabel) : '';
       const deliveryDate = factoryOrderDate(order);
+      const cid = String(order?.customer_id ?? order?.customerId ?? '').trim();
+      const orderCustomer = cid ? customerById?.[cid] : null;
       const parts = [
         order.siteName,
         order.siteAddress,
@@ -1287,7 +1288,7 @@ function isUnreadForFactory(messages, readKey) {
         order.factorySiteName,
         order.acceptedFactoryLabel,
         order.factoryPendingByName,
-        orderContactPersonName(order, ''),
+        orderContactPersonName(order, '', orderCustomer),
         deliveryDate,
         deliveryDate ? deliveryDate.replace(/-/g, '/') : '',
         fl,
@@ -1295,10 +1296,10 @@ function isUnreadForFactory(messages, readKey) {
       return parts.map((p) => (p == null ? '' : String(p))).join(' ').toLowerCase();
     }
 
-    function orderMatchesFactorySearch(order, raw, factoryLabel) {
+    function orderMatchesFactorySearch(order, raw, factoryLabel, customerById) {
       const q = String(raw || '').trim().toLowerCase();
       if (!q) return true;
-      return factorySearchHaystack(order, factoryLabel).includes(q);
+      return factorySearchHaystack(order, factoryLabel, customerById).includes(q);
     }
 
     function OrderListSearchInput({ id, value, onChange }) {
@@ -2642,6 +2643,7 @@ function isUnreadForFactory(messages, readKey) {
                 messages={chatMessages}
                 factoryName={factoryName}
                 onAfterSend={onFactoryChatSent}
+                customerById={customerById}
               />
             </div>
           ) : null}
@@ -2887,8 +2889,8 @@ function isUnreadForFactory(messages, readKey) {
     }) {
       const [searchQuery, setSearchQuery] = useState('');
       const filteredOrders = useMemo(
-        () => orders.filter((o) => orderMatchesFactorySearch(o, searchQuery, factorySearchLabel)),
-        [orders, searchQuery, factorySearchLabel],
+        () => orders.filter((o) => orderMatchesFactorySearch(o, searchQuery, factorySearchLabel, customerById)),
+        [orders, searchQuery, factorySearchLabel, customerById],
       );
 
       useEffect(() => {
@@ -4728,13 +4730,13 @@ function isUnreadForFactory(messages, readKey) {
         const from = String(historyDateFrom || '').slice(0, 10);
         const to = String(historyDateTo || '').slice(0, 10);
         return factoryHistoryOrders.filter((order) => {
-          if (!orderMatchesFactorySearch(order, historySearchQuery, activeFactoryName)) return false;
+          if (!orderMatchesFactorySearch(order, historySearchQuery, activeFactoryName, customerById)) return false;
           const d = factoryOrderDate(order);
           if (from && (!d || d < from)) return false;
           if (to && (!d || d > to)) return false;
           return true;
         });
-      }, [factoryHistoryOrders, historySearchQuery, historyDateFrom, historyDateTo, activeFactoryName]);
+      }, [factoryHistoryOrders, historySearchQuery, historyDateFrom, historyDateTo, activeFactoryName, customerById]);
 
       const otherFactoryAcceptedHistoryCount = useMemo(
         () =>

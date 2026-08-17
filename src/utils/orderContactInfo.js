@@ -15,6 +15,27 @@ export function resolveSiteContactName(order) {
   return '';
 }
 
+/**
+ * 業者マスタの代表担当者名（customers.manager_name）。
+ * 個別注文の発注担当者（ordered_by / orderedBy）や現場担当者にはフォールバックしない。
+ * 未登録時は fallback（デフォルト「担当者」）。
+ *
+ * @param {object|null|undefined} order
+ * @param {{ customer?: object|null, fallback?: string }} [opts]
+ *   customer: orders.customer_id に対応する customers 行（order に manager_name が無いときの供給源）
+ */
+export function resolveOrderContactPersonName(order, { customer = null, fallback = '担当者' } = {}) {
+  return (
+    String(
+      order?.manager_name ??
+        customer?.manager_name ??
+        order?.contact_person ??
+        order?.contactPerson ??
+        '',
+    ).trim() || fallback
+  );
+}
+
 /** 発注担当者名（ログイン/代理発注者） */
 export function resolveOrdererName(order) {
   return String(order?.ordered_by ?? '').trim();
