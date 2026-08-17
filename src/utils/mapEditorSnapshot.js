@@ -1,5 +1,10 @@
 import { MAP_STAMP_EMOJI } from '../mapEditorConstants.js';
-import { boundsFromCenter, latLngToRatio, snapshotBoundsForAnnotations } from './mapAnnotations.js';
+import {
+  boundsFromCenter,
+  commentCanvasLayout,
+  latLngToRatio,
+  snapshotBoundsForAnnotations,
+} from './mapAnnotations.js';
 
 const EXPORT_W = 800;
 const EXPORT_H = 600;
@@ -294,24 +299,24 @@ function drawAnnotationMarkers(ctx, annotations, bounds) {
   for (const c of annotations?.comments || []) {
     const p = geoToPixel(c.lat, c.lng, bounds, EXPORT_W, EXPORT_H);
     if (!p) continue;
-    const text = String(c.text || '').slice(0, 120);
-    ctx.font = 'bold 13px Meiryo, system-ui, sans-serif';
-    const metrics = ctx.measureText(text);
-    const pad = 8;
+    const layout = commentCanvasLayout(c.text, c.scale);
+    ctx.font = `bold ${layout.fontSize}px Meiryo, system-ui, sans-serif`;
+    const metrics = ctx.measureText(layout.label);
+    const pad = layout.pad;
     const bw = Math.min(EXPORT_W - 20, metrics.width + pad * 2);
-    const bh = 28;
+    const bh = layout.height;
     const bx = Math.min(EXPORT_W - bw - 4, Math.max(4, p.px - bw / 2));
     const by = Math.max(4, p.py - bh - 12);
     ctx.fillStyle = 'rgba(255,255,255,0.95)';
     ctx.strokeStyle = '#334155';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = layout.borderW;
     roundRect(ctx, bx, by, bw, bh, 8);
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = '#0f172a';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(text, bx + pad, by + bh / 2);
+    ctx.fillText(layout.label, bx + pad, by + bh / 2);
   }
 }
 

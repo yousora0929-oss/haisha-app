@@ -60,6 +60,8 @@ import { fetchTownLocationsForMunicipality, resolveDeliveryPrefecture } from './
 import { SCHEDULE_BLOCK_IDS, normalizeDayBlockSchedule, todayLocalISODate } from './haishaConstants.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { orderPartyInfo } from './utils/orderPartyInfo.js';
+// 業者欄: contractorName 優先（utils/orderPartyInfo）。代理発注で業者名未設定時は発注者名を業者の代役にしない。
+import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
@@ -2060,6 +2062,8 @@ function AdminOrderDetailModal({
   const [quantityM3, setQuantityM3] = useState('');
   const [mixText, setMixText] = useState('');
   const [siteName, setSiteName] = useState('');
+  const [agentOrganizationId, setAgentOrganizationId] = useState('');
+  const [agentOrganizations, setAgentOrganizations] = useState([]);
   const [editingFactories, setEditingFactories] = useState(false);
 
   useEffect(() => {
@@ -2072,7 +2076,30 @@ function AdminOrderDetailModal({
     setQuantityM3(q != null ? String(q) : '');
     setMixText(order.mixText != null ? String(order.mixText) : '');
     setSiteName(orderSiteName(order) === '（現場名未入力）' ? '' : orderSiteName(order));
+    setAgentOrganizationId(
+      order.agent_organization_id != null ? String(order.agent_organization_id).trim() : '',
+    );
   }, [open, order]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const orgs = await db.fetchOrganizations();
+        if (cancelled) return;
+        setAgentOrganizations(
+          (Array.isArray(orgs) ? orgs : []).filter((o) => o && String(o.type) === 'agent' && o.id),
+        );
+      } catch (e) {
+        console.warn('[AdminOrderDetailModal] agent organizations load failed', e);
+        if (!cancelled) setAgentOrganizations([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   if (!open || !order) return null;
 
@@ -2092,6 +2119,7 @@ function AdminOrderDetailModal({
   const submit = (e) => {
     e.preventDefault();
     const minutes = parseTimeInputToMinutes(timeValue);
+    const agentSync = buildAgentOrganizationSyncPatch(agentOrganizationId || null, agentOrganizations);
     onSave(order.id, {
       preferredDate,
       delivery_date: preferredDate,
@@ -2104,6 +2132,7 @@ function AdminOrderDetailModal({
       quantityM3: quantityM3.trim(),
       mixText: mixText.trim(),
       siteName: siteName.trim(),
+      ...agentSync,
     });
   };
 
@@ -2260,6 +2289,21 @@ function AdminOrderDetailModal({
             <label className="text-xs font-black text-slate-600">数量<input type="text" value={quantityM3} onChange={(e) => setQuantityM3(e.target.value)} className={inputClass} /></label>
             <label className="text-xs font-black text-slate-600">配合<input type="text" value={mixText} onChange={(e) => setMixText(e.target.value)} className={inputClass} /></label>
             <label className="text-xs font-black text-slate-600 sm:col-span-2">現場名<input type="text" value={siteName} onChange={(e) => setSiteName(e.target.value)} className={inputClass} /></label>
+            <label className="text-xs font-black text-slate-600 sm:col-span-2">
+              商社
+              <select
+                value={agentOrganizationId}
+                onChange={(e) => setAgentOrganizationId(e.target.value)}
+                className={inputClass}
+              >
+                <option value="">商社なし（直接請求）</option>
+                {agentOrganizations.map((org) => (
+                  <option key={org.id} value={String(org.id)}>
+                    {org.name || org.id}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
         </div>
         <div className="flex shrink-0 gap-2 border-t border-slate-200 bg-white p-4">

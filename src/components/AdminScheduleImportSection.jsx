@@ -348,6 +348,7 @@ export function AdminScheduleImportSection({
         projects,
         factories,
         customers,
+        organizations,
         orderedBy:
           lockedOrderPlacerName != null ? String(lockedOrderPlacerName) : orderPlacerName,
         actingCustomerId: isCustomerMode ? uploadedBy : null,

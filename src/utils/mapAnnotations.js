@@ -159,6 +159,18 @@ function normalizeUnload(raw) {
   };
 }
 
+export const COMMENT_SCALE_MIN = 0.5;
+export const COMMENT_SCALE_MAX = 3;
+export const COMMENT_SCALE_STEP = 0.1;
+export const COMMENT_ICON_BASE_ZOOM = 17;
+
+/** コメント scale を 0.5〜3 にクランプ（未設定・非数は 1） */
+export function clampCommentScale(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(COMMENT_SCALE_MAX, Math.max(COMMENT_SCALE_MIN, n));
+}
+
 function normalizeComment(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const geo = clampLatLng(raw.lat, raw.lng);
@@ -169,6 +181,40 @@ function normalizeComment(raw) {
     lat: geo.lat,
     lng: geo.lng,
     text,
+    scale: clampCommentScale(raw.scale),
+  };
+}
+
+/**
+ * 地図上コメント吹き出しのフォント・枠・パディング（編集・印刷共通）。
+ * scale 一つで文字サイズと枠サイズを比例させる。
+ */
+export function commentBubbleLayout(text, scale = 1, mapZoom = COMMENT_ICON_BASE_ZOOM) {
+  const label = String(text || '').slice(0, 80);
+  const sc = clampCommentScale(scale);
+  const z = Number.isFinite(Number(mapZoom)) ? Number(mapZoom) : COMMENT_ICON_BASE_ZOOM;
+  const zoomFactor = 2 ** (z - COMMENT_ICON_BASE_ZOOM);
+  const fontSize = Math.max(9, Math.min(42, Math.round(11 * sc * zoomFactor)));
+  const padX = Math.max(4, Math.round(6 * sc * zoomFactor));
+  const padY = Math.max(3, Math.round(4 * sc * zoomFactor));
+  const borderW = Math.max(1, Math.round(2 * Math.min(2, sc)));
+  const baseW = Math.min(200, Math.max(80, label.length * 7));
+  const iconW = Math.min(400, Math.max(48, Math.round(baseW * sc * zoomFactor)));
+  const iconH = Math.max(20, Math.min(120, Math.round(36 * sc * zoomFactor)));
+  return { label, fontSize, padX, padY, borderW, iconW, iconH, scale: sc, zoomFactor };
+}
+
+/** スナップショット / Canvas 用のコメント寸法（固定解像度向け） */
+export function commentCanvasLayout(text, scale = 1) {
+  const sc = clampCommentScale(scale);
+  const label = String(text || '').slice(0, 120);
+  return {
+    label,
+    fontSize: Math.max(11, Math.round(13 * sc)),
+    pad: Math.max(6, Math.round(8 * sc)),
+    borderW: Math.max(1, Math.round(2 * Math.min(2, sc))),
+    height: Math.max(22, Math.round(28 * sc)),
+    scale: sc,
   };
 }
 

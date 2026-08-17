@@ -299,6 +299,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       return chatMessageReadKey(latest) !== readKey;
     }
 
+    // 業者表示は utils/orderPartyInfo（contractorName 優先。代理発注で業者名空なら発注者名へ落とさない）
     function orderPartyInfo(order) {
       return buildOrderPartyInfo(order, { preferSiteContact: true });
     }

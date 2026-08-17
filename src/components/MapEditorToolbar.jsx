@@ -1,6 +1,12 @@
 import React from 'react';
 import { MAP_EDITOR_TOOLS, MAP_STAMP_PICKER_DEFS } from '../mapEditorConstants.js';
-import { DEFAULT_UNLOAD_RADIUS_M } from '../utils/mapAnnotations.js';
+import {
+  COMMENT_SCALE_MAX,
+  COMMENT_SCALE_MIN,
+  COMMENT_SCALE_STEP,
+  DEFAULT_UNLOAD_RADIUS_M,
+  clampCommentScale,
+} from '../utils/mapAnnotations.js';
 
 const TOOL_BTN =
   'flex w-full flex-col items-center gap-0.5 rounded-xl border-2 px-1 py-2 text-[10px] font-black transition active:scale-95 disabled:opacity-40 sm:text-[11px]';
@@ -15,6 +21,8 @@ export function MapEditorToolbar({
   selection = null,
   selectedStampScale = 1,
   onStampScaleChange,
+  selectedCommentScale = 1,
+  onCommentScaleChange,
   onDeleteSelection,
   disabled = false,
   className = '',
@@ -105,7 +113,52 @@ export function MapEditorToolbar({
             <p className="mt-1 text-[10px] font-bold text-red-800">荷下ろし地点 · 半径スライダーで調整</p>
           ) : null}
           {selection.kind === 'comment' ? (
-            <p className="mt-1 text-[10px] font-bold text-slate-700">コメント · ドラッグで移動</p>
+            <div className="mt-2">
+              <p className="text-[10px] font-bold text-slate-700">コメントサイズ</p>
+              <div className="mt-1 flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={disabled}
+                  aria-label="コメントを小さく"
+                  onClick={() =>
+                    onCommentScaleChange?.(
+                      clampCommentScale(Number(selectedCommentScale) - COMMENT_SCALE_STEP),
+                    )
+                  }
+                  className="min-h-[36px] min-w-[36px] rounded-lg border-2 border-slate-300 bg-white text-sm font-black text-slate-800 disabled:opacity-40"
+                >
+                  −
+                </button>
+                <span className="flex-1 text-center text-[11px] font-black text-slate-700">
+                  ×{Number(selectedCommentScale).toFixed(1)}
+                </span>
+                <button
+                  type="button"
+                  disabled={disabled}
+                  aria-label="コメントを大きく"
+                  onClick={() =>
+                    onCommentScaleChange?.(
+                      clampCommentScale(Number(selectedCommentScale) + COMMENT_SCALE_STEP),
+                    )
+                  }
+                  className="min-h-[36px] min-w-[36px] rounded-lg border-2 border-slate-300 bg-white text-sm font-black text-slate-800 disabled:opacity-40"
+                >
+                  ＋
+                </button>
+              </div>
+              <input
+                id="comment-scale"
+                type="range"
+                min={COMMENT_SCALE_MIN}
+                max={COMMENT_SCALE_MAX}
+                step={COMMENT_SCALE_STEP}
+                disabled={disabled}
+                value={selectedCommentScale}
+                onChange={(e) => onCommentScaleChange?.(Number(e.target.value))}
+                className="mt-1 w-full"
+              />
+              <p className="mt-1 text-[10px] font-bold text-slate-500">右下ハンドルでも調整可</p>
+            </div>
           ) : null}
           <button
             type="button"

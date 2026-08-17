@@ -14,40 +14,17 @@ import { MAP_EDITOR_TOOLS, MAP_STAMP_EMOJI } from '../mapEditorConstants.js';
 import {
   applyInitialViewCenter,
   boundsFromCenter,
+  clampCommentScale,
   createAnnotationId,
   DEFAULT_MAP_CENTER,
   DEFAULT_UNLOAD_RADIUS_M,
 } from '../utils/mapAnnotations.js';
 import { renderAnnotationsSnapshot } from '../utils/mapEditorSnapshot.js';
 import {
+  createCommentDivIcon,
   createStampDivIcon,
   LEAFLET_DIV_ICON_CLASS,
 } from '../utils/mapEditorStampIcon.js';
-
-function createCommentDivIcon(text, selected, mapZoom) {
-  const label = String(text || '').slice(0, 80);
-  const border = selected ? '#6366f1' : '#334155';
-  const z = Number.isFinite(Number(mapZoom)) ? Number(mapZoom) : 17;
-  const zoomFactor = 2 ** (z - 17);
-  const fontSize = Math.max(9, Math.min(14, Math.round(11 * zoomFactor)));
-  const iconW = Math.min(200, Math.max(64, Math.round(Math.min(200, Math.max(80, label.length * 7)) * zoomFactor)));
-  const iconH = Math.max(24, Math.min(44, Math.round(36 * zoomFactor)));
-  const html = `<div style="max-width:${iconW}px;padding:4px 6px;border:2px solid ${border};border-radius:8px;background:rgba(255,255,255,0.96);font-size:${fontSize}px;font-weight:700;line-height:1.35;color:#0f172a;box-shadow:0 2px 6px rgba(0,0,0,0.15);white-space:pre-wrap;">${escapeHtml(label)}</div>`;
-  return L.divIcon({
-    className: LEAFLET_DIV_ICON_CLASS,
-    html,
-    iconSize: [iconW, iconH],
-    iconAnchor: [iconW / 2, iconH],
-  });
-}
-
-function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
 
 function MapInstanceBinder({ mapRef }) {
   const map = useMap();
@@ -137,7 +114,16 @@ function UnloadCircles({ points, selectedId, onSelect }) {
   );
 }
 
-function AnnotationMarkersLayer({ stamps, comments, selection, disabled, setSelection, updateStamp, updateComment, mapZoom }) {
+function AnnotationMarkersLayer({
+  stamps,
+  comments,
+  selection,
+  disabled,
+  setSelection,
+  updateStamp,
+  updateComment,
+  mapZoom,
+}) {
   return (
     <>
       <StampMarkers
@@ -154,6 +140,7 @@ function AnnotationMarkersLayer({ stamps, comments, selection, disabled, setSele
         disabled={disabled}
         onSelect={setSelection}
         onMove={updateComment}
+        onScale={(id, scale) => updateComment(id, { scale })}
         mapZoom={mapZoom}
       />
     </>
@@ -186,26 +173,113 @@ function StampMarkers({ stamps, selected, disabled, onSelect, onMove, mapZoom })
   });
 }
 
-function CommentMarkers({ comments, selected, disabled, onSelect, onMove, mapZoom }) {
+function CommentMarkerItem({ c, isSel, disabled, onSelect, onMove, onScale, mapZoom }) {
+  const markerRef = useRef(null);
+  const scaleRef = useRef(c.scale);
+  scaleRef.current = c.scale;
+
+  useEffect(() => {
+    if (!isSel || disabled) return undefined;
+    const marker = markerRef.current;
+    if (!marker) return undefined;
+
+    let handle = null;
+    let detachTimer = null;
+
+    const attach = () => {
+      const el = marker.getElement?.();
+      if (!el) return false;
+      handle = el.querySelector('[data-comment-resize]');
+      if (!handle) return false;
+
+      const onPointerDown = (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        L.DomEvent.stop(ev);
+        try {
+          marker.dragging?.disable?.();
+        } catch {
+          /* ignore */
+        }
+        const startY = ev.clientY;
+        const startX = ev.clientX;
+        const startScale = clampCommentScale(scaleRef.current);
+        const onPointerMove = (e) => {
+          const delta = (e.clientX - startX + (e.clientY - startY)) / 100;
+          onScale?.(c.id, clampCommentScale(startScale + delta));
+        };
+        const onPointerUp = () => {
+          window.removeEventListener('pointermove', onPointerMove);
+          window.removeEventListener('pointerup', onPointerUp);
+          window.removeEventListener('pointercancel', onPointerUp);
+          try {
+            if (!disabled) marker.dragging?.enable?.();
+          } catch {
+            /* ignore */
+          }
+        };
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+        window.addEventListener('pointercancel', onPointerUp);
+      };
+
+      handle.addEventListener('pointerdown', onPointerDown);
+      L.DomEvent.disableClickPropagation(handle);
+      L.DomEvent.disableScrollPropagation(handle);
+      handle._commentResizeCleanup = () => {
+        handle.removeEventListener('pointerdown', onPointerDown);
+      };
+      return true;
+    };
+
+    if (!attach()) {
+      detachTimer = window.setTimeout(() => {
+        attach();
+      }, 0);
+    }
+
+    return () => {
+      if (detachTimer) window.clearTimeout(detachTimer);
+      if (handle?._commentResizeCleanup) handle._commentResizeCleanup();
+    };
+  }, [isSel, disabled, c.id, c.scale, c.text, mapZoom, onScale]);
+
+  return (
+    <Marker
+      ref={markerRef}
+      position={[c.lat, c.lng]}
+      draggable={!disabled}
+      icon={createCommentDivIcon(c.text, c.scale, mapZoom, isSel, {
+        showResizeHandle: isSel && !disabled,
+      })}
+      zIndexOffset={isSel ? 1100 : 300}
+      eventHandlers={{
+        click: (e) => {
+          L.DomEvent.stopPropagation(e);
+          onSelect?.({ kind: 'comment', id: c.id });
+        },
+        dragend: (e) => {
+          const ll = e.target.getLatLng();
+          onMove?.(c.id, { lat: ll.lat, lng: ll.lng });
+        },
+      }}
+    />
+  );
+}
+
+function CommentMarkers({ comments, selected, disabled, onSelect, onMove, onScale, mapZoom }) {
   return (comments || []).map((c) => {
     const isSel = selected?.kind === 'comment' && selected.id === c.id;
     return (
-      <Marker
+      <CommentMarkerItem
         key={c.id}
-        position={[c.lat, c.lng]}
-        draggable={!disabled}
-        icon={createCommentDivIcon(c.text, isSel, mapZoom)}
-        zIndexOffset={isSel ? 1100 : 300}
-        eventHandlers={{
-          click: (e) => {
-            L.DomEvent.stopPropagation(e);
-            onSelect?.({ kind: 'comment', id: c.id });
-          },
-          dragend: (e) => {
-            const ll = e.target.getLatLng();
-            onMove?.(c.id, { lat: ll.lat, lng: ll.lng });
-          },
-        }}
+        c={c}
+        isSel={isSel}
+        disabled={disabled}
+        onSelect={onSelect}
+        onMove={onMove}
+        onScale={onScale}
+        mapZoom={mapZoom}
       />
     );
   });
@@ -341,7 +415,7 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
         patchAnnotations({
           comments: [
             ...(annotations.comments || []),
-            { id, lat, lng, text: String(text).trim() },
+            { id, lat, lng, text: String(text).trim(), scale: 1 },
           ],
         });
       }

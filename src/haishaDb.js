@@ -24,6 +24,7 @@ import { normalizeAssociationFactorySelection } from './utils/associationFactory
 import { shouldResetOrderStatusOnFactoryReassign } from './utils/orderFactoryReassign.js';
 import { ensureOrderPreferredFactoryForInsert } from './utils/dispatchBulkOrder.js';
 import { resolveProjectTradingCompanyName } from './utils/projectTradingCompany.js';
+import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.js';
 import {
   customerFactoryRejectionChatMessage,
   customerScheduleAutoRejectChatBody,
@@ -1253,6 +1254,10 @@ export async function updateOrderDetails(orderId, updatedData) {
   ) {
     updateRow.is_factory_modified = Boolean(patch.is_factory_modified ?? patch.isFactoryModified);
   }
+  if (Object.prototype.hasOwnProperty.call(patch, 'agent_organization_id')) {
+    updateRow.agent_organization_id = sanitizeRefId(patch.agent_organization_id) || null;
+    // 表示名は order_data 側（mergedOrderData）に既に含まれている想定
+  }
   const { data: updated, error: upErr } = await supabase
     .from('orders')
     .update(updateRow)
@@ -1996,6 +2001,7 @@ export async function confirmScheduleImportNewRows({
   projects = [],
   factories = [],
   customers = [],
+  organizations = [],
   orderedBy = '',
   /** DispatchApp: ログイン中カスタマーID（orders.customer_id / RLS 用）。未指定時は業者紐づけを使う */
   actingCustomerId = null,
@@ -2019,10 +2025,39 @@ export async function confirmScheduleImportNewRows({
   if (!customerId) throw new Error('業者（customer_id）を先に解決してください');
   const orderCustomer =
     (customers || []).find((c) => String(c.id) === String(customerId)) || null;
-  const contractorCustomer =
+  let contractorCustomer =
     (contractorId &&
       (customers || []).find((c) => String(c.id) === String(contractorId))) ||
     null;
+  // 一覧に無い場合は DB から直接解決（表示名の取りこぼし防止）
+  if (contractorId && !contractorCustomer) {
+    const { data: crow, error: cErr } = await supabase
+      .from('customers')
+      .select('id, company_name, manager_name, phone_number')
+      .eq('id', contractorId)
+      .maybeSingle();
+    if (cErr) {
+      console.warn('[confirmScheduleImportNewRows] contractor customer fetch failed', cErr);
+    } else if (crow) {
+      contractorCustomer = crow;
+    }
+  }
+  let agentOrganization =
+    (agentOrgId &&
+      (organizations || []).find((o) => String(o.id) === String(agentOrgId))) ||
+    null;
+  if (agentOrgId && !agentOrganization) {
+    const { data: orgRow, error: oErr } = await supabase
+      .from('organizations')
+      .select('id, name, type')
+      .eq('id', agentOrgId)
+      .maybeSingle();
+    if (oErr) {
+      console.warn('[confirmScheduleImportNewRows] agent organization fetch failed', oErr);
+    } else if (orgRow) {
+      agentOrganization = orgRow;
+    }
+  }
   const header = batch?.header_raw && typeof batch.header_raw === 'object' ? batch.header_raw : {};
   const contacts = Array.isArray(batch?.site_contacts_raw)
     ? batch.site_contacts_raw
@@ -2035,18 +2070,17 @@ export async function confirmScheduleImportNewRows({
   const customerName = String(
     orderCustomer?.company_name ||
       orderCustomer?.name ||
-      header.contractor_name ||
       '',
   ).trim();
-  const contractorName = String(
-    contractorCustomer?.company_name ||
-      contractorCustomer?.name ||
-      header.contractor_name ||
-      '',
-  ).trim();
-  const traderName = String(
-    resolveProjectTradingCompanyName(project) || header.trading_company_name || '',
-  ).trim();
+  // 業者名は contractor_customer_id 解決時のみ。発注操作者名・ヘッダ文言へのフォールバック禁止
+  const contractorName = contractorId
+    ? String(contractorCustomer?.company_name || contractorCustomer?.name || '').trim()
+    : '';
+  // 商社表示名は agent_organization_id があるときだけ同期。無いときは空（直接請求）
+  const agentSync = buildAgentOrganizationSyncPatch(
+    agentOrgId,
+    agentOrganization || organizations,
+  );
   const customerPhone = String(orderCustomer?.phone_number || '').trim();
 
   const orders = list.map((row) => {
@@ -2071,11 +2105,11 @@ export async function confirmScheduleImportNewRows({
       customerPhone,
       contractorName,
       contractor_customer_id: contractorId || customerId,
-      agent_organization_id: agentOrgId,
+      agent_organization_id: agentSync.agent_organization_id,
       site_history_contractor_id: contractorId || customerId,
-      trading_company_name: traderName,
-      projectTradingCompanyName: traderName,
-      traderName,
+      trading_company_name: agentSync.trading_company_name,
+      projectTradingCompanyName: agentSync.projectTradingCompanyName,
+      traderName: agentSync.traderName,
       ordered_by: orderPlacerName,
       order_placer_name: orderPlacerName,
       orderPlacerName,

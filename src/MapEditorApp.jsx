@@ -17,7 +17,7 @@ import {
   publishMapEditorProjectSaved,
 } from './mapEditorConstants.js';
 import { isValidExternalUrl, normalizeExternalUrl } from './utils/urlValidation.js';
-import { boundsFromCenter, emptyMapAnnotations } from './utils/mapAnnotations.js';
+import { boundsFromCenter, clampCommentScale, emptyMapAnnotations } from './utils/mapAnnotations.js';
 import { MapEditorPrintModal } from './components/MapEditorPrintModal.jsx';
 import { MapEditorPrintSheet } from './components/MapEditorPrintSheet.jsx';
 import { resolvePrintMapViewport } from './utils/mapEditorPrintViewport.js';
@@ -138,6 +138,11 @@ export function MapEditorApp() {
     return (annotations.stamps || []).find((s) => s.id === selection.id) || null;
   }, [annotations.stamps, selection]);
 
+  const selectedComment = useMemo(() => {
+    if (selection?.kind !== 'comment') return null;
+    return (annotations.comments || []).find((c) => c.id === selection.id) || null;
+  }, [annotations.comments, selection]);
+
   const selectedUnload = useMemo(() => {
     if (selection?.kind !== 'unload') return null;
     return (annotations.unloadPoints || []).find((u) => u.id === selection.id) || null;
@@ -152,6 +157,17 @@ export function MapEditorApp() {
     setAnnotations((prev) => ({
       ...prev,
       stamps: (prev.stamps || []).map((s) => (s.id === selectedStamp.id ? { ...s, scale } : s)),
+    }));
+  };
+
+  const handleCommentScaleChange = (scale) => {
+    if (!selectedComment) return;
+    const next = clampCommentScale(scale);
+    setAnnotations((prev) => ({
+      ...prev,
+      comments: (prev.comments || []).map((c) =>
+        c.id === selectedComment.id ? { ...c, scale: next } : c,
+      ),
     }));
   };
 
@@ -613,6 +629,8 @@ export function MapEditorApp() {
         selection={selection}
         selectedStampScale={selectedStamp?.scale ?? 1}
         onStampScaleChange={handleStampScaleChange}
+        selectedCommentScale={selectedComment?.scale ?? 1}
+        onCommentScaleChange={handleCommentScaleChange}
         onDeleteSelection={handleDeleteSelection}
         disabled={saving}
         className="map-editor-no-print absolute left-4 top-[calc(env(safe-area-inset-top)+3.25rem)] z-10 max-h-[min(48vh,24rem)] overflow-y-auto rounded-2xl border border-slate-200 bg-white/95 shadow-lg backdrop-blur md:top-4 md:max-h-[calc(100dvh-6rem)] dark:border-slate-600 dark:bg-slate-900/95"

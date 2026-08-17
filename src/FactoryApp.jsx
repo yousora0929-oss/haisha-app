@@ -66,6 +66,8 @@ import { isLocationPendingOrder } from './utils/orderWorkflow.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
 import { orderPartyInfo } from './utils/orderPartyInfo.js';
+// 業者欄: contractorName 優先（utils/orderPartyInfo）。代理発注で業者名未設定時は発注者名を業者の代役にしない。
+import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.js';
 import { setAutoReloadBlocked } from './hooks/useAppReleaseControl.js';
 import {
   resolveOrdererName,
@@ -1594,6 +1596,7 @@ function isUnreadForFactory(messages, readKey) {
         vehicleType: 'large',
         quantityM3: '',
         unloadDuration: '30',
+        agentOrganizationId: '',
         traderName: '',
         contractorName: '',
         siteName: '',
@@ -1602,6 +1605,7 @@ function isUnreadForFactory(messages, readKey) {
         mixText: '',
         hasTest: false,
       });
+      const [agentOrganizations, setAgentOrganizations] = useState([]);
       const [submitting, setSubmitting] = useState(false);
       const submittingRef = useRef(false);
 
@@ -1609,6 +1613,26 @@ function isUnreadForFactory(messages, readKey) {
         if (open) return;
         submittingRef.current = false;
         setSubmitting(false);
+      }, [open]);
+
+      useEffect(() => {
+        if (!open) return undefined;
+        let cancelled = false;
+        (async () => {
+          try {
+            const orgs = await db.fetchOrganizations();
+            if (cancelled) return;
+            setAgentOrganizations(
+              (Array.isArray(orgs) ? orgs : []).filter((o) => o && String(o.type) === 'agent' && o.id),
+            );
+          } catch (e) {
+            console.warn('[OrderFullEditModal] agent organizations load failed', e);
+            if (!cancelled) setAgentOrganizations([]);
+          }
+        })();
+        return () => {
+          cancelled = true;
+        };
       }, [open]);
 
       useEffect(() => {
@@ -1636,12 +1660,15 @@ function isUnreadForFactory(messages, readKey) {
         const explicitTrader = order.traderName != null ? String(order.traderName).trim() : '';
         const explicitContractor =
           order.contractorName != null ? String(order.contractorName).trim() : '';
+        const agentId =
+          order.agent_organization_id != null ? String(order.agent_organization_id).trim() : '';
         setEditData({
           preferredDate: order.preferredDate && typeof order.preferredDate === 'string' ? order.preferredDate : '',
           timeSlot: ok ? ts : String(TIME_SLOTS[0]?.value ?? '480'),
           vehicleType: order.vehicleType === 'small' ? 'small' : 'large',
           quantityM3: q != null && String(q).trim() !== '' && String(q) !== 'null' ? String(q) : '',
           unloadDuration: String(order.unloadDurationMinutes || order.unloadDuration || order.unloadingTime || '30'),
+          agentOrganizationId: agentId,
           traderName:
             explicitTrader || (partyDisplay.trader !== '—' ? partyDisplay.trader : ''),
           contractorName:
@@ -1682,6 +1709,15 @@ function isUnreadForFactory(messages, readKey) {
       const setEditField = (name, value) => {
         setEditData((prev) => ({ ...prev, [name]: value }));
       };
+      const handleAgentChange = (e) => {
+        const nextId = e.target.value;
+        const sync = buildAgentOrganizationSyncPatch(nextId || null, agentOrganizations);
+        setEditData((prev) => ({
+          ...prev,
+          agentOrganizationId: nextId,
+          traderName: sync.traderName,
+        }));
+      };
 
       const handleSubmit = async (e) => {
         e.preventDefault();
@@ -1689,6 +1725,10 @@ function isUnreadForFactory(messages, readKey) {
         const slotMeta = TIME_SLOTS.find((s) => s.value === editData.timeSlot);
         const timeMinutes = parseInt(editData.timeSlot, 10);
         const slotLabel = slotMeta?.label ?? '';
+        const agentSync = buildAgentOrganizationSyncPatch(
+          editData.agentOrganizationId || null,
+          agentOrganizations,
+        );
         const patch = {
           preferredDate: editData.preferredDate,
           timeSlot: editData.timeSlot,
@@ -1703,13 +1743,13 @@ function isUnreadForFactory(messages, readKey) {
           unloadDuration: editData.unloadDuration,
           unloadDurationMinutes: editData.unloadDuration,
           unloadDurationLabel: factoryUnloadDurationLabel({ unloadDuration: editData.unloadDuration }),
-          traderName: editData.traderName.trim(),
           contractorName: editData.contractorName.trim(),
           siteName: sanitizeSiteNameValue(editData.siteName),
           siteAddress: editData.siteAddress.trim(),
           sitePhone: editData.sitePhone.trim(),
           mixText: editData.mixText.trim(),
           has_test: editData.hasTest,
+          ...agentSync,
         };
         submittingRef.current = true;
         setSubmitting(true);
@@ -1824,8 +1864,21 @@ function isUnreadForFactory(messages, readKey) {
                     <input id="foe-contractor" name="contractorName" type="text" value={editData.contractorName} onChange={handleInputChange} className={fieldInput} />
                   </div>
                   <div>
-                    <label className={fieldLabel} htmlFor="foe-trader">商社名</label>
-                    <input id="foe-trader" name="traderName" type="text" value={editData.traderName} onChange={handleInputChange} className={fieldInput} />
+                    <label className={fieldLabel} htmlFor="foe-trader">商社</label>
+                    <select
+                      id="foe-trader"
+                      name="agentOrganizationId"
+                      value={editData.agentOrganizationId}
+                      onChange={handleAgentChange}
+                      className={fieldInput}
+                    >
+                      <option value="">商社なし（直接請求）</option>
+                      {agentOrganizations.map((org) => (
+                        <option key={org.id} value={String(org.id)}>
+                          {org.name || org.id}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className={fieldLabel} htmlFor="foe-site">
