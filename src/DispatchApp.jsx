@@ -51,7 +51,7 @@ import { PhoneOrderBadge } from './components/PhoneOrderBadge.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { CompanyMemberContactList } from './components/CompanyMemberContactList.jsx';
-import { OrderFullEditModal, isPreAcceptOrderEditable } from './components/OrderFullEditModal.jsx';
+import { OrderFullEditModal, isPreAcceptOrderEditable, isAcceptedOrderChangeRequestable } from './components/OrderFullEditModal.jsx';
 import { AdminScheduleImportSection } from './components/AdminScheduleImportSection.jsx';
 import { customerSuggestTexts, organizationSuggestTexts, projectSuggestTexts, sortCustomersByUsageFrequency } from './utils/masterSuggest.js';
 import { dedupeCustomersByCompany } from './utils/dedupeCustomersByCompany.js';
@@ -889,6 +889,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       onCancelPreferred,
       choiceSubmitting = false,
       onEditOrder = null,
+      onRequestChange = null,
     }) {
       const addr = order.siteAddress?.trim() || '';
       const party = orderPartyInfo(order);
@@ -906,6 +907,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const showPreferredChoice = needsPreferredCustomerChoice(order);
       const showFullRejectChoice = isFullCompanyRejectionForCustomer(order, escalationCtx || {});
       const canEditPending = isPreAcceptOrderEditable(order) && typeof onEditOrder === 'function';
+      const canRequestChange =
+        !canEditPending &&
+        isAcceptedOrderChangeRequestable(order) &&
+        typeof onRequestChange === 'function';
       const showMapPlaceholder = useMemo(
         () => shouldShowMapPendingPlaceholder(order, project),
         [order, project],
@@ -939,19 +944,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         [mapUrl],
       );
 
-      const handleCopyMapUrl = useCallback(
-        async (e) => {
-          e?.stopPropagation?.();
-          if (!mapUrl) return;
-          try {
-            await navigator.clipboard.writeText(mapUrl);
-          } catch (err) {
-            console.error('地図URLコピーに失敗', err);
-            window.prompt('以下のURLをコピーしてください', mapUrl);
-          }
-        },
-        [mapUrl],
-      );
+      const actionBtnBase =
+        'min-h-[40px] min-w-0 flex-1 whitespace-nowrap rounded-lg px-2 py-1.5 text-sm font-black shadow-sm transition active:scale-[0.99] sm:flex-none sm:px-3';
 
       return (
         <article
@@ -1047,7 +1041,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 ) : null}
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex w-full min-w-0 items-stretch gap-2 sm:w-auto sm:items-center">
                 {canEditPending ? (
                   <button
                     type="button"
@@ -1055,33 +1049,47 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       e?.stopPropagation?.();
                       onEditOrder(order);
                     }}
-                    className="rounded-lg border-2 border-indigo-500 bg-indigo-50 px-3 py-1.5 text-sm font-black text-indigo-900 shadow-sm hover:bg-indigo-100 active:scale-[0.99]"
+                    className={
+                      actionBtnBase +
+                      ' border-2 border-indigo-500 bg-indigo-50 text-indigo-900 hover:bg-indigo-100'
+                    }
                     title="注文内容を編集"
                   >
                     編集
                   </button>
+                ) : canRequestChange ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e?.stopPropagation?.();
+                      onRequestChange(order);
+                    }}
+                    className={
+                      actionBtnBase +
+                      ' border-2 border-amber-500 bg-amber-50 text-amber-950 hover:bg-amber-100'
+                    }
+                    title="工場へ変更依頼を送る"
+                  >
+                    変更依頼
+                  </button>
                 ) : null}
                 {mapUrl ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={handleOpenMap}
-                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-black text-white shadow-sm hover:bg-emerald-700 active:scale-[0.99]"
-                      title="現場地図を開く"
-                    >
-                      地図
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => void handleCopyMapUrl(e)}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-black text-slate-700 shadow-sm hover:bg-slate-50 active:scale-[0.99]"
-                      title="現場地図URLをコピー"
-                    >
-                      URL
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    onClick={handleOpenMap}
+                    className={
+                      actionBtnBase + ' bg-emerald-600 text-white hover:bg-emerald-700'
+                    }
+                    title="現場地図を開く"
+                  >
+                    地図
+                  </button>
                 ) : null}
-                <div className={'relative shrink-0 ' + (hasUnreadChat ? 'mt-3' : '')}>
+                <div
+                  className={
+                    'relative min-w-0 flex-1 sm:flex-none ' + (hasUnreadChat ? 'mt-0 sm:mt-3' : '')
+                  }
+                >
                   {hasUnreadChat ? (
                     <span
                       className="pointer-events-none absolute -top-9 left-1/2 z-20 -translate-x-1/2 animate-bounce whitespace-nowrap rounded-lg border-2 border-red-400 bg-red-500 px-2.5 py-1 text-[11px] font-black text-white shadow-lg"
@@ -1101,7 +1109,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       if (typeof onOpenChat === 'function') onOpenChat(order.id);
                     }}
                     className={
-                      'relative rounded-lg px-3 py-1.5 text-sm font-black text-white shadow-sm transition active:scale-[0.99] ' +
+                      actionBtnBase +
+                      ' relative w-full text-white ' +
                       (hasUnreadChat
                         ? 'bg-indigo-600 ring-2 ring-red-400 ring-offset-1 hover:bg-indigo-700 dark:ring-offset-slate-800'
                         : 'bg-indigo-600 hover:bg-indigo-700')
@@ -1211,6 +1220,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       escalationCtx = null,
       projectById = {},
       onEditOrder = null,
+      onRequestChange = null,
     }) {
       const [expandedStatusOrderId, setExpandedStatusOrderId] = useState('');
       const lastTapRef = useRef({ orderId: null, at: 0 });
@@ -1326,6 +1336,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     const meta = historyStatusMeta(order, escalationCtx);
                     const canEditPending =
                       isPreAcceptOrderEditable(order) && typeof onEditOrder === 'function';
+                    const canRequestChange =
+                      !canEditPending &&
+                      isAcceptedOrderChangeRequestable(order) &&
+                      typeof onRequestChange === 'function';
                     return (
                       <div
                         onDoubleClick={() => toggleStatusCard(order.id)}
@@ -1345,6 +1359,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                               className="rounded-lg border-2 border-indigo-500 bg-indigo-50 px-2.5 py-1 text-[11px] font-black text-indigo-900 hover:bg-indigo-100"
                             >
                               編集
+                            </button>
+                          ) : canRequestChange ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onRequestChange(order);
+                              }}
+                              className="rounded-lg border-2 border-amber-500 bg-amber-50 px-2.5 py-1 text-[11px] font-black text-amber-950 hover:bg-amber-100"
+                            >
+                              変更依頼
                             </button>
                           ) : null}
                         </div>
@@ -1483,6 +1508,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [adminSettings, setAdminSettings] = useState({ admin_name: '', phone_number: '' });
       const [dashboardOrders, setDashboardOrders] = useState([]);
       const [customerEditOrder, setCustomerEditOrder] = useState(null);
+      const [customerEditMode, setCustomerEditMode] = useState('edit');
+      const [changeRequestNotice, setChangeRequestNotice] = useState('');
       const [chatThreads, setChatThreads] = useState({});
       const [readChatKeys, setReadChatKeys] = useState({});
       const [unreadChatsByOrder, setUnreadChatsByOrder] = useState({});
@@ -2760,11 +2787,36 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
       const handleOpenCustomerOrderEdit = useCallback((order) => {
         if (!isPreAcceptOrderEditable(order)) return;
+        setCustomerEditMode('edit');
+        setCustomerEditOrder(order);
+      }, []);
+
+      const handleOpenCustomerChangeRequest = useCallback((order) => {
+        if (!isAcceptedOrderChangeRequestable(order)) return;
+        setCustomerEditMode('request');
         setCustomerEditOrder(order);
       }, []);
 
       const handleCustomerOrderFullSave = useCallback(
-        async (orderId, patch) => {
+        async (orderId, patch, meta) => {
+          if (meta?.mode === 'request') {
+            const message = String(meta?.message || '').trim();
+            if (!message) return false;
+            const updated = await db.submitOrderChangeRequest(orderId, message);
+            setDashboardOrders((prev) =>
+              (Array.isArray(prev) ? prev : []).map((o) =>
+                o?.id === orderId
+                  ? { ...o, ...(updated || {}), has_pending_change_request: true }
+                  : o,
+              ),
+            );
+            setCustomerEditOrder(null);
+            setCustomerEditMode('edit');
+            setChangeRequestNotice('変更依頼を送信しました。工場からの返信をお待ちください');
+            window.setTimeout(() => setChangeRequestNotice(''), 5000);
+            await refreshDashboard({ skipChatSound: true });
+            return true;
+          }
           const updated = await db.customerUpdateOrder(orderId, patch);
           setDashboardOrders((prev) =>
             (Array.isArray(prev) ? prev : []).map((o) =>
@@ -2772,6 +2824,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             ),
           );
           setCustomerEditOrder(null);
+          setCustomerEditMode('edit');
           await refreshDashboard({ skipChatSound: true });
           return true;
         },
@@ -5242,6 +5295,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                 onReschedulePreferred={(o) => void runCustomerChoice(o, 'reschedule')}
                                 onCancelPreferred={(o) => void runCustomerChoice(o, 'cancel')}
                                 onEditOrder={handleOpenCustomerOrderEdit}
+                                onRequestChange={handleOpenCustomerChangeRequest}
                               />
                             );
                             if (entry.type === 'group') {
@@ -5475,6 +5529,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 escalationCtx={customerEscalationCtx}
                 projectById={projectById}
                 onEditOrder={handleOpenCustomerOrderEdit}
+                onRequestChange={handleOpenCustomerChangeRequest}
                 onMonthChange={(nextMonth) => {
                   const next = nextMonth instanceof Date && !Number.isNaN(nextMonth.getTime()) ? nextMonth : new Date();
                   const normalized = new Date(next.getFullYear(), next.getMonth(), 1);
@@ -5508,12 +5563,25 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             <OrderFullEditModal
               order={customerEditOrder}
               open={Boolean(customerEditOrder)}
-              onClose={() => setCustomerEditOrder(null)}
+              onClose={() => {
+                setCustomerEditOrder(null);
+                setCustomerEditMode('edit');
+              }}
               editorRole="customer"
+              mode={customerEditMode === 'request' ? 'request' : 'edit'}
               projectById={projectById}
               customerById={customerById}
               onSave={handleCustomerOrderFullSave}
             />
+
+            {changeRequestNotice ? (
+              <div
+                className="fixed bottom-24 left-1/2 z-[520] w-[min(92vw,28rem)] -translate-x-1/2 rounded-2xl border-2 border-emerald-600 bg-white px-4 py-3 text-center text-sm font-black text-emerald-900 shadow-2xl sm:bottom-8 sm:text-base lg:bottom-8"
+                role="status"
+              >
+                {changeRequestNotice}
+              </div>
+            ) : null}
 
             {!isGuestSiteOrder ? (
               <nav className="block lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200" aria-label="カスタマー画面ナビゲーション">

@@ -3280,6 +3280,9 @@ function OrdersMonitorSection({
                           {o.is_admin_modified ? (
                             <span className="inline-flex rounded-full border border-violet-300 bg-violet-50 px-2 py-0.5 text-xs font-black text-violet-800">管理者変更</span>
                           ) : null}
+                          {o.has_pending_change_request ? (
+                            <span className="inline-flex rounded-full border border-orange-400 bg-orange-50 px-2 py-0.5 text-xs font-black text-orange-950">📝 変更依頼あり</span>
+                          ) : null}
                           <LocationPendingBadge order={o} className="text-xs" />
                           <PhoneOrderBadge order={o} className="text-xs" />
                         </div>

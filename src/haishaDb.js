@@ -47,7 +47,7 @@ import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils
 import { generateInitialPassword } from './utils/initialPassword.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, site_history_contractor_id, is_admin_modified, is_factory_modified, is_customer_modified, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at';
+  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, site_history_contractor_id, is_admin_modified, is_factory_modified, is_customer_modified, has_pending_change_request, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -380,6 +380,7 @@ export function normalizeOrderRow(row) {
     is_admin_modified: row.is_admin_modified === true,
     is_factory_modified: row.is_factory_modified === true,
     is_customer_modified: row.is_customer_modified === true,
+    has_pending_change_request: row.has_pending_change_request === true,
     // 相談ステータスは専用カラムを唯一の正とする（order_data へはフォールバックしない）
     factory_consult_status:
       row.factory_consult_status != null ? String(row.factory_consult_status).trim() : '',
@@ -1262,6 +1263,18 @@ export async function updateOrderDetails(orderId, updatedData) {
   ) {
     updateRow.is_customer_modified = Boolean(patch.is_customer_modified ?? patch.isCustomerModified);
   }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'has_pending_change_request') ||
+    Object.prototype.hasOwnProperty.call(patch, 'hasPendingChangeRequest')
+  ) {
+    updateRow.has_pending_change_request = Boolean(
+      patch.has_pending_change_request ?? patch.hasPendingChangeRequest,
+    );
+  }
+  // 工場・管理者が内容を編集して保存したら変更依頼は対応済みとみなす
+  if (updateRow.is_admin_modified === true || updateRow.is_factory_modified === true) {
+    updateRow.has_pending_change_request = false;
+  }
   if (Object.prototype.hasOwnProperty.call(patch, 'agent_organization_id')) {
     updateRow.agent_organization_id = sanitizeRefId(patch.agent_organization_id) || null;
     // 表示名は order_data 側（mergedOrderData）に既に含まれている想定
@@ -1356,6 +1369,60 @@ export async function clearOrderCustomerModifiedFlag(orderId) {
     return data ? normalizeOrderRow(data) : null;
   } catch (err) {
     console.warn('[haisha] is_customer_modified クリア失敗', err);
+    return null;
+  }
+}
+
+/**
+ * 確定後の変更依頼を送信（チャット投稿 + has_pending_change_request=true）
+ * 注文内容自体は書き換えない。
+ */
+export async function submitOrderChangeRequest(orderId, messageBody) {
+  const id = String(orderId || '').trim();
+  const body = String(messageBody || '').trim();
+  if (!id) throw new Error('orderId が必要です');
+  if (!body) throw new Error('変更依頼の内容が空です');
+
+  await appendChatMessage(id, 'customer', body);
+
+  if (!supabase?.from) {
+    throw new Error('Supabase client is not ready');
+  }
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ has_pending_change_request: true })
+    .eq('id', id)
+    .select(ORDER_SELECT)
+    .maybeSingle();
+  if (error) {
+    console.error('[haisha] has_pending_change_request 更新失敗', error);
+    throw error;
+  }
+  return data ? normalizeOrderRow(data) : null;
+}
+
+/** 変更依頼フラグを明示的に下ろす（対応済み） */
+export async function clearOrderPendingChangeRequest(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id) return null;
+  if (!supabase?.from) {
+    console.warn('[haisha] has_pending_change_request クリア失敗: Supabase client is not ready');
+    return null;
+  }
+  try {
+    const { data, error } = await supabase
+      .from('orders')
+      .update({ has_pending_change_request: false })
+      .eq('id', id)
+      .select(ORDER_SELECT)
+      .maybeSingle();
+    if (error) {
+      console.warn('[haisha] has_pending_change_request クリア失敗', error);
+      return null;
+    }
+    return data ? normalizeOrderRow(data) : null;
+  } catch (err) {
+    console.warn('[haisha] has_pending_change_request クリア失敗', err);
     return null;
   }
 }

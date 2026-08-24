@@ -2124,6 +2124,11 @@ function isUnreadForFactory(messages, readKey) {
                 お客様変更あり
               </span>
             ) : null}
+            {order.has_pending_change_request ? (
+              <span className="inline-flex rounded-full border-2 border-orange-400 bg-orange-50 px-2 py-0.5 text-[10px] font-black text-orange-950 sm:text-[11px]">
+                📝 変更依頼あり
+              </span>
+            ) : null}
             <LocationPendingBadge order={order} />
             <PhoneOrderBadge order={order} />
           </div>
@@ -2136,6 +2141,11 @@ function isUnreadForFactory(messages, readKey) {
           {order.is_customer_modified ? (
             <div className="mb-3 rounded-xl border-2 border-amber-400 bg-amber-50 px-3 py-2 text-sm font-black text-amber-950 dark:border-amber-500/70 dark:bg-amber-950/40 dark:text-amber-100">
               ⚠️ お客様が内容を変更しました。最新の内容をご確認のうえ受注してください。
+            </div>
+          ) : null}
+          {order.has_pending_change_request ? (
+            <div className="mb-3 rounded-xl border-2 border-orange-400 bg-orange-50 px-3 py-2 text-sm font-black text-orange-950 dark:border-orange-500/70 dark:bg-orange-950/40 dark:text-orange-100">
+              📝 お客様から変更依頼があります。チャットの内容を確認し、必要に応じて注文を編集してください（保存すると依頼は対応済みになります）。
             </div>
           ) : null}
           <div className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border border-slate-200/90 bg-white px-3 py-3 dark:border-slate-600 dark:bg-slate-900/60 sm:grid-cols-2">
@@ -3518,6 +3528,7 @@ function isUnreadForFactory(messages, readKey) {
       const notifiedOrderIds = useRef(new Set());
       const notifiedAdminModifiedOrderIds = useRef(new Set());
       const notifiedCustomerModifiedOrderIds = useRef(new Set());
+      const notifiedChangeRequestOrderIds = useRef(new Set());
       const initialNotificationMuteDoneRef = useRef(false);
       const [factories, setFactories] = useState([]);
       const [activeFactoryId, setActiveFactoryId] = useState('');
@@ -3978,6 +3989,7 @@ function isUnreadForFactory(messages, readKey) {
               if (o?.id) notifiedOrderIds.current.add(o.id);
               if (o?.id && o.is_admin_modified) notifiedAdminModifiedOrderIds.current.add(o.id);
               if (o?.id && o.is_customer_modified) notifiedCustomerModifiedOrderIds.current.add(o.id);
+              if (o?.id && o.has_pending_change_request) notifiedChangeRequestOrderIds.current.add(o.id);
             }
             return;
           }
@@ -3998,6 +4010,14 @@ function isUnreadForFactory(messages, readKey) {
           if (customerModified) {
             notifiedCustomerModifiedOrderIds.current.add(customerModified.id);
             setActionNotice('⚠️ お客様が内容を変更しました。最新の内容をご確認のうえ受注してください。');
+            window.setTimeout(() => setActionNotice(''), 6000);
+          }
+          const changeRequest = visible.find(
+            (o) => o?.id && o.has_pending_change_request && !notifiedChangeRequestOrderIds.current.has(o.id),
+          );
+          if (changeRequest) {
+            notifiedChangeRequestOrderIds.current.add(changeRequest.id);
+            setActionNotice('📝 お客様から変更依頼が届いています。チャットを確認してください。');
             window.setTimeout(() => setActionNotice(''), 6000);
           }
           const isNotifyCandidate = (o) => {

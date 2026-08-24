@@ -21,6 +21,84 @@ function unloadDurationLabel(value) {
   return String(value || '30分（標準）');
 }
 
+function vehicleTypeLabel(value) {
+  return String(value || '') === 'small' ? '小型' : '大型';
+}
+
+/** 変更依頼チャット本文を組み立てる（差分のみ） */
+export function buildChangeRequestChatMessage(order, patch) {
+  const o = order && typeof order === 'object' ? order : {};
+  const p = patch && typeof patch === 'object' ? patch : {};
+  const fields = [
+    {
+      label: '希望日',
+      before: String(o.preferredDate ?? '').trim(),
+      after: String(p.preferredDate ?? '').trim(),
+    },
+    {
+      label: '希望時刻',
+      before: String(o.timePointLabel || o.timeSlotLabel || '').trim(),
+      after: String(p.timePointLabel || p.timeSlotLabel || '').trim(),
+    },
+    {
+      label: '車種',
+      before: vehicleTypeLabel(o.vehicleType),
+      after: vehicleTypeLabel(p.vehicleType),
+    },
+    {
+      label: '数量',
+      before: String(o.confirmedQuantityM3 ?? o.quantityM3 ?? '').trim(),
+      after: String(p.quantityM3 ?? '').trim(),
+      suffix: 'm³',
+    },
+    {
+      label: '荷卸し時間',
+      before: unloadDurationLabel(o.unloadDurationMinutes || o.unloadDuration || o.unloadingTime),
+      after: unloadDurationLabel(p.unloadDuration || p.unloadDurationMinutes),
+    },
+    {
+      label: '配合',
+      before: String(o.confirmedMixText ?? o.mixText ?? '').trim(),
+      after: String(p.mixText ?? '').trim(),
+    },
+    {
+      label: '現場名',
+      before: String(o.siteName ?? o.projectName ?? '').trim(),
+      after: String(p.siteName ?? '').trim(),
+    },
+    {
+      label: '現場住所',
+      before: String(o.siteAddress ?? '').trim(),
+      after: String(p.siteAddress ?? '').trim(),
+    },
+    {
+      label: '電話番号',
+      before: String(o.sitePhone ?? '').trim(),
+      after: String(p.sitePhone ?? '').trim(),
+    },
+    {
+      label: '業者名',
+      before: String(o.contractorName ?? '').trim(),
+      after: String(p.contractorName ?? '').trim(),
+    },
+    {
+      label: '試験体',
+      before: o.has_test ? 'あり' : 'なし',
+      after: p.has_test ? 'あり' : 'なし',
+    },
+  ];
+  const parts = [];
+  for (const f of fields) {
+    if (f.before === f.after || (!f.before && !f.after)) continue;
+    const suffix = f.suffix ?? '';
+    const beforeText = f.before ? `${f.before}${suffix}` : '（未設定）';
+    const afterText = f.after ? `${f.after}${suffix}` : '（未設定）';
+    parts.push(`${f.label}: ${beforeText} → ${afterText}`);
+  }
+  if (parts.length === 0) return '';
+  return `【変更依頼】${parts.join('、')}`;
+}
+
 function resolveSiteUrlToken(order, projectById, customerById) {
   const pid = String(order?.project_id ?? order?.projectId ?? '').trim();
   const cid = String(order?.customer_id ?? order?.customerId ?? '').trim();
@@ -37,6 +115,7 @@ function resolveSiteUrlToken(order, projectById, customerById) {
 /**
  * 確定前〜受注後の注文内容編集モーダル（顧客 / 工場 / 管理者で共通）
  * @param {'customer'|'factory'|'admin'} editorRole
+ * @param {'edit'|'request'} mode - customer の確定後変更依頼は mode="request"
  */
 export function OrderFullEditModal({
   order,
@@ -47,10 +126,16 @@ export function OrderFullEditModal({
   customerById,
   onSiteUrlCopied,
   editorRole = 'factory',
+  mode = 'edit',
 }) {
   const isCustomer = editorRole === 'customer';
+  const isRequestMode = isCustomer && mode === 'request';
   const showSiteUrlActions = !isCustomer;
-  const titleId = isCustomer ? 'customer-order-edit-title' : 'factory-order-edit-title';
+  const titleId = isCustomer
+    ? isRequestMode
+      ? 'customer-order-request-title'
+      : 'customer-order-edit-title'
+    : 'factory-order-edit-title';
 
   const [editData, setEditData] = useState({
     preferredDate: '',
@@ -163,7 +248,11 @@ export function OrderFullEditModal({
     : null;
   const fieldLabel = 'mb-1 block text-sm font-bold text-slate-600 dark:text-slate-300 sm:text-base';
   const fieldInput =
-    'mt-1 min-h-[48px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 sm:text-lg';
+    'box-border mt-1 min-h-[48px] w-full min-w-0 max-w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 sm:text-lg';
+  // iOS Safari の type=date はネイティブUI幅＋パディングではみ出しやすい
+  const fieldDateInput =
+    fieldInput +
+    ' appearance-none px-2.5 text-[16px] leading-normal sm:px-3 sm:text-lg [-webkit-appearance:none]';
 
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -221,13 +310,30 @@ export function OrderFullEditModal({
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      const ok = await onSave(order.id, patch);
-      if (ok === false) {
-        setSaveError('保存に失敗しました。内容を確認して再度お試しください。');
+      if (isRequestMode) {
+        const message = buildChangeRequestChatMessage(order, patch);
+        if (!message) {
+          setSaveError('変更内容がありません。項目を変更してから送信してください。');
+          return;
+        }
+        const ok = await onSave(order.id, patch, { mode: 'request', message });
+        if (ok === false) {
+          setSaveError('変更依頼の送信に失敗しました。通信状態を確認してください。');
+        }
+      } else {
+        const ok = await onSave(order.id, patch);
+        if (ok === false) {
+          setSaveError('保存に失敗しました。内容を確認して再度お試しください。');
+        }
       }
     } catch (err) {
       console.error('[OrderFullEditModal] save failed', err);
-      setSaveError(err?.message || '保存に失敗しました。通信状態を確認してください。');
+      setSaveError(
+        err?.message ||
+          (isRequestMode
+            ? '変更依頼の送信に失敗しました。通信状態を確認してください。'
+            : '保存に失敗しました。通信状態を確認してください。'),
+      );
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -251,7 +357,7 @@ export function OrderFullEditModal({
       >
         <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
           <h2 id={titleId} className="text-lg font-black text-slate-900 sm:text-xl">
-            {isCustomer ? '注文内容の編集' : '注文内容の編集'}
+            {isRequestMode ? '変更依頼' : '注文内容の編集'}
           </h2>
           <button
             type="button"
@@ -264,13 +370,17 @@ export function OrderFullEditModal({
         </div>
         <form className="flex min-h-0 flex-1 flex-col" onSubmit={handleSubmit}>
           <div className="min-h-0 flex-1 overflow-y-auto pr-2 px-4 py-4">
-            {isCustomer ? (
+            {isRequestMode ? (
+              <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">
+                受注済みの注文です。ここで入力した内容は直接反映されず、工場・管理者への「変更依頼」としてチャットに送信されます。
+              </p>
+            ) : isCustomer ? (
               <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">
                 工場が受注する前の注文です。変更内容は工場側に通知されます。
               </p>
             ) : null}
-            <section className="space-y-4 rounded-xl border-2 border-indigo-300 bg-indigo-50 p-3 shadow-inner dark:bg-indigo-950/40">
-              <div>
+            <section className="min-w-0 space-y-4 overflow-hidden rounded-xl border-2 border-indigo-300 bg-indigo-50 p-3 shadow-inner dark:bg-indigo-950/40">
+              <div className="min-w-0">
                 <label className={fieldLabel} htmlFor="foe-date">
                   日付（納入日）
                 </label>
@@ -280,7 +390,7 @@ export function OrderFullEditModal({
                   type="date"
                   value={editData.preferredDate}
                   onChange={handleInputChange}
-                  className={fieldInput}
+                  className={fieldDateInput}
                   required
                 />
               </div>
@@ -539,7 +649,13 @@ export function OrderFullEditModal({
               aria-busy={submitting}
               className="min-h-[52px] flex-1 rounded-xl border-2 border-indigo-700 bg-indigo-600 text-base font-black text-white shadow hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg"
             >
-              {submitting ? '保存中…' : '保存'}
+              {submitting
+                ? isRequestMode
+                  ? '送信中…'
+                  : '保存中…'
+                : isRequestMode
+                  ? '変更依頼を送信'
+                  : '保存'}
             </button>
           </div>
         </form>
@@ -563,6 +679,24 @@ export function isPreAcceptOrderEditable(order) {
   }
   if (String(order.factoryResponseStatus || '').trim() === 'accepted') return false;
   return status === 'pending' || status === 'pending_association';
+}
+
+/** 確定後（受注済み）の注文に変更依頼を出せるか */
+export function isAcceptedOrderChangeRequestable(order) {
+  if (!order?.id) return false;
+  const status = String(order.status || 'pending').trim() || 'pending';
+  if (
+    status === 'customer_cancelled' ||
+    status === 'cancelled' ||
+    status === 'rejected' ||
+    status === 'completed'
+  ) {
+    return false;
+  }
+  if (status === 'accepted') return true;
+  if (String(order.factory_site_id || order.factorySiteId || '').trim()) return true;
+  if (String(order.factoryResponseStatus || '').trim() === 'accepted') return true;
+  return false;
 }
 
 export default OrderFullEditModal;
