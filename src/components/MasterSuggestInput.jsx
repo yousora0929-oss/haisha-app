@@ -12,12 +12,19 @@ function useStableId() {
 }
 
 const LIST_CLASS =
-  'absolute left-0 right-0 z-[9999] touch-pan-y overscroll-contain overflow-y-auto rounded-md border border-gray-200 bg-white pb-2 text-gray-900 shadow-2xl dark:border-gray-700 dark:bg-gray-800 dark:text-white';
+  'absolute left-0 right-0 z-[9999] touch-pan-y overscroll-contain rounded-md border border-gray-200 bg-white pb-2 text-gray-900 shadow-2xl dark:border-gray-700 dark:bg-gray-800 dark:text-white';
 
 const DEFAULT_LIST_MAX_HEIGHT_PX = 240; // 従来の max-h-60 相当（フォールバック用）
 const MIN_USABLE_SPACE_PX = 120; // これ未満のスペースなら反転を検討
 const VIEWPORT_EDGE_MARGIN_PX = 8;
 const FOCUS_SCROLL_DELAY_MS = 250; // キーボードのアニメーション待ち（保険）
+/** Tailwind sm 相当。狭い画面のみ候補リストに高さ制限＋内部スクロールを付ける */
+const NARROW_VIEWPORT_MQ = '(max-width: 639px)';
+
+function isNarrowViewport() {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return true;
+  return window.matchMedia(NARROW_VIEWPORT_MQ).matches;
+}
 
 const INPUT_CLASS =
   'min-h-[56px] w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-base text-gray-900 placeholder:text-slate-400 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300 dark:border-slate-600 dark:bg-slate-900 dark:text-gray-100 dark:placeholder:text-slate-500 dark:focus:border-slate-500';
@@ -75,6 +82,7 @@ export function MasterSuggestInput({
   const focusScrollCleanupRef = useRef(null);
   const [placement, setPlacement] = useState({
     openUp: false,
+    /** @type {number|null} 狭い画面のみ px。PC は null（高さ制限なし） */
     maxHeight: DEFAULT_LIST_MAX_HEIGHT_PX,
   });
 
@@ -138,6 +146,9 @@ export function MasterSuggestInput({
   const handleFocus = useCallback(() => {
     openPanel();
 
+    // PC ではキーボードでビューポートが縮まないため、不要な scrollIntoView を避ける
+    if (!isNarrowViewport()) return;
+
     if (typeof focusScrollCleanupRef.current === 'function') {
       focusScrollCleanupRef.current();
       focusScrollCleanupRef.current = null;
@@ -195,6 +206,12 @@ export function MasterSuggestInput({
       const wrapperEl = wrapperRef.current;
       if (!wrapperEl) return;
 
+      // PC: 高さ制限・内部スクロールを付けず、ページ全体スクロールに任せる
+      if (!isNarrowViewport()) {
+        setPlacement({ openUp: false, maxHeight: null });
+        return;
+      }
+
       const rect = wrapperEl.getBoundingClientRect();
       const vv = typeof window !== 'undefined' ? window.visualViewport : null;
       const viewportHeight = vv ? vv.height : window.innerHeight;
@@ -211,7 +228,13 @@ export function MasterSuggestInput({
       } else {
         setPlacement({
           openUp: false,
-          maxHeight: Math.max(120, Math.floor(spaceBelow - VIEWPORT_EDGE_MARGIN_PX)),
+          maxHeight: Math.max(
+            120,
+            Math.min(
+              DEFAULT_LIST_MAX_HEIGHT_PX * 2,
+              Math.floor(spaceBelow - VIEWPORT_EDGE_MARGIN_PX),
+            ),
+          ),
         });
       }
     }
@@ -219,14 +242,20 @@ export function MasterSuggestInput({
     recalcPlacement();
 
     const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+    const mq =
+      typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        ? window.matchMedia(NARROW_VIEWPORT_MQ)
+        : null;
     vv?.addEventListener('resize', recalcPlacement);
     vv?.addEventListener('scroll', recalcPlacement);
     window.addEventListener('resize', recalcPlacement);
+    mq?.addEventListener?.('change', recalcPlacement);
 
     return () => {
       vv?.removeEventListener('resize', recalcPlacement);
       vv?.removeEventListener('scroll', recalcPlacement);
       window.removeEventListener('resize', recalcPlacement);
+      mq?.removeEventListener?.('change', recalcPlacement);
     };
   }, [showList]);
 
@@ -335,7 +364,10 @@ export function MasterSuggestInput({
             aria-label={typeof label === 'string' ? `${label}の候補` : '候補一覧'}
             onPointerMove={(e) => markPointerMoved(e.clientX, e.clientY)}
             style={{
-              maxHeight: `${placement.maxHeight}px`,
+              // 狭い画面のみ内部スクロール。PC は maxHeight なしでページスクロールに任せる
+              ...(placement.maxHeight != null
+                ? { maxHeight: `${placement.maxHeight}px`, overflowY: 'auto' }
+                : { overflowY: 'visible' }),
               ...(placement.openUp
                 ? { top: 'auto', bottom: '100%', marginBottom: '4px' }
                 : { top: '100%', marginTop: '4px' }),
