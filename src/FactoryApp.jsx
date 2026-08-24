@@ -20,6 +20,7 @@ import {
   resolveProjectPartyDisplay,
 } from './utils/projectPartyDisplay.js';
 import BillingMark from './components/BillingMark.jsx';
+import { OrderFullEditModal } from './components/OrderFullEditModal.jsx';
 import {
   FACTORY_SITE_ID,
   FACTORY_SITE_NAME,
@@ -67,7 +68,6 @@ import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/site
 import { normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
 import { orderPartyInfo } from './utils/orderPartyInfo.js';
 // 業者欄: contractorName 優先（utils/orderPartyInfo）。代理発注で業者名未設定時は発注者名を業者の代役にしない。
-import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.js';
 import { setAutoReloadBlocked } from './hooks/useAppReleaseControl.js';
 import {
   resolveOrderContactPersonName,
@@ -1590,361 +1590,6 @@ function isUnreadForFactory(messages, readKey) {
       );
     }
 
-    function OrderFullEditModal({ order, open, onClose, onSave, projectById, customerById, onSiteUrlCopied }) {
-      const [editData, setEditData] = useState({
-        preferredDate: '',
-        timeSlot: String(TIME_SLOTS[0]?.value ?? '480'),
-        vehicleType: 'large',
-        quantityM3: '',
-        unloadDuration: '30',
-        agentOrganizationId: '',
-        traderName: '',
-        contractorName: '',
-        siteName: '',
-        siteAddress: '',
-        sitePhone: '',
-        mixText: '',
-        hasTest: false,
-      });
-      const [agentOrganizations, setAgentOrganizations] = useState([]);
-      const [submitting, setSubmitting] = useState(false);
-      const submittingRef = useRef(false);
-
-      useEffect(() => {
-        if (open) return;
-        submittingRef.current = false;
-        setSubmitting(false);
-      }, [open]);
-
-      useEffect(() => {
-        if (!open) return undefined;
-        let cancelled = false;
-        (async () => {
-          try {
-            const orgs = await db.fetchOrganizations();
-            if (cancelled) return;
-            setAgentOrganizations(
-              (Array.isArray(orgs) ? orgs : []).filter((o) => o && String(o.type) === 'agent' && o.id),
-            );
-          } catch (e) {
-            console.warn('[OrderFullEditModal] agent organizations load failed', e);
-            if (!cancelled) setAgentOrganizations([]);
-          }
-        })();
-        return () => {
-          cancelled = true;
-        };
-      }, [open]);
-
-      useEffect(() => {
-        if (!order || !open) return;
-        const ts = order.timeSlot != null ? String(order.timeSlot) : '';
-        const ok = TIME_SLOTS.some((s) => s.value === ts);
-        const q = order.quantityM3 ?? order.quantityCube;
-        const projectId = String(order?.project_id ?? order?.projectId ?? '').trim();
-        const linkedProject = projectId ? projectById?.[projectId] : null;
-        const linkedCustomerId = String(
-          linkedProject?.customer_id ?? order?.customer_id ?? order?.customerId ?? '',
-        ).trim();
-        const linkedCustomer =
-          (linkedCustomerId ? customerById?.[linkedCustomerId] : null) ?? null;
-        const contractorCustomerId = String(
-          order?.contractor_customer_id ?? order?.contractorCustomerId ?? '',
-        ).trim();
-        const contractorCustomer =
-          (contractorCustomerId ? customerById?.[contractorCustomerId] : null) ?? null;
-        const partyDisplay = resolveOrderPartyDisplay(order, {
-          project: linkedProject,
-          customer: linkedCustomer,
-          contractorCustomer,
-        });
-        const explicitTrader = order.traderName != null ? String(order.traderName).trim() : '';
-        const explicitContractor =
-          order.contractorName != null ? String(order.contractorName).trim() : '';
-        const agentId =
-          order.agent_organization_id != null ? String(order.agent_organization_id).trim() : '';
-        setEditData({
-          preferredDate: order.preferredDate && typeof order.preferredDate === 'string' ? order.preferredDate : '',
-          timeSlot: ok ? ts : String(TIME_SLOTS[0]?.value ?? '480'),
-          vehicleType: order.vehicleType === 'small' ? 'small' : 'large',
-          quantityM3: q != null && String(q).trim() !== '' && String(q) !== 'null' ? String(q) : '',
-          unloadDuration: String(order.unloadDurationMinutes || order.unloadDuration || order.unloadingTime || '30'),
-          agentOrganizationId: agentId,
-          traderName:
-            explicitTrader || (partyDisplay.trader !== '—' ? partyDisplay.trader : ''),
-          contractorName:
-            explicitContractor || (partyDisplay.prime !== '—' ? partyDisplay.prime : ''),
-          siteName:
-            sanitizeSiteNameValue(order.siteName) ||
-            sanitizeSiteNameValue(order.projectName) ||
-            '',
-          siteAddress: order.siteAddress != null ? String(order.siteAddress) : '',
-          sitePhone: order.sitePhone != null ? String(order.sitePhone) : '',
-          mixText: order.mixText != null ? String(order.mixText) : '',
-          hasTest: Boolean(order.has_test),
-        });
-      }, [order?.id, open, projectById, customerById]);
-
-      if (!open || !order) return null;
-
-      const projectId = String(order?.project_id ?? order?.projectId ?? '').trim();
-      const linkedProject = projectId ? projectById?.[projectId] : null;
-      const linkedCustomerId = String(
-        linkedProject?.customer_id ?? order?.customer_id ?? order?.customerId ?? '',
-      ).trim();
-      const linkedCustomer =
-        (linkedCustomerId ? customerById?.[linkedCustomerId] : null) ?? null;
-      const projectPartyDisplay = linkedProject
-        ? resolveProjectPartyDisplay(linkedProject, linkedCustomer)
-        : null;
-      const fieldLabel = 'mb-1 block text-sm font-bold text-slate-600 dark:text-slate-300 sm:text-base';
-      const fieldInput =
-        'mt-1 min-h-[48px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 sm:text-lg';
-      const handleInputChange = (e) => {
-        const { name, value, type, checked } = e.target;
-        setEditData((prev) => ({
-          ...prev,
-          [name]: type === 'checkbox' ? checked : value,
-        }));
-      };
-      const setEditField = (name, value) => {
-        setEditData((prev) => ({ ...prev, [name]: value }));
-      };
-      const handleAgentChange = (e) => {
-        const nextId = e.target.value;
-        const sync = buildAgentOrganizationSyncPatch(nextId || null, agentOrganizations);
-        setEditData((prev) => ({
-          ...prev,
-          agentOrganizationId: nextId,
-          traderName: sync.traderName,
-        }));
-      };
-
-      const handleSubmit = async (e) => {
-        e.preventDefault();
-        if (submittingRef.current) return;
-        const slotMeta = TIME_SLOTS.find((s) => s.value === editData.timeSlot);
-        const timeMinutes = parseInt(editData.timeSlot, 10);
-        const slotLabel = slotMeta?.label ?? '';
-        const agentSync = buildAgentOrganizationSyncPatch(
-          editData.agentOrganizationId || null,
-          agentOrganizations,
-        );
-        const patch = {
-          preferredDate: editData.preferredDate,
-          timeSlot: editData.timeSlot,
-          timeSlotMinutes: Number.isFinite(timeMinutes) ? timeMinutes : null,
-          timeSlotLabel: slotLabel,
-          timePointLabel: slotLabel,
-          scheduleMatchDate: editData.preferredDate,
-          scheduleMatchMinutes: Number.isFinite(timeMinutes) ? timeMinutes : null,
-          vehicleType: editData.vehicleType,
-          vehicleLabel: editData.vehicleType === 'large' ? '大型' : '小型',
-          quantityM3: editData.quantityM3.trim(),
-          unloadDuration: editData.unloadDuration,
-          unloadDurationMinutes: editData.unloadDuration,
-          unloadDurationLabel: factoryUnloadDurationLabel({ unloadDuration: editData.unloadDuration }),
-          contractorName: editData.contractorName.trim(),
-          siteName: sanitizeSiteNameValue(editData.siteName),
-          siteAddress: editData.siteAddress.trim(),
-          sitePhone: editData.sitePhone.trim(),
-          mixText: editData.mixText.trim(),
-          has_test: editData.hasTest,
-          ...agentSync,
-        };
-        submittingRef.current = true;
-        setSubmitting(true);
-        try {
-          await onSave(order.id, patch);
-        } finally {
-          submittingRef.current = false;
-          setSubmitting(false);
-        }
-      };
-
-      return (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4"
-          role="presentation"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) onClose();
-          }}
-        >
-          <div
-            className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="factory-order-edit-title"
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
-              <h2 id="factory-order-edit-title" className="text-lg font-black text-slate-900 sm:text-xl">
-                注文内容の編集
-              </h2>
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 hover:bg-slate-100 sm:text-base"
-              >
-                閉じる
-              </button>
-            </div>
-            <form className="flex min-h-0 flex-1 flex-col" onSubmit={handleSubmit}>
-              <div className="min-h-0 flex-1 overflow-y-auto pr-2 px-4 py-4">
-                <section className="space-y-4 rounded-xl border-2 border-indigo-300 bg-indigo-50 p-3 shadow-inner dark:bg-indigo-950/40">
-                  <div>
-                    <label className={fieldLabel} htmlFor="foe-date">日付（納入日）</label>
-                    <input id="foe-date" name="preferredDate" type="date" value={editData.preferredDate} onChange={handleInputChange} className={fieldInput} required />
-                  </div>
-                  <div>
-                    <label className={fieldLabel} htmlFor="foe-slot">時間（出荷時間）</label>
-                    <select id="foe-slot" name="timeSlot" value={editData.timeSlot} onChange={handleInputChange} className={fieldInput}>
-                      {TIME_SLOTS.map((s) => (
-                        <option key={s.value} value={s.value}>{s.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className={fieldLabel} htmlFor="foe-unload-duration">1台あたりの荷卸し（車返却）予定時間</label>
-                    <select id="foe-unload-duration" name="unloadDuration" value={editData.unloadDuration} onChange={handleInputChange} className={fieldInput}>
-                      <option value="15">15分</option>
-                      <option value="30">30分（標準）</option>
-                      <option value="45">45分</option>
-                      <option value="60">60分（手押し車など時間要）</option>
-                      <option value="95_plus">95分以上（要相談）</option>
-                    </select>
-                  </div>
-                  <div>
-                    <span className={fieldLabel}>車両（車種）</span>
-                    <div className="mt-2 flex gap-3">
-                      <button type="button" onClick={() => setEditField('vehicleType', 'large')} className={'min-h-[48px] flex-1 rounded-lg border-2 text-base font-black sm:text-lg ' + (editData.vehicleType === 'large' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50')}>大型</button>
-                      <button type="button" onClick={() => setEditField('vehicleType', 'small')} className={'min-h-[48px] flex-1 rounded-lg border-2 text-base font-black sm:text-lg ' + (editData.vehicleType === 'small' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50')}>小型</button>
-                    </div>
-                  </div>
-                  <div>
-                    <label className={fieldLabel} htmlFor="foe-qty">数量（m³）</label>
-                    <input id="foe-qty" name="quantityM3" type="text" inputMode="decimal" value={editData.quantityM3} onChange={handleInputChange} className={fieldInput} />
-                  </div>
-                  <div className="rounded-lg border-2 border-indigo-200 bg-white px-3 py-3">
-                    <label className="flex cursor-pointer items-start gap-3" htmlFor="foe-has-test">
-                      <input id="foe-has-test" name="hasTest" type="checkbox" checked={editData.hasTest} onChange={handleInputChange} className="mt-1 h-5 w-5 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-                      <span className="min-w-0 text-sm font-bold text-slate-800 sm:text-base">
-                        試験の有無（試験あり）
-                        <span className="mt-1 block text-xs font-medium text-slate-500">未チェックは試験なしとして保存されます。</span>
-                      </span>
-                    </label>
-                  </div>
-                </section>
-
-                <section className="mt-4 space-y-4 rounded-xl border border-slate-200 bg-white p-3">
-                  <p className="text-xs font-black uppercase tracking-wider text-slate-500">物件基本情報</p>
-                  {projectPartyDisplay ? (
-                    <dl className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
-                      <div>
-                        <dt className="font-bold text-slate-500">業者（元請）</dt>
-                        <dd className="font-black text-slate-900">
-                          {projectPartyDisplay.prime}
-                          {projectPartyDisplay.billOnPrime ? <BillingMark /> : null}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="font-bold text-slate-500">下請</dt>
-                        <dd className="font-black text-slate-900">
-                          {projectPartyDisplay.sub}
-                          {projectPartyDisplay.billOnSub ? <BillingMark /> : null}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="font-bold text-slate-500">商社</dt>
-                        <dd className="font-black text-slate-900">{projectPartyDisplay.trader}</dd>
-                      </div>
-                    </dl>
-                  ) : null}
-                  <div>
-                    <label className={fieldLabel} htmlFor="foe-contractor">業者名</label>
-                    <input id="foe-contractor" name="contractorName" type="text" value={editData.contractorName} onChange={handleInputChange} className={fieldInput} />
-                  </div>
-                  <div>
-                    <label className={fieldLabel} htmlFor="foe-trader">商社</label>
-                    <select
-                      id="foe-trader"
-                      name="agentOrganizationId"
-                      value={editData.agentOrganizationId}
-                      onChange={handleAgentChange}
-                      className={fieldInput}
-                    >
-                      <option value="">商社なし（直接請求）</option>
-                      {agentOrganizations.map((org) => (
-                        <option key={org.id} value={String(org.id)}>
-                          {org.name || org.id}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className={fieldLabel} htmlFor="foe-site">
-                      現場名
-                    </label>
-                    <input id="foe-site" name="siteName" type="text" value={editData.siteName} onChange={handleInputChange} className={fieldInput} placeholder="例：〇〇ビル新築工事" />
-                    <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
-                      <p className="text-[10px] font-bold text-slate-500">専用発注URL（現場名とは別）</p>
-                      <SiteOrderUrlActions
-                        urlToken={resolveSiteUrlToken(order, projectById, customerById)}
-                        siteName={editData.siteName || resolveOrderSiteDisplayName(order)}
-                        customerName={
-                          customerById?.[String(order?.customer_id ?? order?.customerId ?? '')]?.company_name ||
-                          editData.contractorName
-                        }
-                        traderName={editData.traderName}
-                        project={projectById?.[String(order?.project_id ?? order?.projectId ?? '')]}
-                        customer={customerById?.[String(order?.customer_id ?? order?.customerId ?? '')]}
-                        onCopied={onSiteUrlCopied}
-                        compact
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className={fieldLabel} htmlFor="foe-addr">現場住所</label>
-                    <input id="foe-addr" name="siteAddress" type="text" value={editData.siteAddress} onChange={handleInputChange} className={fieldInput} />
-                  </div>
-                </section>
-
-                <section className="mt-4 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <p className="text-xs font-black uppercase tracking-wider text-slate-500">補足情報</p>
-                  <div>
-                    <label className={fieldLabel} htmlFor="foe-phone">電話番号</label>
-                    <input id="foe-phone" name="sitePhone" type="text" value={editData.sitePhone} onChange={handleInputChange} className={fieldInput} />
-                  </div>
-                  <div>
-                    <label className={fieldLabel} htmlFor="foe-mix">配合</label>
-                    <input id="foe-mix" name="mixText" type="text" value={editData.mixText} onChange={handleInputChange} className={fieldInput} />
-                  </div>
-                </section>
-              </div>
-              <div className="flex shrink-0 flex-col gap-2 border-t border-slate-200 bg-white px-4 py-3 sm:flex-row">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  disabled={submitting}
-                  className="min-h-[52px] flex-1 rounded-xl border-2 border-slate-300 bg-white text-base font-black text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg"
-                >
-                  キャンセル
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  aria-busy={submitting}
-                  className="min-h-[52px] flex-1 rounded-xl border-2 border-indigo-700 bg-indigo-600 text-base font-black text-white shadow hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg"
-                >
-                  {submitting ? '保存中…' : '保存'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      );
-    }
-
     function OrderRequestCard({
       order,
       idx,
@@ -2474,6 +2119,11 @@ function isUnreadForFactory(messages, readKey) {
                 管理者変更あり
               </span>
             ) : null}
+            {order.is_customer_modified ? (
+              <span className="inline-flex rounded-full border-2 border-amber-400 bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-900 sm:text-[11px]">
+                お客様変更あり
+              </span>
+            ) : null}
             <LocationPendingBadge order={order} />
             <PhoneOrderBadge order={order} />
           </div>
@@ -2483,6 +2133,11 @@ function isUnreadForFactory(messages, readKey) {
 
       const renderDetailBody = () => (
         <>
+          {order.is_customer_modified ? (
+            <div className="mb-3 rounded-xl border-2 border-amber-400 bg-amber-50 px-3 py-2 text-sm font-black text-amber-950 dark:border-amber-500/70 dark:bg-amber-950/40 dark:text-amber-100">
+              ⚠️ お客様が内容を変更しました。最新の内容をご確認のうえ受注してください。
+            </div>
+          ) : null}
           <div className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border border-slate-200/90 bg-white px-3 py-3 dark:border-slate-600 dark:bg-slate-900/60 sm:grid-cols-2">
             <div className="min-w-0">
               <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 sm:text-sm">現場担当者</p>
@@ -2848,6 +2503,7 @@ function isUnreadForFactory(messages, readKey) {
               order={order}
               open={editOpen}
               onClose={() => setEditOpen(false)}
+              editorRole="factory"
               projectById={projectById}
               customerById={customerById}
               onSiteUrlCopied={onSiteUrlCopied}
@@ -3861,6 +3517,7 @@ function isUnreadForFactory(messages, readKey) {
       const lastNotifiedHeadIdRef = useRef(null);
       const notifiedOrderIds = useRef(new Set());
       const notifiedAdminModifiedOrderIds = useRef(new Set());
+      const notifiedCustomerModifiedOrderIds = useRef(new Set());
       const initialNotificationMuteDoneRef = useRef(false);
       const [factories, setFactories] = useState([]);
       const [activeFactoryId, setActiveFactoryId] = useState('');
@@ -4320,6 +3977,7 @@ function isUnreadForFactory(messages, readKey) {
             for (const o of visible) {
               if (o?.id) notifiedOrderIds.current.add(o.id);
               if (o?.id && o.is_admin_modified) notifiedAdminModifiedOrderIds.current.add(o.id);
+              if (o?.id && o.is_customer_modified) notifiedCustomerModifiedOrderIds.current.add(o.id);
             }
             return;
           }
@@ -4335,6 +3993,12 @@ function isUnreadForFactory(messages, readKey) {
               setRawOrders((prev) => (Array.isArray(prev) ? prev.map(patchOrder) : prev));
               setOrders((prev) => (Array.isArray(prev) ? prev.map(patchOrder) : prev));
             });
+          }
+          const customerModified = visible.find((o) => o?.id && o.is_customer_modified && !notifiedCustomerModifiedOrderIds.current.has(o.id));
+          if (customerModified) {
+            notifiedCustomerModifiedOrderIds.current.add(customerModified.id);
+            setActionNotice('⚠️ お客様が内容を変更しました。最新の内容をご確認のうえ受注してください。');
+            window.setTimeout(() => setActionNotice(''), 6000);
           }
           const isNotifyCandidate = (o) => {
             if (!o?.id) return false;
@@ -5113,21 +4777,43 @@ function isUnreadForFactory(messages, readKey) {
         setAcceptSubmitting(true);
         markOrderRead(order.id);
         try {
+          const latest = await db.fetchOrderById(order.id);
+          if (!latest) {
+            window.alert("注文が見つかりません。画面を更新してから再度お試しください。");
+            return;
+          }
+          const localUpdatedAt = String(order.updated_at ?? order.updatedAt ?? "");
+          const serverUpdatedAt = String(latest.updated_at ?? latest.updatedAt ?? "");
+          if (localUpdatedAt !== serverUpdatedAt) {
+            let refreshed = latest;
+            if (latest.is_customer_modified) {
+              const cleared = await db.clearOrderCustomerModifiedFlag(order.id);
+              if (cleared) refreshed = cleared;
+              else refreshed = { ...latest, is_customer_modified: false };
+            }
+            const patchOrder = (o) => (o?.id === refreshed.id ? { ...o, ...refreshed } : o);
+            setRawOrders((prev) => (Array.isArray(prev) ? prev.map(patchOrder) : prev));
+            setOrders((prev) => (Array.isArray(prev) ? prev.map(patchOrder) : prev));
+            setAcceptModalOrder(refreshed);
+            window.alert("注文内容が更新されています。最新の内容に更新しました。再度ご確認のうえ受注してください");
+            return;
+          }
+
           const accepted = await db.acceptOrderForFactory(order, activeFactoryId, activeFactoryName);
           setRawOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === accepted.id ? accepted : o)) : prev));
           setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === accepted.id ? accepted : o)) : prev));
           setAcceptModalOrder(null);
-          setActionNotice('受注しました！');
-          window.setTimeout(() => setActionNotice(''), 4500);
+          setActionNotice("受注しました！");
+          window.setTimeout(() => setActionNotice(""), 4500);
           await appendOrderChatMessage(
             accepted.id,
-            'system',
-            `【受注】${activeFactoryName}がこの注文を受注しました。`,
+            "system",
+            "【受注】" + activeFactoryName + "がこの注文を受注しました。",
           );
           await syncFromStorage({ playSound: false });
         } catch (e) {
           console.error(e);
-          window.alert('受注処理に失敗しました。通信状態を確認して再度お試しください。');
+          window.alert("受注処理に失敗しました。通信状態を確認して再度お試しください。");
         } finally {
           setAcceptSubmitting(false);
         }
@@ -5138,6 +4824,7 @@ function isUnreadForFactory(messages, readKey) {
         activeFactoryName,
         markOrderRead,
         syncFromStorage,
+        appendOrderChatMessage,
       ]);
 
       const handleRejectOrder = useCallback(

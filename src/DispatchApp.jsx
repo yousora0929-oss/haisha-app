@@ -51,6 +51,7 @@ import { PhoneOrderBadge } from './components/PhoneOrderBadge.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { CompanyMemberContactList } from './components/CompanyMemberContactList.jsx';
+import { OrderFullEditModal, isPreAcceptOrderEditable } from './components/OrderFullEditModal.jsx';
 import { AdminScheduleImportSection } from './components/AdminScheduleImportSection.jsx';
 import { customerSuggestTexts, organizationSuggestTexts, projectSuggestTexts, sortCustomersByUsageFrequency } from './utils/masterSuggest.js';
 import { dedupeCustomersByCompany } from './utils/dedupeCustomersByCompany.js';
@@ -887,6 +888,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       onReschedulePreferred,
       onCancelPreferred,
       choiceSubmitting = false,
+      onEditOrder = null,
     }) {
       const addr = order.siteAddress?.trim() || '';
       const party = orderPartyInfo(order);
@@ -903,6 +905,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const isCustomerCancelled = order.status === 'customer_cancelled';
       const showPreferredChoice = needsPreferredCustomerChoice(order);
       const showFullRejectChoice = isFullCompanyRejectionForCustomer(order, escalationCtx || {});
+      const canEditPending = isPreAcceptOrderEditable(order) && typeof onEditOrder === 'function';
       const showMapPlaceholder = useMemo(
         () => shouldShowMapPendingPlaceholder(order, project),
         [order, project],
@@ -1045,6 +1048,19 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </div>
 
               <div className="flex items-center gap-2">
+                {canEditPending ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e?.stopPropagation?.();
+                      onEditOrder(order);
+                    }}
+                    className="rounded-lg border-2 border-indigo-500 bg-indigo-50 px-3 py-1.5 text-sm font-black text-indigo-900 shadow-sm hover:bg-indigo-100 active:scale-[0.99]"
+                    title="注文内容を編集"
+                  >
+                    編集
+                  </button>
+                ) : null}
                 {mapUrl ? (
                   <>
                     <button
@@ -1186,7 +1202,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
     }
 
-    function CustomerOrderCalendar({ orders, selectedDate, onSelectDate, currentMonth, onMonthChange, escalationCtx = null, projectById = {} }) {
+    function CustomerOrderCalendar({
+      orders,
+      selectedDate,
+      onSelectDate,
+      currentMonth,
+      onMonthChange,
+      escalationCtx = null,
+      projectById = {},
+      onEditOrder = null,
+    }) {
       const [expandedStatusOrderId, setExpandedStatusOrderId] = useState('');
       const lastTapRef = useRef({ orderId: null, at: 0 });
       const days = useMemo(() => {
@@ -1299,6 +1324,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   const renderOrderBody = (order, { showSite }) => {
                     const party = orderPartyInfo(order);
                     const meta = historyStatusMeta(order, escalationCtx);
+                    const canEditPending =
+                      isPreAcceptOrderEditable(order) && typeof onEditOrder === 'function';
                     return (
                       <div
                         onDoubleClick={() => toggleStatusCard(order.id)}
@@ -1306,7 +1333,21 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         className="cursor-pointer"
                         title="ダブルタップで現在のステータスを表示"
                       >
-                        <span className={'inline-flex rounded-full px-3 py-1 text-xs font-black ' + statusClass(order)}>{meta.label}</span>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className={'inline-flex rounded-full px-3 py-1 text-xs font-black ' + statusClass(order)}>{meta.label}</span>
+                          {canEditPending ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onEditOrder(order);
+                              }}
+                              className="rounded-lg border-2 border-indigo-500 bg-indigo-50 px-2.5 py-1 text-[11px] font-black text-indigo-900 hover:bg-indigo-100"
+                            >
+                              編集
+                            </button>
+                          ) : null}
+                        </div>
                         {showSite ? (
                           <p className="mt-2 text-sm font-black text-slate-900">{party.site || '現場未設定'}</p>
                         ) : null}
@@ -1441,6 +1482,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [loginLoading, setLoginLoading] = useState(false);
       const [adminSettings, setAdminSettings] = useState({ admin_name: '', phone_number: '' });
       const [dashboardOrders, setDashboardOrders] = useState([]);
+      const [customerEditOrder, setCustomerEditOrder] = useState(null);
       const [chatThreads, setChatThreads] = useState({});
       const [readChatKeys, setReadChatKeys] = useState({});
       const [unreadChatsByOrder, setUnreadChatsByOrder] = useState({});
@@ -2707,6 +2749,33 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             (projects || []).filter((p) => p?.id).map((p) => [String(p.id), p]),
           ),
         [projects],
+      );
+      const customerById = useMemo(
+        () =>
+          Object.fromEntries(
+            (customers || []).filter((c) => c?.id).map((c) => [String(c.id), c]),
+          ),
+        [customers],
+      );
+
+      const handleOpenCustomerOrderEdit = useCallback((order) => {
+        if (!isPreAcceptOrderEditable(order)) return;
+        setCustomerEditOrder(order);
+      }, []);
+
+      const handleCustomerOrderFullSave = useCallback(
+        async (orderId, patch) => {
+          const updated = await db.customerUpdateOrder(orderId, patch);
+          setDashboardOrders((prev) =>
+            (Array.isArray(prev) ? prev : []).map((o) =>
+              o?.id === orderId ? { ...o, ...updated } : o,
+            ),
+          );
+          setCustomerEditOrder(null);
+          await refreshDashboard({ skipChatSound: true });
+          return true;
+        },
+        [refreshDashboard],
       );
       const filteredInProgressOrders = useMemo(
         () =>
@@ -4103,7 +4172,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </section>
               ) : null}
               {customerOrderTab === 'new' && newOrderMode ? (
-              <div ref={orderFormRef} className="mx-auto w-full max-w-4xl min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6 lg:max-w-4xl lg:p-8">
+              <div ref={orderFormRef} className="mx-auto w-full max-w-4xl min-w-0 overflow-x-hidden overflow-y-visible rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6 lg:max-w-4xl lg:p-8">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h2 className="text-sm font-black uppercase tracking-wider text-indigo-700">新規発注</h2>
@@ -4118,7 +4187,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   ) : null}
                 </div>
                 <form
-                  className="mt-6 flex min-w-0 flex-col gap-6 overflow-hidden"
+                  className="mt-6 flex min-w-0 flex-col gap-6 overflow-x-hidden overflow-y-visible"
                   onSubmit={(e) => e.preventDefault()}
                 >
               <div className="flex min-w-0 flex-col gap-6">
@@ -5172,6 +5241,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                 onEscalatePreferred={(o) => void runCustomerChoice(o, 'escalate')}
                                 onReschedulePreferred={(o) => void runCustomerChoice(o, 'reschedule')}
                                 onCancelPreferred={(o) => void runCustomerChoice(o, 'cancel')}
+                                onEditOrder={handleOpenCustomerOrderEdit}
                               />
                             );
                             if (entry.type === 'group') {
@@ -5404,6 +5474,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 currentMonth={customerCalendarMonth}
                 escalationCtx={customerEscalationCtx}
                 projectById={projectById}
+                onEditOrder={handleOpenCustomerOrderEdit}
                 onMonthChange={(nextMonth) => {
                   const next = nextMonth instanceof Date && !Number.isNaN(nextMonth.getTime()) ? nextMonth : new Date();
                   const normalized = new Date(next.getFullYear(), next.getMonth(), 1);
@@ -5433,6 +5504,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             ) : null}
               </PullToRefresh>
             </main>
+
+            <OrderFullEditModal
+              order={customerEditOrder}
+              open={Boolean(customerEditOrder)}
+              onClose={() => setCustomerEditOrder(null)}
+              editorRole="customer"
+              projectById={projectById}
+              customerById={customerById}
+              onSave={handleCustomerOrderFullSave}
+            />
 
             {!isGuestSiteOrder ? (
               <nav className="block lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200" aria-label="カスタマー画面ナビゲーション">

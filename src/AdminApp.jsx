@@ -82,6 +82,7 @@ import {
   parseProjectsCsvFile,
   stripImportMeta,
 } from './utils/adminCsvImport.js';
+import { normalizeCompanyName } from './utils/csvImport.js';
 import {
   findAgentOrganizationByName,
   isUnregisteredTradingCompanyName,
@@ -544,6 +545,7 @@ function ProjectForm({
   const [name, setName] = useState(initial?.name ?? '');
   const [customerId, setCustomerId] = useState(initial?.customer_id ?? '');
   const [contractorName, setContractorName] = useState('');
+  const [registerNewContractor, setRegisterNewContractor] = useState(true);
   const [tradingCompany, setTradingCompany] = useState(() => resolveProjectTradingCompanyName(initial));
   const [tradingCompanyOrganizationId, setTradingCompanyOrganizationId] = useState(
     initial?.trading_company_organization_id ?? '',
@@ -635,6 +637,7 @@ function ProjectForm({
       setContractorName('');
       setCustomerId('');
     }
+    setRegisterNewContractor(true);
     setTradingCompany(resolveProjectTradingCompanyName(initial));
     setTradingCompanyOrganizationId(initial?.trading_company_organization_id ?? '');
     setTradingContactName(String(initial?.trading_contact_name ?? '').trim());
@@ -677,11 +680,11 @@ function ProjectForm({
 
   const findCustomerByExactName = useCallback(
     (text) => {
-      const q = String(text || '').trim().toLowerCase();
+      const q = normalizeCompanyName(text);
       if (!q) return null;
       return (
         contractorCustomers.find(
-          (c) => String(c?.company_name || c?.name || '').trim().toLowerCase() === q,
+          (c) => normalizeCompanyName(c?.company_name || c?.name) === q,
         ) || null
       );
     },
@@ -698,6 +701,7 @@ function ProjectForm({
       }
       const hit = findCustomerByExactName(trimmed);
       if (hit) setCustomerId(String(hit.id));
+      else setCustomerId('');
     },
     [findCustomerByExactName],
   );
@@ -706,7 +710,15 @@ function ProjectForm({
     if (!customer?.id) return;
     setCustomerId(String(customer.id));
     setContractorName(String(customer.company_name || customer.name || '').trim());
+    setRegisterNewContractor(true);
   }, []);
+
+  const isUnmatchedContractor = useMemo(() => {
+    const typed = String(contractorName || '').trim();
+    if (!typed) return false;
+    if (String(customerId || '').trim()) return false;
+    return !findCustomerByExactName(typed);
+  }, [contractorName, customerId, findCustomerByExactName]);
 
   // 業者（元請）に紐づく会社メンバーを現場担当者サジェスト候補にする（DispatchApp と同 RPC）
   useEffect(() => {
@@ -907,7 +919,7 @@ function ProjectForm({
     });
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     const area = String(deliveryArea || '').trim();
     const detail = String(siteAddressDetail || '').trim();
@@ -930,6 +942,7 @@ function ProjectForm({
     const typed = contractorName.trim();
     let nextCustomerId = String(customerId || '').trim();
     let nextDisplayName = '';
+    let justCreatedCustomer = false;
 
     if (!typed) {
       nextCustomerId = '';
@@ -946,12 +959,26 @@ function ProjectForm({
         if (typed !== exactMaster) nextDisplayName = typed;
       } else if (nextCustomerId && masterName && typed !== masterName) {
         nextDisplayName = typed;
+      } else if (!nextCustomerId && registerNewContractor && isUnmatchedContractor) {
+        try {
+          const created = await db.addCustomer({
+            company_name: typed,
+            phone_number: null,
+          });
+          nextCustomerId = String(created?.id || '').trim();
+          nextDisplayName = '';
+          justCreatedCustomer = true;
+        } catch (err) {
+          console.error(err);
+          setAddressError(err?.message || '業者の仮登録に失敗しました。');
+          return;
+        }
       } else if (!nextCustomerId) {
         nextDisplayName = typed;
       }
     }
 
-    if (nextCustomerId) {
+    if (nextCustomerId && !justCreatedCustomer) {
       const contractorHit = contractorCustomers.find(
         (c) => c && String(c.id) === String(nextCustomerId),
       );
@@ -1023,6 +1050,24 @@ function ProjectForm({
         <p className="mt-1 text-[11px] font-medium text-slate-500">
           業者マスタから選ぶと紐づけられます。候補にない名称も自由入力でき、印刷物・専用URLの表記に使われます（任意）。
         </p>
+        {isUnmatchedContractor ? (
+          <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600"
+              checked={registerNewContractor}
+              onChange={(e) => setRegisterNewContractor(e.target.checked)}
+            />
+            <span>
+              <span className="block text-xs font-black text-amber-950">
+                業者管理にも登録する（新規: &quot;{contractorName.trim()}&quot;）
+              </span>
+              <span className="mt-0.5 block text-[11px] font-medium text-amber-800">
+                電話番号未設定のため、ログイン不可の仮登録として保存されます。後で業者管理画面から本登録できます。
+              </span>
+            </span>
+          </label>
+        ) : null}
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
@@ -1342,6 +1387,7 @@ function ProjectForm({
 function ProjectsSection({ factories, factoryNameById }) {
   const [projects, setProjects] = useState([]);
   const [customers, setCustomers] = useState([]);
+  const [tradingCompanies, setTradingCompanies] = useState([]);
   const [agentOrganizations, setAgentOrganizations] = useState([]);
   const [allowedDeliveryAreas, setAllowedDeliveryAreas] = useState([]);
   const [salesStaff, setSalesStaff] = useState([]);
@@ -1359,9 +1405,13 @@ function ProjectsSection({ factories, factoryNameById }) {
     setLoading(true);
     setError('');
     try {
-      const [rows, customerRows, agentOrgRows, settings] = await Promise.all([
+      const [rows, customerRows, tradingRows, agentOrgRows, settings] = await Promise.all([
         db.fetchProjects(),
         db.fetchCustomers(),
+        db.fetchTradingCompanies().catch((e) => {
+          console.warn('[ProjectsSection] trading_companies load failed', e);
+          return [];
+        }),
         db.fetchOrganizationsWithMembers('agent').catch((e) => {
           console.warn('[ProjectsSection] agent organizations load failed', e);
           return [];
@@ -1370,6 +1420,7 @@ function ProjectsSection({ factories, factoryNameById }) {
       ]);
       setProjects(rows);
       setCustomers(customerRows);
+      setTradingCompanies(tradingRows || []);
       setAgentOrganizations(agentOrgRows || []);
       setAllowedDeliveryAreas(normalizeAllowedDeliveryAreas(settings?.allowed_delivery_areas));
       setSalesStaff(normalizeSalesStaffList(settings?.sales_staff));
@@ -1436,7 +1487,7 @@ function ProjectsSection({ factories, factoryNameById }) {
     let unsub = () => {};
     void (async () => {
       unsub = await db.subscribeHaishaRealtime((payload) => {
-        if (payload?.table === 'customers' || payload?.table === 'admin_settings' || payload?.table === 'organizations') {
+        if (payload?.table === 'customers' || payload?.table === 'admin_settings' || payload?.table === 'organizations' || payload?.table === 'trading_companies') {
           if (timerId != null) window.clearTimeout(timerId);
           timerId = window.setTimeout(() => {
             timerId = null;
@@ -1494,12 +1545,13 @@ function ProjectsSection({ factories, factoryNameById }) {
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => { setEditing(null); setFormMode('add'); }} className="min-h-[44px] rounded-lg bg-indigo-600 px-4 text-sm font-black text-white hover:bg-indigo-700">＋ 物件を追加</button>
           <AdminCsvImportButton
-            label="CSV一括取込"
+            label="CSV/Excel一括取込"
             disabled={!defaultMainFactoryId}
             entityLabel="件の物件"
             parseFile={(file) =>
               parseProjectsCsvFile(file, {
                 customers,
+                tradingCompanies,
                 mainFactoryId: defaultMainFactoryId,
                 allowedDeliveryAreas,
                 agentOrganizations,
@@ -1510,23 +1562,107 @@ function ProjectsSection({ factories, factoryNameById }) {
               {
                 key: 'contractor',
                 label: '元請業者',
-                render: (r) => r.__contractorLabel || customers.find((c) => c.id === r.customer_id)?.company_name || '—',
+                render: (r, ctx) => (
+                  <>
+                    {r.__contractorLabel ||
+                      customers.find((c) => c.id === r.customer_id)?.company_name ||
+                      '—'}
+                    {r.__unmatchedContractorName &&
+                    ctx?.contractorSelection?.[normalizeCompanyName(r.__unmatchedContractorName)]
+                      ? ctx.renderNewBadge?.(true)
+                      : null}
+                  </>
+                ),
               },
               { key: 'contractor_display_name', label: '業者名（表記用）' },
-              { key: 'trading_company_name', label: '商社名' },
+              {
+                key: 'trading_company_name',
+                label: '商社名',
+                render: (r, ctx) => (
+                  <>
+                    {r.trading_company_name || '—'}
+                    {r.__unmatchedTradingCompanyName &&
+                    ctx?.tradingSelection?.[normalizeCompanyName(r.__unmatchedTradingCompanyName)]
+                      ? ctx.renderNewBadge?.(true)
+                      : null}
+                  </>
+                ),
+              },
               { key: 'delivery_area', label: 'エリア' },
               { key: 'site_address', label: '現場住所' },
             ]}
             onImport={async (preview) => {
-              const payload = preview.rows.map(stripImportMeta);
+              const contractorKeyOn = preview.registerContractorKeys || {};
+              const tradingKeyOn = preview.registerTradingCompanyKeys || {};
+
+              const contractorsToInsert = (preview.newContractors || []).filter(
+                (c) => contractorKeyOn[normalizeCompanyName(c.name)],
+              );
+              const tradingToInsert = (preview.newTradingCompanies || []).filter(
+                (t) => tradingKeyOn[normalizeCompanyName(t.name)],
+              );
+
+              let insertedTrading = [];
+              if (tradingToInsert.length > 0) {
+                insertedTrading = await db.bulkInsertTradingCompanies(
+                  tradingToInsert.map((t) => ({ name: t.name })),
+                );
+              }
+
+              let insertedContractors = [];
+              if (contractorsToInsert.length > 0) {
+                insertedContractors = await db.bulkInsertCustomers(
+                  contractorsToInsert.map((c) => ({
+                    company_name: c.name,
+                    phone_number: null,
+                  })),
+                );
+              }
+
+              const contractorIdByName = new Map();
+              for (const c of customers || []) {
+                const key = normalizeCompanyName(c.company_name || c.name);
+                if (key && c.id) contractorIdByName.set(key, c.id);
+              }
+              for (const c of insertedContractors) {
+                const key = normalizeCompanyName(c.company_name || c.name);
+                if (key && c.id) contractorIdByName.set(key, c.id);
+              }
+
+              const payload = preview.rows.map((row) => {
+                const next = { ...stripImportMeta(row) };
+                const unmatchedC = row.__unmatchedContractorName;
+                if (unmatchedC) {
+                  const key = normalizeCompanyName(unmatchedC);
+                  if (contractorKeyOn[key] && contractorIdByName.has(key)) {
+                    next.customer_id = contractorIdByName.get(key);
+                  } else {
+                    next.customer_id = null;
+                    if (!next.contractor_display_name) {
+                      next.contractor_display_name = unmatchedC;
+                    }
+                  }
+                }
+                // 商社は名称保存。新規登録ONなら trading_companies に載った名前のまま残す
+                const unmatchedT = row.__unmatchedTradingCompanyName;
+                if (unmatchedT) {
+                  const key = normalizeCompanyName(unmatchedT);
+                  if (!tradingKeyOn[key]) {
+                    // 登録しない：名称は残すが新規マスタには載せない（表記用テキストのみ）
+                  }
+                }
+                return next;
+              });
+
               await db.bulkInsertProjects(payload);
               const skipped = preview.skipped?.length ?? 0;
-              const unregisteredWarnings = (preview.warnings || []).filter((w) =>
-                String(w).startsWith('未登録商社名:'),
-              );
-              const warningNote = unregisteredWarnings.length ? ` ${unregisteredWarnings.join(' ')}` : '';
+              const parts = [
+                `${payload.length}件の物件`,
+                `${insertedContractors.length}件の業者（仮登録）`,
+                `${insertedTrading.length}件の商社`,
+              ];
               setImportNotice(
-                `${payload.length}件の物件を取り込みました。${skipped > 0 ? `（${skipped}行スキップ）` : ''}${warningNote}`,
+                `${parts.join('、')}を取り込みました。${skipped > 0 ? `（${skipped}行スキップ）` : ''}`,
               );
             }}
             onComplete={() => {

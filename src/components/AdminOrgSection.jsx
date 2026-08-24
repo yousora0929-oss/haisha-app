@@ -1113,8 +1113,13 @@ export function AdminOrgSection({ orgType, label }) {
                           {member.furigana}
                         </span>
                       ) : null}
-                      <span className="min-w-[6rem] text-gray-700">
-                        {member.company_name || org.name || '—'}
+                      <span className="flex min-w-[6rem] flex-wrap items-center gap-1.5 text-gray-700">
+                        <span>{member.company_name || org.name || '—'}</span>
+                        {!String(member.phone_number || '').trim() ? (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">
+                            未確認
+                          </span>
+                        ) : null}
                       </span>
                       <span className="min-w-[7rem] text-gray-600">
                         {member.phone_number ? formatPhoneNumberJP(member.phone_number) : '—'}

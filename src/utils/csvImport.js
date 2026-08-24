@@ -286,3 +286,58 @@ export function downloadCsvWithUtf8Bom(filename, rows) {
   link.remove();
   URL.revokeObjectURL(url);
 }
+
+/**
+ * 業者名・商社名の名寄せ用正規化（法人格の統一は行わない）
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function normalizeCompanyName(value) {
+  return String(value ?? '')
+    .trim()
+    .replace(/\u3000/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function spreadsheetExt(file) {
+  const name = String(file?.name || '').toLowerCase();
+  const i = name.lastIndexOf('.');
+  return i >= 0 ? name.slice(i) : '';
+}
+
+/**
+ * CSV / Excel を共通の string[][] matrix に変換
+ * @param {File} file
+ * @returns {Promise<string[][]>}
+ */
+export async function parseSpreadsheetFile(file) {
+  if (!file) throw new Error('ファイルが選択されていません。');
+  const ext = spreadsheetExt(file);
+  const isExcel = ext === '.xlsx' || ext === '.xls';
+  const isCsv = ext === '.csv' || (!ext && /csv|text\/plain/i.test(String(file.type || '')));
+
+  if (isExcel) {
+    const XLSX = await import('xlsx');
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: 'array' });
+    const sheetName = workbook.SheetNames?.[0];
+    if (!sheetName) throw new Error('Excelファイルにシートがありません。');
+    const sheet = workbook.Sheets[sheetName];
+    const matrix = XLSX.utils.sheet_to_json(sheet, {
+      header: 1,
+      raw: false,
+      defval: '',
+    });
+    return (Array.isArray(matrix) ? matrix : [])
+      .map((r) => (Array.isArray(r) ? r : []).map((c) => String(c ?? '').trim()))
+      .filter((r) => r.some((c) => c !== ''));
+  }
+
+  if (!isCsv && ext && ext !== '.csv') {
+    throw new Error('対応形式は .csv / .xlsx / .xls です。');
+  }
+
+  const text = await readCsvFileAsText(file);
+  return parseCsvText(text);
+}

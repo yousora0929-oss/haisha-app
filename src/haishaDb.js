@@ -46,7 +46,7 @@ import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils
 import { generateInitialPassword } from './utils/initialPassword.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, site_history_contractor_id, is_admin_modified, is_factory_modified, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at';
+  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, site_history_contractor_id, is_admin_modified, is_factory_modified, is_customer_modified, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -378,6 +378,7 @@ export function normalizeOrderRow(row) {
             : null,
     is_admin_modified: row.is_admin_modified === true,
     is_factory_modified: row.is_factory_modified === true,
+    is_customer_modified: row.is_customer_modified === true,
     // 相談ステータスは専用カラムを唯一の正とする（order_data へはフォールバックしない）
     factory_consult_status:
       row.factory_consult_status != null ? String(row.factory_consult_status).trim() : '',
@@ -1254,6 +1255,12 @@ export async function updateOrderDetails(orderId, updatedData) {
   ) {
     updateRow.is_factory_modified = Boolean(patch.is_factory_modified ?? patch.isFactoryModified);
   }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'is_customer_modified') ||
+    Object.prototype.hasOwnProperty.call(patch, 'isCustomerModified')
+  ) {
+    updateRow.is_customer_modified = Boolean(patch.is_customer_modified ?? patch.isCustomerModified);
+  }
   if (Object.prototype.hasOwnProperty.call(patch, 'agent_organization_id')) {
     updateRow.agent_organization_id = sanitizeRefId(patch.agent_organization_id) || null;
     // 表示名は order_data 側（mergedOrderData）に既に含まれている想定
@@ -1276,6 +1283,80 @@ export async function adminUpdateOrder(orderId, updatedData) {
   if (!id) throw new Error('orderId が必要です');
   const patch = updatedData && typeof updatedData === 'object' && !Array.isArray(updatedData) ? updatedData : {};
   return updateOrderDetails(id, { ...patch, is_admin_modified: true });
+}
+
+/** 工場未受注（pending 等）のうち、顧客が注文内容を編集するときの更新（is_customer_modified を自動付与） */
+export async function customerUpdateOrder(orderId, updatedData) {
+  const id = String(orderId || '').trim();
+  if (!id) throw new Error('orderId が必要です');
+  const patch = updatedData && typeof updatedData === 'object' && !Array.isArray(updatedData) ? updatedData : {};
+
+  const { data: row, error: selErr } = await supabase
+    .from('orders')
+    .select('status')
+    .eq('id', id)
+    .maybeSingle();
+  if (selErr) throw selErr;
+  if (!row) throw new Error('注文が見つかりません');
+
+  const status = String(row.status || 'pending').trim();
+  const isPreAccept = status === 'pending' || status === 'pending_association';
+  return updateOrderDetails(id, {
+    ...patch,
+    ...(isPreAccept ? { is_customer_modified: true } : {}),
+  });
+}
+
+/** 注文1件を最新状態で取得（受注鮮度ガード等） */
+export async function fetchOrderById(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id) return null;
+  const { data, error } = await supabase.from('orders').select(ORDER_SELECT).eq('id', id).maybeSingle();
+  if (error) {
+    console.error('fetchOrderById failed', error);
+    throw error;
+  }
+  return data ? normalizeOrderRow(data) : null;
+}
+
+/** 顧客変更通知の確認後、DB側フラグを下ろす（カラム＋order_data の両方） */
+export async function clearOrderCustomerModifiedFlag(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id) return null;
+  if (!supabase?.from) {
+    console.warn('[haisha] is_customer_modified クリア失敗: Supabase client is not ready');
+    return null;
+  }
+  try {
+    const { data: row, error: selErr } = await supabase
+      .from('orders')
+      .select(ORDER_SELECT)
+      .eq('id', id)
+      .maybeSingle();
+    if (selErr) {
+      console.warn('[haisha] is_customer_modified クリア失敗', selErr);
+      return null;
+    }
+    if (!row) return null;
+    const od =
+      row.order_data && typeof row.order_data === 'object' && !Array.isArray(row.order_data)
+        ? { ...row.order_data, is_customer_modified: false }
+        : { is_customer_modified: false };
+    const { data, error } = await supabase
+      .from('orders')
+      .update({ is_customer_modified: false, order_data: od })
+      .eq('id', id)
+      .select(ORDER_SELECT)
+      .maybeSingle();
+    if (error) {
+      console.warn('[haisha] is_customer_modified クリア失敗', error);
+      return null;
+    }
+    return data ? normalizeOrderRow(data) : null;
+  } catch (err) {
+    console.warn('[haisha] is_customer_modified クリア失敗', err);
+    return null;
+  }
 }
 
 /** 管理者変更通知を表示済みにした後、DB側フラグを下ろす（カラム＋order_data の両方） */
@@ -2195,6 +2276,7 @@ export async function acceptOrderForFactory(order, factorySiteId, factorySiteNam
     factory_consult_started_at: '',
     factory_consult_by_factory_id: '',
     factoryConsultByFactoryId: '',
+    is_customer_modified: false,
   };
   const { error } = await supabase
     .from('orders')
@@ -2207,6 +2289,7 @@ export async function acceptOrderForFactory(order, factorySiteId, factorySiteNam
       factory_consult_started_at: null,
       factory_consult_by_factory_id: null,
       accepted_at: acceptedAt,
+      is_customer_modified: false,
     })
     .eq('id', id)
     .eq('status', 'pending');
@@ -2216,7 +2299,7 @@ export async function acceptOrderForFactory(order, factorySiteId, factorySiteNam
   }
   const { data: verify, error: verifyErr } = await supabase
     .from('orders')
-    .select('id')
+    .select(ORDER_SELECT)
     .eq('id', id)
     .eq('factory_site_id', fid)
     .eq('status', 'accepted')
@@ -2230,7 +2313,7 @@ export async function acceptOrderForFactory(order, factorySiteId, factorySiteNam
     console.error('acceptOrderForFactory optimistic lock failed', { orderId: id, factorySiteId: fid });
     throw err;
   }
-  return nextOrder;
+  return normalizeOrderRow(verify) || { ...nextOrder, is_customer_modified: false };
 }
 
 export async function rejectOrderForFactory(orderId, factoryId, options = {}) {
@@ -3494,6 +3577,56 @@ export async function fetchCustomers() {
 
 const BULK_INSERT_CHUNK = 100;
 
+/** 商社マスタ（trading_companies） */
+export async function fetchTradingCompanies() {
+  const { data, error } = await supabase
+    .from('trading_companies')
+    .select('id, name, created_at, updated_at, contacts')
+    .order('name', { ascending: true });
+  if (error) throw error;
+  return (data || [])
+    .map((row) => ({
+      id: row.id,
+      name: String(row.name || '').trim(),
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      contacts: Array.isArray(row.contacts) ? row.contacts : [],
+    }))
+    .filter((t) => t.id && t.name);
+}
+
+export async function bulkInsertTradingCompanies(rows) {
+  const list = Array.isArray(rows) ? rows.filter((r) => r && typeof r === 'object') : [];
+  if (list.length === 0) return [];
+
+  const prepared = [];
+  const seen = new Set();
+  for (const row of list) {
+    const name = String(row?.name || '').trim();
+    if (!name) throw new Error('商社名が空の行があります');
+    const key = name.replace(/\u3000/g, ' ').replace(/\s+/g, ' ').trim();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    prepared.push({ name });
+  }
+  if (prepared.length === 0) return [];
+
+  const inserted = [];
+  for (let i = 0; i < prepared.length; i += BULK_INSERT_CHUNK) {
+    const chunk = prepared.slice(i, i + BULK_INSERT_CHUNK);
+    const { data, error } = await supabase.from('trading_companies').insert(chunk).select('id, name, created_at, updated_at, contacts');
+    if (error) throw error;
+    inserted.push(...(data || []));
+  }
+  return inserted.map((row) => ({
+    id: row.id,
+    name: String(row.name || '').trim(),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    contacts: Array.isArray(row.contacts) ? row.contacts : [],
+  }));
+}
+
 export async function bulkInsertCustomers(customerRows) {
   const list = Array.isArray(customerRows) ? customerRows.filter((r) => r && typeof r === 'object') : [];
   if (list.length === 0) return [];
@@ -3501,6 +3634,20 @@ export async function bulkInsertCustomers(customerRows) {
   const prepared = list.map((customerData) => {
     const companyName = String(customerData?.company_name || customerData?.name || '').trim();
     if (!companyName) throw new Error('業者名（会社名）が空の行があります');
+    const provisional =
+      customerData?.phone_number === null ||
+      customerData?.allowProvisional === true ||
+      customerData?.__provisional === true;
+    if (provisional) {
+      // phone_number NULL = 仮登録（ログイン不可）。login_password は省略して DB default に任せる
+      return {
+        company_name: companyName,
+        furigana: String(customerData?.furigana || '').trim() || null,
+        manager_name: String(customerData?.manager_name || '').trim() || null,
+        phone_number: null,
+        role: String(customerData?.role || 'contractor').trim() || 'contractor',
+      };
+    }
     const loginPassword = String(customerData?.login_password || '').trim();
     if (!loginPassword) throw new Error('ログインパスワードが空の行があります');
     const phoneNumber = String(customerData?.phone_number || '').trim();
@@ -3527,6 +3674,23 @@ export async function bulkInsertCustomers(customerRows) {
 export async function addCustomer(customerData) {
   const companyName = String(customerData?.company_name || customerData?.name || '').trim();
   if (!companyName) throw new Error('業者名（会社名）を入力してください');
+  const provisional =
+    customerData?.phone_number === null ||
+    customerData?.allowProvisional === true ||
+    customerData?.__provisional === true;
+  if (provisional) {
+    const row = {
+      company_name: companyName,
+      furigana: String(customerData?.furigana || '').trim() || null,
+      manager_name: String(customerData?.manager_name || '').trim() || null,
+      phone_number: null,
+      role: String(customerData?.role || 'contractor').trim() || 'contractor',
+      organization_id: customerData?.organization_id || null,
+    };
+    const { data, error } = await supabase.from('customers').insert(row).select('*').single();
+    if (error) throw error;
+    return mapCustomerRow(data);
+  }
   const loginPassword = String(customerData?.login_password || '').trim();
   if (!loginPassword) throw new Error('ログインパスワードを入力してください');
   const phoneNumber = String(customerData?.phone_number || '').trim();
