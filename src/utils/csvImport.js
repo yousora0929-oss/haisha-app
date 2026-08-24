@@ -288,16 +288,29 @@ export function downloadCsvWithUtf8Bom(filename, rows) {
 }
 
 /**
- * 業者名・商社名の名寄せ用正規化（法人格の統一は行わない）
- * @param {unknown} value
+ * 業者名・商社名の名寄せ用正規化
+ * - 空白・全角括弧を統一し、法人格表記ゆれを種類別トークンへ置換（位置は維持）
+ * - 前株/後株・法人格の種類違い・支店名は別文字列のまま（誤マージ防止）
+ * @param {unknown} raw
  * @returns {string}
  */
-export function normalizeCompanyName(value) {
-  return String(value ?? '')
-    .trim()
-    .replace(/\u3000/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+const LEGAL_FORM_RULES = [
+  { pattern: /株式会社|㈱|\(株\)/g, token: '[KK]' },
+  { pattern: /有限会社|㈲|\(有\)/g, token: '[YK]' },
+  { pattern: /合同会社|㈾|\(同\)/g, token: '[GD]' },
+  { pattern: /合資会社|\(資\)/g, token: '[GS]' },
+  { pattern: /合名会社|\(名\)/g, token: '[GM]' },
+];
+
+export function normalizeCompanyName(raw) {
+  let s = String(raw ?? '').trim();
+  s = s.replace(/\u3000/g, ' ').replace(/\s+/g, ' ');
+  s = s.replace(/[（）]/g, (m) => (m === '（' ? '(' : ')'));
+  for (const { pattern, token } of LEGAL_FORM_RULES) {
+    s = s.replace(pattern, token);
+  }
+  s = s.replace(/\s+/g, ' ').trim();
+  return s;
 }
 
 function spreadsheetExt(file) {

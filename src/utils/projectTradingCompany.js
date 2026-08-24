@@ -1,3 +1,5 @@
+import { normalizeCompanyName } from './csvImport.js';
+
 /** 物件の商社名表示（organizations 紐付け優先、なければテキスト） */
 export function resolveProjectTradingCompanyName(project) {
   if (!project || typeof project !== 'object') return '';
@@ -8,11 +10,11 @@ export function resolveProjectTradingCompanyName(project) {
 }
 
 export function findAgentOrganizationByName(agentOrganizations, name) {
-  const q = String(name ?? '').trim();
+  const q = normalizeCompanyName(name);
   if (!q) return null;
   return (
     (agentOrganizations || []).find(
-      (o) => o && String(o.type || '') === 'agent' && String(o.name || '').trim() === q,
+      (o) => o && String(o.type || '') === 'agent' && normalizeCompanyName(o.name) === q,
     ) ?? null
   );
 }
@@ -22,7 +24,7 @@ export function isUnregisteredTradingCompanyName(name, agentOrganizations, organ
   if (!trimmed) return false;
   if (organizationId) {
     const org = (agentOrganizations || []).find((o) => String(o.id) === String(organizationId));
-    if (org && String(org.name || '').trim() === trimmed) return false;
+    if (org && normalizeCompanyName(org.name) === normalizeCompanyName(trimmed)) return false;
   }
   return !findAgentOrganizationByName(agentOrganizations, trimmed);
 }

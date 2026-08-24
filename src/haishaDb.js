@@ -25,6 +25,7 @@ import { shouldResetOrderStatusOnFactoryReassign } from './utils/orderFactoryRea
 import { ensureOrderPreferredFactoryForInsert } from './utils/dispatchBulkOrder.js';
 import { resolveProjectTradingCompanyName } from './utils/projectTradingCompany.js';
 import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.js';
+import { normalizeCompanyName } from './utils/csvImport.js';
 import {
   customerFactoryRejectionChatMessage,
   customerScheduleAutoRejectChatBody,
@@ -3604,8 +3605,8 @@ export async function bulkInsertTradingCompanies(rows) {
   for (const row of list) {
     const name = String(row?.name || '').trim();
     if (!name) throw new Error('商社名が空の行があります');
-    const key = name.replace(/\u3000/g, ' ').replace(/\s+/g, ' ').trim();
-    if (seen.has(key)) continue;
+    const key = normalizeCompanyName(name);
+    if (!key || seen.has(key)) continue;
     seen.add(key);
     prepared.push({ name });
   }

@@ -42,16 +42,8 @@ function findTradingCompanyByNormalizedName(tradingCompanies, name) {
 }
 
 function findAgentOrgByNormalizedName(agentOrganizations, name) {
-  const q = normalizeCompanyName(name);
-  if (!q) return null;
-  return (
-    (agentOrganizations || []).find(
-      (o) =>
-        o &&
-        String(o.type || '') === 'agent' &&
-        normalizeCompanyName(o.name) === q,
-    ) || findAgentOrganizationByName(agentOrganizations, name)
-  );
+  // findAgentOrganizationByName も normalizeCompanyName 経由
+  return findAgentOrganizationByName(agentOrganizations, name);
 }
 
 function upsertNamedEntity(map, name, line) {

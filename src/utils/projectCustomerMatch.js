@@ -1,7 +1,6 @@
-/** 名前比較用の正規化（空白除去・小文字化） */
-export function normalizeCompanyName(value) {
-  return String(value ?? '').replace(/\s+/g, '').trim().toLowerCase();
-}
+import { normalizeCompanyName } from './csvImport.js';
+
+export { normalizeCompanyName };
 
 /**
  * 物件が業者に紐づくか（元請=ID一致 or 下請=名前一致）
