@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import * as db from './haishaDb.js';
 import {
   setAdminPanelSession,
@@ -2201,6 +2201,13 @@ function AdminOrderDetailModal({
   const [agentOrganizationId, setAgentOrganizationId] = useState('');
   const [agentOrganizations, setAgentOrganizations] = useState([]);
   const [editingFactories, setEditingFactories] = useState(false);
+  const agentOrganizationIdRef = useRef('');
+
+  const applyAgentOrganizationId = (next) => {
+    const value = next != null ? String(next).trim() : '';
+    agentOrganizationIdRef.current = value;
+    setAgentOrganizationId(value);
+  };
 
   useEffect(() => {
     if (!open || !order) return;
@@ -2212,10 +2219,11 @@ function AdminOrderDetailModal({
     setQuantityM3(q != null ? String(q) : '');
     setMixText(order.mixText != null ? String(order.mixText) : '');
     setSiteName(orderSiteName(order) === '（現場名未入力）' ? '' : orderSiteName(order));
-    setAgentOrganizationId(
+    applyAgentOrganizationId(
       order.agent_organization_id != null ? String(order.agent_organization_id).trim() : '',
     );
-  }, [open, order]);
+    // order オブジェクト参照ではなく id で初期化する。親の再レンダーで選択値を空へ戻さない。
+  }, [open, order?.id]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -2224,12 +2232,23 @@ function AdminOrderDetailModal({
       try {
         const orgs = await db.fetchOrganizations();
         if (cancelled) return;
-        setAgentOrganizations(
-          (Array.isArray(orgs) ? orgs : []).filter((o) => o && String(o.type) === 'agent' && o.id),
+        const next = (Array.isArray(orgs) ? orgs : []).filter(
+          (o) => o && String(o.type || '').trim() === 'agent' && o.id,
         );
+        setAgentOrganizations((prev) => {
+          if (
+            prev.length === next.length &&
+            prev.every(
+              (p, i) =>
+                String(p?.id) === String(next[i]?.id) && String(p?.name || '') === String(next[i]?.name || ''),
+            )
+          ) {
+            return prev;
+          }
+          return next;
+        });
       } catch (e) {
         console.warn('[AdminOrderDetailModal] agent organizations load failed', e);
-        if (!cancelled) setAgentOrganizations([]);
       }
     })();
     return () => {
@@ -2251,11 +2270,28 @@ function AdminOrderDetailModal({
         : '—';
   const canReassign = canAdminReassignOrderFactories(order);
   const willResetOnReassign = shouldResetOrderStatusOnFactoryReassign(order);
+  const agentSelectOptions = (() => {
+    const list = Array.isArray(agentOrganizations) ? agentOrganizations : [];
+    const selected = String(agentOrganizationId || '').trim();
+    if (selected && !list.some((o) => o && String(o.id) === selected)) {
+      const label =
+        String(
+          order.trading_company_name ||
+            order.traderName ||
+            order.projectTradingCompanyName ||
+            '',
+        ).trim() || '（現在の設定）';
+      return [{ id: selected, name: label }, ...list];
+    }
+    return list;
+  })();
 
   const submit = (e) => {
     e.preventDefault();
     const minutes = parseTimeInputToMinutes(timeValue);
-    const agentSync = buildAgentOrganizationSyncPatch(agentOrganizationId || null, agentOrganizations);
+    // 空文字は「商社なし」として有効。falsy フォールバックで UUID を復活させない。
+    const selectedId = String(agentOrganizationIdRef.current ?? agentOrganizationId ?? '').trim();
+    const agentSync = buildAgentOrganizationSyncPatch(selectedId || null, agentSelectOptions);
     onSave(order.id, {
       preferredDate,
       delivery_date: preferredDate,
@@ -2425,15 +2461,17 @@ function AdminOrderDetailModal({
             <label className="text-xs font-black text-slate-600">数量<input type="text" value={quantityM3} onChange={(e) => setQuantityM3(e.target.value)} className={inputClass} /></label>
             <label className="text-xs font-black text-slate-600">配合<input type="text" value={mixText} onChange={(e) => setMixText(e.target.value)} className={inputClass} /></label>
             <label className="text-xs font-black text-slate-600 sm:col-span-2">現場名<input type="text" value={siteName} onChange={(e) => setSiteName(e.target.value)} className={inputClass} /></label>
-            <label className="text-xs font-black text-slate-600 sm:col-span-2">
+            <label className="text-xs font-black text-slate-600 sm:col-span-2" htmlFor="admin-order-agent-org">
               商社
               <select
+                id="admin-order-agent-org"
+                name="agentOrganizationId"
                 value={agentOrganizationId}
-                onChange={(e) => setAgentOrganizationId(e.target.value)}
+                onChange={(e) => applyAgentOrganizationId(e.currentTarget.value)}
                 className={inputClass}
               >
                 <option value="">商社なし（直接請求）</option>
-                {agentOrganizations.map((org) => (
+                {agentSelectOptions.map((org) => (
                   <option key={org.id} value={String(org.id)}>
                     {org.name || org.id}
                   </option>

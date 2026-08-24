@@ -1275,8 +1275,12 @@ export async function updateOrderDetails(orderId, updatedData) {
   if (updateRow.is_admin_modified === true || updateRow.is_factory_modified === true) {
     updateRow.has_pending_change_request = false;
   }
-  if (Object.prototype.hasOwnProperty.call(patch, 'agent_organization_id')) {
-    updateRow.agent_organization_id = sanitizeRefId(patch.agent_organization_id) || null;
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'agent_organization_id') ||
+    Object.prototype.hasOwnProperty.call(patch, 'agentOrganizationId')
+  ) {
+    updateRow.agent_organization_id =
+      sanitizeRefId(patch.agent_organization_id ?? patch.agentOrganizationId) || null;
     // 表示名は order_data 側（mergedOrderData）に既に含まれている想定
   }
   const { data: updated, error: upErr } = await supabase
