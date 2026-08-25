@@ -47,7 +47,7 @@ import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils
 import { generateInitialPassword } from './utils/initialPassword.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, site_history_contractor_id, is_admin_modified, is_factory_modified, is_customer_modified, has_pending_change_request, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at';
+  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, site_history_contractor_id, is_admin_modified, is_factory_modified, is_customer_modified, has_pending_change_request, pending_change_request_patch, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -381,6 +381,12 @@ export function normalizeOrderRow(row) {
     is_factory_modified: row.is_factory_modified === true,
     is_customer_modified: row.is_customer_modified === true,
     has_pending_change_request: row.has_pending_change_request === true,
+    pending_change_request_patch:
+      row.pending_change_request_patch &&
+      typeof row.pending_change_request_patch === 'object' &&
+      !Array.isArray(row.pending_change_request_patch)
+        ? row.pending_change_request_patch
+        : null,
     // 相談ステータスは専用カラムを唯一の正とする（order_data へはフォールバックしない）
     factory_consult_status:
       row.factory_consult_status != null ? String(row.factory_consult_status).trim() : '',
@@ -1271,9 +1277,18 @@ export async function updateOrderDetails(orderId, updatedData) {
       patch.has_pending_change_request ?? patch.hasPendingChangeRequest,
     );
   }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'pending_change_request_patch') ||
+    Object.prototype.hasOwnProperty.call(patch, 'pendingChangeRequestPatch')
+  ) {
+    const raw = patch.pending_change_request_patch ?? patch.pendingChangeRequestPatch;
+    updateRow.pending_change_request_patch =
+      raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
+  }
   // 工場・管理者が内容を編集して保存したら変更依頼は対応済みとみなす
   if (updateRow.is_admin_modified === true || updateRow.is_factory_modified === true) {
     updateRow.has_pending_change_request = false;
+    updateRow.pending_change_request_patch = null;
   }
   if (
     Object.prototype.hasOwnProperty.call(patch, 'agent_organization_id') ||
@@ -1378,14 +1393,25 @@ export async function clearOrderCustomerModifiedFlag(orderId) {
 }
 
 /**
- * 確定後の変更依頼を送信（チャット投稿 + has_pending_change_request=true）
+ * 確定後の変更依頼を送信（チャット投稿 + フラグ + 構造化パッチ）
  * 注文内容自体は書き換えない。
+ * @param {string} orderId
+ * @param {string} messageBody
+ * @param {object} [structuredPatch] 変更フィールドのみのマップ
  */
-export async function submitOrderChangeRequest(orderId, messageBody) {
+export async function submitOrderChangeRequest(orderId, messageBody, structuredPatch) {
   const id = String(orderId || '').trim();
   const body = String(messageBody || '').trim();
   if (!id) throw new Error('orderId が必要です');
   if (!body) throw new Error('変更依頼の内容が空です');
+
+  const patchObj =
+    structuredPatch && typeof structuredPatch === 'object' && !Array.isArray(structuredPatch)
+      ? structuredPatch
+      : {};
+  if (Object.keys(patchObj).length === 0) {
+    throw new Error('変更内容がありません');
+  }
 
   await appendChatMessage(id, 'customer', body);
 
@@ -1394,7 +1420,10 @@ export async function submitOrderChangeRequest(orderId, messageBody) {
   }
   const { data, error } = await supabase
     .from('orders')
-    .update({ has_pending_change_request: true })
+    .update({
+      has_pending_change_request: true,
+      pending_change_request_patch: patchObj,
+    })
     .eq('id', id)
     .select(ORDER_SELECT)
     .maybeSingle();
@@ -1416,7 +1445,7 @@ export async function clearOrderPendingChangeRequest(orderId) {
   try {
     const { data, error } = await supabase
       .from('orders')
-      .update({ has_pending_change_request: false })
+      .update({ has_pending_change_request: false, pending_change_request_patch: null })
       .eq('id', id)
       .select(ORDER_SELECT)
       .maybeSingle();
@@ -1429,6 +1458,65 @@ export async function clearOrderPendingChangeRequest(orderId) {
     console.warn('[haisha] has_pending_change_request クリア失敗', err);
     return null;
   }
+}
+
+/**
+ * 工場が変更依頼を承諾し、構造化パッチを注文へ反映する
+ * @param {string} orderId
+ * @param {{ factoryName?: string }} [opts]
+ */
+export async function acceptOrderChangeRequest(orderId, opts = {}) {
+  const id = String(orderId || '').trim();
+  if (!id) throw new Error('orderId が必要です');
+
+  const latest = await fetchOrderById(id);
+  if (!latest) throw new Error('注文が見つかりません');
+  if (!latest.has_pending_change_request) {
+    throw new Error('対応待ちの変更依頼がありません');
+  }
+  const structured =
+    latest.pending_change_request_patch &&
+    typeof latest.pending_change_request_patch === 'object' &&
+    !Array.isArray(latest.pending_change_request_patch)
+      ? latest.pending_change_request_patch
+      : null;
+  if (!structured || Object.keys(structured).length === 0) {
+    throw new Error('反映する内容がありません');
+  }
+
+  const applyPatch = { ...structured, is_factory_modified: true, is_customer_modified: false };
+  if (Object.prototype.hasOwnProperty.call(structured, 'quantityM3')) {
+    applyPatch.confirmedQuantityM3 = structured.quantityM3;
+  }
+  if (Object.prototype.hasOwnProperty.call(structured, 'mixText')) {
+    applyPatch.confirmedMixText = structured.mixText;
+  }
+  // updateOrderDetails 側で is_factory_modified によりフラグ/パッチもクリアされるが明示する
+  applyPatch.has_pending_change_request = false;
+  applyPatch.pending_change_request_patch = null;
+
+  const updated = await updateOrderDetails(id, applyPatch);
+  const factoryLabel = String(opts.factoryName || '').trim();
+  try {
+    await appendChatMessage(
+      id,
+      'factory',
+      factoryLabel
+        ? `${factoryLabel}が変更依頼を承諾し、内容を反映しました。`
+        : '工場が変更依頼を承諾し、内容を反映しました。',
+    );
+  } catch (chatErr) {
+    console.warn('[haisha] 変更依頼承諾チャット投稿失敗', chatErr);
+  }
+  return updated;
+}
+
+/** pending_change_request_patch が承諾可能か */
+export function isChangeRequestPatchApplicable(order) {
+  const patch = order?.pending_change_request_patch;
+  return Boolean(
+    patch && typeof patch === 'object' && !Array.isArray(patch) && Object.keys(patch).length > 0,
+  );
 }
 
 /** 管理者変更通知を表示済みにした後、DB側フラグを下ろす（カラム＋order_data の両方） */

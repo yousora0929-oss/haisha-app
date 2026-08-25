@@ -20,7 +20,10 @@ import {
   resolveProjectPartyDisplay,
 } from './utils/projectPartyDisplay.js';
 import BillingMark from './components/BillingMark.jsx';
-import { OrderFullEditModal } from './components/OrderFullEditModal.jsx';
+import {
+  OrderFullEditModal,
+  formatChangeRequestPatchSummary,
+} from './components/OrderFullEditModal.jsx';
 import {
   FACTORY_SITE_ID,
   FACTORY_SITE_NAME,
@@ -1605,6 +1608,7 @@ function isUnreadForFactory(messages, readKey) {
       onResponseStatusChange,
       onRequestUnlock,
       onOrderFullPatch,
+      onAcceptChangeRequest,
       chatMessages,
       hasUnreadChat,
       onMarkChatRead,
@@ -1623,6 +1627,13 @@ function isUnreadForFactory(messages, readKey) {
       const canCustomerCancelOrder = !isToast && typeof onCustomerCancelOrder === 'function' && Boolean(order.id);
       const canHideOrder = !isToast && typeof onHideOrder === 'function' && Boolean(order.id);
       const canSetStatus = !isToast && typeof onResponseStatusChange === 'function' && Boolean(order.id);
+      const canAcceptChangeRequest =
+        !isToast &&
+        typeof onAcceptChangeRequest === 'function' &&
+        Boolean(order.id) &&
+        order.has_pending_change_request === true;
+      const changeRequestPatchApplicable = db.isChangeRequestPatchApplicable(order);
+      const [acceptChangeBusy, setAcceptChangeBusy] = useState(false);
       const orderStatus = order.status != null ? String(order.status) : '';
       const responseStatus = normalizeFactoryResponse(order.factoryResponseStatus || orderStatus);
       const responseLocked = Boolean(order.factoryResponseLocked);
@@ -2145,7 +2156,45 @@ function isUnreadForFactory(messages, readKey) {
           ) : null}
           {order.has_pending_change_request ? (
             <div className="mb-3 rounded-xl border-2 border-orange-400 bg-orange-50 px-3 py-2 text-sm font-black text-orange-950 dark:border-orange-500/70 dark:bg-orange-950/40 dark:text-orange-100">
-              📝 お客様から変更依頼があります。チャットの内容を確認し、必要に応じて注文を編集してください（保存すると依頼は対応済みになります）。
+              <p>
+                📝 お客様から変更依頼があります。内容を確認のうえ「承諾」で反映するか、注文編集で対応してください。
+              </p>
+              {canAcceptChangeRequest ? (
+                <div className="mt-2 flex flex-col gap-1.5 sm:flex-row sm:items-center">
+                  <button
+                    type="button"
+                    disabled={!changeRequestPatchApplicable || acceptChangeBusy}
+                    title={
+                      changeRequestPatchApplicable
+                        ? '変更依頼を注文に反映します'
+                        : '反映する内容がありません'
+                    }
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      if (!changeRequestPatchApplicable || acceptChangeBusy) return;
+                      setAcceptChangeBusy(true);
+                      try {
+                        await onAcceptChangeRequest(order);
+                      } finally {
+                        setAcceptChangeBusy(false);
+                      }
+                    }}
+                    className={
+                      'min-h-[44px] rounded-lg border-2 px-4 py-2 text-sm font-black shadow-sm transition sm:text-base ' +
+                      (changeRequestPatchApplicable && !acceptChangeBusy
+                        ? 'border-orange-700 bg-orange-600 text-white hover:bg-orange-700 active:scale-[0.99]'
+                        : 'cursor-not-allowed border-slate-300 bg-slate-200 text-slate-500')
+                    }
+                  >
+                    {acceptChangeBusy ? '反映中…' : '承諾'}
+                  </button>
+                  {!changeRequestPatchApplicable ? (
+                    <p className="text-xs font-bold text-orange-900/90 dark:text-orange-200 sm:text-sm">
+                      反映する内容がありません（古い依頼のため手動編集で対応してください）
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ) : null}
           <div className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border border-slate-200/90 bg-white px-3 py-3 dark:border-slate-600 dark:bg-slate-900/60 sm:grid-cols-2">
@@ -2534,6 +2583,7 @@ function isUnreadForFactory(messages, readKey) {
       readOrderIds,
       factorySearchLabel,
       onOrderFullPatch,
+      onAcceptChangeRequest,
       onMarkRead,
       onAcceptOrder,
       onRejectOrder,
@@ -2617,6 +2667,7 @@ function isUnreadForFactory(messages, readKey) {
                         isRead={Boolean(o?.id && readOrderIds?.has(o.id))}
                         onMarkRead={onMarkRead}
                         onOrderFullPatch={onOrderFullPatch}
+                        onAcceptChangeRequest={onAcceptChangeRequest}
                         onAcceptOrder={onAcceptOrder}
                         onRejectOrder={onRejectOrder}
                         onConsultOrder={onConsultOrder}
@@ -4783,6 +4834,62 @@ function isUnreadForFactory(messages, readKey) {
         [activeFactoryId, activeFactoryName, rawOrders, orders, appendOrderChatMessage, refreshChatThreads],
       );
 
+      const handleAcceptChangeRequest = useCallback(
+        async (order) => {
+          const orderId = order?.id;
+          if (!orderId) return false;
+          if (!db.isChangeRequestPatchApplicable(order)) {
+            window.alert('反映する内容がありません。');
+            return false;
+          }
+          const inFlightKey = `change-req:${String(orderId)}`;
+          if (orderPatchInFlightRef.current.has(inFlightKey)) return false;
+          orderPatchInFlightRef.current.add(inFlightKey);
+          try {
+            const updated = await db.acceptOrderChangeRequest(orderId, {
+              factoryName: activeFactoryName,
+            });
+            if (!updated) return false;
+            setRawOrders((prev) =>
+              Array.isArray(prev)
+                ? prev.map((o) => (o?.id === orderId ? { ...o, ...updated } : o))
+                : prev,
+            );
+            setOrders((prev) =>
+              Array.isArray(prev)
+                ? prev.map((o) => (o?.id === orderId ? { ...o, ...updated } : o))
+                : prev,
+            );
+            await refreshChatThreads();
+            setActionNotice('変更依頼を承諾し、内容を反映しました');
+            window.setTimeout(() => setActionNotice(''), 3500);
+            return true;
+          } catch (e) {
+            console.error('handleAcceptChangeRequest failed', e);
+            window.alert(
+              e?.message || '変更依頼の承諾に失敗しました。通信状態を確認してください。',
+            );
+            return false;
+          } finally {
+            orderPatchInFlightRef.current.delete(inFlightKey);
+          }
+        },
+        [activeFactoryName, refreshChatThreads],
+      );
+
+      const pendingCustomerChangeRequestOrders = useMemo(() => {
+        const list = Array.isArray(orders) ? orders : [];
+        return list.filter(
+          (o) =>
+            o?.has_pending_change_request === true &&
+            isOrderAcceptedByFactory(o, activeFactoryId),
+        );
+      }, [orders, activeFactoryId]);
+
+      const pendingCustomerChangeRequestCount = pendingCustomerChangeRequestOrders.length;
+      const scheduleChangesTabBadgeCount =
+        scheduleChangePendingCount + pendingCustomerChangeRequestCount;
+
       const handleAcceptOrder = useCallback(
         (order) => {
           if (!order?.id || !activeFactoryId) return;
@@ -5328,9 +5435,9 @@ function isUnreadForFactory(messages, readKey) {
                             {factoryNewsUnread}
                           </span>
                         ) : null}
-                        {id === 'scheduleChanges' && scheduleChangePendingCount > 0 ? (
+                        {id === 'scheduleChanges' && scheduleChangesTabBadgeCount > 0 ? (
                           <span className="rounded-full bg-amber-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
-                            {scheduleChangePendingCount}
+                            {scheduleChangesTabBadgeCount}
                           </span>
                         ) : null}
                         {id === 'charterRespond' && charterPendingCount > 0 ? (
@@ -5416,13 +5523,111 @@ function isUnreadForFactory(messages, readKey) {
                 </div>
               ) : null}
               {activeTab === 'scheduleChanges' ? (
-                <FactoryScheduleChangeProposalsPanel
-                  factoryId={activeFactoryId}
-                  onApplied={() => {
-                    void refreshScheduleChangePendingCount();
-                    void syncFromStorage({ playSound: false });
-                  }}
-                />
+                <div className="grid gap-4">
+                  <section
+                    className="rounded-xl border-2 border-orange-200 bg-orange-50/40 p-3 dark:border-orange-700/50 dark:bg-orange-950/25"
+                    aria-label="顧客からの変更依頼"
+                  >
+                    <header className="mb-3">
+                      <h2 className="text-base font-black text-orange-950 dark:text-orange-100 sm:text-lg">
+                        顧客からの変更依頼
+                        {pendingCustomerChangeRequestCount > 0
+                          ? `（${pendingCustomerChangeRequestCount}件）`
+                          : ''}
+                      </h2>
+                      <p className="mt-1 text-xs font-bold text-orange-900/80 dark:text-orange-200/90 sm:text-sm">
+                        受注後の注文に対する変更依頼です。承諾すると依頼内容が注文へ反映されます（注文一覧からも引き続き確認できます）。
+                      </p>
+                    </header>
+                    {pendingCustomerChangeRequestOrders.length === 0 ? (
+                      <p className="rounded-lg border border-dashed border-orange-300 bg-white/70 px-3 py-6 text-center text-sm font-bold text-orange-900/70 dark:border-orange-700 dark:bg-slate-900/40 dark:text-orange-200/80">
+                        対応待ちの変更依頼はありません
+                      </p>
+                    ) : (
+                      <ul className="grid gap-2">
+                        {pendingCustomerChangeRequestOrders.map((order) => {
+                          const linkedProject =
+                            order?.project_id && projectById
+                              ? projectById[order.project_id] || projectById[String(order.project_id)]
+                              : null;
+                          const siteLabel =
+                            resolveOrderSiteDisplayName(order, linkedProject) ||
+                            String(order.siteName || order.projectName || '').trim() ||
+                            '（現場名なし）';
+                          const patchSummary = formatChangeRequestPatchSummary(
+                            order.pending_change_request_patch,
+                          );
+                          const chatList = chatThreads[order.id];
+                          let chatSummary = '';
+                          if (Array.isArray(chatList)) {
+                            for (let i = chatList.length - 1; i >= 0; i -= 1) {
+                              const body = String(chatList[i]?.body || chatList[i]?.text || '').trim();
+                              if (body.startsWith('【変更依頼】')) {
+                                chatSummary = body;
+                                break;
+                              }
+                            }
+                          }
+                          const summary = chatSummary || patchSummary || '（内容の詳細はチャットを確認）';
+                          const applicable = db.isChangeRequestPatchApplicable(order);
+                          return (
+                            <li
+                              key={order.id}
+                              className="rounded-xl border-2 border-orange-300 bg-white p-3 shadow-sm dark:border-orange-700 dark:bg-slate-900/60"
+                            >
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-sm font-black text-slate-900 dark:text-slate-100 sm:text-base">
+                                    {siteLabel}
+                                  </p>
+                                  <p className="mt-1 break-words text-xs font-bold leading-relaxed text-slate-700 dark:text-slate-300 sm:text-sm">
+                                    {summary}
+                                  </p>
+                                  {!applicable ? (
+                                    <p className="mt-1 text-xs font-bold text-orange-800 dark:text-orange-200">
+                                      反映する内容がありません（手動編集で対応してください）
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <button
+                                  type="button"
+                                  disabled={!applicable}
+                                  title={
+                                    applicable ? '変更依頼を注文に反映します' : '反映する内容がありません'
+                                  }
+                                  onClick={() => void handleAcceptChangeRequest(order)}
+                                  className={
+                                    'min-h-[44px] shrink-0 rounded-lg border-2 px-4 py-2 text-sm font-black shadow-sm transition sm:text-base ' +
+                                    (applicable
+                                      ? 'border-orange-700 bg-orange-600 text-white hover:bg-orange-700 active:scale-[0.99]'
+                                      : 'cursor-not-allowed border-slate-300 bg-slate-200 text-slate-500')
+                                  }
+                                >
+                                  承諾
+                                </button>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </section>
+                  <section aria-label="スケジュール取込の予定変更">
+                    <h2 className="mb-2 text-base font-black text-slate-900 dark:text-slate-100 sm:text-lg">
+                      スケジュール取込の予定変更
+                      {scheduleChangePendingCount > 0
+                        ? `（${scheduleChangePendingCount}件）`
+                        : ''}
+                    </h2>
+                    <FactoryScheduleChangeProposalsPanel
+                      factoryId={activeFactoryId}
+                      onApplied={() => {
+                        void refreshScheduleChangePendingCount();
+                        void syncFromStorage({ playSound: false });
+                      }}
+                    />
+                  </section>
+                </div>
               ) : null}
               {activeTab === 'assignments' ? (
                 <FactoryAssignedProjectsTab
@@ -5457,6 +5662,7 @@ function isUnreadForFactory(messages, readKey) {
                     readOrderIds={readOrderIds}
                     factorySearchLabel={activeFactoryName}
                     onOrderFullPatch={handleOrderFullPatch}
+                    onAcceptChangeRequest={handleAcceptChangeRequest}
                     onMarkRead={markOrderRead}
                     onAcceptOrder={handleAcceptOrder}
                     onRejectOrder={handleRejectOrder}

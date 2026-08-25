@@ -27,6 +27,125 @@ function vehicleTypeLabel(value) {
 
 /** 変更依頼チャット本文を組み立てる（差分のみ） */
 export function buildChangeRequestChatMessage(order, patch) {
+  const parts = buildChangeRequestDiffParts(order, patch);
+  if (parts.length === 0) return '';
+  return `【変更依頼】${parts.join('、')}`;
+}
+
+/**
+ * 承諾用の構造化パッチ（変更があったフィールドのみ）
+ * updateOrderDetails が解釈できるキーだけを含める
+ */
+export function buildChangeRequestPatch(order, patch) {
+  const o = order && typeof order === 'object' ? order : {};
+  const p = patch && typeof patch === 'object' ? patch : {};
+  const out = {};
+
+  const setIfChanged = (key, before, after) => {
+    const b = before == null ? '' : String(before);
+    const a = after == null ? '' : String(after);
+    if (b === a) return;
+    if (typeof after === 'boolean') {
+      out[key] = after;
+      return;
+    }
+    out[key] = after;
+  };
+
+  setIfChanged('preferredDate', o.preferredDate, p.preferredDate);
+  if (
+    String(o.timeSlot ?? '') !== String(p.timeSlot ?? '') ||
+    String(o.timePointLabel || o.timeSlotLabel || '') !== String(p.timePointLabel || p.timeSlotLabel || '')
+  ) {
+    if (p.timeSlot != null) out.timeSlot = p.timeSlot;
+    if (p.timeSlotMinutes != null) out.timeSlotMinutes = p.timeSlotMinutes;
+    if (p.timeSlotLabel != null) out.timeSlotLabel = p.timeSlotLabel;
+    if (p.timePointLabel != null) out.timePointLabel = p.timePointLabel;
+    if (p.scheduleMatchMinutes != null) out.scheduleMatchMinutes = p.scheduleMatchMinutes;
+  }
+  if (p.preferredDate != null && out.preferredDate !== undefined) {
+    out.scheduleMatchDate = p.preferredDate;
+  }
+  setIfChanged('vehicleType', o.vehicleType, p.vehicleType);
+  if (out.vehicleType !== undefined) {
+    out.vehicleLabel = p.vehicleLabel ?? (p.vehicleType === 'small' ? '小型' : '大型');
+  }
+  setIfChanged(
+    'quantityM3',
+    o.confirmedQuantityM3 ?? o.quantityM3,
+    p.quantityM3,
+  );
+  if (
+    String(o.unloadDurationMinutes || o.unloadDuration || o.unloadingTime || '') !==
+    String(p.unloadDuration || p.unloadDurationMinutes || '')
+  ) {
+    out.unloadDuration = p.unloadDuration;
+    out.unloadDurationMinutes = p.unloadDurationMinutes ?? p.unloadDuration;
+    out.unloadDurationLabel = p.unloadDurationLabel;
+  }
+  setIfChanged('mixText', o.confirmedMixText ?? o.mixText, p.mixText);
+  setIfChanged('siteName', o.siteName ?? o.projectName, p.siteName);
+  setIfChanged('siteAddress', o.siteAddress, p.siteAddress);
+  setIfChanged('sitePhone', o.sitePhone, p.sitePhone);
+  setIfChanged('contractorName', o.contractorName, p.contractorName);
+  if (Boolean(o.has_test) !== Boolean(p.has_test)) {
+    out.has_test = Boolean(p.has_test);
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(p, 'agent_organization_id') ||
+    Object.prototype.hasOwnProperty.call(p, 'traderName')
+  ) {
+    const beforeAgent = String(o.agent_organization_id ?? o.agentOrganizationId ?? '').trim();
+    const afterAgent = String(p.agent_organization_id ?? '').trim();
+    const beforeTrader = String(o.traderName ?? '').trim();
+    const afterTrader = String(p.traderName ?? '').trim();
+    if (beforeAgent !== afterAgent || beforeTrader !== afterTrader) {
+      if (Object.prototype.hasOwnProperty.call(p, 'agent_organization_id')) {
+        out.agent_organization_id = p.agent_organization_id;
+      }
+      if (Object.prototype.hasOwnProperty.call(p, 'traderName')) {
+        out.traderName = p.traderName;
+      }
+    }
+  }
+  return out;
+}
+
+/** 構造化パッチの簡易日本語サマリー（タブ一覧用） */
+export function formatChangeRequestPatchSummary(patch) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return '';
+  const labels = {
+    preferredDate: '希望日',
+    timeSlotLabel: '希望時刻',
+    timePointLabel: '希望時刻',
+    vehicleLabel: '車種',
+    vehicleType: '車種',
+    quantityM3: '数量',
+    unloadDurationLabel: '荷卸し時間',
+    mixText: '配合',
+    siteName: '現場名',
+    siteAddress: '現場住所',
+    sitePhone: '電話番号',
+    contractorName: '業者名',
+    has_test: '試験体',
+    traderName: '商社',
+  };
+  const parts = [];
+  const seen = new Set();
+  for (const [key, value] of Object.entries(patch)) {
+    const label = labels[key];
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    let display = value;
+    if (key === 'has_test') display = value ? 'あり' : 'なし';
+    if (key === 'vehicleType') display = vehicleTypeLabel(value);
+    if (key === 'quantityM3') display = `${value}m³`;
+    parts.push(`${label}: ${display == null || display === '' ? '（未設定）' : display}`);
+  }
+  return parts.join('、');
+}
+
+function buildChangeRequestDiffParts(order, patch) {
   const o = order && typeof order === 'object' ? order : {};
   const p = patch && typeof patch === 'object' ? patch : {};
   const fields = [
@@ -95,8 +214,7 @@ export function buildChangeRequestChatMessage(order, patch) {
     const afterText = f.after ? `${f.after}${suffix}` : '（未設定）';
     parts.push(`${f.label}: ${beforeText} → ${afterText}`);
   }
-  if (parts.length === 0) return '';
-  return `【変更依頼】${parts.join('、')}`;
+  return parts;
 }
 
 function resolveSiteUrlToken(order, projectById, customerById) {
@@ -312,11 +430,16 @@ export function OrderFullEditModal({
     try {
       if (isRequestMode) {
         const message = buildChangeRequestChatMessage(order, patch);
-        if (!message) {
+        const structuredPatch = buildChangeRequestPatch(order, patch);
+        if (!message || Object.keys(structuredPatch).length === 0) {
           setSaveError('変更内容がありません。項目を変更してから送信してください。');
           return;
         }
-        const ok = await onSave(order.id, patch, { mode: 'request', message });
+        const ok = await onSave(order.id, patch, {
+          mode: 'request',
+          message,
+          structuredPatch,
+        });
         if (ok === false) {
           setSaveError('変更依頼の送信に失敗しました。通信状態を確認してください。');
         }

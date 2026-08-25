@@ -2801,12 +2801,22 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         async (orderId, patch, meta) => {
           if (meta?.mode === 'request') {
             const message = String(meta?.message || '').trim();
-            if (!message) return false;
-            const updated = await db.submitOrderChangeRequest(orderId, message);
+            const structuredPatch =
+              meta?.structuredPatch && typeof meta.structuredPatch === 'object'
+                ? meta.structuredPatch
+                : {};
+            if (!message || Object.keys(structuredPatch).length === 0) return false;
+            const updated = await db.submitOrderChangeRequest(orderId, message, structuredPatch);
             setDashboardOrders((prev) =>
               (Array.isArray(prev) ? prev : []).map((o) =>
                 o?.id === orderId
-                  ? { ...o, ...(updated || {}), has_pending_change_request: true }
+                  ? {
+                      ...o,
+                      ...(updated || {}),
+                      has_pending_change_request: true,
+                      pending_change_request_patch:
+                        updated?.pending_change_request_patch ?? structuredPatch,
+                    }
                   : o,
               ),
             );
