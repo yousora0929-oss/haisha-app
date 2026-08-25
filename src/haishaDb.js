@@ -3327,22 +3327,19 @@ export async function fetchOrganizationsWithMembers(type) {
     .order('name');
   if (oe) throw oe;
 
-  const orgIds = orgs.map((o) => o.id);
-  let members = [];
-  if (orgIds.length > 0) {
-    const { data, error: ce } = await supabase
-      .from('customers')
-      .select(
-        'id, company_name, furigana, manager_name, phone_number, login_password, organization_id, can_import_schedule',
-      )
-      .eq('role', type)
-      .in('organization_id', orgIds)
-      .order('manager_name');
-    if (ce) throw ce;
-    members = data ?? [];
-  }
+  // organization_id を IN で列挙すると組織数が増えたときに PostgREST URL が
+  // 長大化して 400 になる。role で絞り、所属はクライアント側で紐付ける。
+  const { data, error: ce } = await supabase
+    .from('customers')
+    .select(
+      'id, company_name, furigana, manager_name, phone_number, login_password, organization_id, can_import_schedule',
+    )
+    .eq('role', type)
+    .order('manager_name');
+  if (ce) throw ce;
+  const members = data ?? [];
 
-  return orgs.map((org) => ({
+  return (orgs || []).map((org) => ({
     ...org,
     members: members.filter((m) => String(m.organization_id) === String(org.id)),
   }));
