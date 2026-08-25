@@ -12,6 +12,8 @@ const emptyMember = () => ({
   phone: '',
   password: '',
   canImportSchedule: false,
+  isCreditEligible: false,
+  creditSource: '',
 });
 
 const newMemberWithGeneratedPassword = () => ({
@@ -153,6 +155,8 @@ function memberToForm(member, orgName = '') {
     phone: member.phone_number ?? '',
     password: member.login_password ?? '',
     canImportSchedule: Boolean(member.can_import_schedule),
+    isCreditEligible: Boolean(member.is_credit_eligible),
+    creditSource: member.credit_source != null ? String(member.credit_source) : '',
   };
 }
 
@@ -188,6 +192,7 @@ export function AdminOrgSection({ orgType, label }) {
   const csvFileInputRef = useRef(null);
 
   const isAgentOrg = orgType === 'agent';
+  const isContractorOrg = orgType === 'contractor';
 
   const filteredOrgs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -397,6 +402,8 @@ export function AdminOrgSection({ orgType, label }) {
         password: newMember.password,
         companyName: org?.name ?? '',
         canImportSchedule: newMember.canImportSchedule,
+        isCreditEligible: isContractorOrg ? newMember.isCreditEligible : false,
+        creditSource: isContractorOrg ? newMember.creditSource : '',
       });
       let linkError = null;
       if (isAgentOrg && selectedLinkContractorIds.size > 0) {
@@ -452,6 +459,8 @@ export function AdminOrgSection({ orgType, label }) {
         phone: editingMember.phone,
         password: editingMember.password,
         canImportSchedule: editingMember.canImportSchedule,
+        isCreditEligible: isContractorOrg ? editingMember.isCreditEligible : undefined,
+        creditSource: isContractorOrg ? editingMember.creditSource : undefined,
       });
       let linkError = null;
       if (isAgentOrg) {
@@ -484,6 +493,12 @@ export function AdminOrgSection({ orgType, label }) {
                   phone_number: editingMember.phone?.trim() ?? null,
                   login_password: editingMember.password?.trim() ?? null,
                   can_import_schedule: Boolean(editingMember.canImportSchedule),
+                  is_credit_eligible: isContractorOrg
+                    ? Boolean(editingMember.isCreditEligible)
+                    : Boolean(m.is_credit_eligible),
+                  credit_source: isContractorOrg
+                    ? String(editingMember.creditSource || '').trim() || null
+                    : m.credit_source,
                 }
               : m,
           ),
@@ -1052,6 +1067,46 @@ export function AdminOrgSection({ orgType, label }) {
                               </span>
                             </span>
                           </label>
+                          {isContractorOrg ? (
+                            <>
+                              <label className="flex items-start gap-2 text-xs font-bold text-slate-700 sm:col-span-2">
+                                <input
+                                  type="checkbox"
+                                  className="mt-0.5 h-4 w-4"
+                                  checked={Boolean(editingMember.isCreditEligible)}
+                                  onChange={(e) =>
+                                    setEditingMember((cur) =>
+                                      cur
+                                        ? { ...cur, isCreditEligible: e.target.checked }
+                                        : cur,
+                                    )
+                                  }
+                                />
+                                <span>
+                                  掛売可（名簿登録）
+                                  <span className="mt-0.5 block font-medium text-slate-500">
+                                    組合取引先名簿に基づく直接取引の掛売可否（商社経由では適用されません）
+                                  </span>
+                                </span>
+                              </label>
+                              {editingMember.isCreditEligible ? (
+                                <label className="block text-xs text-gray-600 sm:col-span-2">
+                                  掛売可の根拠（任意）
+                                  <input
+                                    type="text"
+                                    value={editingMember.creditSource}
+                                    onChange={(e) =>
+                                      setEditingMember((cur) =>
+                                        cur ? { ...cur, creditSource: e.target.value } : cur,
+                                      )
+                                    }
+                                    placeholder="例: 大分中央生コンクリート協同組合 取引先業者名簿 2026/4/1"
+                                    className={`${inputClass} mt-1 w-full`}
+                                  />
+                                </label>
+                              ) : null}
+                            </>
+                          ) : null}
                           {isAgentOrg ? (
                             <ContractorLinksChecklist
                               contractors={contractors}
@@ -1118,6 +1173,11 @@ export function AdminOrgSection({ orgType, label }) {
                         {!String(member.phone_number || '').trim() ? (
                           <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">
                             未確認
+                          </span>
+                        ) : null}
+                        {isContractorOrg && member.is_credit_eligible ? (
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800">
+                            掛売可
                           </span>
                         ) : null}
                       </span>
@@ -1236,6 +1296,43 @@ export function AdminOrgSection({ orgType, label }) {
                           </span>
                         </span>
                       </label>
+                      {isContractorOrg ? (
+                        <>
+                          <label className="flex items-start gap-2 text-xs font-bold text-slate-700 sm:col-span-2">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4"
+                              checked={Boolean(newMember.isCreditEligible)}
+                              onChange={(e) =>
+                                setNewMember((m) => ({
+                                  ...m,
+                                  isCreditEligible: e.target.checked,
+                                }))
+                              }
+                            />
+                            <span>
+                              掛売可（名簿登録）
+                              <span className="mt-0.5 block font-medium text-slate-500">
+                                組合取引先名簿に基づく直接取引の掛売可否（商社経由では適用されません）
+                              </span>
+                            </span>
+                          </label>
+                          {newMember.isCreditEligible ? (
+                            <label className="block text-xs text-gray-600 sm:col-span-2">
+                              掛売可の根拠（任意）
+                              <input
+                                type="text"
+                                value={newMember.creditSource}
+                                onChange={(e) =>
+                                  setNewMember((m) => ({ ...m, creditSource: e.target.value }))
+                                }
+                                placeholder="例: 大分中央生コンクリート協同組合 取引先業者名簿 2026/4/1"
+                                className={`${inputClass} mt-1 w-full`}
+                              />
+                            </label>
+                          ) : null}
+                        </>
+                      ) : null}
                       {isAgentOrg ? (
                         <ContractorLinksChecklist
                           contractors={contractors}

@@ -35,6 +35,7 @@ import { ProjectExternalUrlActions } from './components/ProjectExternalUrlAction
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
 import { externalUrlValidationMessage } from './utils/urlValidation.js';
 import { buildOrderVisibilityContext } from './utils/orderVisibilityScope.js';
+import { shouldShowCreditBadge } from './utils/creditEligibility.js';
 import {
   MAP_EDITOR_PROJECT_SAVED_DOM_EVENT,
   MAP_EDITOR_PROJECT_SAVED_EVENT_KEY,
@@ -561,6 +562,8 @@ function ProjectForm({
     return list.length ? list.map((c) => ({ name: c?.name || '', phone: c?.phone || '' })) : [{ name: '', phone: '' }];
   });
   const [siteContactCandidates, setSiteContactCandidates] = useState([]);
+  const [tradingCompanyHistory, setTradingCompanyHistory] = useState([]);
+  const [tradingCompanyHistoryLoading, setTradingCompanyHistoryLoading] = useState(false);
   const [subContractor, setSubContractor] = useState(
     initial?.sub_contractor_name ?? initial?.contractor ?? '',
   );
@@ -742,6 +745,47 @@ function ProjectForm({
       cancelled = true;
     };
   }, [customerId]);
+
+  // 選択業者の過去商社利用実績
+  useEffect(() => {
+    const cid = String(customerId || '').trim();
+    if (!cid) {
+      setTradingCompanyHistory([]);
+      setTradingCompanyHistoryLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setTradingCompanyHistoryLoading(true);
+    void db
+      .fetchTradingCompanyHistoryByCustomer(cid)
+      .then((rows) => {
+        if (cancelled) return;
+        setTradingCompanyHistory(Array.isArray(rows) ? rows : []);
+      })
+      .catch((err) => {
+        console.warn('[ProjectForm] trading company history fetch failed', err);
+        if (!cancelled) setTradingCompanyHistory([]);
+      })
+      .finally(() => {
+        if (!cancelled) setTradingCompanyHistoryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [customerId]);
+
+  const applyTradingCompanyFromHistory = useCallback(
+    (companyName) => {
+      const name = String(companyName || '').trim();
+      if (!name) return;
+      setTradingCompany(name);
+      const hit = (agentOrganizations || []).find(
+        (o) => String(o?.name || '').trim() === name,
+      );
+      setTradingCompanyOrganizationId(hit?.id ? String(hit.id) : '');
+    },
+    [agentOrganizations],
+  );
 
   useEffect(() => {
     const municipality = String(deliveryArea || '').trim();
@@ -1050,6 +1094,61 @@ function ProjectForm({
         <p className="mt-1 text-[11px] font-medium text-slate-500">
           業者マスタから選ぶと紐づけられます。候補にない名称も自由入力でき、印刷物・専用URLの表記に使われます（任意）。
         </p>
+        {linkedCustomer &&
+        shouldShowCreditBadge(
+          {
+            trading_company_name: tradingCompany,
+            trading_company_organization_id: tradingCompanyOrganizationId,
+          },
+          linkedCustomer,
+        ) ? (
+          <p className="mt-1.5">
+            <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-black text-emerald-800">
+              掛売可
+            </span>
+            <span className="ml-2 text-[11px] font-medium text-slate-500">
+              商社未設定の直接取引向け（商社を紐付けると非表示）
+            </span>
+          </p>
+        ) : null}
+        {tradingCompanyHistoryLoading ? (
+          <p className="mt-2 text-[11px] font-medium text-slate-400">商社実績を読み込み中…</p>
+        ) : null}
+        {!tradingCompanyHistoryLoading && tradingCompanyHistory.length > 0 ? (
+          <div className="mt-2 rounded-lg border border-slate-200 bg-white/80 px-3 py-2">
+            <p className="text-[11px] font-black text-slate-700">過去の商社利用実績:</p>
+            <ul className="mt-1 space-y-1">
+              {tradingCompanyHistory.map((row) => {
+                const ym = (() => {
+                  const d = new Date(row.latestDate);
+                  if (Number.isNaN(d.getTime())) return '';
+                  return `${d.getFullYear()}/${d.getMonth() + 1}`;
+                })();
+                return (
+                  <li key={row.tradingCompanyName} className="text-[11px] font-medium text-slate-700">
+                    ・
+                    <button
+                      type="button"
+                      onClick={() => applyTradingCompanyFromHistory(row.tradingCompanyName)}
+                      className="font-black text-indigo-700 underline-offset-2 hover:underline"
+                      title="商社名欄に入力"
+                    >
+                      {row.tradingCompanyName}
+                    </button>
+                    （{row.count}件）
+                    {row.latestProjectName ? (
+                      <span className="text-slate-500">
+                        {' '}
+                        最新: {row.latestProjectName}
+                        {ym ? `（${ym}）` : ''}
+                      </span>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ) : null}
         {isUnmatchedContractor ? (
           <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2">
             <input
@@ -1733,8 +1832,15 @@ function ProjectsSection({ factories, factoryNameById }) {
                   <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50/80">
                     <td className="px-3 py-2.5 font-bold text-slate-900">{p.name}</td>
                     <td className="px-3 py-2.5 font-bold text-slate-800">
-                      {display.prime}
-                      {display.billOnPrime ? <BillingMark /> : null}
+                      <span className="inline-flex flex-wrap items-center gap-1.5">
+                        <span>{display.prime}</span>
+                        {display.billOnPrime ? <BillingMark /> : null}
+                        {shouldShowCreditBadge(p, customer) ? (
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-black text-emerald-800">
+                            掛売可
+                          </span>
+                        ) : null}
+                      </span>
                     </td>
                     <td className="px-3 py-2.5 text-slate-700">
                       <span className="font-bold text-slate-800">{display.sub}</span>

@@ -3332,7 +3332,7 @@ export async function fetchOrganizationsWithMembers(type) {
   const { data, error: ce } = await supabase
     .from('customers')
     .select(
-      'id, company_name, furigana, manager_name, phone_number, login_password, organization_id, can_import_schedule',
+      'id, company_name, furigana, manager_name, phone_number, login_password, organization_id, can_import_schedule, is_credit_eligible, credit_source',
     )
     .eq('role', type)
     .order('manager_name');
@@ -3373,6 +3373,8 @@ export async function createOrgMember({
   password,
   furigana,
   canImportSchedule,
+  isCreditEligible,
+  creditSource,
 }) {
   let resolvedCompanyName = String(companyName ?? '').trim();
   if (!resolvedCompanyName && organizationId) {
@@ -3396,6 +3398,8 @@ export async function createOrgMember({
       phone_number: phone?.trim() ?? null,
       login_password: password?.trim() ?? null,
       can_import_schedule: Boolean(canImportSchedule),
+      is_credit_eligible: Boolean(isCreditEligible),
+      credit_source: String(creditSource ?? '').trim() || null,
     })
     .select()
     .single();
@@ -3406,7 +3410,17 @@ export async function createOrgMember({
 /** 担当者を更新 */
 export async function updateOrgMember(
   id,
-  { organizationId, companyName, managerName, phone, password, furigana, canImportSchedule },
+  {
+    organizationId,
+    companyName,
+    managerName,
+    phone,
+    password,
+    furigana,
+    canImportSchedule,
+    isCreditEligible,
+    creditSource,
+  },
 ) {
   let resolvedCompanyName = String(companyName ?? '').trim();
   if (!resolvedCompanyName && organizationId) {
@@ -3428,6 +3442,12 @@ export async function updateOrgMember(
   };
   if (canImportSchedule !== undefined) {
     updateRow.can_import_schedule = Boolean(canImportSchedule);
+  }
+  if (isCreditEligible !== undefined) {
+    updateRow.is_credit_eligible = Boolean(isCreditEligible);
+  }
+  if (creditSource !== undefined) {
+    updateRow.credit_source = String(creditSource ?? '').trim() || null;
   }
 
   const { error } = await supabase.from('customers').update(updateRow).eq('id', id);
@@ -3634,6 +3654,8 @@ function mapCustomerRow(row) {
     role: String(row.role ?? 'contractor'),
     organization_id: row.organization_id != null ? String(row.organization_id) : null,
     can_import_schedule: Boolean(row.can_import_schedule),
+    is_credit_eligible: Boolean(row.is_credit_eligible),
+    credit_source: row.credit_source != null ? String(row.credit_source) : '',
     created_at: row.created_at,
   };
 }
@@ -3642,6 +3664,39 @@ export async function fetchCustomers() {
   const { data, error } = await supabase.from('customers').select('*').order('company_name', { ascending: true });
   if (error) throw error;
   return (data || []).map(mapCustomerRow).filter(Boolean);
+}
+
+/**
+ * 指定した業者(customer_id)が過去に利用した商社の実績を取得
+ * @param {string} customerId
+ * @returns {Promise<Array<{ tradingCompanyName: string, count: number, latestProjectName: string, latestDate: string }>>}
+ */
+export async function fetchTradingCompanyHistoryByCustomer(customerId) {
+  const cid = String(customerId || '').trim();
+  if (!cid) return [];
+  const { data, error } = await supabase
+    .from('projects')
+    .select('name, trading_company_name, created_at')
+    .eq('customer_id', cid)
+    .not('trading_company_name', 'is', null)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+
+  const grouped = {};
+  for (const row of data || []) {
+    const key = String(row.trading_company_name || '').trim();
+    if (!key) continue;
+    if (!grouped[key]) {
+      grouped[key] = {
+        tradingCompanyName: key,
+        count: 0,
+        latestProjectName: String(row.name || '').trim(),
+        latestDate: row.created_at != null ? String(row.created_at) : '',
+      };
+    }
+    grouped[key].count += 1;
+  }
+  return Object.values(grouped).sort((a, b) => b.count - a.count);
 }
 
 const BULK_INSERT_CHUNK = 100;
