@@ -25,11 +25,42 @@ function vehicleTypeLabel(value) {
   return String(value || '') === 'small' ? '小型' : '大型';
 }
 
+/** 商社組織IDを比較用に正規化（未選択は空文字） */
+function normalizeAgentOrganizationId(value) {
+  if (value == null) return '';
+  return String(value).trim();
+}
+
+/** 商社の表示名（チャット・サマリー用。判定には使わない） */
+function resolveTraderDisplayName(source) {
+  if (!source || typeof source !== 'object') return '';
+  return String(
+    source.traderName ??
+      source.trading_company_name ??
+      source.projectTradingCompanyName ??
+      '',
+  ).trim();
+}
+
+/**
+ * 商社（agent_organization_id）の変更を検出する。
+ * 表示名ではなく ID のみで判定し、null/未選択への変更も対象にする。
+ */
+function hasAgentOrganizationIdChanged(order, patch) {
+  if (!patch || typeof patch !== 'object') return false;
+  if (!Object.prototype.hasOwnProperty.call(patch, 'agent_organization_id')) return false;
+  const before = normalizeAgentOrganizationId(
+    order?.agent_organization_id ?? order?.agentOrganizationId,
+  );
+  const after = normalizeAgentOrganizationId(patch.agent_organization_id);
+  return before !== after;
+}
+
 /** 変更依頼チャット本文を組み立てる（差分のみ） */
 export function buildChangeRequestChatMessage(order, patch) {
-  const parts = buildChangeRequestDiffParts(order, patch);
-  if (parts.length === 0) return '';
-  return `【変更依頼】${parts.join('、')}`;
+  const rows = buildChangeRequestDiffRows(order, patch);
+  if (rows.length === 0) return '';
+  return `【変更依頼】${rows.map((r) => `${r.label}: ${r.before} → ${r.after}`).join('、')}`;
 }
 
 /**
@@ -91,22 +122,16 @@ export function buildChangeRequestPatch(order, patch) {
   if (Boolean(o.has_test) !== Boolean(p.has_test)) {
     out.has_test = Boolean(p.has_test);
   }
-  if (
-    Object.prototype.hasOwnProperty.call(p, 'agent_organization_id') ||
-    Object.prototype.hasOwnProperty.call(p, 'traderName')
-  ) {
-    const beforeAgent = String(o.agent_organization_id ?? o.agentOrganizationId ?? '').trim();
-    const afterAgent = String(p.agent_organization_id ?? '').trim();
-    const beforeTrader = String(o.traderName ?? '').trim();
-    const afterTrader = String(p.traderName ?? '').trim();
-    if (beforeAgent !== afterAgent || beforeTrader !== afterTrader) {
-      if (Object.prototype.hasOwnProperty.call(p, 'agent_organization_id')) {
-        out.agent_organization_id = p.agent_organization_id;
-      }
-      if (Object.prototype.hasOwnProperty.call(p, 'traderName')) {
-        out.traderName = p.traderName;
-      }
-    }
+
+  // 商社: agent_organization_id の ID 比較のみ（表示名一致ではスキップしない）
+  // 未選択（null）への変更も検出する
+  if (hasAgentOrganizationIdChanged(o, p)) {
+    const afterId = normalizeAgentOrganizationId(p.agent_organization_id);
+    out.agent_organization_id = afterId || null;
+    const traderName = afterId ? resolveTraderDisplayName(p) : '';
+    out.traderName = traderName;
+    out.trading_company_name = traderName;
+    out.projectTradingCompanyName = traderName;
   }
   return out;
 }
@@ -128,7 +153,9 @@ export function formatChangeRequestPatchSummary(patch) {
     sitePhone: '電話番号',
     contractorName: '業者名',
     has_test: '試験体',
+    agent_organization_id: '商社',
     traderName: '商社',
+    trading_company_name: '商社',
   };
   const parts = [];
   const seen = new Set();
@@ -140,12 +167,19 @@ export function formatChangeRequestPatchSummary(patch) {
     if (key === 'has_test') display = value ? 'あり' : 'なし';
     if (key === 'vehicleType') display = vehicleTypeLabel(value);
     if (key === 'quantityM3') display = `${value}m³`;
+    if (key === 'agent_organization_id') {
+      display = resolveTraderDisplayName(patch) || (value ? String(value) : '');
+    }
     parts.push(`${label}: ${display == null || display === '' ? '（未設定）' : display}`);
   }
   return parts.join('、');
 }
 
-function buildChangeRequestDiffParts(order, patch) {
+/**
+ * 変更点だけを「項目名 / 変更前 / 変更後」の行配列で返す（確認画面・チャット共用）
+ * @returns {Array<{ label: string, before: string, after: string }>}
+ */
+export function buildChangeRequestDiffRows(order, patch) {
   const o = order && typeof order === 'object' ? order : {};
   const p = patch && typeof patch === 'object' ? patch : {};
   const fields = [
@@ -206,15 +240,28 @@ function buildChangeRequestDiffParts(order, patch) {
       after: p.has_test ? 'あり' : 'なし',
     },
   ];
-  const parts = [];
+  const rows = [];
   for (const f of fields) {
     if (f.before === f.after || (!f.before && !f.after)) continue;
     const suffix = f.suffix ?? '';
-    const beforeText = f.before ? `${f.before}${suffix}` : '（未設定）';
-    const afterText = f.after ? `${f.after}${suffix}` : '（未設定）';
-    parts.push(`${f.label}: ${beforeText} → ${afterText}`);
+    rows.push({
+      label: f.label,
+      before: f.before ? `${f.before}${suffix}` : '（未設定）',
+      after: f.after ? `${f.after}${suffix}` : '（未設定）',
+    });
   }
-  return parts;
+
+  // 商社は ID 比較で検出（表示名の一致では落とさない。未選択→選択／選択→未選択も対象）
+  if (hasAgentOrganizationIdChanged(o, p)) {
+    const beforeName = resolveTraderDisplayName(o);
+    const afterName = resolveTraderDisplayName(p);
+    rows.push({
+      label: '商社',
+      before: beforeName || '（未設定）',
+      after: afterName || '（未設定）',
+    });
+  }
+  return rows;
 }
 
 function resolveSiteUrlToken(order, projectById, customerById) {
@@ -273,6 +320,10 @@ export function OrderFullEditModal({
   const [agentOrganizations, setAgentOrganizations] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [saveError, setSaveError] = useState('');
+  /** 依頼モードのみ: 'edit' | 'confirm' */
+  const [requestStep, setRequestStep] = useState('edit');
+  const [confirmDiffRows, setConfirmDiffRows] = useState([]);
+  const [confirmPayload, setConfirmPayload] = useState(null);
   const submittingRef = useRef(false);
 
   useEffect(() => {
@@ -280,6 +331,9 @@ export function OrderFullEditModal({
     submittingRef.current = false;
     setSubmitting(false);
     setSaveError('');
+    setRequestStep('edit');
+    setConfirmDiffRows([]);
+    setConfirmPayload(null);
   }, [open]);
 
   useEffect(() => {
@@ -350,6 +404,9 @@ export function OrderFullEditModal({
       hasTest: Boolean(order.has_test),
     });
     setSaveError('');
+    setRequestStep('edit');
+    setConfirmDiffRows([]);
+    setConfirmPayload(null);
   }, [order?.id, open, projectById, customerById]);
 
   if (!open || !order) return null;
@@ -392,10 +449,7 @@ export function OrderFullEditModal({
     }));
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (submittingRef.current) return;
-    setSaveError('');
+  const buildFormPatch = () => {
     const slotMeta = TIME_SLOTS.find((s) => s.value === editData.timeSlot);
     const timeMinutes = parseInt(editData.timeSlot, 10);
     const slotLabel = slotMeta?.label ?? '';
@@ -403,7 +457,7 @@ export function OrderFullEditModal({
       editData.agentOrganizationId || null,
       agentOrganizations,
     );
-    const patch = {
+    return {
       preferredDate: editData.preferredDate,
       timeSlot: editData.timeSlot,
       timeSlotMinutes: Number.isFinite(timeMinutes) ? timeMinutes : null,
@@ -425,43 +479,90 @@ export function OrderFullEditModal({
       has_test: editData.hasTest,
       ...agentSync,
     };
+  };
+
+  const handleBackToEdit = () => {
+    if (submittingRef.current) return;
+    setSaveError('');
+    setRequestStep('edit');
+    setConfirmDiffRows([]);
+    setConfirmPayload(null);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (submittingRef.current) return;
+    setSaveError('');
+
+    // 依頼モード・入力画面: 送信せず確認画面へ
+    if (isRequestMode && requestStep === 'edit') {
+      const patch = buildFormPatch();
+      const structuredPatch = buildChangeRequestPatch(order, patch);
+      const diffRows = buildChangeRequestDiffRows(order, patch);
+      if (diffRows.length === 0 || Object.keys(structuredPatch).length === 0) {
+        setSaveError('変更点がありません。項目を変更してから確認してください。');
+        return;
+      }
+      const message = buildChangeRequestChatMessage(order, patch);
+      setConfirmDiffRows(diffRows);
+      setConfirmPayload({ patch, structuredPatch, message });
+      setRequestStep('confirm');
+      return;
+    }
+
+    // 依頼モード・確認画面からの送信は専用ボタンで行う
+    if (isRequestMode && requestStep === 'confirm') {
+      return;
+    }
+
+    const patch = buildFormPatch();
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      if (isRequestMode) {
-        const message = buildChangeRequestChatMessage(order, patch);
-        const structuredPatch = buildChangeRequestPatch(order, patch);
-        if (!message || Object.keys(structuredPatch).length === 0) {
-          setSaveError('変更内容がありません。項目を変更してから送信してください。');
-          return;
-        }
-        const ok = await onSave(order.id, patch, {
-          mode: 'request',
-          message,
-          structuredPatch,
-        });
-        if (ok === false) {
-          setSaveError('変更依頼の送信に失敗しました。通信状態を確認してください。');
-        }
-      } else {
-        const ok = await onSave(order.id, patch);
-        if (ok === false) {
-          setSaveError('保存に失敗しました。内容を確認して再度お試しください。');
-        }
+      const ok = await onSave(order.id, patch);
+      if (ok === false) {
+        setSaveError('保存に失敗しました。内容を確認して再度お試しください。');
       }
     } catch (err) {
       console.error('[OrderFullEditModal] save failed', err);
+      setSaveError(err?.message || '保存に失敗しました。通信状態を確認してください。');
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  };
+
+  const handleConfirmSend = async () => {
+    if (!isRequestMode || requestStep !== 'confirm') return;
+    if (submittingRef.current) return;
+    if (!confirmPayload?.structuredPatch || !confirmPayload?.message) {
+      setSaveError('変更点がありません。戻って内容を確認してください。');
+      return;
+    }
+    setSaveError('');
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      const ok = await onSave(order.id, confirmPayload.patch, {
+        mode: 'request',
+        message: confirmPayload.message,
+        structuredPatch: confirmPayload.structuredPatch,
+      });
+      if (ok === false) {
+        setSaveError('変更依頼の送信に失敗しました。通信状態を確認してください。');
+      }
+    } catch (err) {
+      console.error('[OrderFullEditModal] change request send failed', err);
       setSaveError(
-        err?.message ||
-          (isRequestMode
-            ? '変更依頼の送信に失敗しました。通信状態を確認してください。'
-            : '保存に失敗しました。通信状態を確認してください。'),
+        err?.message || '変更依頼の送信に失敗しました。通信状態を確認してください。',
       );
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
     }
   };
+
+  const isConfirmStep = isRequestMode && requestStep === 'confirm';
 
   return (
     <div
@@ -480,7 +581,11 @@ export function OrderFullEditModal({
       >
         <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
           <h2 id={titleId} className="text-lg font-black text-slate-900 sm:text-xl">
-            {isRequestMode ? '変更依頼' : '注文内容の編集'}
+            {isRequestMode
+              ? isConfirmStep
+                ? '変更内容の確認'
+                : '変更依頼'
+              : '注文内容の編集'}
           </h2>
           <button
             type="button"
@@ -493,6 +598,33 @@ export function OrderFullEditModal({
         </div>
         <form className="flex min-h-0 flex-1 flex-col" onSubmit={handleSubmit}>
           <div className="min-h-0 flex-1 overflow-y-auto pr-2 px-4 py-4">
+            {isConfirmStep ? (
+              <div className="space-y-3">
+                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">
+                  以下の変更点だけが工場・管理者へ送信されます。内容を確認してから送信してください。
+                </p>
+                <ul className="space-y-2 rounded-xl border-2 border-indigo-200 bg-indigo-50/60 p-3">
+                  {confirmDiffRows.map((row) => (
+                    <li
+                      key={row.label}
+                      className="rounded-lg border border-indigo-100 bg-white px-3 py-2.5 shadow-sm"
+                    >
+                      <p className="text-xs font-black uppercase tracking-wider text-slate-500">
+                        {row.label}
+                      </p>
+                      <p className="mt-1 break-words text-sm font-black text-slate-900 sm:text-base">
+                        <span className="text-slate-600">{row.before}</span>
+                        <span className="mx-1.5 text-indigo-600" aria-hidden="true">
+                          →
+                        </span>
+                        <span className="text-indigo-900">{row.after}</span>
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <>
             {isRequestMode ? (
               <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">
                 受注済みの注文です。ここで入力した内容は直接反映されず、工場・管理者への「変更依頼」としてチャットに送信されます。
@@ -748,6 +880,8 @@ export function OrderFullEditModal({
                 />
               </div>
             </section>
+              </>
+            )}
           </div>
           {saveError ? (
             <p
@@ -758,28 +892,50 @@ export function OrderFullEditModal({
             </p>
           ) : null}
           <div className="flex shrink-0 flex-col gap-2 border-t border-slate-200 bg-white px-4 py-3 sm:flex-row">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={submitting}
-              className="min-h-[52px] flex-1 rounded-xl border-2 border-slate-300 bg-white text-base font-black text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg"
-            >
-              キャンセル
-            </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              aria-busy={submitting}
-              className="min-h-[52px] flex-1 rounded-xl border-2 border-indigo-700 bg-indigo-600 text-base font-black text-white shadow hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg"
-            >
-              {submitting
-                ? isRequestMode
-                  ? '送信中…'
-                  : '保存中…'
-                : isRequestMode
-                  ? '変更依頼を送信'
-                  : '保存'}
-            </button>
+            {isConfirmStep ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleBackToEdit}
+                  disabled={submitting}
+                  className="min-h-[52px] flex-1 rounded-xl border-2 border-slate-300 bg-white text-base font-black text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg"
+                >
+                  戻る
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleConfirmSend()}
+                  disabled={submitting}
+                  aria-busy={submitting}
+                  className="min-h-[52px] flex-1 rounded-xl border-2 border-indigo-700 bg-indigo-600 text-base font-black text-white shadow hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg"
+                >
+                  {submitting ? '送信中…' : 'この内容で変更依頼を送信'}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  disabled={submitting}
+                  className="min-h-[52px] flex-1 rounded-xl border-2 border-slate-300 bg-white text-base font-black text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg"
+                >
+                  キャンセル
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  aria-busy={submitting}
+                  className="min-h-[52px] flex-1 rounded-xl border-2 border-indigo-700 bg-indigo-600 text-base font-black text-white shadow hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg"
+                >
+                  {submitting
+                    ? '保存中…'
+                    : isRequestMode
+                      ? '確認'
+                      : '保存'}
+                </button>
+              </>
+            )}
           </div>
         </form>
       </div>
