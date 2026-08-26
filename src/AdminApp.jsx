@@ -82,9 +82,11 @@ import {
   downloadProjectsExportCsv,
   parseProjectsCsvFile,
   reresolveProjectImportRow,
+  salesAdminSelectOptions,
   stripImportMeta,
+  tradingCompanySelectOptions,
 } from './utils/adminCsvImport.js';
-import { normalizeCompanyName } from './utils/csvImport.js';
+import { normalizeCompanyName, normalizeCsvPhoneNumber } from './utils/csvImport.js';
 import {
   findAgentOrganizationByName,
   isUnregisteredTradingCompanyName,
@@ -552,6 +554,7 @@ function ProjectForm({
   const [tradingCompanyOrganizationId, setTradingCompanyOrganizationId] = useState(
     initial?.trading_company_organization_id ?? '',
   );
+  const [registerNewTradingCompany, setRegisterNewTradingCompany] = useState(true);
   const [tradingContactName, setTradingContactName] = useState(
     () => String(initial?.trading_contact_name ?? '').trim(),
   );
@@ -644,6 +647,7 @@ function ProjectForm({
     setRegisterNewContractor(true);
     setTradingCompany(resolveProjectTradingCompanyName(initial));
     setTradingCompanyOrganizationId(initial?.trading_company_organization_id ?? '');
+    setRegisterNewTradingCompany(true);
     setTradingContactName(String(initial?.trading_contact_name ?? '').trim());
     setTradingContactPhone(String(initial?.trading_contact_phone ?? '').trim());
     {
@@ -858,6 +862,13 @@ function ProjectForm({
     [tradingCompany, agentOrganizations, tradingCompanyOrganizationId],
   );
 
+  const isUnmatchedTradingCompany = useMemo(() => {
+    const typed = String(tradingCompany || '').trim();
+    if (!typed) return false;
+    if (String(tradingCompanyOrganizationId || '').trim()) return false;
+    return !findAgentOrganizationByName(agentOrganizations, typed);
+  }, [tradingCompany, tradingCompanyOrganizationId, agentOrganizations]);
+
   const handleTradingCompanyChange = useCallback(
     (text) => {
       setTradingCompany(text);
@@ -984,10 +995,17 @@ function ProjectForm({
     }
     setAddressError('');
     setMainFactorySwapNotice('');
+
+    if (billingTarget === 'sub' && !subContractor.trim()) {
+      const ok = window.confirm('請求先が下請ですが、業者（下請）が未入力です');
+      if (!ok) return;
+    }
+
     const typed = contractorName.trim();
     let nextCustomerId = String(customerId || '').trim();
     let nextDisplayName = '';
     let justCreatedCustomer = false;
+    let createdContractorName = '';
 
     if (!typed) {
       nextCustomerId = '';
@@ -1006,13 +1024,11 @@ function ProjectForm({
         nextDisplayName = typed;
       } else if (!nextCustomerId && registerNewContractor && isUnmatchedContractor) {
         try {
-          const created = await db.addCustomer({
-            company_name: typed,
-            phone_number: null,
-          });
-          nextCustomerId = String(created?.id || '').trim();
+          const created = await db.createProvisionalCompany({ name: typed, role: 'contractor' });
+          nextCustomerId = String(created?.customer?.id || '').trim();
           nextDisplayName = '';
           justCreatedCustomer = true;
+          createdContractorName = typed;
         } catch (err) {
           console.error(err);
           setAddressError(err?.message || '業者の仮登録に失敗しました。');
@@ -1033,35 +1049,62 @@ function ProjectForm({
       }
     }
 
-    if (billingTarget === 'sub' && !subContractor.trim()) {
-      const ok = window.confirm('請求先が下請ですが、業者（下請）が未入力です');
-      if (!ok) return;
+    const typedTradingCompany = tradingCompany.trim();
+    let nextTradingOrgId = String(tradingCompanyOrganizationId || '').trim();
+    let createdTradingCompanyName = '';
+
+    if (
+      typedTradingCompany &&
+      !nextTradingOrgId &&
+      registerNewTradingCompany &&
+      isUnmatchedTradingCompany
+    ) {
+      try {
+        const created = await db.createProvisionalCompany({
+          name: typedTradingCompany,
+          role: 'agent',
+        });
+        nextTradingOrgId = String(created?.organization?.id || '').trim();
+        createdTradingCompanyName = typedTradingCompany;
+      } catch (err) {
+        console.error(err);
+        // 業者だけ先に登録済みの場合、どこまで成功したか分かるように伝える
+        setAddressError(
+          createdContractorName
+            ? `業者「${createdContractorName}」は登録されましたが、商社「${typedTradingCompany}」の登録に失敗しました。もう一度お試しください。`
+            : err?.message || '商社の仮登録に失敗しました。',
+        );
+        return;
+      }
     }
 
-    onSave({
-      name: name.trim(),
-      customer_id: nextCustomerId,
-      contractor_display_name: nextDisplayName,
-      trading_company_name: tradingCompany.trim(),
-      trading_company: tradingCompany.trim(),
-      trading_company_organization_id: tradingCompanyOrganizationId || null,
-      trading_contact_name: tradingContactName.trim(),
-      trading_contact_phone: tradingContactPhone.trim(),
-      site_contacts: siteContacts,
-      contractor: subContractor.trim(),
-      sub_contractor_name: subContractor.trim(),
-      billing_target: billingTarget,
-      main_factory_id: mainFactoryId,
-      sub_factory_ids: [...subIds].filter((id) => id && id !== mainFactoryId),
-      delivery_area: area,
-      site_address: detail,
-      lat: lat.trim(),
-      lng: lng.trim(),
-      folder_url: folderUrl.trim(),
-      sheet_url: sheetUrl.trim(),
-      sales_admin_id: salesAdminId.trim(),
-      sales_admin_name: salesAdminName.trim(),
-    });
+    onSave(
+      {
+        name: name.trim(),
+        customer_id: nextCustomerId,
+        contractor_display_name: nextDisplayName,
+        trading_company_name: typedTradingCompany,
+        trading_company: typedTradingCompany,
+        trading_company_organization_id: nextTradingOrgId || null,
+        trading_contact_name: tradingContactName.trim(),
+        trading_contact_phone: tradingContactPhone.trim(),
+        site_contacts: siteContacts,
+        contractor: subContractor.trim(),
+        sub_contractor_name: subContractor.trim(),
+        billing_target: billingTarget,
+        main_factory_id: mainFactoryId,
+        sub_factory_ids: [...subIds].filter((id) => id && id !== mainFactoryId),
+        delivery_area: area,
+        site_address: detail,
+        lat: lat.trim(),
+        lng: lng.trim(),
+        folder_url: folderUrl.trim(),
+        sheet_url: sheetUrl.trim(),
+        sales_admin_id: salesAdminId.trim(),
+        sales_admin_name: salesAdminName.trim(),
+      },
+      { createdContractorName, createdTradingCompanyName },
+    );
   };
 
   const fieldClass =
@@ -1186,7 +1229,25 @@ function ProjectForm({
             emptyHint="該当する商社がありません（自由入力で保存できます）"
             inputClassName="min-h-[44px] rounded-lg border-2 border-slate-200 px-3 py-2 text-sm"
           />
-          {showTradingCompanyWarning ? (
+          {isUnmatchedTradingCompany ? (
+            <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600"
+                checked={registerNewTradingCompany}
+                onChange={(e) => setRegisterNewTradingCompany(e.target.checked)}
+              />
+              <span>
+                <span className="block text-xs font-black text-amber-950">
+                  商社管理にも登録する（新規: &quot;{tradingCompany.trim()}&quot;）
+                </span>
+                <span className="mt-0.5 block text-[11px] font-medium text-amber-800">
+                  電話番号未設定のため、ログイン不可の仮登録として保存されます。
+                </span>
+              </span>
+            </label>
+          ) : null}
+          {showTradingCompanyWarning && !(isUnmatchedTradingCompany && registerNewTradingCompany) ? (
             <p className="mt-1 text-xs font-bold text-amber-800" role="status">
               ⚠️ 未登録の商社名です。登録済み商社から選択することを推奨します
             </p>
@@ -1501,6 +1562,17 @@ function ProjectsSection({ factories, factoryNameById }) {
 
   const defaultMainFactoryId = factories?.[0]?.id ?? '';
 
+  const importResolveCtx = useMemo(
+    () => ({
+      factories,
+      salesStaff,
+      customers,
+      tradingCompanies,
+      agentOrganizations,
+    }),
+    [factories, salesStaff, customers, tradingCompanies, agentOrganizations],
+  );
+
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -1602,15 +1674,22 @@ function ProjectsSection({ factories, factoryNameById }) {
     };
   }, [load]);
 
-  const handleSave = async (payload) => {
+  const handleSave = async (payload, meta = {}) => {
     setSaving(true);
     setError('');
+    const isEdit = Boolean(editing?.id);
     try {
-      const saved = editing?.id
+      const saved = isEdit
         ? await db.updateProject(editing.id, payload)
         : await db.insertProject(payload);
       setFormMode('edit');
       setEditing(saved);
+      const created = [];
+      if (meta.createdContractorName) created.push('業者');
+      if (meta.createdTradingCompanyName) created.push('商社');
+      const base = isEdit ? '物件を更新しました' : '物件を登録しました';
+      setImportNotice(created.length > 0 ? `${base}（${created.join('・')}を新規登録）` : base);
+      window.setTimeout(() => setImportNotice(''), 5000);
       await load();
     } catch (e) {
       console.error(e);
@@ -1674,17 +1753,7 @@ function ProjectsSection({ factories, factoryNameById }) {
                 editable: true,
                 getValue: (r) => String(r.__contractorLabel ?? ''),
                 applyValue: (r, v) =>
-                  reresolveProjectImportRow(
-                    { ...r, __contractorLabel: v },
-                    {
-                      factories,
-                      salesStaff,
-                      customers,
-                      tradingCompanies,
-                      agentOrganizations,
-                      defaultMainFactoryId,
-                    },
-                  ),
+                  reresolveProjectImportRow({ ...r, __contractorLabel: v }, importResolveCtx),
                 render: (r, ctx) => (
                   <>
                     {r.__contractorLabel ||
@@ -1708,19 +1777,13 @@ function ProjectsSection({ factories, factoryNameById }) {
                 key: 'trading_company_name',
                 label: '商社名',
                 editable: true,
+                editType: (r) =>
+                  (r.__tradingCandidates || []).length >= 2 ? 'select' : 'text',
                 getValue: (r) => String(r.trading_company_name ?? ''),
+                options: (r) =>
+                  tradingCompanySelectOptions(r, { tradingCompanies, agentOrganizations }),
                 applyValue: (r, v) =>
-                  reresolveProjectImportRow(
-                    { ...r, trading_company_name: v },
-                    {
-                      factories,
-                      salesStaff,
-                      customers,
-                      tradingCompanies,
-                      agentOrganizations,
-                      defaultMainFactoryId,
-                    },
-                  ),
+                  reresolveProjectImportRow({ ...r, trading_company_name: v }, importResolveCtx),
                 render: (r, ctx) => (
                   <>
                     {r.trading_company_name || '—'}
@@ -1751,29 +1814,29 @@ function ProjectsSection({ factories, factoryNameById }) {
                 editable: true,
                 editType: 'select',
                 getValue: (r) => String(r.main_factory_id ?? ''),
-                options: () => [
-                  { value: '', label: '（未選択）' },
-                  ...(factories || []).map((f) => ({
-                    value: String(f.id),
-                    label: String(f.name || f.id),
-                  })),
-                ],
+                options: (r) => {
+                  const opts = [
+                    { value: '', label: '（未選択）' },
+                    ...(factories || []).map((f) => ({
+                      value: String(f.id),
+                      label: String(f.name || f.id).trim(),
+                    })),
+                  ];
+                  const id = String(r.main_factory_id || '');
+                  if (id && !opts.some((o) => o.value === id)) {
+                    opts.push({ value: id, label: r.__mainFactoryLabel || id });
+                  }
+                  return opts;
+                },
                 applyValue: (r, v) => {
                   const hit = (factories || []).find((f) => String(f.id) === String(v));
                   return reresolveProjectImportRow(
                     {
                       ...r,
                       main_factory_id: v || '',
-                      __mainFactoryLabel: hit ? String(hit.name || '') : '',
+                      __mainFactoryLabel: hit ? String(hit.name || '').trim() : '',
                     },
-                    {
-                      factories,
-                      salesStaff,
-                      customers,
-                      tradingCompanies,
-                      agentOrganizations,
-                      defaultMainFactoryId,
-                    },
+                    importResolveCtx,
                   );
                 },
               },
@@ -1781,19 +1844,10 @@ function ProjectsSection({ factories, factoryNameById }) {
                 key: 'sub_factory',
                 label: 'サブ工場',
                 editable: true,
+                placeholder: 'カンマ区切り（略称可）',
                 getValue: (r) => String(r.__subFactoryLabels ?? ''),
                 applyValue: (r, v) =>
-                  reresolveProjectImportRow(
-                    { ...r, __subFactoryLabels: v },
-                    {
-                      factories,
-                      salesStaff,
-                      customers,
-                      tradingCompanies,
-                      agentOrganizations,
-                      defaultMainFactoryId,
-                    },
-                  ),
+                  reresolveProjectImportRow({ ...r, __subFactoryLabels: v }, importResolveCtx),
               },
               {
                 key: 'trading_contact_name',
@@ -1807,43 +1861,29 @@ function ProjectsSection({ factories, factoryNameById }) {
                 label: '商社電話',
                 editable: true,
                 getValue: (r) => String(r.trading_contact_phone ?? ''),
-                applyValue: (r, v) => ({ ...r, trading_contact_phone: v || null }),
+                applyValue: (r, v) => ({
+                  ...r,
+                  trading_contact_phone: v ? normalizeCsvPhoneNumber(v) : null,
+                }),
               },
               {
                 key: 'site_contacts',
                 label: '現場担当',
                 editable: true,
+                placeholder: '名前:電話,名前',
                 getValue: (r) => String(r.__siteContactsRaw ?? ''),
                 applyValue: (r, v) =>
-                  reresolveProjectImportRow(
-                    { ...r, __siteContactsRaw: v },
-                    {
-                      factories,
-                      salesStaff,
-                      customers,
-                      tradingCompanies,
-                      agentOrganizations,
-                      defaultMainFactoryId,
-                    },
-                  ),
+                  reresolveProjectImportRow({ ...r, __siteContactsRaw: v }, importResolveCtx),
               },
               {
                 key: 'sales_admin_name',
                 label: '担当営業',
                 editable: true,
+                editType: (salesStaff || []).length > 0 ? 'select' : 'text',
                 getValue: (r) => String(r.sales_admin_name ?? ''),
+                options: (r) => salesAdminSelectOptions(r, salesStaff),
                 applyValue: (r, v) =>
-                  reresolveProjectImportRow(
-                    { ...r, sales_admin_name: v },
-                    {
-                      factories,
-                      salesStaff,
-                      customers,
-                      tradingCompanies,
-                      agentOrganizations,
-                      defaultMainFactoryId,
-                    },
-                  ),
+                  reresolveProjectImportRow({ ...r, sales_admin_name: v }, importResolveCtx),
               },
             ]}
             onImport={async (preview) => {

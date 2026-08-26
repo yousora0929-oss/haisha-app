@@ -133,19 +133,33 @@ function normalizeHeaderKey(raw) {
 }
 
 /**
- * ヘッダー行から列インデックスを解決
+ * ヘッダー行から列インデックスを解決。
+ * 完全一致を先に割り当て、同じヘッダーを複数フィールドで使い回さない
+ * （「工場」と「サブ工場」の衝突防止）。
  * @param {string[]} headers
  * @param {Record<string, string[]>} aliasMap fieldKey -> 別名リスト
  */
 export function mapCsvHeaders(headers, aliasMap) {
   const normalized = headers.map(normalizeHeaderKey);
   const indexByField = {};
+  const used = new Set();
 
-  for (const [field, aliases] of Object.entries(aliasMap)) {
-    const aliasNorm = aliases.map((a) => normalizeHeaderKey(a));
-    const idx = normalized.findIndex((h) => aliasNorm.some((a) => h === a || h.includes(a) || a.includes(h)));
-    if (idx >= 0) indexByField[field] = idx;
-  }
+  const tryAssign = (predicate) => {
+    for (const [field, aliases] of Object.entries(aliasMap)) {
+      if (indexByField[field] != null) continue;
+      const aliasNorm = aliases.map((a) => normalizeHeaderKey(a)).filter(Boolean);
+      const idx = normalized.findIndex(
+        (h, i) => !used.has(i) && h && predicate(h, aliasNorm),
+      );
+      if (idx >= 0) {
+        indexByField[field] = idx;
+        used.add(idx);
+      }
+    }
+  };
+
+  tryAssign((h, aliasNorm) => aliasNorm.includes(h));
+  tryAssign((h, aliasNorm) => aliasNorm.some((a) => h.includes(a) || a.includes(h)));
 
   return indexByField;
 }
@@ -187,6 +201,53 @@ export const PROJECT_CSV_ALIASES = {
   site_contacts_raw: ['現場担当者', '現場ご担当', 'site_contacts', '現場担当者（名前:電話）'],
   sales_admin_name: ['組合担当営業', '担当営業', 'sales_admin_name', '営業担当'],
 };
+
+/**
+ * 会議資料などで使われる工場略称 → factories.id
+ * 略称が増えたらここに追記する。
+ */
+export const FACTORY_NAME_ALIASES = {
+  挾間: 'FACTORY_12',
+  豊海: 'FACTORY_05',
+  千歳: 'FACTORY_01',
+  野津原: 'FACTORY_11',
+  松田: 'FACTORY_02',
+  九大: 'FACTORY_13',
+  大分レミ: 'FACTORY_03',
+  大南レミ: 'FACTORY_10',
+  大分生: 'FACTORY_09',
+  宇部: 'FACTORY_04',
+  幸崎: 'FACTORY_08',
+  味岡: 'FACTORY_07',
+  志村: 'FACTORY_06',
+};
+
+/**
+ * 工場名（正式名称・略称）から factories.id を解決する。
+ * 1. 完全一致 2. 略称テーブル 3. 部分一致（1件だけ）
+ * @param {unknown} rawName
+ * @param {{ id?: string, name?: string }[]} factories
+ * @returns {string|null}
+ */
+export function resolveFactoryId(rawName, factories) {
+  const name = String(rawName ?? '').trim();
+  if (!name) return null;
+  const list = Array.isArray(factories) ? factories.filter((f) => f && f.id) : [];
+
+  const exact = list.find((f) => String(f.name || '').trim() === name);
+  if (exact) return String(exact.id);
+
+  const aliasId = FACTORY_NAME_ALIASES[name];
+  if (aliasId) {
+    const byAlias = list.find((f) => String(f.id) === String(aliasId));
+    if (byAlias) return String(byAlias.id);
+    return String(aliasId);
+  }
+
+  const partial = list.filter((f) => String(f.name || '').includes(name));
+  if (partial.length === 1) return String(partial[0].id);
+  return null;
+}
 
 export const TRADING_COMPANY_CSV_ALIASES = {
   name: ['商社名', 'name', '商社', 'trading_company_name', '会社名'],

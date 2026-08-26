@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { normalizeCompanyName } from '../utils/csvImport.js';
+import { collectNewEntitiesFromProjectRows } from '../utils/adminCsvImport.js';
 
 function buildDefaultSelection(items) {
   const map = {};
@@ -65,15 +66,30 @@ export function AdminCsvImportButton({
     setEditedRows(cloneRows(preview.rows));
   }, [preview]);
 
-  const newContractorCount = preview?.newContractors?.length ?? 0;
-  const newTradingCount = preview?.newTradingCompanies?.length ?? 0;
+  const newEntities = useMemo(() => {
+    if (!preview) return { newContractors: [], newTradingCompanies: [] };
+    if (editablePreview) return collectNewEntitiesFromProjectRows(editedRows);
+    return {
+      newContractors: preview.newContractors || [],
+      newTradingCompanies: preview.newTradingCompanies || [],
+    };
+  }, [preview, editablePreview, editedRows]);
+
+  const newContractorCount = newEntities.newContractors.length;
+  const newTradingCount = newEntities.newTradingCompanies.length;
   const selectedContractorCount = useMemo(
-    () => Object.values(contractorSelection).filter(Boolean).length,
-    [contractorSelection],
+    () =>
+      newEntities.newContractors.filter(
+        (item) => contractorSelection[normalizeCompanyName(item.name)] !== false,
+      ).length,
+    [newEntities, contractorSelection],
   );
   const selectedTradingCount = useMemo(
-    () => Object.values(tradingSelection).filter(Boolean).length,
-    [tradingSelection],
+    () =>
+      newEntities.newTradingCompanies.filter(
+        (item) => tradingSelection[normalizeCompanyName(item.name)] !== false,
+      ).length,
+    [newEntities, tradingSelection],
   );
 
   const displayRows = editablePreview ? editedRows : preview?.rows || [];
@@ -147,14 +163,27 @@ export function AdminCsvImportButton({
       return;
     }
 
+    const registerContractorKeys = { ...contractorSelection };
+    const registerTradingCompanyKeys = { ...tradingSelection };
+    for (const item of newEntities.newContractors) {
+      const key = normalizeCompanyName(item.name);
+      if (key && registerContractorKeys[key] === undefined) registerContractorKeys[key] = true;
+    }
+    for (const item of newEntities.newTradingCompanies) {
+      const key = normalizeCompanyName(item.name);
+      if (key && registerTradingCompanyKeys[key] === undefined) registerTradingCompanyKeys[key] = true;
+    }
+
     setBusy(true);
     setError('');
     try {
       await onImport({
         ...preview,
         rows: rowsForImport,
-        registerContractorKeys: { ...contractorSelection },
-        registerTradingCompanyKeys: { ...tradingSelection },
+        newContractors: newEntities.newContractors,
+        newTradingCompanies: newEntities.newTradingCompanies,
+        registerContractorKeys,
+        registerTradingCompanyKeys,
       });
       closePreview();
       onComplete?.();
@@ -183,18 +212,26 @@ export function AdminCsvImportButton({
         typeof col.getValue === 'function' ? col.getValue(row) : String(row[col.key] ?? '');
       const options =
         typeof col.options === 'function' ? col.options(row) : col.options || [];
-      if (col.editType === 'select') {
-        return (
+      const editType = typeof col.editType === 'function' ? col.editType(row) : col.editType;
+      const apply = (nextVal) => {
+        updateEditedRow(rowIndex, (prev) => {
+          if (typeof col.applyValue === 'function') return col.applyValue(prev, nextVal);
+          return { ...prev, [col.key]: nextVal };
+        });
+      };
+      const showNew =
+        (col.key === 'trading_company_name' &&
+          row.__unmatchedTradingCompanyName &&
+          tradingSelection[normalizeCompanyName(row.__unmatchedTradingCompanyName)] !== false) ||
+        (col.key === 'contractor' &&
+          row.__unmatchedContractorName &&
+          contractorSelection[normalizeCompanyName(row.__unmatchedContractorName)] !== false);
+      const control =
+        editType === 'select' ? (
           <select
             className="min-h-[32px] w-full min-w-[7rem] rounded border border-slate-300 bg-white px-1 py-0.5 text-xs text-slate-900"
             value={value}
-            onChange={(e) => {
-              const nextVal = e.target.value;
-              updateEditedRow(rowIndex, (prev) => {
-                if (typeof col.applyValue === 'function') return col.applyValue(prev, nextVal);
-                return { ...prev, [col.key]: nextVal };
-              });
-            }}
+            onChange={(e) => apply(e.target.value)}
           >
             {(options || []).map((opt) => (
               <option key={String(opt.value)} value={opt.value}>
@@ -202,21 +239,20 @@ export function AdminCsvImportButton({
               </option>
             ))}
           </select>
+        ) : (
+          <input
+            type="text"
+            className="min-h-[32px] w-full min-w-[6rem] rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs text-slate-900"
+            value={value}
+            placeholder={col.placeholder || ''}
+            onChange={(e) => apply(e.target.value)}
+          />
         );
-      }
       return (
-        <input
-          type="text"
-          className="min-h-[32px] w-full min-w-[6rem] rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs text-slate-900"
-          value={value}
-          onChange={(e) => {
-            const nextVal = e.target.value;
-            updateEditedRow(rowIndex, (prev) => {
-              if (typeof col.applyValue === 'function') return col.applyValue(prev, nextVal);
-              return { ...prev, [col.key]: nextVal };
-            });
-          }}
-        />
+        <>
+          {control}
+          {showNew ? renderNewBadge(true) : null}
+        </>
       );
     }
     if (col.render) return col.render(row, ctx);
@@ -225,7 +261,7 @@ export function AdminCsvImportButton({
         {String(row[col.key] ?? '—')}
         {col.key === 'trading_company_name' &&
         row.__unmatchedTradingCompanyName &&
-        tradingSelection[normalizeCompanyName(row.__unmatchedTradingCompanyName)]
+        tradingSelection[normalizeCompanyName(row.__unmatchedTradingCompanyName)] !== false
           ? renderNewBadge(true)
           : null}
       </>
@@ -263,7 +299,7 @@ export function AdminCsvImportButton({
           <div
             role="dialog"
             aria-modal="true"
-            className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl"
+            className="max-h-[90vh] w-full max-w-7xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl"
           >
             <h3 className="text-lg font-black text-slate-900">取込プレビュー</h3>
             <p className="mt-1 text-sm font-bold text-emerald-800">
@@ -284,7 +320,7 @@ export function AdminCsvImportButton({
                 </p>
                 {newContractorCount > 0 ? (
                   <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto">
-                    {preview.newContractors.map((item) => {
+                    {newEntities.newContractors.map((item) => {
                       const key = normalizeCompanyName(item.name);
                       return (
                         <li key={`c-${key}`}>
@@ -292,7 +328,7 @@ export function AdminCsvImportButton({
                             <input
                               type="checkbox"
                               className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600"
-                              checked={Boolean(contractorSelection[key])}
+                              checked={contractorSelection[key] !== false}
                               onChange={(e) =>
                                 setContractorSelection((prev) => ({
                                   ...prev,
@@ -314,7 +350,7 @@ export function AdminCsvImportButton({
                 ) : null}
                 {newTradingCount > 0 ? (
                   <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto">
-                    {preview.newTradingCompanies.map((item) => {
+                    {newEntities.newTradingCompanies.map((item) => {
                       const key = normalizeCompanyName(item.name);
                       return (
                         <li key={`t-${key}`}>
@@ -322,7 +358,7 @@ export function AdminCsvImportButton({
                             <input
                               type="checkbox"
                               className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600"
-                              checked={Boolean(tradingSelection[key])}
+                              checked={tradingSelection[key] !== false}
                               onChange={(e) =>
                                 setTradingSelection((prev) => ({
                                   ...prev,
@@ -373,7 +409,7 @@ export function AdminCsvImportButton({
 
             {previewColumns.length > 0 ? (
               <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200">
-                <table className="w-full min-w-[720px] border-collapse text-left text-xs">
+                <table className="w-full min-w-[1100px] border-collapse text-left text-xs">
                   <thead>
                     <tr className="bg-slate-50">
                       {previewColumns.map((col) => (

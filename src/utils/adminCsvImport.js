@@ -14,6 +14,7 @@ import {
   parseSpreadsheetFile,
   PROJECT_CSV_ALIASES,
   PROJECT_EXPORT_HEADERS,
+  resolveFactoryId,
   rowsToObjects,
   stripLegalFormCompletely,
   TRADING_COMPANY_CSV_ALIASES,
@@ -69,10 +70,9 @@ export function formatSiteContactsRaw(contacts) {
     .join(',');
 }
 
-function findFactoryByExactName(factories, name) {
-  const q = cleanCell(name);
-  if (!q) return null;
-  return (factories || []).find((f) => f && cleanCell(f.name) === q) || null;
+function factoryLabelById(factories, id, fallback = '') {
+  const hit = (factories || []).find((f) => f && String(f.id) === String(id));
+  return hit ? cleanCell(hit.name) || fallback : fallback;
 }
 
 /** 工場名（カンマ区切り可）→ { ids, labels, unmatchedNames } */
@@ -85,16 +85,17 @@ export function resolveFactoryNames(namesRaw, factories) {
   const unmatchedNames = [];
   const seen = new Set();
   for (const name of names) {
-    const hit = findFactoryByExactName(factories, name);
-    if (hit?.id) {
-      const id = String(hit.id);
-      if (!seen.has(id)) {
-        seen.add(id);
-        ids.push(id);
-        labels.push(cleanCell(hit.name) || name);
+    const id = resolveFactoryId(name, factories);
+    if (id) {
+      const sid = String(id);
+      if (!seen.has(sid)) {
+        seen.add(sid);
+        ids.push(sid);
+        labels.push(factoryLabelById(factories, sid, name));
       }
     } else {
       unmatchedNames.push(name);
+      labels.push(name);
     }
   }
   return { ids, labels, unmatchedNames };
@@ -153,6 +154,7 @@ export function resolveTradingCompanyForImport(name, { tradingCompanies = [], ag
       trading_company_organization_id: null,
       __unmatchedTradingCompanyName: undefined,
       __tradingNotes: [],
+      __tradingCandidates: [],
     };
   }
 
@@ -161,6 +163,7 @@ export function resolveTradingCompanyForImport(name, { tradingCompanies = [], ag
   let agentOrg = findAgentOrgByNormalizedName(agentOrganizations, resolvedName);
   let knownTrading = findTradingCompanyByNormalizedName(tradingCompanies, resolvedName);
 
+  let tradingCandidates = [];
   if (!agentOrg && !knownTrading) {
     const strippedInput = stripLegalFormCompletely(resolvedName);
     if (strippedInput) {
@@ -186,6 +189,7 @@ export function resolveTradingCompanyForImport(name, { tradingCompanies = [], ag
         agentOrg = findAgentOrgByNormalizedName(agentOrganizations, resolvedName);
         knownTrading = findTradingCompanyByNormalizedName(tradingCompanies, resolvedName);
       } else if (candidates.length >= 2) {
+        tradingCandidates = candidates;
         notes.push(
           `⚠️法人格の省略により複数候補あり: ${candidates.slice(0, 5).join(' / ')}${
             candidates.length > 5 ? ' など' : ''
@@ -209,6 +213,7 @@ export function resolveTradingCompanyForImport(name, { tradingCompanies = [], ag
     trading_company_organization_id,
     __unmatchedTradingCompanyName,
     __tradingNotes: notes,
+    __tradingCandidates: tradingCandidates,
   };
 }
 
@@ -233,7 +238,6 @@ function upsertNamedEntity(map, name, line) {
  *   customers?: object[],
  *   tradingCompanies?: object[],
  *   agentOrganizations?: object[],
- *   defaultMainFactoryId?: string,
  * }} ctx
  */
 export function reresolveProjectImportRow(row, ctx = {}) {
@@ -243,29 +247,23 @@ export function reresolveProjectImportRow(row, ctx = {}) {
     customers = [],
     tradingCompanies = [],
     agentOrganizations = [],
-    defaultMainFactoryId = '',
   } = ctx;
   const next = { ...row };
   const notes = [];
 
-  // メイン工場
+  // メイン工場（プレビューで未選択にした行はデフォルト工場へ戻さない）
   const mainLabel = cleanCell(next.__mainFactoryLabel ?? '');
   if (mainLabel) {
-    const mainHit = findFactoryByExactName(factories, mainLabel);
-    if (mainHit?.id) {
-      next.main_factory_id = String(mainHit.id);
-      next.__mainFactoryLabel = cleanCell(mainHit.name) || mainLabel;
+    const mainId = resolveFactoryId(mainLabel, factories);
+    if (mainId) {
+      next.main_factory_id = String(mainId);
+      next.__mainFactoryLabel = factoryLabelById(factories, mainId, mainLabel);
     } else {
       next.main_factory_id = '';
       notes.push('⚠️工場名不一致');
     }
   } else if (next.main_factory_id) {
-    const byId = (factories || []).find((f) => String(f.id) === String(next.main_factory_id));
-    next.__mainFactoryLabel = byId ? cleanCell(byId.name) : '';
-  } else if (defaultMainFactoryId) {
-    next.main_factory_id = String(defaultMainFactoryId);
-    const byId = (factories || []).find((f) => String(f.id) === String(defaultMainFactoryId));
-    next.__mainFactoryLabel = byId ? cleanCell(byId.name) : '';
+    next.__mainFactoryLabel = factoryLabelById(factories, next.main_factory_id, '');
   }
 
   // サブ工場（ラベル文字列から）
@@ -307,6 +305,7 @@ export function reresolveProjectImportRow(row, ctx = {}) {
   } else {
     delete next.__unmatchedTradingCompanyName;
   }
+  next.__tradingCandidates = trading.__tradingCandidates || [];
   for (const n of trading.__tradingNotes || []) notes.push(n);
 
   // 業者ラベルからの customer_id 再解決（任意）
@@ -401,18 +400,17 @@ export async function parseProjectsCsvFile(
     let resolvedMainId = '';
     let mainFactoryLabel = '';
     if (mainFactoryName) {
-      const hit = findFactoryByExactName(factories, mainFactoryName);
-      if (hit?.id) {
-        resolvedMainId = String(hit.id);
-        mainFactoryLabel = cleanCell(hit.name) || mainFactoryName;
+      const resolvedId = resolveFactoryId(mainFactoryName, factories);
+      if (resolvedId) {
+        resolvedMainId = String(resolvedId);
+        mainFactoryLabel = factoryLabelById(factories, resolvedId, mainFactoryName);
       } else {
         rowNotes.push('⚠️工場名不一致');
         mainFactoryLabel = mainFactoryName;
       }
     } else if (mainFactoryId) {
       resolvedMainId = String(mainFactoryId);
-      const byId = (factories || []).find((f) => String(f.id) === String(mainFactoryId));
-      mainFactoryLabel = byId ? cleanCell(byId.name) : '';
+      mainFactoryLabel = factoryLabelById(factories, mainFactoryId, '');
     }
 
     // サブ工場
@@ -479,6 +477,9 @@ export async function parseProjectsCsvFile(
       ...(__unmatchedContractorName ? { __unmatchedContractorName } : {}),
       ...(trading.__unmatchedTradingCompanyName
         ? { __unmatchedTradingCompanyName: trading.__unmatchedTradingCompanyName }
+        : {}),
+      ...((trading.__tradingCandidates || []).length > 0
+        ? { __tradingCandidates: trading.__tradingCandidates }
         : {}),
     });
   }
@@ -608,9 +609,89 @@ export function stripImportMeta(row) {
     __siteContactsRaw,
     __rowNotes,
     __tradingNotes,
+    __tradingCandidates,
     ...rest
   } = row;
   return rest;
+}
+
+function sortNamedEntities(map) {
+  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+}
+
+/** プレビュー編集後の行から、新規登録対象の業者・商社を再集計 */
+export function collectNewEntitiesFromProjectRows(rows) {
+  const newContractorMap = new Map();
+  const newTradingMap = new Map();
+  for (const row of rows || []) {
+    const line = row?.__line;
+    if (row?.__unmatchedContractorName) {
+      upsertNamedEntity(newContractorMap, row.__unmatchedContractorName, line);
+    }
+    if (row?.__unmatchedTradingCompanyName) {
+      upsertNamedEntity(newTradingMap, row.__unmatchedTradingCompanyName, line);
+    }
+  }
+  return {
+    newContractors: sortNamedEntities(newContractorMap),
+    newTradingCompanies: sortNamedEntities(newTradingMap),
+  };
+}
+
+/** プレビューの商社名セレクト用 */
+export function tradingCompanySelectOptions(
+  row,
+  { tradingCompanies = [], agentOrganizations = [] } = {},
+) {
+  const names = [];
+  const seen = new Set();
+  const push = (raw) => {
+    const d = cleanCell(raw);
+    if (!d) return;
+    const key = normalizeCompanyName(d);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    names.push(d);
+  };
+  for (const c of row?.__tradingCandidates || []) push(c);
+  for (const t of tradingCompanies || []) push(t?.name);
+  for (const o of agentOrganizations || []) {
+    if (!o) continue;
+    if (String(o.type || '') === 'agent') push(o.name);
+    else push(o.name);
+  }
+  push(row?.trading_company_name);
+  const candidateSet = new Set(
+    (row?.__tradingCandidates || []).map((n) => normalizeCompanyName(n)).filter(Boolean),
+  );
+  const candidateNames = names.filter((n) => candidateSet.has(normalizeCompanyName(n)));
+  const rest = names
+    .filter((n) => !candidateSet.has(normalizeCompanyName(n)))
+    .sort((a, b) => a.localeCompare(b, 'ja'));
+  return [
+    { value: '', label: '（なし）' },
+    ...candidateNames.map((n) => ({ value: n, label: n })),
+    ...rest.map((n) => ({ value: n, label: n })),
+  ];
+}
+
+/** プレビューの組合担当営業セレクト用 */
+export function salesAdminSelectOptions(row, salesStaff) {
+  const current = cleanCell(row?.sales_admin_name);
+  const staffNames = [];
+  const seen = new Set();
+  for (const s of salesStaff || []) {
+    const n = cleanCell(s?.name);
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    staffNames.push(n);
+  }
+  const opts = [{ value: '', label: '（未選択）' }];
+  if (current && !seen.has(current)) {
+    opts.push({ value: current, label: `${current}（マスタ未登録）` });
+  }
+  for (const n of staffNames) opts.push({ value: n, label: n });
+  return opts;
 }
 
 function exportDateSuffix() {

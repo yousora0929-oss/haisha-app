@@ -3451,6 +3451,64 @@ export async function createOrganization(name, type, { furigana } = {}) {
   return data;
 }
 
+/**
+ * 未登録の会社を仮登録（organizations と電話番号なし customers のペアを作成）
+ * 同名の組織・担当者が既にあれば再利用し、重複を作らない。
+ * @param {{ name: string, role: 'contractor'|'agent'|'cooperative' }} params
+ */
+export async function createProvisionalCompany({ name, role }) {
+  const trimmed = String(name ?? '').trim();
+  if (!trimmed) throw new Error('会社名を入力してください');
+  validateOrganizationType(role);
+
+  const { data: existingOrgs, error: orgFetchError } = await supabase
+    .from('organizations')
+    .select('*')
+    .eq('type', role);
+  if (orgFetchError) throw orgFetchError;
+
+  const key = normalizeCompanyName(trimmed);
+  let organizationRow =
+    (existingOrgs || []).find((o) => normalizeCompanyName(o?.name) === key) || null;
+  const organizationExisted = Boolean(organizationRow);
+
+  if (!organizationRow) {
+    const { data, error } = await supabase
+      .from('organizations')
+      .insert({ name: trimmed, type: role })
+      .select('*')
+      .single();
+    if (error) throw error;
+    organizationRow = data;
+  }
+
+  const organization = mapOrganizationRow(organizationRow);
+  const organizationId = organization?.id || null;
+
+  if (organizationExisted && organizationId) {
+    const { data: existingMembers, error: memberFetchError } = await supabase
+      .from('customers')
+      .select('*')
+      .eq('organization_id', organizationId)
+      .eq('role', role)
+      .limit(1);
+    if (memberFetchError) throw memberFetchError;
+    const existing = (existingMembers || [])[0];
+    if (existing) {
+      return { organization, customer: mapCustomerRow(existing), created: false };
+    }
+  }
+
+  const customer = await addCustomer({
+    company_name: trimmed,
+    phone_number: null,
+    role,
+    organization_id: organizationId,
+  });
+
+  return { organization, customer, created: true };
+}
+
 /** 担当者を新規作成（customers に INSERT） */
 export async function createOrgMember({
   organizationId,

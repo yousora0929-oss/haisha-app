@@ -64,7 +64,11 @@ import {
 import { buildMapEditorUrl, openMapEditorWindow, rememberMapEditorReturnUrl } from './mapEditorConstants.js';
 import { combineDeliveryAddress, extractProjectAddressFields, normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
 import { resolveProjectTradingCompanyName } from './utils/projectTradingCompany.js';
-import { projectMatchRole } from './utils/projectCustomerMatch.js';
+import {
+  contractorAccountsInSameCompany,
+  formatProjectAccountLabel,
+  projectMatchForCustomers,
+} from './utils/projectCustomerMatch.js';
 import {
   resolveContractorDisplayName,
   resolveProjectContractorLabels,
@@ -2103,20 +2107,52 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const targetProjectCustomer = isAgentOrCooperative
         ? contractorCustomer
         : currentCustomer;
-      const filteredProjects = useMemo(() => {
+      // 代理発注は物件がどの担当者アカウントで登録されたか分からないことがあるため、
+      // 選択業者と同じ会社名の業者アカウント全件を物件の検索対象にする。
+      // 業者本人ログイン時は従来どおり自分のアカウントだけを対象にする。
+      const projectMatchCustomers = useMemo(() => {
         if (!targetProjectCustomer) return [];
+        if (!isAgentOrCooperative) return [targetProjectCustomer];
+        return contractorAccountsInSameCompany(customers, targetProjectCustomer);
+      }, [isAgentOrCooperative, targetProjectCustomer, customers]);
+      const projectMatchByProjectId = useMemo(() => {
+        const map = new Map();
+        if (projectMatchCustomers.length === 0) return map;
+        for (const project of projects || []) {
+          const pid = String(project?.id || '').trim();
+          if (!pid) continue;
+          const match = projectMatchForCustomers(project, projectMatchCustomers);
+          if (match) map.set(pid, match);
+        }
+        return map;
+      }, [projects, projectMatchCustomers]);
+      const getProjectMatch = useCallback(
+        (project) => {
+          const pid = String(project?.id || '').trim();
+          return (pid ? projectMatchByProjectId.get(pid) : null) ?? null;
+        },
+        [projectMatchByProjectId],
+      );
+      const filteredProjects = useMemo(() => {
         const roleOrder = { main: 0, sub: 1 };
         return (projects || [])
-          .filter((project) => projectMatchRole(project, targetProjectCustomer) !== null)
+          .filter((project) => projectMatchByProjectId.has(String(project?.id || '').trim()))
           .sort(
             (a, b) =>
-              roleOrder[projectMatchRole(a, targetProjectCustomer)] -
-              roleOrder[projectMatchRole(b, targetProjectCustomer)],
+              roleOrder[projectMatchByProjectId.get(String(a.id).trim()).role] -
+              roleOrder[projectMatchByProjectId.get(String(b.id).trim()).role],
           );
-      }, [projects, targetProjectCustomer]);
+      }, [projects, projectMatchByProjectId]);
       const projectSelectionWarnings = useMemo(
         () => (selectedProject ? getProjectDataGapWarnings(selectedProject) : []),
         [selectedProject],
+      );
+      const selectedProjectAccountLabel = useMemo(
+        () =>
+          selectedProject
+            ? formatProjectAccountLabel(getProjectMatch(selectedProject)?.customer)
+            : '',
+        [selectedProject, getProjectMatch],
       );
       const hasCurrentCustomer = Boolean(String(currentCustomerId || '').trim());
 
@@ -2197,12 +2233,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           (projects || []).map((p) => ({
             id: p?.id,
             name: p?.name,
-            match_role: projectMatchRole(p, targetProjectCustomer),
+            match_role: getProjectMatch(p)?.role ?? null,
+            matched_account_id: getProjectMatch(p)?.customer?.id ?? null,
             has_main: Boolean(resolveProjectMainFactoryId(p)),
             has_coords: Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lng)),
           })),
         );
-      }, [projects, targetProjectCustomer, filteredProjects]);
+      }, [projects, targetProjectCustomer, getProjectMatch, filteredProjects]);
 
       useEffect(() => {
         setCustomerSearchText(currentCustomerDisplayName);
@@ -2499,13 +2536,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setSelectedProjectId((cur) => {
           if (!cur) return cur;
           const p = (projects || []).find((x) => x && x.id === cur);
-          const valid = projectMatchRole(p, targetProjectCustomer) !== null;
+          const valid = Boolean(getProjectMatch(p));
           if (!valid) {
             lastAutofillProjectIdRef.current = '';
           }
           return valid ? cur : '';
         });
-      }, [currentCustomerId, targetProjectCustomer, projects]);
+      }, [currentCustomerId, getProjectMatch, projects]);
 
       useEffect(() => {
         consumePushRedirectForApp('customer');
@@ -2662,9 +2699,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         if (lastAutofillProjectIdRef.current === selectedProjectId) return;
         const p = (projects || []).find((x) => x && String(x.id) === String(selectedProjectId));
         if (!p) return;
-        if (projectMatchRole(p, targetProjectCustomer) === null) return;
+        if (!getProjectMatch(p)) return;
         applyProjectSelection(p);
-      }, [orderKind, selectedProjectId, projects, targetProjectCustomer, applyProjectSelection]);
+      }, [orderKind, selectedProjectId, projects, getProjectMatch, applyProjectSelection]);
 
       useEffect(() => {
         if (orderKind !== 'project' || selectedProjectId) return;
@@ -4515,10 +4552,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     getItemKey={(p) => String(p.id)}
                     getItemLabel={(p) => {
                       const name = String(p.name || p.id || '').trim();
-                      return projectMatchRole(p, targetProjectCustomer) === 'sub'
-                        ? `${name}（下請）`
-                        : name;
+                      return getProjectMatch(p)?.role === 'sub' ? `${name}（下請）` : name;
                     }}
+                    getItemSubLabel={
+                      isAgentOrCooperative
+                        ? (p) => formatProjectAccountLabel(getProjectMatch(p)?.customer)
+                        : undefined
+                    }
                     getSearchTexts={projectSuggestTexts}
                     onValueChange={(text) => {
                       setProjectSearchText(text);
@@ -4554,6 +4594,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     }}
                     emptyHint="該当する物件がありません"
                   />
+                  {isAgentOrCooperative && selectedProject && selectedProjectAccountLabel ? (
+                    <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                      この物件の登録アカウント: {selectedProjectAccountLabel}
+                    </p>
+                  ) : null}
                   {!hasCurrentCustomer ? (
                     <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
                       ログイン中の業者情報を確認できません。再ログインするか、上の欄で業者を選択してください。

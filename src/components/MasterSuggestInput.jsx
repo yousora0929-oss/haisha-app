@@ -56,6 +56,8 @@ export function MasterSuggestInput({
   items = [],
   getItemKey,
   getItemLabel,
+  /** 候補の右側に小さく添える補助表示（入力値には反映されない） */
+  getItemSubLabel,
   getSearchTexts,
   onSelect,
   placeholder = '',
@@ -313,19 +315,27 @@ export function MasterSuggestInput({
     }
   }, []);
 
-  const renderOptionButton = (item, className, extraContent = null) => (
-    <button
-      type="button"
-      className={className}
-      onPointerDown={(e) => beginOptionPointer(e, item)}
-      onPointerMove={(e) => markPointerMoved(e.clientX, e.clientY)}
-      onPointerUp={finishOptionPointer}
-      onPointerCancel={cancelOptionPointer}
-    >
-      {extraContent}
-      {getItemLabel(item)}
-    </button>
-  );
+  const renderOptionButton = (item, className, extraContent = null) => {
+    const subLabel = getItemSubLabel ? String(getItemSubLabel(item) ?? '').trim() : '';
+    return (
+      <button
+        type="button"
+        className={className}
+        onPointerDown={(e) => beginOptionPointer(e, item)}
+        onPointerMove={(e) => markPointerMoved(e.clientX, e.clientY)}
+        onPointerUp={finishOptionPointer}
+        onPointerCancel={cancelOptionPointer}
+      >
+        {extraContent}
+        {getItemLabel(item)}
+        {subLabel ? (
+          <span className="ml-2 text-xs font-medium text-slate-500 dark:text-slate-400">
+            {subLabel}
+          </span>
+        ) : null}
+      </button>
+    );
+  };
 
   return (
     <div className="flex flex-col gap-2">

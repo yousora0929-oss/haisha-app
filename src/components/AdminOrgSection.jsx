@@ -193,6 +193,8 @@ export function AdminOrgSection({ orgType, label }) {
 
   const isAgentOrg = orgType === 'agent';
   const isContractorOrg = orgType === 'contractor';
+  // 担当者名が空欄なら「会社の代表窓口」として扱うロール（商社・業者）
+  const allowsRepresentativeMember = isAgentOrg || isContractorOrg;
 
   const filteredOrgs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -998,13 +1000,13 @@ export function AdminOrgSection({ orgType, label }) {
                                 )
                               }
                               placeholder={
-                                isAgentOrg
+                                allowsRepresentativeMember
                                   ? '空欄の場合は会社の代表窓口として登録されます'
                                   : undefined
                               }
                               className={`${inputClass} mt-1 w-full`}
                             />
-                            {isAgentOrg ? (
+                            {allowsRepresentativeMember ? (
                               <span className="mt-1 block text-[11px] leading-relaxed text-slate-500">
                                 空欄の場合は会社の代表窓口として登録されます
                               </span>
@@ -1152,7 +1154,7 @@ export function AdminOrgSection({ orgType, label }) {
                       <span className="flex min-w-[5rem] flex-wrap items-center gap-1.5 font-medium">
                         {member.manager_name?.trim() ? (
                           member.manager_name
-                        ) : isAgentOrg ? (
+                        ) : allowsRepresentativeMember ? (
                           <>
                             <span className="text-slate-500">—</span>
                             <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-bold text-slate-600">
@@ -1232,13 +1234,13 @@ export function AdminOrgSection({ orgType, label }) {
                             setNewMember((m) => ({ ...m, managerName: e.target.value }))
                           }
                           placeholder={
-                            isAgentOrg
+                            allowsRepresentativeMember
                               ? '空欄の場合は会社の代表窓口として登録されます'
                               : undefined
                           }
                           className={`${inputClass} mt-1 w-full`}
                         />
-                        {isAgentOrg ? (
+                        {allowsRepresentativeMember ? (
                           <span className="mt-1 block text-[11px] leading-relaxed text-slate-500">
                             空欄の場合は会社の代表窓口として登録されます
                           </span>
