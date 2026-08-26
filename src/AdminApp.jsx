@@ -81,6 +81,7 @@ import BillingMark from './components/BillingMark.jsx';
 import {
   downloadProjectsExportCsv,
   parseProjectsCsvFile,
+  reresolveProjectImportRow,
   stripImportMeta,
 } from './utils/adminCsvImport.js';
 import { normalizeCompanyName } from './utils/csvImport.js';
@@ -1647,6 +1648,7 @@ function ProjectsSection({ factories, factoryNameById }) {
             label="CSV/Excel一括取込"
             disabled={!defaultMainFactoryId}
             entityLabel="件の物件"
+            editablePreview
             parseFile={(file) =>
               parseProjectsCsvFile(file, {
                 customers,
@@ -1654,13 +1656,35 @@ function ProjectsSection({ factories, factoryNameById }) {
                 mainFactoryId: defaultMainFactoryId,
                 allowedDeliveryAreas,
                 agentOrganizations,
+                factories,
+                salesStaff,
               })
             }
             previewColumns={[
-              { key: 'name', label: '物件名' },
+              {
+                key: 'name',
+                label: '物件名',
+                editable: true,
+                getValue: (r) => String(r.name ?? ''),
+                applyValue: (r, v) => ({ ...r, name: v }),
+              },
               {
                 key: 'contractor',
                 label: '元請業者',
+                editable: true,
+                getValue: (r) => String(r.__contractorLabel ?? ''),
+                applyValue: (r, v) =>
+                  reresolveProjectImportRow(
+                    { ...r, __contractorLabel: v },
+                    {
+                      factories,
+                      salesStaff,
+                      customers,
+                      tradingCompanies,
+                      agentOrganizations,
+                      defaultMainFactoryId,
+                    },
+                  ),
                 render: (r, ctx) => (
                   <>
                     {r.__contractorLabel ||
@@ -1673,10 +1697,30 @@ function ProjectsSection({ factories, factoryNameById }) {
                   </>
                 ),
               },
-              { key: 'contractor_display_name', label: '業者名（表記用）' },
+              {
+                key: 'contractor_display_name',
+                label: '業者名（表記用）',
+                editable: true,
+                getValue: (r) => String(r.contractor_display_name ?? ''),
+                applyValue: (r, v) => ({ ...r, contractor_display_name: v || null }),
+              },
               {
                 key: 'trading_company_name',
                 label: '商社名',
+                editable: true,
+                getValue: (r) => String(r.trading_company_name ?? ''),
+                applyValue: (r, v) =>
+                  reresolveProjectImportRow(
+                    { ...r, trading_company_name: v },
+                    {
+                      factories,
+                      salesStaff,
+                      customers,
+                      tradingCompanies,
+                      agentOrganizations,
+                      defaultMainFactoryId,
+                    },
+                  ),
                 render: (r, ctx) => (
                   <>
                     {r.trading_company_name || '—'}
@@ -1687,8 +1731,120 @@ function ProjectsSection({ factories, factoryNameById }) {
                   </>
                 ),
               },
-              { key: 'delivery_area', label: 'エリア' },
-              { key: 'site_address', label: '現場住所' },
+              {
+                key: 'delivery_area',
+                label: 'エリア',
+                editable: true,
+                getValue: (r) => String(r.delivery_area ?? ''),
+                applyValue: (r, v) => ({ ...r, delivery_area: v || null }),
+              },
+              {
+                key: 'site_address',
+                label: '現場住所',
+                editable: true,
+                getValue: (r) => String(r.site_address ?? ''),
+                applyValue: (r, v) => ({ ...r, site_address: v || null }),
+              },
+              {
+                key: 'main_factory',
+                label: 'メイン工場',
+                editable: true,
+                editType: 'select',
+                getValue: (r) => String(r.main_factory_id ?? ''),
+                options: () => [
+                  { value: '', label: '（未選択）' },
+                  ...(factories || []).map((f) => ({
+                    value: String(f.id),
+                    label: String(f.name || f.id),
+                  })),
+                ],
+                applyValue: (r, v) => {
+                  const hit = (factories || []).find((f) => String(f.id) === String(v));
+                  return reresolveProjectImportRow(
+                    {
+                      ...r,
+                      main_factory_id: v || '',
+                      __mainFactoryLabel: hit ? String(hit.name || '') : '',
+                    },
+                    {
+                      factories,
+                      salesStaff,
+                      customers,
+                      tradingCompanies,
+                      agentOrganizations,
+                      defaultMainFactoryId,
+                    },
+                  );
+                },
+              },
+              {
+                key: 'sub_factory',
+                label: 'サブ工場',
+                editable: true,
+                getValue: (r) => String(r.__subFactoryLabels ?? ''),
+                applyValue: (r, v) =>
+                  reresolveProjectImportRow(
+                    { ...r, __subFactoryLabels: v },
+                    {
+                      factories,
+                      salesStaff,
+                      customers,
+                      tradingCompanies,
+                      agentOrganizations,
+                      defaultMainFactoryId,
+                    },
+                  ),
+              },
+              {
+                key: 'trading_contact_name',
+                label: '商社担当',
+                editable: true,
+                getValue: (r) => String(r.trading_contact_name ?? ''),
+                applyValue: (r, v) => ({ ...r, trading_contact_name: v || null }),
+              },
+              {
+                key: 'trading_contact_phone',
+                label: '商社電話',
+                editable: true,
+                getValue: (r) => String(r.trading_contact_phone ?? ''),
+                applyValue: (r, v) => ({ ...r, trading_contact_phone: v || null }),
+              },
+              {
+                key: 'site_contacts',
+                label: '現場担当',
+                editable: true,
+                getValue: (r) => String(r.__siteContactsRaw ?? ''),
+                applyValue: (r, v) =>
+                  reresolveProjectImportRow(
+                    { ...r, __siteContactsRaw: v },
+                    {
+                      factories,
+                      salesStaff,
+                      customers,
+                      tradingCompanies,
+                      agentOrganizations,
+                      defaultMainFactoryId,
+                    },
+                  ),
+              },
+              {
+                key: 'sales_admin_name',
+                label: '担当営業',
+                editable: true,
+                getValue: (r) => String(r.sales_admin_name ?? ''),
+                applyValue: (r, v) =>
+                  reresolveProjectImportRow(
+                    { ...r, sales_admin_name: v },
+                    {
+                      factories,
+                      salesStaff,
+                      customers,
+                      tradingCompanies,
+                      agentOrganizations,
+                      defaultMainFactoryId,
+                    },
+                  ),
+              },
             ]}
             onImport={async (preview) => {
               const contractorKeyOn = preview.registerContractorKeys || {};
@@ -1772,7 +1928,7 @@ function ProjectsSection({ factories, factoryNameById }) {
           <AdminCsvDownloadButton
             disabled={loading}
             onDownload={() => {
-              downloadProjectsExportCsv(projects, customers);
+              downloadProjectsExportCsv(projects, customers, factories);
               setImportNotice(`${projects.length}件の物件をCSVでダウンロードしました。`);
               window.setTimeout(() => setImportNotice(''), 4000);
             }}

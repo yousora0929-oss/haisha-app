@@ -10,8 +10,25 @@ function buildDefaultSelection(items) {
   return map;
 }
 
+function cloneRows(rows) {
+  try {
+    return structuredClone(rows || []);
+  } catch {
+    return JSON.parse(JSON.stringify(rows || []));
+  }
+}
+
 /**
  * 管理画面 — CSV/Excel一括取込（プレビュー・確認ダイアログ付き）
+ *
+ * previewColumns の各列:
+ * - key, label
+ * - editable?: boolean
+ * - editType?: 'text' | 'select'
+ * - options?: { value: string, label: string }[] | ((row) => options)
+ * - getValue?: (row) => string
+ * - applyValue?: (row, value) => object  // 編集後の行を返す（再解決など）
+ * - render?: (row, ctx) => ReactNode  // 非編集時、または editable でも補助表示
  */
 export function AdminCsvImportButton({
   label = 'CSV一括取込',
@@ -21,10 +38,13 @@ export function AdminCsvImportButton({
   previewColumns = [],
   onImport,
   onComplete,
+  /** 物件取込などで全行を編集可能にする */
+  editablePreview = false,
 }) {
   const inputRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(null);
+  const [editedRows, setEditedRows] = useState([]);
   const [error, setError] = useState('');
   const [contractorSelection, setContractorSelection] = useState({});
   const [tradingSelection, setTradingSelection] = useState({});
@@ -37,10 +57,12 @@ export function AdminCsvImportButton({
     if (!preview) {
       setContractorSelection({});
       setTradingSelection({});
+      setEditedRows([]);
       return;
     }
     setContractorSelection(buildDefaultSelection(preview.newContractors));
     setTradingSelection(buildDefaultSelection(preview.newTradingCompanies));
+    setEditedRows(cloneRows(preview.rows));
   }, [preview]);
 
   const newContractorCount = preview?.newContractors?.length ?? 0;
@@ -53,6 +75,8 @@ export function AdminCsvImportButton({
     () => Object.values(tradingSelection).filter(Boolean).length,
     [tradingSelection],
   );
+
+  const displayRows = editablePreview ? editedRows : preview?.rows || [];
 
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
@@ -74,12 +98,41 @@ export function AdminCsvImportButton({
 
   const closePreview = () => {
     setPreview(null);
+    setEditedRows([]);
     setError('');
   };
 
+  const updateEditedRow = (index, updater) => {
+    setEditedRows((prev) => {
+      const next = [...prev];
+      const current = next[index];
+      if (!current) return prev;
+      next[index] = typeof updater === 'function' ? updater(current) : { ...current, ...updater };
+      return next;
+    });
+  };
+
   const handleConfirm = async () => {
-    if (!preview?.rows?.length) return;
-    const count = preview.rows.length;
+    const rowsForImport = editablePreview ? editedRows : preview?.rows;
+    if (!rowsForImport?.length) return;
+
+    // 物件名必須の再チェック
+    const emptyName = rowsForImport.find((r) => !String(r?.name || '').trim());
+    if (emptyName) {
+      setError(`行${emptyName.__line ?? '?'}：物件名が空です。プレビューで入力してください。`);
+      return;
+    }
+    if (editablePreview) {
+      const missingFactory = rowsForImport.find((r) => !String(r?.main_factory_id || '').trim());
+      if (missingFactory) {
+        setError(
+          `行${missingFactory.__line ?? '?'}：メイン工場が未設定です。工場名を選択してください。`,
+        );
+        return;
+      }
+    }
+
+    const count = rowsForImport.length;
     const skippedNote =
       preview.skipped?.length > 0 ? `\n（${preview.skipped.length}行はスキップされます）` : '';
     const registerNote =
@@ -99,6 +152,7 @@ export function AdminCsvImportButton({
     try {
       await onImport({
         ...preview,
+        rows: rowsForImport,
         registerContractorKeys: { ...contractorSelection },
         registerTradingCompanyKeys: { ...tradingSelection },
       });
@@ -117,6 +171,68 @@ export function AdminCsvImportButton({
         🆕新規登録
       </span>
     ) : null;
+
+  const renderCell = (col, row, rowIndex) => {
+    const ctx = {
+      renderNewBadge,
+      contractorSelection,
+      tradingSelection,
+    };
+    if (editablePreview && col.editable) {
+      const value =
+        typeof col.getValue === 'function' ? col.getValue(row) : String(row[col.key] ?? '');
+      const options =
+        typeof col.options === 'function' ? col.options(row) : col.options || [];
+      if (col.editType === 'select') {
+        return (
+          <select
+            className="min-h-[32px] w-full min-w-[7rem] rounded border border-slate-300 bg-white px-1 py-0.5 text-xs text-slate-900"
+            value={value}
+            onChange={(e) => {
+              const nextVal = e.target.value;
+              updateEditedRow(rowIndex, (prev) => {
+                if (typeof col.applyValue === 'function') return col.applyValue(prev, nextVal);
+                return { ...prev, [col.key]: nextVal };
+              });
+            }}
+          >
+            {(options || []).map((opt) => (
+              <option key={String(opt.value)} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        );
+      }
+      return (
+        <input
+          type="text"
+          className="min-h-[32px] w-full min-w-[6rem] rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs text-slate-900"
+          value={value}
+          onChange={(e) => {
+            const nextVal = e.target.value;
+            updateEditedRow(rowIndex, (prev) => {
+              if (typeof col.applyValue === 'function') return col.applyValue(prev, nextVal);
+              return { ...prev, [col.key]: nextVal };
+            });
+          }}
+        />
+      );
+    }
+    if (col.render) return col.render(row, ctx);
+    return (
+      <>
+        {String(row[col.key] ?? '—')}
+        {col.key === 'trading_company_name' &&
+        row.__unmatchedTradingCompanyName &&
+        tradingSelection[normalizeCompanyName(row.__unmatchedTradingCompanyName)]
+          ? renderNewBadge(true)
+          : null}
+      </>
+    );
+  };
+
+  const previewLimit = editablePreview ? displayRows.length : Math.min(8, displayRows.length);
 
   return (
     <>
@@ -147,12 +263,15 @@ export function AdminCsvImportButton({
           <div
             role="dialog"
             aria-modal="true"
-            className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl"
+            className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl"
           >
             <h3 className="text-lg font-black text-slate-900">取込プレビュー</h3>
             <p className="mt-1 text-sm font-bold text-emerald-800">
-              {preview.rows.length}
+              {displayRows.length}
               {entityLabel}を登録できます
+              {editablePreview ? (
+                <span className="ml-2 text-xs font-bold text-slate-600">（セルを編集してから取り込めます）</span>
+              ) : null}
             </p>
 
             {newContractorCount > 0 || newTradingCount > 0 ? (
@@ -254,7 +373,7 @@ export function AdminCsvImportButton({
 
             {previewColumns.length > 0 ? (
               <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200">
-                <table className="w-full min-w-[480px] border-collapse text-left text-xs">
+                <table className="w-full min-w-[720px] border-collapse text-left text-xs">
                   <thead>
                     <tr className="bg-slate-50">
                       {previewColumns.map((col) => (
@@ -265,35 +384,25 @@ export function AdminCsvImportButton({
                     </tr>
                   </thead>
                   <tbody>
-                    {preview.rows.slice(0, 8).map((row, i) => (
-                      <tr key={row.__line ?? i} className="border-t border-slate-100">
+                    {displayRows.slice(0, previewLimit).map((row, i) => (
+                      <tr key={row.__line ?? i} className="border-t border-slate-100 align-top">
                         {previewColumns.map((col) => (
                           <td key={col.key} className="px-2 py-1.5 text-slate-800">
-                            {col.render ? (
-                              col.render(row, {
-                                renderNewBadge,
-                                contractorSelection,
-                                tradingSelection,
-                              })
-                            ) : (
-                              <>
-                                {String(row[col.key] ?? '—')}
-                                {col.key === 'trading_company_name' &&
-                                row.__unmatchedTradingCompanyName &&
-                                tradingSelection[
-                                  normalizeCompanyName(row.__unmatchedTradingCompanyName)
-                                ]
-                                  ? renderNewBadge(true)
-                                  : null}
-                              </>
-                            )}
+                            {renderCell(col, row, i)}
+                            {col.key === 'name' && Array.isArray(row.__rowNotes) && row.__rowNotes.length > 0 ? (
+                              <ul className="mt-1 space-y-0.5 text-[10px] font-bold text-amber-800">
+                                {row.__rowNotes.map((n) => (
+                                  <li key={n}>{n}</li>
+                                ))}
+                              </ul>
+                            ) : null}
                           </td>
                         ))}
                       </tr>
                     ))}
                   </tbody>
                 </table>
-                {preview.rows.length > 8 ? (
+                {!editablePreview && (preview.rows?.length || 0) > 8 ? (
                   <p className="border-t border-slate-100 px-2 py-1 text-[10px] text-slate-500">
                     …ほか {preview.rows.length - 8} 件
                   </p>

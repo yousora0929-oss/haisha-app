@@ -4245,6 +4245,9 @@ export async function bulkInsertProjects(projectRows) {
       url_token: resolveUrlTokenForInsert(payload),
       sales_admin_id: String(payload.sales_admin_id ?? '').trim() || null,
       sales_admin_name: String(payload.sales_admin_name ?? '').trim() || null,
+      site_contacts: normalizeContactList(payload.site_contacts),
+      trading_contact_name: String(payload.trading_contact_name ?? '').trim() || null,
+      trading_contact_phone: String(payload.trading_contact_phone ?? '').trim() || null,
     };
   });
 

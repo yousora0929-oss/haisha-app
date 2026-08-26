@@ -180,6 +180,12 @@ export const PROJECT_CSV_ALIASES = {
   site_address: ['現場住所', '住所', 'site_address', '町名', '町名・地名', '現場住所詳細'],
   delivery_area: ['エリア', '納入エリア', 'delivery_area', '市町村', '配送エリア'],
   billing_target: ['請求先', 'billing_target', '請求区分'],
+  main_factory_name: ['工場', 'メイン工場', '工場（メイン）', 'main_factory', '出荷工場'],
+  sub_factory_names: ['サブ工場', '工場（サブ）', 'サブ工場（複数可）', 'sub_factory', '応援工場'],
+  trading_contact_name: ['商社担当者', '商社担当者名', 'trading_contact_name', '商社ご担当'],
+  trading_contact_phone: ['商社担当者電話', '商社担当者連絡先', 'trading_contact_phone'],
+  site_contacts_raw: ['現場担当者', '現場ご担当', 'site_contacts', '現場担当者（名前:電話）'],
+  sales_admin_name: ['組合担当営業', '担当営業', 'sales_admin_name', '営業担当'],
 };
 
 export const TRADING_COMPANY_CSV_ALIASES = {
@@ -195,7 +201,21 @@ export const CUSTOMER_CSV_ALIASES = {
 };
 
 /** CSV取込フォーマットと一致するエクスポート用ヘッダー */
-export const PROJECT_EXPORT_HEADERS = ['物件名', '元請業者', '業者名（表記用）', '商社名', '現場住所', 'エリア', '請求先'];
+export const PROJECT_EXPORT_HEADERS = [
+  '物件名',
+  '元請業者',
+  '業者名（表記用）',
+  '商社名',
+  '現場住所',
+  'エリア',
+  '請求先',
+  'メイン工場',
+  'サブ工場',
+  '商社担当者',
+  '商社担当者電話',
+  '現場担当者',
+  '組合担当営業',
+];
 export const CUSTOMER_EXPORT_HEADERS = ['業者名', 'フリガナ', '担当者名', '電話番号', 'ログインパスワード'];
 export const TRADING_COMPANY_EXPORT_HEADERS = ['商社名'];
 
@@ -311,6 +331,29 @@ export function normalizeCompanyName(raw) {
   }
   s = s.replace(/\s+/g, ' ').trim();
   return s;
+}
+
+/** 法人格を位置問わず完全除去した比較キー（法人格省略の吸収用。normalizeCompanyName とは別） */
+const LEGAL_FORM_STRIP_WORDS = [
+  '株式会社',
+  '有限会社',
+  '合同会社',
+  '合資会社',
+  '合名会社',
+  '㈱',
+  '㈲',
+  '㈾',
+  '㈳',
+  '㈴',
+];
+
+export function stripLegalFormCompletely(raw) {
+  let s = String(raw ?? '').trim();
+  s = s.replace(/\u3000/g, ' ').replace(/\s+/g, ' ');
+  s = s.replace(/[（）]/g, (m) => (m === '（' ? '(' : ')'));
+  s = s.replace(/\((株|有|同|資|名)\)/g, '');
+  for (const w of LEGAL_FORM_STRIP_WORDS) s = s.split(w).join('');
+  return s.replace(/\s+/g, ' ').trim();
 }
 
 function spreadsheetExt(file) {
