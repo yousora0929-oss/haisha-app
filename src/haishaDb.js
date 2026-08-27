@@ -3470,7 +3470,6 @@ export async function createProvisionalCompany({ name, role }) {
   const key = normalizeCompanyName(trimmed);
   let organizationRow =
     (existingOrgs || []).find((o) => normalizeCompanyName(o?.name) === key) || null;
-  const organizationExisted = Boolean(organizationRow);
 
   if (!organizationRow) {
     const { data, error } = await supabase
@@ -3484,19 +3483,40 @@ export async function createProvisionalCompany({ name, role }) {
 
   const organization = mapOrganizationRow(organizationRow);
   const organizationId = organization?.id || null;
+  // ここで組織IDが取れないと customers が organization_id なしで作られてしまう
+  if (!organizationId) throw new Error('組織の作成に失敗しました');
 
-  if (organizationExisted && organizationId) {
-    const { data: existingMembers, error: memberFetchError } = await supabase
+  const { data: existingMembers, error: memberFetchError } = await supabase
+    .from('customers')
+    .select('*')
+    .eq('organization_id', organizationId)
+    .eq('role', role)
+    .limit(1);
+  if (memberFetchError) throw memberFetchError;
+  const existingMember = (existingMembers || [])[0];
+  if (existingMember) {
+    return { organization, customer: mapCustomerRow(existingMember), created: false };
+  }
+
+  // 旧実装が組織なしで作った担当者が残っている場合は、重複を作らず組織へ紐付ける
+  const { data: orphans, error: orphanFetchError } = await supabase
+    .from('customers')
+    .select('*')
+    .is('organization_id', null)
+    .eq('role', role)
+    .eq('company_name', trimmed)
+    .limit(1);
+  if (orphanFetchError) throw orphanFetchError;
+  const orphan = (orphans || [])[0];
+  if (orphan) {
+    const { data: linked, error: linkError } = await supabase
       .from('customers')
+      .update({ organization_id: organizationId })
+      .eq('id', orphan.id)
       .select('*')
-      .eq('organization_id', organizationId)
-      .eq('role', role)
-      .limit(1);
-    if (memberFetchError) throw memberFetchError;
-    const existing = (existingMembers || [])[0];
-    if (existing) {
-      return { organization, customer: mapCustomerRow(existing), created: false };
-    }
+      .single();
+    if (linkError) throw linkError;
+    return { organization, customer: mapCustomerRow(linked), created: false };
   }
 
   const customer = await addCustomer({

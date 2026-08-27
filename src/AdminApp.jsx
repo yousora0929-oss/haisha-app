@@ -1904,14 +1904,14 @@ function ProjectsSection({ factories, factoryNameById }) {
                 );
               }
 
-              let insertedContractors = [];
-              if (contractorsToInsert.length > 0) {
-                insertedContractors = await db.bulkInsertCustomers(
-                  contractorsToInsert.map((c) => ({
-                    company_name: c.name,
-                    phone_number: null,
-                  })),
-                );
+              // 物件フォームと同じく organizations とのペアで仮登録する
+              const insertedContractors = [];
+              for (const c of contractorsToInsert) {
+                const created = await db.createProvisionalCompany({
+                  name: c.name,
+                  role: 'contractor',
+                });
+                if (created?.customer) insertedContractors.push(created.customer);
               }
 
               const contractorIdByName = new Map();
