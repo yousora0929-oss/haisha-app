@@ -1600,6 +1600,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [historyCustomerFilter, setHistoryCustomerFilter] = useState('all');
       const [factories, setFactories] = useState([]);
       const [projects, setProjects] = useState([]);
+      /** fetchProjects/fetchCustomers 完了後に true（未取得中の「物件なし」誤表示防止） */
+      const [projectCatalogReady, setProjectCatalogReady] = useState(false);
       const [holidays, setHolidays] = useState([]);
       const [systemSettings, setSystemSettings] = useState({ start_time: '08:00:00', end_time: '16:00:00' });
       const [escalationStepsByFactoryId, setEscalationStepsByFactoryId] = useState({});
@@ -1795,7 +1797,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [townList]);
 
       const currentCustomer = useMemo(
-        () => (customers || []).find((c) => c && c.id === currentCustomerId) || null,
+        () =>
+          (customers || []).find(
+            (c) => c && String(c.id) === String(currentCustomerId || ''),
+          ) || null,
         [customers, currentCustomerId],
       );
       const currentCustomerRole = useMemo(
@@ -1975,9 +1980,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return sorted;
       }, [customers, contractorLinkAgentId, linkedContractorIds, contractorUsageCounts]);
 
-      // 業者ログイン時「業者（会社）」候補（会社単位で1件）
+      // 業者ログイン時「業者（会社）」候補（会社単位で1件・contractor のみ）
       const companyCustomerItems = useMemo(
-        () => dedupeCustomersByCompany(customers),
+        () =>
+          dedupeCustomersByCompany(
+            (customers || []).filter((c) => (c.role ?? 'contractor') === 'contractor'),
+          ),
         [customers],
       );
       const tradingAgentItems = useMemo(() => {
@@ -2091,6 +2099,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [isLoggedIn]);
       const currentCustomerPhone = String(currentCustomer?.phone_number || sessionCustomerPhone || '').trim();
       const currentCustomerDisplayName = String(currentCustomer?.company_name || currentCustomer?.name || '').trim() || 'カスタマー';
+      /** ログイン中アカウントの担当者表示（空欄＝代表窓口） */
+      const currentLoginManagerLabel = String(currentCustomer?.manager_name ?? '').trim() || '代表';
       // 代理発注時の商社スナップショット（UI非表示でも order_data.traderName / 表示用に使う）
       const proxyTraderName = useMemo(() => {
         if (!isAgentOrCooperative) return '';
@@ -2195,23 +2205,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const targetProjectCustomer = isAgentOrCooperative
         ? contractorCustomer
         : currentCustomer;
-      // 代理発注は物件がどの担当者アカウントで登録されたか分からないことがあるため、
-      // 選択業者と同じ会社名の業者アカウント全件を物件の検索対象にする。
-      // 業者本人ログイン時は従来どおり自分のアカウントだけが対象で、
-      // 「会社全体を表示」に切り替えたときだけ会社の全担当者を対象にする。
+      // 物件の customer_id は会社の代表アカウント側に付くことが多い。
+      // 新規発注の物件候補は「会社全体を表示」トグルに依存せず、同社アカウント全体でマッチする
+      // （トグルは進行中注文の閲覧範囲専用。個人アカウントだけだと初期表示が空になる）。
       const projectMatchCustomers = useMemo(() => {
         if (!targetProjectCustomer) return [];
-        if (!isAgentOrCooperative) {
-          return companyScopeActive ? contractorCompanyAccounts : [targetProjectCustomer];
-        }
         return contractorAccountsInSameCompany(customers, targetProjectCustomer);
-      }, [
-        isAgentOrCooperative,
-        targetProjectCustomer,
-        customers,
-        companyScopeActive,
-        contractorCompanyAccounts,
-      ]);
+      }, [targetProjectCustomer, customers]);
       const projectMatchByProjectId = useMemo(() => {
         const map = new Map();
         if (projectMatchCustomers.length === 0) return map;
@@ -2240,6 +2240,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               roleOrder[projectMatchByProjectId.get(String(b.id).trim()).role],
           );
       }, [projects, projectMatchByProjectId]);
+      /** マスタ未取得時は「物件なし」と誤表示しない */
+      const projectMastersReady = Boolean(
+        projectCatalogReady &&
+          String(currentCustomerId || '').trim() &&
+          (customers || []).some((c) => c?.id),
+      );
       const projectSelectionWarnings = useMemo(
         () => (selectedProject ? getProjectDataGapWarnings(selectedProject) : []),
         [selectedProject],
@@ -2567,8 +2573,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               const adminSettingRows = await db.fetchDispatchOperationalSettings();
               if (cancelled) return;
               setAdminSettings(adminSettingRows || { admin_name: '', phone_number: '' });
+              setProjectCatalogReady(false);
               return;
             }
+            setProjectCatalogReady(false);
             const [rows, projs, customerRows, adminSettingRows, holidayRows, opSettings, escalationSteps, orgRows, poolSize, smallVehicleInfo, monthlyVolumes] = await Promise.all([
               db.fetchFactories(),
               db.fetchProjects(),
@@ -2604,18 +2612,23 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             setFactorySmallVehicleInfo(smallVehicleInfo || {});
             setMonthlyVolumeByFactory(monthlyVolumes || {});
             setCurrentCustomerId((cur) => {
-              if (cur && customerRows.some((c) => c && c.id === cur)) return cur;
+              const curId = String(cur || '').trim();
+              if (curId && customerRows.some((c) => c && String(c.id) === curId)) return cur;
               return '';
             });
             if (isLoggedIn) {
               const authId = (() => {
                 try {
-                  return readAuthValue(DISPATCH_AUTH_SESSION_KEY) || '';
+                  return String(readAuthValue(DISPATCH_AUTH_SESSION_KEY) || '').trim();
                 } catch {
                   return '';
                 }
               })();
-              if (!authId || !hasCustomerPanelSession() || !customerRows.some((c) => c && c.id === authId)) {
+              if (
+                !authId ||
+                !hasCustomerPanelSession() ||
+                !customerRows.some((c) => c && String(c.id) === authId)
+              ) {
                 setIsLoggedIn(false);
                 setCurrentCustomerId('');
                 clearCustomerPanelSession();
@@ -2631,8 +2644,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               if (cur && rows.some((r) => r && r.id === cur)) return cur;
               return '';
             });
+            setProjectCatalogReady(true);
           } catch (e) {
             console.error('物件取得エラー', e);
+            if (!cancelled) setProjectCatalogReady(true);
             window.alert(formatSupabaseError(e, '物件一覧の取得に失敗しました'));
           }
         })();
@@ -4208,6 +4223,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       <p className="mt-1 break-words text-sm font-black leading-snug text-slate-900">
                         {currentCustomer?.company_name || currentCustomer?.name || '認証済み業者'}
                       </p>
+                      <p className="mt-0.5 break-words text-xs font-bold leading-snug text-slate-500">
+                        担当: {currentLoginManagerLabel}
+                      </p>
                     </div>
                     <div className="shrink-0">
                       <ThemeToggle compact />
@@ -4301,7 +4319,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                             </button>
                           </div>
                         </div>
-                        <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{APP_BRAND_NAME}</p>
+                        <div className="mt-2 min-w-0">
+                          <p className="break-words text-sm font-black leading-snug text-slate-900">
+                            {currentCustomer?.company_name || currentCustomer?.name || '認証済み業者'}
+                          </p>
+                          <p className="mt-0.5 break-words text-xs font-bold leading-snug text-slate-500">
+                            担当: {currentLoginManagerLabel}
+                          </p>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -4665,13 +4690,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     emptyHint="該当する業者がありません"
                   />
                   ) : null}
-                  {canUseCompanyScope ? (
-                    <CompanyScopeToggle
-                      value={companyScopeEnabled}
-                      onChange={setCompanyScopeEnabled}
-                      memberCount={contractorCompanyAccounts.length}
-                    />
-                  ) : null}
                   <MasterSuggestInput
                     label="物件を選択"
                     htmlFor={orderFieldId('dispatch-project')}
@@ -4694,7 +4712,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       return getProjectMatch(p)?.role === 'sub' ? `${name}（下請）` : name;
                     }}
                     getItemSubLabel={
-                      isAgentOrCooperative || companyScopeActive
+                      isAgentOrCooperative || projectMatchCustomers.length > 1
                         ? (p) => formatProjectAccountLabel(getProjectMatch(p)?.customer)
                         : undefined
                     }
@@ -4733,7 +4751,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     }}
                     emptyHint="該当する物件がありません"
                   />
-                  {(isAgentOrCooperative || companyScopeActive) &&
+                  {(isAgentOrCooperative || projectMatchCustomers.length > 1) &&
                   selectedProject &&
                   selectedProjectAccountLabel ? (
                     <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
@@ -4743,6 +4761,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   {!hasCurrentCustomer ? (
                     <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
                       ログイン中の業者情報を確認できません。再ログインするか、上の欄で業者を選択してください。
+                    </p>
+                  ) : isAgentOrCooperative && !contractorCustomerId ? (
+                    <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
+                      発注先の業者を選択すると、その会社の物件が一覧表示されます。
+                    </p>
+                  ) : !projectMastersReady || !targetProjectCustomer ? (
+                    <p className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                      物件を読み込み中…
                     </p>
                   ) : filteredProjects.length === 0 ? (
                     <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
