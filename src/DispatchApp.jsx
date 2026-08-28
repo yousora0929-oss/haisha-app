@@ -880,6 +880,49 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
     }
 
+    /**
+     * 業者ログイン向けの表示範囲切替。「自分の担当分のみ」（既定）⇄「会社全体を表示」。
+     * 会社全体は閲覧のみで、書き込み操作は自分の担当分に限られる。
+     */
+    function CompanyScopeToggle({ value, onChange, memberCount = 0, className = '' }) {
+      const btnBase =
+        'min-h-[36px] whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-black transition active:scale-[0.99]';
+      const activeCls = 'bg-indigo-700 text-white shadow-sm';
+      const idleCls =
+        'bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700';
+      return (
+        <div className={'flex flex-wrap items-center gap-2 ' + className}>
+          <div
+            className="inline-flex items-center gap-1 rounded-xl border-2 border-slate-200 bg-slate-50 p-1 dark:border-slate-600 dark:bg-slate-900/40"
+            role="group"
+            aria-label="表示範囲の切り替え"
+          >
+            <button
+              type="button"
+              aria-pressed={!value}
+              onClick={() => onChange(false)}
+              className={btnBase + ' ' + (!value ? activeCls : idleCls)}
+            >
+              自分の担当分のみ
+            </button>
+            <button
+              type="button"
+              aria-pressed={value}
+              onClick={() => onChange(true)}
+              className={btnBase + ' ' + (value ? activeCls : idleCls)}
+            >
+              会社全体を表示
+            </button>
+          </div>
+          {value ? (
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+              同じ会社の担当者{memberCount > 0 ? `${memberCount}名` : ''}分を表示中（閲覧のみ・操作は自分の担当分だけ）
+            </span>
+          ) : null}
+        </div>
+      );
+    }
+
     function InProgressOrderCard({
       order,
       project,
@@ -894,6 +937,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       choiceSubmitting = false,
       onEditOrder = null,
       onRequestChange = null,
+      readOnly = false,
+      accountLabel = '',
     }) {
       const addr = order.siteAddress?.trim() || '';
       const party = orderPartyInfo(order);
@@ -908,10 +953,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
       const timeSummary = `${formatOrderDate(order)} · ${order.timePointLabel || order.timeSlotLabel || '—'}`;
       const isCustomerCancelled = order.status === 'customer_cancelled';
-      const showPreferredChoice = needsPreferredCustomerChoice(order);
-      const showFullRejectChoice = isFullCompanyRejectionForCustomer(order, escalationCtx || {});
-      const canEditPending = isPreAcceptOrderEditable(order) && typeof onEditOrder === 'function';
+      // readOnly は「会社全体を表示」で見えている同僚の注文。閲覧のみ許可し操作系は出さない。
+      const showPreferredChoice = !readOnly && needsPreferredCustomerChoice(order);
+      const showFullRejectChoice =
+        !readOnly && isFullCompanyRejectionForCustomer(order, escalationCtx || {});
+      const canEditPending =
+        !readOnly && isPreAcceptOrderEditable(order) && typeof onEditOrder === 'function';
       const canRequestChange =
+        !readOnly &&
         !canEditPending &&
         isAcceptedOrderChangeRequestable(order) &&
         typeof onRequestChange === 'function';
@@ -985,6 +1034,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   <OrderStatusBadges order={order} escalationCtx={escalationCtx} />
                   <LocationPendingBadge order={order} />
                   <PhoneOrderBadge order={order} />
+                  {accountLabel ? (
+                    <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-black text-slate-600 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-300">
+                      {accountLabel}
+                    </span>
+                  ) : null}
                 </div>
               </div>
 
@@ -1194,7 +1248,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           {order.factoryUnlockRequested ? (
             <div className="border-t border-indigo-100 bg-indigo-50 px-4 py-3 dark:border-indigo-800 dark:bg-indigo-950/40">
               <p className="text-xs font-black text-indigo-900 dark:text-indigo-100">工場からステータス変更のロック解除が依頼されています。</p>
-              {typeof onAllowStatusReset === 'function' ? (
+              {!readOnly && typeof onAllowStatusReset === 'function' ? (
                 <button
                   type="button"
                   onClick={() => onAllowStatusReset(order.id)}
@@ -1538,6 +1592,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return initialOrderDateTime.slot;
       });
       const [inProgressSearchQuery, setInProgressSearchQuery] = useState('');
+      // 業者ログインの表示範囲。false = 自分の担当分のみ（従来動作）、true = 会社全体
+      const [companyScopeEnabled, setCompanyScopeEnabled] = useState(false);
+      const [companyScopeOrders, setCompanyScopeOrders] = useState([]);
       const [collapsedInProgressGroups, setCollapsedInProgressGroups] = useState({});
       const [historyStatusFilter, setHistoryStatusFilter] = useState('all');
       const [historyCustomerFilter, setHistoryCustomerFilter] = useState('all');
@@ -2104,17 +2161,57 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setContractorDisplayCustomText('');
       }, [selectedProjectId, orderKind, isGuestSiteOrder]);
 
+      // ── 会社単位表示（業者ログインのみ） ─────────────────────────────
+      // 同じ会社（organization_id / 会社名）の担当者アカウント。
+      // 会社にアカウントが1件しかなければ切り替える意味がないので切替UIも出さない。
+      const contractorCompanyAccounts = useMemo(() => {
+        if (isGuestSiteOrder || isAgentOrCooperative) return [];
+        if (currentCustomerRole !== 'contractor' || !currentCustomer?.id) return [];
+        return contractorAccountsInSameCompany(customers, currentCustomer);
+      }, [
+        isGuestSiteOrder,
+        isAgentOrCooperative,
+        currentCustomerRole,
+        currentCustomer,
+        customers,
+      ]);
+      const canUseCompanyScope = contractorCompanyAccounts.length > 1;
+      const companyScopeActive = canUseCompanyScope && companyScopeEnabled;
+      const companyColleagueIdSet = useMemo(() => {
+        const me = String(currentCustomerId || '').trim();
+        return new Set(
+          contractorCompanyAccounts
+            .map((c) => String(c?.id || '').trim())
+            .filter((id) => id && id !== me),
+        );
+      }, [contractorCompanyAccounts, currentCustomerId]);
+      const companyColleagueIdSetRef = useRef(companyColleagueIdSet);
+      companyColleagueIdSetRef.current = companyColleagueIdSet;
+      // ログインし直したら必ず「自分の担当分のみ」に戻す
+      useEffect(() => {
+        setCompanyScopeEnabled(false);
+      }, [currentCustomerId]);
+
       const targetProjectCustomer = isAgentOrCooperative
         ? contractorCustomer
         : currentCustomer;
       // 代理発注は物件がどの担当者アカウントで登録されたか分からないことがあるため、
       // 選択業者と同じ会社名の業者アカウント全件を物件の検索対象にする。
-      // 業者本人ログイン時は従来どおり自分のアカウントだけを対象にする。
+      // 業者本人ログイン時は従来どおり自分のアカウントだけが対象で、
+      // 「会社全体を表示」に切り替えたときだけ会社の全担当者を対象にする。
       const projectMatchCustomers = useMemo(() => {
         if (!targetProjectCustomer) return [];
-        if (!isAgentOrCooperative) return [targetProjectCustomer];
+        if (!isAgentOrCooperative) {
+          return companyScopeActive ? contractorCompanyAccounts : [targetProjectCustomer];
+        }
         return contractorAccountsInSameCompany(customers, targetProjectCustomer);
-      }, [isAgentOrCooperative, targetProjectCustomer, customers]);
+      }, [
+        isAgentOrCooperative,
+        targetProjectCustomer,
+        customers,
+        companyScopeActive,
+        contractorCompanyAccounts,
+      ]);
       const projectMatchByProjectId = useMemo(() => {
         const map = new Map();
         if (projectMatchCustomers.length === 0) return map;
@@ -2429,6 +2526,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
             prevOrdersRef.current = displayOrders;
             prevChatThreadsRef.current = newThreads;
+            // 「会社全体を表示」用の同僚分。通知判定（displayOrders）には混ぜない。
+            const colleagueIds = companyColleagueIdSetRef.current;
+            setCompanyScopeOrders(
+              colleagueIds && colleagueIds.size > 0
+                ? newOrders.filter(
+                    (o) =>
+                      o && colleagueIds.has(String(o.customer_id ?? o.customerId ?? '').trim()),
+                  )
+                : [],
+            );
             setDashboardOrders(Array.isArray(displayOrders) ? displayOrders : []);
             setChatThreads(newThreads);
           } catch (loadErr) {
@@ -2443,6 +2550,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         refreshDashboardRef.current = refreshDashboard;
         isRelevantDashboardOrderRef.current = isRelevantDashboardOrder;
       }, [refreshDashboard, isRelevantDashboardOrder]);
+
+      // 会社全体に切り替えた直後は同僚分（companyScopeOrders）が未取得のため、その場で再取得する
+      useEffect(() => {
+        if (!companyScopeActive) return;
+        if (typeof refreshDashboardRef.current !== 'function') return;
+        void refreshDashboardRef.current({ skipChatSound: true });
+      }, [companyScopeActive]);
 
       useEffect(() => {
         if (isGuestSiteOrder) return undefined;
@@ -2877,17 +2991,26 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         },
         [refreshDashboard],
       );
+      // 進行中一覧の対象。会社全体表示のときだけ同僚分を足す（重複IDは除外）。
+      const inProgressSourceOrders = useMemo(() => {
+        const base = Array.isArray(dashboardOrders) ? dashboardOrders : [];
+        if (!companyScopeActive) return base;
+        const seen = new Set(base.map((o) => String(o?.id || '')));
+        const extra = (Array.isArray(companyScopeOrders) ? companyScopeOrders : []).filter(
+          (o) => o?.id && !seen.has(String(o.id)),
+        );
+        return extra.length > 0 ? [...base, ...extra] : base;
+      }, [dashboardOrders, companyScopeOrders, companyScopeActive]);
+      const scopedInProgressOrders = useMemo(
+        () => (inProgressSourceOrders || []).filter((o) => o && isOrderInProgressView(o, today)),
+        [inProgressSourceOrders, today],
+      );
       const filteredInProgressOrders = useMemo(
         () =>
-          (dashboardOrders || [])
-            .filter(
-              (o) =>
-                o &&
-                isOrderInProgressView(o, today) &&
-                orderMatchesMasterSearch(o, inProgressSearchQuery),
-            )
-            .slice(0, 15),
-        [dashboardOrders, inProgressSearchQuery, today],
+          (scopedInProgressOrders || [])
+            .filter((o) => orderMatchesMasterSearch(o, inProgressSearchQuery))
+            .slice(0, companyScopeActive ? 45 : 15),
+        [scopedInProgressOrders, inProgressSearchQuery, companyScopeActive],
       );
       // 進行中一覧も割当物件は現場名でグルーピング（検索フィルタ適用後の一覧をグループ化する）
       const inProgressOrderEntries = useMemo(
@@ -4183,6 +4306,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   </div>
 
                   <div className="flex flex-col md:items-end gap-2">
+                    {!isGuestSiteOrder && customerOrderTab === 'active' && canUseCompanyScope ? (
+                      <CompanyScopeToggle
+                        value={companyScopeEnabled}
+                        onChange={setCompanyScopeEnabled}
+                        memberCount={contractorCompanyAccounts.length}
+                        className="md:justify-end"
+                      />
+                    ) : null}
                     {!isGuestSiteOrder && customerOrderTab === 'active' ? (
                       <div className="w-full md:w-auto max-w-md">
                         <OrderListSearchInput
@@ -4533,6 +4664,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     emptyHint="該当する業者がありません"
                   />
                   ) : null}
+                  {canUseCompanyScope ? (
+                    <CompanyScopeToggle
+                      value={companyScopeEnabled}
+                      onChange={setCompanyScopeEnabled}
+                      memberCount={contractorCompanyAccounts.length}
+                    />
+                  ) : null}
                   <MasterSuggestInput
                     label="物件を選択"
                     htmlFor={orderFieldId('dispatch-project')}
@@ -4555,7 +4693,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       return getProjectMatch(p)?.role === 'sub' ? `${name}（下請）` : name;
                     }}
                     getItemSubLabel={
-                      isAgentOrCooperative
+                      isAgentOrCooperative || companyScopeActive
                         ? (p) => formatProjectAccountLabel(getProjectMatch(p)?.customer)
                         : undefined
                     }
@@ -4594,7 +4732,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     }}
                     emptyHint="該当する物件がありません"
                   />
-                  {isAgentOrCooperative && selectedProject && selectedProjectAccountLabel ? (
+                  {(isAgentOrCooperative || companyScopeActive) &&
+                  selectedProject &&
+                  selectedProjectAccountLabel ? (
                     <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                       この物件の登録アカウント: {selectedProjectAccountLabel}
                     </p>
@@ -5319,7 +5459,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   </div>
                 </div>
                   <div className="mt-4 grid grid-cols-1 gap-4">
-                    {activeOrders.length === 0 ? (
+                    {scopedInProgressOrders.length === 0 ? (
                       <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-600 dark:bg-slate-900/50 dark:text-gray-300">
                         進行中の注文はありません。「新規発注」タブから発注してください。
                       </p>
@@ -5332,7 +5472,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         ) : (
                           <div className="grid grid-cols-1 gap-6">
                           {inProgressOrderEntries.map((entry) => {
-                            const renderCard = (ord) => (
+                            const renderCard = (ord) => {
+                              // 会社全体表示で見えている同僚の注文は閲覧のみ（操作ボタンを出さない）
+                              const ownerId = String(ord?.customer_id ?? ord?.customerId ?? '').trim();
+                              const isColleagueOrder =
+                                companyScopeActive && companyColleagueIdSet.has(ownerId);
+                              return (
                               <InProgressOrderCard
                                 key={ord.id}
                                 order={ord}
@@ -5341,18 +5486,25 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                   unreadChatsByOrder[ord.id] ||
                                     isUnreadForDispatch(chatThreads[ord.id], readChatKeys[ord.id]),
                                 )}
-                                onOpenChat={handleOpenChat}
-                                onAllowStatusReset={handleAllowStatusReset}
+                                onOpenChat={isColleagueOrder ? null : handleOpenChat}
+                                onAllowStatusReset={isColleagueOrder ? null : handleAllowStatusReset}
                                 guestToken={isGuestSiteOrder ? guestOrderToken : ''}
                                 escalationCtx={customerEscalationCtx}
                                 choiceSubmitting={choiceSubmitting}
                                 onEscalatePreferred={(o) => void runCustomerChoice(o, 'escalate')}
                                 onReschedulePreferred={(o) => void runCustomerChoice(o, 'reschedule')}
                                 onCancelPreferred={(o) => void runCustomerChoice(o, 'cancel')}
-                                onEditOrder={handleOpenCustomerOrderEdit}
-                                onRequestChange={handleOpenCustomerChangeRequest}
+                                onEditOrder={isColleagueOrder ? null : handleOpenCustomerOrderEdit}
+                                onRequestChange={isColleagueOrder ? null : handleOpenCustomerChangeRequest}
+                                readOnly={isColleagueOrder}
+                                accountLabel={
+                                  companyScopeActive
+                                    ? formatProjectAccountLabel(customerById[ownerId])
+                                    : ''
+                                }
                               />
-                            );
+                              );
+                            };
                             if (entry.type === 'group') {
                               const groupStorageId = resolveInProgressGroupStorageId(entry);
                               const collapsed = Boolean(

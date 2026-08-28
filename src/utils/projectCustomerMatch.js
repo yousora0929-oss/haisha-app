@@ -25,21 +25,24 @@ export function projectMatchRole(project, customer) {
 }
 
 /**
- * 同じ会社（company_name の正規化一致）に属する業者アカウント一覧。
- * 物件が特定の担当者アカウントに紐づくため、代理発注では会社単位で探せるようにする。
+ * 同じ会社に属する業者アカウント一覧。
+ * 判定は organization_id 一致（RLS の会社単位判定と同じ基準）と
+ * company_name の正規化一致の和集合。組織未設定の古いデータでも会社単位で探せる。
  * @param {object[]|null|undefined} customers
  * @param {object|null|undefined} customer 基準となる業者アカウント
  * @returns {object[]}
  */
 export function contractorAccountsInSameCompany(customers, customer) {
   if (!customer) return [];
+  const orgId = String(customer.organization_id || '').trim();
   const key = normalizeCompanyName(customer.company_name || customer.name);
-  if (!key) return [customer];
+  if (!orgId && !key) return [customer];
   const list = (Array.isArray(customers) ? customers : []).filter(
     (c) =>
       c &&
       (c.role ?? 'contractor') === 'contractor' &&
-      normalizeCompanyName(c.company_name || c.name) === key,
+      ((orgId && String(c.organization_id || '').trim() === orgId) ||
+        (key && normalizeCompanyName(c.company_name || c.name) === key)),
   );
   if (!list.some((c) => String(c.id) === String(customer.id))) list.push(customer);
   return list;
