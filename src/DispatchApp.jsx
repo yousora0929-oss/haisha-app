@@ -103,7 +103,11 @@ import {
   resolveNearestUpcomingOrder,
   formatOrderDateTimeSummary,
 } from './utils/orderGrouping.js';
-import { resolveOrderContactPersonName, resolveSiteContactName } from './utils/orderContactInfo.js';
+import {
+  formatProjectSiteContactsLabel,
+  resolveOrderContactPersonName,
+  resolveSiteContactName,
+} from './utils/orderContactInfo.js';
 import { formatPhoneNumberJP } from './utils/phoneFormat.js';
 import { resolveGuestPreferredFactoryId, resolveProjectMainFactoryId, getProjectDataGapWarnings } from './utils/projectFactory.js';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
@@ -976,6 +980,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [guestToken, order?.id]);
 
       const orderedByDisp = resolveSiteContactName(order);
+      const projectSiteContactsLabel = formatProjectSiteContactsLabel(project, {
+        formatPhone: formatPhoneNumberJP,
+      });
       const compactMeta = [
         vehicle ? `車種:${vehicle}` : '',
         trader && trader !== '—' ? `商社:${trader}` : '',
@@ -1080,6 +1087,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       <span className="ml-2 text-gray-400 dark:text-gray-500">（{orderedByDisp}）</span>
                     ) : null}
                   </p>
+                  {projectSiteContactsLabel ? (
+                    <p
+                      className="min-w-0 break-words text-sm font-bold text-slate-600 dark:text-slate-300"
+                      title={`現場担当者: ${projectSiteContactsLabel}`}
+                    >
+                      現場担当者: {projectSiteContactsLabel}
+                    </p>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -1392,6 +1407,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   const renderOrderBody = (order, { showSite }) => {
                     const party = orderPartyInfo(order);
                     const meta = historyStatusMeta(order, escalationCtx);
+                    const project =
+                      projectById[String(order?.project_id ?? order?.projectId ?? '')] ?? null;
+                    const projectSiteContactsLabel = formatProjectSiteContactsLabel(project, {
+                      formatPhone: formatPhoneNumberJP,
+                    });
                     const canEditPending =
                       isPreAcceptOrderEditable(order) && typeof onEditOrder === 'function';
                     const canRequestChange =
@@ -1435,6 +1455,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           <p className="mt-2 text-sm font-black text-slate-900">{party.site || '現場未設定'}</p>
                         ) : null}
                         <p className="mt-1 text-xs font-bold text-slate-500">{order.timePointLabel || order.timeSlotLabel || '時刻未設定'} / {order.confirmedQuantityM3 ?? order.quantityM3 ?? '—'}m³ / {order.confirmedMixText || order.mixText || '配合未入力'}</p>
+                        {projectSiteContactsLabel ? (
+                          <p className="mt-1 text-xs font-bold text-slate-600">
+                            現場担当者: {projectSiteContactsLabel}
+                          </p>
+                        ) : null}
                         <p className="mt-2 text-[10px] font-black text-indigo-600">ダブルタップで現在のステータス</p>
                         <div
                           className="grid transition-[grid-template-rows] duration-300 ease-out"
@@ -2249,13 +2274,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const projectSelectionWarnings = useMemo(
         () => (selectedProject ? getProjectDataGapWarnings(selectedProject) : []),
         [selectedProject],
-      );
-      const selectedProjectAccountLabel = useMemo(
-        () =>
-          selectedProject
-            ? formatProjectAccountLabel(getProjectMatch(selectedProject)?.customer)
-            : '',
-        [selectedProject, getProjectMatch],
       );
       const hasCurrentCustomer = Boolean(String(currentCustomerId || '').trim());
 
@@ -4711,11 +4729,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       const name = String(p.name || p.id || '').trim();
                       return getProjectMatch(p)?.role === 'sub' ? `${name}（下請）` : name;
                     }}
-                    getItemSubLabel={
-                      isAgentOrCooperative || projectMatchCustomers.length > 1
-                        ? (p) => formatProjectAccountLabel(getProjectMatch(p)?.customer)
-                        : undefined
-                    }
                     getSearchTexts={projectSuggestTexts}
                     onValueChange={(text) => {
                       setProjectSearchText(text);
@@ -4751,13 +4764,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     }}
                     emptyHint="該当する物件がありません"
                   />
-                  {(isAgentOrCooperative || projectMatchCustomers.length > 1) &&
-                  selectedProject &&
-                  selectedProjectAccountLabel ? (
-                    <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      この物件の登録アカウント: {selectedProjectAccountLabel}
-                    </p>
-                  ) : null}
                   {!hasCurrentCustomer ? (
                     <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
                       ログイン中の業者情報を確認できません。再ログインするか、上の欄で業者を選択してください。

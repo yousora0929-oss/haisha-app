@@ -49,3 +49,24 @@ export function resolveSitePhone(order) {
   }
   return '';
 }
+
+/**
+ * 物件マスタの現場担当者リスト（projects.site_contacts）を1行表示用に整形。
+ * 未登録・空なら ''（呼び出し側で行ごと非表示）。
+ * @param {object|null|undefined} project
+ * @param {{ formatPhone?: (phone: string) => string }} [opts]
+ */
+export function formatProjectSiteContactsLabel(project, { formatPhone } = {}) {
+  const list = Array.isArray(project?.site_contacts) ? project.site_contacts : [];
+  const fmt =
+    typeof formatPhone === 'function' ? formatPhone : (phone) => String(phone || '').trim();
+  const parts = [];
+  for (const c of list) {
+    if (!c || typeof c !== 'object') continue;
+    const name = String(c.name || '').trim();
+    const phone = fmt(String(c.phone || '').trim());
+    if (!name && !phone) continue;
+    parts.push(name && phone ? `${name}（${phone}）` : name || phone);
+  }
+  return parts.join('、');
+}
