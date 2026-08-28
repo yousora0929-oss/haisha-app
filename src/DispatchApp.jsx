@@ -3327,6 +3327,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           }
 
           try {
+            // 以降の fetch がパネル用 RLS を使えるよう、先にセッションヘッダーを確立する
+            setCustomerPanelSession(phone, password);
             setCurrentCustomerId(customer.id);
             const role = customer.role ?? 'contractor';
             if (role === 'agent' || role === 'cooperative') {
@@ -3361,7 +3363,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               setContractorName(companyName);
             }
 
-            setCustomerPanelSession(phone, password);
             setLoginPhone('');
             setLoginPassword('');
             setLoginError('');

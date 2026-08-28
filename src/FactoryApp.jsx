@@ -4583,12 +4583,10 @@ function isUnreadForFactory(messages, readKey) {
         let cancelled = false;
         (async () => {
           try {
-            const [rows, projs, hols, settings, customerRows, organizationRows, opSettings, escalationSteps, poolSize, smallVehicleInfo, monthlyVolumes] = await Promise.all([
+            const [rows, hols, settings, organizationRows, opSettings, escalationSteps, poolSize, smallVehicleInfo, monthlyVolumes] = await Promise.all([
               db.fetchFactories(),
-              db.fetchProjects(),
               db.fetchHolidays(),
               db.fetchSystemSettings(),
-              db.fetchCustomers(),
               db.fetchOrganizations().catch((error) => {
                 console.warn('[FactoryApp] organizations load failed', error);
                 return [];
@@ -4610,8 +4608,6 @@ function isUnreadForFactory(messages, readKey) {
             ]);
             if (cancelled) return;
             setFactories(rows);
-            setProjects(projs);
-            setCustomers(customerRows);
             setOrganizations(organizationRows);
             setHolidays(hols);
             setSystemSettings(settings);
@@ -4671,6 +4667,29 @@ function isUnreadForFactory(messages, readKey) {
           cancelled = true;
         };
       }, []);
+
+      // 物件・業者マスタは工場ログイン後のみ取得する（未ログイン時の全件読みを避ける）
+      useEffect(() => {
+        if (!isFactoryAuthenticated) {
+          setProjects([]);
+          setCustomers([]);
+          return undefined;
+        }
+        let cancelled = false;
+        (async () => {
+          try {
+            const [projs, customerRows] = await Promise.all([db.fetchProjects(), db.fetchCustomers()]);
+            if (cancelled) return;
+            setProjects(projs);
+            setCustomers(customerRows);
+          } catch (e) {
+            console.error('物件・業者マスタの取得に失敗しました', e);
+          }
+        })();
+        return () => {
+          cancelled = true;
+        };
+      }, [isFactoryAuthenticated]);
 
       useEffect(() => {
         if (!activeFactoryId) return undefined;
