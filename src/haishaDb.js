@@ -4335,9 +4335,34 @@ export async function fetchProjects() {
   return enrichProjectsWithTradingCompanyOrgs(withTokens);
 }
 
+/**
+ * 物件の所有会社（organizations, type=contractor）を発注元業者から解決する。
+ * customer_id が業者以外（商社の直接発注など）を指す場合や会社未設定の場合は null。
+ * 戻り値の Map にキーが無い customer_id は「customers を読めなかった」ケースで、
+ * 更新時に既存の organization_id を消さないよう呼び出し側で区別する。
+ * @param {unknown[]} customerIds
+ * @returns {Promise<Map<string, string|null>>}
+ */
+async function resolveProjectOrganizationIds(customerIds) {
+  const ids = [
+    ...new Set((Array.isArray(customerIds) ? customerIds : []).map((v) => sanitizeRefId(v)).filter(Boolean)),
+  ];
+  const map = new Map();
+  if (ids.length === 0) return map;
+  const { data, error } = await supabase.from('customers').select('id, role, organization_id').in('id', ids);
+  if (error) throw error;
+  for (const row of data || []) {
+    const role = String(row?.role || 'contractor');
+    map.set(String(row.id), role === 'contractor' ? sanitizeRefId(row?.organization_id) : null);
+  }
+  return map;
+}
+
 export async function bulkInsertProjects(projectRows) {
   const list = Array.isArray(projectRows) ? projectRows.filter((r) => r && typeof r === 'object') : [];
   if (list.length === 0) return [];
+
+  const orgIdByCustomerId = await resolveProjectOrganizationIds(list.map((p) => p?.customer_id));
 
   const prepared = list.map((payload) => {
     const main_factory_id = String(payload.main_factory_id || '').trim();
@@ -4345,9 +4370,11 @@ export async function bulkInsertProjects(projectRows) {
     const name = String(payload.name || '').trim();
     if (!name) throw new Error('物件名が空の行があります');
     const sub_factory_ids = normalizeSubFactoryIds(payload.sub_factory_ids).filter((id) => id !== main_factory_id);
+    const customer_id = sanitizeRefId(payload.customer_id);
     return {
       name,
-      customer_id: sanitizeRefId(payload.customer_id),
+      customer_id,
+      organization_id: customer_id ? orgIdByCustomerId.get(customer_id) || null : null,
       main_factory_id,
       sub_factory_ids,
       lat:
@@ -4394,9 +4421,12 @@ export async function insertProject(payload) {
   const name = String(payload.name || '').trim();
   if (!name) throw new Error('物件名を入力してください');
   const sub_factory_ids = normalizeSubFactoryIds(payload.sub_factory_ids).filter((id) => id !== main_factory_id);
+  const customer_id = sanitizeRefId(payload.customer_id);
+  const orgIdByCustomerId = await resolveProjectOrganizationIds([customer_id]);
   const row = {
     name,
-    customer_id: sanitizeRefId(payload.customer_id),
+    customer_id,
+    organization_id: customer_id ? orgIdByCustomerId.get(customer_id) || null : null,
     main_factory_id,
     sub_factory_ids,
     lat: payload.lat != null && payload.lat !== '' && Number.isFinite(Number(payload.lat)) ? Number(payload.lat) : null,
@@ -4430,9 +4460,11 @@ export async function updateProject(projectId, payload) {
   const name = String(payload.name || '').trim();
   if (!name) throw new Error('物件名を入力してください');
   const sub_factory_ids = normalizeSubFactoryIds(payload.sub_factory_ids).filter((fid) => fid !== main_factory_id);
+  const customer_id = sanitizeRefId(payload.customer_id);
+  const orgIdByCustomerId = await resolveProjectOrganizationIds([customer_id]);
   const row = {
     name,
-    customer_id: sanitizeRefId(payload.customer_id),
+    customer_id,
     main_factory_id,
     sub_factory_ids,
     ...buildProjectTradingCompanyFields(payload),
@@ -4450,6 +4482,9 @@ export async function updateProject(projectId, payload) {
     trading_contact_name: String(payload.trading_contact_name ?? '').trim() || null,
     trading_contact_phone: String(payload.trading_contact_phone ?? '').trim() || null,
   };
+  // 元請が変わったら所有会社も追従させる。customers が読めなかったときだけ既存値を残す
+  if (!customer_id) row.organization_id = null;
+  else if (orgIdByCustomerId.has(customer_id)) row.organization_id = orgIdByCustomerId.get(customer_id) || null;
   const latNum = payload.lat != null && payload.lat !== '' ? Number(payload.lat) : NaN;
   const lngNum = payload.lng != null && payload.lng !== '' ? Number(payload.lng) : NaN;
   if (Number.isFinite(latNum)) row.lat = latNum;
