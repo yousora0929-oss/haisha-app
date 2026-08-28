@@ -563,7 +563,9 @@ function ProjectForm({
   );
   const [siteContacts, setSiteContacts] = useState(() => {
     const list = Array.isArray(initial?.site_contacts) ? initial.site_contacts : [];
-    return list.length ? list.map((c) => ({ name: c?.name || '', phone: c?.phone || '' })) : [{ name: '', phone: '' }];
+    return list.length
+      ? list.map((c) => ({ name: c?.name || '', phone: c?.phone || '', registerAsStaff: false }))
+      : [{ name: '', phone: '', registerAsStaff: false }];
   });
   const [siteContactCandidates, setSiteContactCandidates] = useState([]);
   const [tradingCompanyHistory, setTradingCompanyHistory] = useState([]);
@@ -654,8 +656,12 @@ function ProjectForm({
       const list = Array.isArray(initial?.site_contacts) ? initial.site_contacts : [];
       setSiteContacts(
         list.length
-          ? list.map((c) => ({ name: String(c?.name || ''), phone: String(c?.phone || '') }))
-          : [{ name: '', phone: '' }],
+          ? list.map((c) => ({
+              name: String(c?.name || ''),
+              phone: String(c?.phone || ''),
+              registerAsStaff: false,
+            }))
+          : [{ name: '', phone: '', registerAsStaff: false }],
       );
     }
     setSubContractor(initial?.sub_contractor_name ?? initial?.contractor ?? '');
@@ -727,6 +733,25 @@ function ProjectForm({
     if (String(customerId || '').trim()) return false;
     return !findCustomerByExactName(typed);
   }, [contractorName, customerId, findCustomerByExactName]);
+
+  // 現場担当者をスタッフ登録する先。組織が特定できないと登録先が定まらない
+  const contractorOrganization = useMemo(() => {
+    const cid = String(customerId || '').trim();
+    if (!cid) return null;
+    const linked = (customers || []).find((c) => c && String(c.id) === cid);
+    const orgId = String(linked?.organization_id || '').trim();
+    if (!orgId) return null;
+    return { id: orgId, companyName: String(linked?.company_name || linked?.name || '').trim() };
+  }, [customerId, customers]);
+
+  // 元請を切り替えたら、前の元請向けに付けたチェックは持ち越さない
+  useEffect(() => {
+    setSiteContacts((prev) =>
+      prev.some((row) => row.registerAsStaff)
+        ? prev.map((row) => ({ ...row, registerAsStaff: false }))
+        : prev,
+    );
+  }, [customerId]);
 
   // 業者（元請）に紐づく会社メンバーを現場担当者サジェスト候補にする（DispatchApp と同 RPC）
   useEffect(() => {
@@ -935,13 +960,13 @@ function ProjectForm({
   }, []);
 
   const addSiteContact = () => {
-    setSiteContacts((prev) => [...prev, { name: '', phone: '' }]);
+    setSiteContacts((prev) => [...prev, { name: '', phone: '', registerAsStaff: false }]);
   };
 
   const removeSiteContact = (index) => {
     setSiteContacts((prev) => {
       const next = prev.filter((_, i) => i !== index);
-      return next.length ? next : [{ name: '', phone: '' }];
+      return next.length ? next : [{ name: '', phone: '', registerAsStaff: false }];
     });
   };
 
@@ -1006,6 +1031,8 @@ function ProjectForm({
     let nextDisplayName = '';
     let justCreatedCustomer = false;
     let createdContractorName = '';
+    let createdContractorOrganizationId = '';
+    let createdContractorCompanyName = '';
 
     if (!typed) {
       nextCustomerId = '';
@@ -1029,6 +1056,9 @@ function ProjectForm({
           nextDisplayName = '';
           justCreatedCustomer = true;
           createdContractorName = typed;
+          // 仮登録直後は customers ステートが古いため、確定した組織をここで押さえる
+          createdContractorOrganizationId = String(created?.organization?.id || '').trim();
+          createdContractorCompanyName = String(created?.organization?.name || typed).trim();
         } catch (err) {
           console.error(err);
           setAddressError(err?.message || '業者の仮登録に失敗しました。');
@@ -1078,6 +1108,18 @@ function ProjectForm({
       }
     }
 
+    const staffOrganizationId =
+      createdContractorOrganizationId || String(contractorOrganization?.id || '').trim();
+    const staffCompanyName =
+      createdContractorCompanyName ||
+      String(contractorOrganization?.companyName || '').trim() ||
+      typed;
+    const siteContactStaff = staffOrganizationId
+      ? siteContacts
+          .filter((c) => c.registerAsStaff && String(c.name || '').trim())
+          .map((c) => ({ name: String(c.name).trim(), phone: String(c.phone || '').trim() }))
+      : [];
+
     onSave(
       {
         name: name.trim(),
@@ -1088,7 +1130,8 @@ function ProjectForm({
         trading_company_organization_id: nextTradingOrgId || null,
         trading_contact_name: tradingContactName.trim(),
         trading_contact_phone: tradingContactPhone.trim(),
-        site_contacts: siteContacts,
+        // チェックボックスの状態は物件データに残さない
+        site_contacts: siteContacts.map((c) => ({ name: c.name, phone: c.phone })),
         contractor: subContractor.trim(),
         sub_contractor_name: subContractor.trim(),
         billing_target: billingTarget,
@@ -1103,7 +1146,13 @@ function ProjectForm({
         sales_admin_id: salesAdminId.trim(),
         sales_admin_name: salesAdminName.trim(),
       },
-      { createdContractorName, createdTradingCompanyName },
+      {
+        createdContractorName,
+        createdTradingCompanyName,
+        siteContactStaff,
+        staffOrganizationId,
+        staffCompanyName,
+      },
     );
   };
 
@@ -1339,6 +1388,19 @@ function ProjectForm({
               >
                 削除
               </button>
+              {contractorOrganization && row.name.trim() ? (
+                <label className="flex cursor-pointer items-start gap-2 sm:col-span-3">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600"
+                    checked={Boolean(row.registerAsStaff)}
+                    onChange={(e) => updateSiteContact(index, 'registerAsStaff', e.target.checked)}
+                  />
+                  <span className="text-[11px] font-bold text-slate-700">
+                    元請（{contractorOrganization.companyName || contractorName.trim()}）の担当者としても登録する
+                  </span>
+                </label>
+              ) : null}
             </div>
           ))}
           <button
@@ -1684,12 +1746,44 @@ function ProjectsSection({ factories, factoryNameById }) {
         : await db.insertProject(payload);
       setFormMode('edit');
       setEditing(saved);
+
+      // 物件保存が成功してから元請スタッフを登録する（失敗時に人だけ増えないように）
+      let staffAddedCount = 0;
+      let staffError = null;
+      const staffOrganizationId = String(meta.staffOrganizationId || '').trim();
+      const staffContacts = Array.isArray(meta.siteContactStaff) ? meta.siteContactStaff : [];
+      if (staffOrganizationId && staffContacts.length > 0) {
+        try {
+          for (const contact of staffContacts) {
+            const result = await db.createOrgStaffIfMissing({
+              organizationId: staffOrganizationId,
+              role: 'contractor',
+              companyName: meta.staffCompanyName,
+              managerName: contact.name,
+              phone: contact.phone,
+            });
+            if (result?.created) staffAddedCount += 1;
+          }
+        } catch (e) {
+          console.error(e);
+          staffError = e;
+        }
+      }
+
+      const notes = [];
       const created = [];
       if (meta.createdContractorName) created.push('業者');
       if (meta.createdTradingCompanyName) created.push('商社');
+      if (created.length > 0) notes.push(`${created.join('・')}を新規登録`);
+      if (staffAddedCount > 0) notes.push(`現場担当者${staffAddedCount}名を業者担当者として登録`);
       const base = isEdit ? '物件を更新しました' : '物件を登録しました';
-      setImportNotice(created.length > 0 ? `${base}（${created.join('・')}を新規登録）` : base);
+      setImportNotice(notes.length > 0 ? `${base}（${notes.join(' / ')}）` : base);
       window.setTimeout(() => setImportNotice(''), 5000);
+      if (staffError) {
+        setError(
+          `物件は保存しましたが、現場担当者の業者担当者登録に失敗しました: ${staffError?.message || '不明なエラー'}`,
+        );
+      }
       await load();
     } catch (e) {
       console.error(e);

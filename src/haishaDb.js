@@ -3529,6 +3529,53 @@ export async function createProvisionalCompany({ name, role }) {
   return { organization, customer, created: true };
 }
 
+/**
+ * 会社（organization）のスタッフを追加。同じ組織に同名（または同一電話番号）の
+ * 担当者が既にいれば追加せず既存行を返す。
+ * ログインパスワードは設定しないため、この行ではログインできない。
+ * @param {{ organizationId: string, role: 'contractor'|'agent'|'cooperative', companyName?: string, managerName: string, phone?: string }} params
+ * @returns {Promise<{ customer: object, created: boolean }>}
+ */
+export async function createOrgStaffIfMissing({
+  organizationId,
+  role,
+  companyName,
+  managerName,
+  phone,
+}) {
+  const orgId = sanitizeRefId(organizationId);
+  if (!orgId) throw new Error('組織IDが必要です');
+  validateOrganizationType(role);
+  const name = String(managerName ?? '').trim();
+  if (!name) throw new Error('担当者名を入力してください');
+  const phoneText = String(phone ?? '').trim();
+
+  const { data: members, error } = await supabase
+    .from('customers')
+    .select('*')
+    .eq('organization_id', orgId);
+  if (error) throw error;
+
+  const phoneDigits = phoneText.replace(/\D/g, '');
+  const existing = (members || []).find((row) => {
+    const rowName = String(row?.manager_name ?? '').trim();
+    if (rowName && rowName === name) return true;
+    const rowDigits = String(row?.phone_number ?? '').replace(/\D/g, '');
+    return Boolean(phoneDigits && rowDigits && rowDigits === phoneDigits);
+  });
+  if (existing) return { customer: mapCustomerRow(existing), created: false };
+
+  const created = await createOrgMember({
+    organizationId: orgId,
+    role,
+    companyName,
+    managerName: name,
+    phone: phoneText,
+    password: null,
+  });
+  return { customer: mapCustomerRow(created), created: true };
+}
+
 /** 担当者を新規作成（customers に INSERT） */
 export async function createOrgMember({
   organizationId,
