@@ -105,7 +105,9 @@ import {
 } from './utils/orderGrouping.js';
 import {
   formatProjectSiteContactsLabel,
+  formatTradingAgentContactLabel,
   resolveOrderContactPersonName,
+  resolveOrderLinkedProject,
   resolveSiteContactName,
 } from './utils/orderContactInfo.js';
 import { formatPhoneNumberJP } from './utils/phoneFormat.js';
@@ -927,6 +929,30 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
     }
 
+    function OrderMasterContactLines({ order, project, customerById, className = '' }) {
+      const siteLabel = formatProjectSiteContactsLabel(project, {
+        formatPhone: formatPhoneNumberJP,
+      });
+      const tradingAgentLabel = formatTradingAgentContactLabel(order, customerById, {
+        formatPhone: formatPhoneNumberJP,
+      });
+      if (!siteLabel && !tradingAgentLabel) return null;
+      return (
+        <>
+          {siteLabel ? (
+            <p className={className} title={`現場担当者: ${siteLabel}`}>
+              現場担当者: {siteLabel}
+            </p>
+          ) : null}
+          {tradingAgentLabel ? (
+            <p className={className} title={`経由商社: ${tradingAgentLabel}`}>
+              経由商社: {tradingAgentLabel}
+            </p>
+          ) : null}
+        </>
+      );
+    }
+
     function InProgressOrderCard({
       order,
       project,
@@ -943,6 +969,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       onRequestChange = null,
       readOnly = false,
       accountLabel = '',
+      customerById = {},
     }) {
       const addr = order.siteAddress?.trim() || '';
       const party = orderPartyInfo(order);
@@ -980,9 +1007,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [guestToken, order?.id]);
 
       const orderedByDisp = resolveSiteContactName(order);
-      const projectSiteContactsLabel = formatProjectSiteContactsLabel(project, {
-        formatPhone: formatPhoneNumberJP,
-      });
       const compactMeta = [
         vehicle ? `車種:${vehicle}` : '',
         trader && trader !== '—' ? `商社:${trader}` : '',
@@ -1087,14 +1111,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       <span className="ml-2 text-gray-400 dark:text-gray-500">（{orderedByDisp}）</span>
                     ) : null}
                   </p>
-                  {projectSiteContactsLabel ? (
-                    <p
-                      className="min-w-0 break-words text-sm font-bold text-slate-600 dark:text-slate-300"
-                      title={`現場担当者: ${projectSiteContactsLabel}`}
-                    >
-                      現場担当者: {projectSiteContactsLabel}
-                    </p>
-                  ) : null}
+                  <OrderMasterContactLines
+                    order={order}
+                    project={project}
+                    customerById={customerById}
+                    className="min-w-0 break-words text-sm font-bold text-slate-600 dark:text-slate-300"
+                  />
                 </div>
               </div>
             </div>
@@ -1292,6 +1314,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       onMonthChange,
       escalationCtx = null,
       projectById = {},
+      customerById = {},
       onEditOrder = null,
       onRequestChange = null,
     }) {
@@ -1407,11 +1430,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   const renderOrderBody = (order, { showSite }) => {
                     const party = orderPartyInfo(order);
                     const meta = historyStatusMeta(order, escalationCtx);
-                    const project =
-                      projectById[String(order?.project_id ?? order?.projectId ?? '')] ?? null;
-                    const projectSiteContactsLabel = formatProjectSiteContactsLabel(project, {
-                      formatPhone: formatPhoneNumberJP,
-                    });
+                    const project = resolveOrderLinkedProject(order, projectById);
                     const canEditPending =
                       isPreAcceptOrderEditable(order) && typeof onEditOrder === 'function';
                     const canRequestChange =
@@ -1455,11 +1474,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           <p className="mt-2 text-sm font-black text-slate-900">{party.site || '現場未設定'}</p>
                         ) : null}
                         <p className="mt-1 text-xs font-bold text-slate-500">{order.timePointLabel || order.timeSlotLabel || '時刻未設定'} / {order.confirmedQuantityM3 ?? order.quantityM3 ?? '—'}m³ / {order.confirmedMixText || order.mixText || '配合未入力'}</p>
-                        {projectSiteContactsLabel ? (
-                          <p className="mt-1 text-xs font-bold text-slate-600">
-                            現場担当者: {projectSiteContactsLabel}
-                          </p>
-                        ) : null}
+                        <OrderMasterContactLines
+                          order={order}
+                          project={project}
+                          customerById={customerById}
+                          className="mt-1 text-xs font-bold text-slate-600"
+                        />
                         <p className="mt-2 text-[10px] font-black text-indigo-600">ダブルタップで現在のステータス</p>
                         <div
                           className="grid transition-[grid-template-rows] duration-300 ease-out"
@@ -2147,13 +2167,28 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         (order) => {
           if (!order) return false;
           const cid = String(currentCustomerId || '').trim();
-          if (cid && String(order.customer_id || order.customerId || '').trim() === cid) return true;
+          if (cid) {
+            if (String(order.customer_id || order.customerId || '').trim() === cid) return true;
+            const orderContractorId = String(
+              order.contractor_customer_id || order.contractorCustomerId || '',
+            ).trim();
+            // 代理発注は customer_id が組合・商社、contractor_customer_id が打設業者
+            if (orderContractorId && orderContractorId === cid) return true;
+            if (currentCustomerRole === 'contractor' && currentCustomer && orderContractorId) {
+              const companyIds = new Set(
+                contractorAccountsInSameCompany(customers, currentCustomer)
+                  .map((c) => String(c?.id || '').trim())
+                  .filter(Boolean),
+              );
+              if (companyIds.has(orderContractorId)) return true;
+            }
+          }
           const phoneDigits = currentCustomerPhone.replace(/\D/g, '');
           if (!phoneDigits) return false;
           const orderPhoneDigits = String(order.phone_number ?? order.customerPhone ?? order.sitePhone ?? order.phone ?? '').replace(/\D/g, '');
           return Boolean(orderPhoneDigits && orderPhoneDigits === phoneDigits);
         },
-        [currentCustomerId, currentCustomerPhone],
+        [currentCustomerId, currentCustomerPhone, currentCustomerRole, currentCustomer, customers],
       );
       const isRelevantDashboardOrder = useCallback(
         (order) => {
@@ -2954,20 +2989,28 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         applyCustomerPushRedirect(payload);
       }, [applyCustomerPushRedirect, dashboardOrders, isLoggedIn]);
 
-      const projectById = useMemo(
-        () =>
-          Object.fromEntries(
-            (projects || []).filter((p) => p?.id).map((p) => [String(p.id), p]),
-          ),
-        [projects],
-      );
-      const customerById = useMemo(
-        () =>
-          Object.fromEntries(
-            (customers || []).filter((c) => c?.id).map((c) => [String(c.id), c]),
-          ),
-        [customers],
-      );
+      const projectById = useMemo(() => {
+        const map = Object.fromEntries(
+          (projects || []).filter((p) => p?.id).map((p) => [String(p.id), p]),
+        );
+        for (const order of [...(dashboardOrders || []), ...(companyScopeOrders || [])]) {
+          const linked = order?.linkedProject;
+          const pid = String(linked?.id || '').trim();
+          if (pid && !map[pid] && linked) map[pid] = linked;
+        }
+        return map;
+      }, [projects, dashboardOrders, companyScopeOrders]);
+      const customerById = useMemo(() => {
+        const map = Object.fromEntries(
+          (customers || []).filter((c) => c?.id).map((c) => [String(c.id), c]),
+        );
+        for (const order of [...(dashboardOrders || []), ...(companyScopeOrders || [])]) {
+          const agent = order?.tradingAgentCustomer;
+          const aid = String(agent?.id || '').trim();
+          if (aid && !map[aid] && agent) map[aid] = agent;
+        }
+        return map;
+      }, [customers, dashboardOrders, companyScopeOrders]);
 
       const handleOpenCustomerOrderEdit = useCallback((order) => {
         if (!isPreAcceptOrderEditable(order)) return;
@@ -5514,7 +5557,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                               <InProgressOrderCard
                                 key={ord.id}
                                 order={ord}
-                                project={projectById[String(ord?.project_id ?? ord?.projectId ?? '')] ?? null}
+                                project={resolveOrderLinkedProject(ord, projectById)}
+                                customerById={customerById}
                                 hasUnreadChat={Boolean(
                                   unreadChatsByOrder[ord.id] ||
                                     isUnreadForDispatch(chatThreads[ord.id], readChatKeys[ord.id]),
@@ -5768,6 +5812,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 currentMonth={customerCalendarMonth}
                 escalationCtx={customerEscalationCtx}
                 projectById={projectById}
+                customerById={customerById}
                 onEditOrder={handleOpenCustomerOrderEdit}
                 onRequestChange={handleOpenCustomerChangeRequest}
                 onMonthChange={(nextMonth) => {

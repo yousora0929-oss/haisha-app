@@ -51,6 +51,28 @@ export function resolveSitePhone(order) {
 }
 
 /**
+ * 注文に紐づく物件を project_id のみで解決する（customer_id は使わない）。
+ * 代理発注では customer_id が組合・商社になるため、カタログ側のフォールバックとして
+ * fetchOrdersWithChat が付けた linkedProject も同じ ID なら採用する。
+ * @param {object|null|undefined} order
+ * @param {Record<string, object>|Map<string, object>|null|undefined} projectById
+ */
+export function resolveOrderLinkedProject(order, projectById = {}) {
+  const pid = String(order?.project_id ?? order?.projectId ?? '').trim();
+  if (!pid) return null;
+  let fromMap = null;
+  if (projectById && typeof projectById.get === 'function') {
+    fromMap = projectById.get(pid) || null;
+  } else if (projectById && typeof projectById === 'object') {
+    fromMap = projectById[pid] || null;
+  }
+  if (fromMap) return fromMap;
+  const linked = order?.linkedProject;
+  if (linked && String(linked.id || '').trim() === pid) return linked;
+  return null;
+}
+
+/**
  * 物件マスタの現場担当者リスト（projects.site_contacts）を1行表示用に整形。
  * 未登録・空なら ''（呼び出し側で行ごと非表示）。
  * @param {object|null|undefined} project
@@ -69,4 +91,47 @@ export function formatProjectSiteContactsLabel(project, { formatPhone } = {}) {
     parts.push(name && phone ? `${name}（${phone}）` : name || phone);
   }
   return parts.join('、');
+}
+
+function lookupCustomerById(customerById, id) {
+  const key = String(id || '').trim();
+  if (!key) return null;
+  if (customerById && typeof customerById.get === 'function') {
+    return customerById.get(key) || null;
+  }
+  if (customerById && typeof customerById === 'object') {
+    return customerById[key] || null;
+  }
+  return null;
+}
+
+/**
+ * 経由商社（orders.trading_agent_customer_id）の連絡先を1行表示用に整形。
+ * 未設定、または customers から解決できないときは ''。
+ * @param {object|null|undefined} order
+ * @param {Record<string, object>|Map<string, object>|null|undefined} customerById
+ * @param {{ formatPhone?: (phone: string) => string }} [opts]
+ */
+export function formatTradingAgentContactLabel(order, customerById, { formatPhone } = {}) {
+  const id = String(
+    order?.trading_agent_customer_id ?? order?.tradingAgentCustomerId ?? '',
+  ).trim();
+  if (!id) return '';
+  const customer =
+    order?.tradingAgentCustomer &&
+    String(order.tradingAgentCustomer.id || '').trim() === id
+      ? order.tradingAgentCustomer
+      : lookupCustomerById(customerById, id);
+  if (!customer) return '';
+  const company = String(customer.company_name || customer.name || '').trim();
+  const manager = String(customer.manager_name || '').trim();
+  const phoneRaw = String(customer.phone_number || customer.phone || '').trim();
+  const fmt =
+    typeof formatPhone === 'function' ? formatPhone : (phone) => String(phone || '').trim();
+  const phone = fmt(phoneRaw);
+  if (company && manager && phone) return `${company} ${manager}（${phone}）`;
+  if (company && manager) return `${company} ${manager}`;
+  if (company && phone) return `${company}（${phone}）`;
+  if (manager && phone) return `${manager}（${phone}）`;
+  return company || manager || phone;
 }

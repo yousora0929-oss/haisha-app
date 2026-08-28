@@ -47,7 +47,7 @@ import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils
 import { generateInitialPassword } from './utils/initialPassword.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, site_history_contractor_id, is_admin_modified, is_factory_modified, is_customer_modified, has_pending_change_request, pending_change_request_patch, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at';
+  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, trading_agent_customer_id, site_history_contractor_id, is_admin_modified, is_factory_modified, is_customer_modified, has_pending_change_request, pending_change_request_patch, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -55,7 +55,7 @@ const CUSTOMER_SELECT_MIN =
 // projects は環境差分（未適用マイグレーション）でカラム欠損しやすい。
 // まずは trading_company_name を優先し、無ければ段階的にフォールバックする。
 const PROJECT_SELECT_MIN =
-  'id, name, customer_id, trading_company_name, main_factory_id, sub_factory_ids, lat, lng, contractor, sub_contractor_name, billing_target, delivery_area, site_address, created_at, updated_at';
+  'id, name, customer_id, trading_company_name, main_factory_id, sub_factory_ids, lat, lng, contractor, sub_contractor_name, billing_target, delivery_area, site_address, site_contacts, trading_contact_name, trading_contact_phone, created_at, updated_at';
 const PROJECT_SELECT_MIN_LEGACY =
   'id, name, main_factory_id, sub_factory_ids, lat, lng, trading_company, contractor, created_at, updated_at';
 const PROJECT_SELECT_MIN_BASE =
@@ -312,6 +312,12 @@ export function normalizeOrderRow(row) {
         ? String(row.agent_organization_id)
         : od.agent_organization_id != null
           ? String(od.agent_organization_id)
+          : null,
+    trading_agent_customer_id:
+      row.trading_agent_customer_id != null
+        ? String(row.trading_agent_customer_id)
+        : od.trading_agent_customer_id != null
+          ? String(od.trading_agent_customer_id)
           : null,
     customerName: od.customerName != null ? String(od.customerName) : od.customer_name != null ? String(od.customer_name) : '',
     trading_company_name:
@@ -830,7 +836,13 @@ export async function fetchOrdersWithChat() {
     if (order) orders.push(order);
     chatThreads[row.id] = normalizeChatMessages(row.chat_messages);
   }
-  const customerIds = [...new Set(orders.map((o) => o.customer_id).filter(Boolean))];
+  const customerIds = [
+    ...new Set(
+      orders.flatMap((o) =>
+        [o.customer_id, o.trading_agent_customer_id, o.contractor_customer_id].filter(Boolean),
+      ),
+    ),
+  ];
   const projectIds = [...new Set(orders.map((o) => o.project_id).filter(Boolean))];
   let customerById = new Map();
   let projectById = new Map();
@@ -858,12 +870,18 @@ export async function fetchOrdersWithChat() {
       console.warn('[fetchOrdersWithChat] projects load failed', pErr);
       projects = [];
     }
-    projectById = new Map((projects || []).map((p) => [String(p.id), p]));
+    projectById = new Map(
+      (projects || [])
+        .map((p) => mapProjectRow(p))
+        .filter((p) => p?.id)
+        .map((p) => [String(p.id), p]),
+    );
   }
   for (let i = 0; i < orders.length; i += 1) {
     const o = orders[i];
     const c = o.customer_id ? customerById.get(String(o.customer_id)) : null;
     const p = o.project_id ? projectById.get(String(o.project_id)) : null;
+    const tradingAgentId = String(o.trading_agent_customer_id || '').trim();
     orders[i] = {
       ...o,
       customerName: o.customerName || (c?.company_name != null ? String(c.company_name) : ''),
@@ -882,6 +900,8 @@ export async function fetchOrdersWithChat() {
         o.trading_company_name ||
         resolveProjectTradingCompanyName(p),
       url_token: pickSiteUrlToken(p, c),
+      linkedProject: p || null,
+      tradingAgentCustomer: tradingAgentId ? customerById.get(tradingAgentId) || null : null,
     };
   }
   return { orders, chatThreads };
