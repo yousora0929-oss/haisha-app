@@ -5399,8 +5399,8 @@ function isUnreadForFactory(messages, readKey) {
               ⚠️警告: 工場ID【{activeFactoryId}】はデータベースに存在しません
             </div>
           ) : null}
-          <header className="shrink-0 border-b border-slate-200 bg-white px-2 py-1 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-            <div className="flex min-w-0 items-center gap-1.5">
+          <header className="shrink-0 overflow-visible border-b border-slate-200 bg-white px-2 pb-1.5 pt-1.5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+            <div className="flex min-w-0 items-center gap-2">
               <div className="flex min-w-0 shrink items-center gap-2">
                 <a
                   href="/"
@@ -5418,21 +5418,22 @@ function isUnreadForFactory(messages, readKey) {
                   </p>
                 </div>
               </div>
+            </div>
 
-              <nav
-                className="flex min-w-0 flex-1 justify-end gap-1 overflow-x-auto overscroll-x-contain whitespace-nowrap [scrollbar-width:thin]"
+            <nav
+                className="mt-1.5 grid min-w-0 grid-cols-2 gap-0.5 overflow-visible rounded-xl bg-slate-100 p-1 pt-1.5 dark:bg-slate-800 sm:grid-cols-9 sm:gap-1"
                 aria-label="工場画面タブ"
               >
                 {[
-                  ['news', '📢 お知らせ'],
-                  ['orders', '🚚 注文'],
+                  ['news', 'お知らせ'],
+                  ['orders', '注文'],
                   ['scheduleChanges', '予定変更'],
                   ['assignments', '割当物件'],
-                  ['calendar', '📅 カレンダー'],
-                  ['history', '📋 履歴'],
-                  ['charter', '📣 チャーター募集'],
-                  ['charterRespond', '🚚 応援要請'],
-                  ['settings', '⚙️ 設定'],
+                  ['calendar', 'カレンダー'],
+                  ['history', '履歴'],
+                  ['charter', 'チャーター募集'],
+                  ['charterRespond', '応援要請'],
+                  ['settings', '設定'],
                 ].map(([id, label]) => {
                   const active = activeTab === id;
                   return (
@@ -5441,35 +5442,35 @@ function isUnreadForFactory(messages, readKey) {
                       type="button"
                       onClick={() => setActiveTab(id)}
                       className={
-                        'relative min-h-[40px] shrink-0 rounded-lg px-3 text-xs font-black transition sm:px-4 sm:text-sm ' +
+                        'relative min-h-[32px] min-w-0 overflow-visible rounded-lg px-1.5 py-1 text-[10px] font-black leading-tight transition sm:min-h-[36px] sm:px-2.5 sm:text-[11px] lg:text-xs ' +
                         (active
                           ? 'bg-indigo-600 text-white shadow-sm'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700')
+                          : 'bg-white text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-700')
                       }
                     >
-                      <span className="inline-flex items-center justify-center gap-1.5">
-                        {label}
+                      <span className="flex min-w-0 flex-wrap items-center justify-center gap-0.5">
+                        <span className="block min-w-0 whitespace-normal text-center leading-tight">{label}</span>
                         {id === 'news' && factoryNewsUnread > 0 ? (
-                          <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm">
+                          <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[8px] font-bold leading-none text-white shadow-sm">
                             {factoryNewsUnread}
                           </span>
                         ) : null}
                         {id === 'scheduleChanges' && scheduleChangesTabBadgeCount > 0 ? (
-                          <span className="rounded-full bg-amber-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
+                          <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[8px] font-bold leading-none text-white shadow-sm animate-pulse">
                             {scheduleChangesTabBadgeCount}
                           </span>
                         ) : null}
                         {id === 'charterRespond' && charterPendingCount > 0 ? (
-                          <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold leading-none text-white shadow-sm animate-pulse">
+                          <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[8px] font-bold leading-none text-white shadow-sm animate-pulse">
                             {charterPendingCount}
                           </span>
                         ) : null}
                       </span>
                       {id === 'orders' && (newOrdersCount > 0 || unreadChatCount > 0) ? (
-                        <span className="absolute -right-1 -top-1 flex items-center gap-0.5">
+                        <span className="absolute -right-0.5 -top-0.5 z-10 flex items-center gap-0.5">
                           {newOrdersCount > 0 ? (
                             <span
-                              className="flex min-h-[16px] min-w-[16px] items-center justify-center rounded-full bg-orange-500 px-1 text-[9px] font-black leading-none text-white shadow-sm"
+                              className="flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-orange-500 px-1 text-[8px] font-black leading-none text-white shadow-sm"
                               aria-label={`新着注文 ${newOrdersCount}件`}
                             >
                               {newOrdersCount > 9 ? '9+' : newOrdersCount}
@@ -5477,10 +5478,10 @@ function isUnreadForFactory(messages, readKey) {
                           ) : null}
                           {unreadChatCount > 0 ? (
                             <span
-                              className="flex min-h-[16px] min-w-[16px] items-center justify-center rounded-full bg-sky-500 px-1 text-[9px] font-black leading-none text-white shadow-sm"
+                              className="flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-sky-500 px-1 text-[8px] font-black leading-none text-white shadow-sm"
                               aria-label={`未読チャット ${unreadChatCount}件`}
                             >
-                              💬{unreadChatCount > 9 ? '9+' : unreadChatCount}
+                              {unreadChatCount > 9 ? '9+' : unreadChatCount}
                             </span>
                           ) : null}
                         </span>
@@ -5489,7 +5490,6 @@ function isUnreadForFactory(messages, readKey) {
                   );
                 })}
               </nav>
-            </div>
 
             {activeTab === 'orders' ? (
               <div className="mt-1 flex flex-wrap items-center gap-1.5">
