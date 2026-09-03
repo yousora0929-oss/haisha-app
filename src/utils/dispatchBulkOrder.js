@@ -8,6 +8,10 @@ import { looksLikeUrlText, sanitizeSiteNameValue } from './siteNameDisplay.js';
 import { resolveEffectiveContractorCustomerId } from './resolveEffectiveContractorCustomerId.js';
 import { normalizeFactoryRefId } from './escalationUtils.js';
 import { resolveProjectTradingCompanyName } from './projectTradingCompany.js';
+import {
+  COOPERATIVE_OWN_ORG_TRADER_ERROR,
+  isCooperativeOwnOrgTraderName,
+} from './cooperativeTraderName.js';
 
 /** 物件マスタから工場ID（main_factory_id）を抽出 */
 export function resolveFactoryIdFromProject(project) {
@@ -431,6 +435,15 @@ export function validateMultiDateOrderForm(context, dates, { today, isPastPrefer
   const list = (Array.isArray(dates) ? dates : []).map((d) => String(d || '').trim()).filter(Boolean);
   if (list.length === 0) missing.push('納入日（1件以上）');
   if (!String(context.currentCustomerId || '').trim()) missing.push('業者（会社）');
+  if (
+    isCooperativeOwnOrgTraderName(
+      context.currentCustomerRole,
+      context.traderName,
+      context.currentCustomer?.company_name || context.currentCustomer?.name,
+    )
+  ) {
+    missing.push(COOPERATIVE_OWN_ORG_TRADER_ERROR);
+  }
   if (context.isAgentOrCooperative && context.orderKind === 'project' && !String(context.contractorCustomerId || '').trim()) {
     missing.push('発注先業者');
   }

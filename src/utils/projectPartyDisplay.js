@@ -1,3 +1,81 @@
+function lookupById(map, id) {
+  const key = String(id || '').trim();
+  if (!key || map == null) return null;
+  if (typeof map.get === 'function') return map.get(key) || null;
+  if (typeof map === 'object') return map[key] || null;
+  return null;
+}
+
+function joinOrdererOrgAndPerson(orgName, personName) {
+  const org = String(orgName || '').trim();
+  const person = String(personName || '').trim();
+  if (org && person) {
+    if (org.includes(person)) return org;
+    return `${org} ${person}`;
+  }
+  return org || person || '—';
+}
+
+/**
+ * 発注者の担当者名。orders.ordered_by（ログイン時のスナップショット）を優先する。
+ * @param {object|null|undefined} order
+ * @param {object|null} [customer]
+ */
+export function resolveOrdererPersonName(order, customer = null) {
+  return String(
+    order?.ordered_by ||
+      order?.order_placer_name ||
+      order?.orderPlacerName ||
+      customer?.manager_name ||
+      '',
+  ).trim();
+}
+
+/**
+ * 発注者の組織名。
+ * customer_id → customers.organization_id → organizations.name、なければ customers.company_name。
+ * agent_organization_id（担当商社）は使わない。
+ * @param {object|null|undefined} order
+ * @param {Record<string, object>|Map<string, object>} [customerById]
+ * @param {Record<string, object>|Map<string, object>} [organizationById]
+ * @param {object|null} [orderingCustomer]
+ */
+export function resolveOrdererOrgName(
+  order,
+  customerById = {},
+  organizationById = {},
+  orderingCustomer = null,
+) {
+  const customerId = String(order?.customer_id ?? order?.customerId ?? '').trim();
+  const customer = orderingCustomer || lookupById(customerById, customerId);
+  const orgId = String(customer?.organization_id || '').trim();
+  const org = lookupById(organizationById, orgId);
+  return String(
+    org?.name ||
+      org?.company_name ||
+      customer?.company_name ||
+      customer?.name ||
+      order?.customerName ||
+      order?.customer_name ||
+      '',
+  ).trim();
+}
+
+/**
+ * 発注者表示 = ログインアカウント（orders.customer_id）の所属組織名 + 担当者名。
+ * 担当商社（agent_organization_id）は混入させない。
+ * @param {object|null|undefined} order
+ * @param {Record<string, object>|Map<string, object>} [customerById]
+ * @param {Record<string, object>|Map<string, object>} [organizationById]
+ */
+export function resolveOrdererLabel(order, customerById = {}, organizationById = {}) {
+  const customerId = String(order?.customer_id ?? order?.customerId ?? '').trim();
+  const customer = lookupById(customerById, customerId);
+  const orgName = resolveOrdererOrgName(order, customerById, organizationById, customer);
+  const personName = resolveOrdererPersonName(order, customer);
+  return joinOrdererOrgAndPerson(orgName, personName);
+}
+
 /**
  * 物件の業者（元請/下請）・商社・請求先マークの表示情報を解決
  * - contractor_display_name が商社名と同一なら元請名として使わず customers マスタへフォールバック
@@ -32,7 +110,8 @@ export function resolveProjectPartyDisplay(project, customer) {
  * 優先順位:
  * - 物件がある注文は、発注者に関係なく元請・下請・商社・請求先を必ず物件基準で確定する
  * - 物件がない注文だけ、発注先業者（contractor_customer_id）から注文スナップショットへフォールバックする
- * - 発注者表示は当事者表示と独立して、代理組織または注文の customer_id に対応する顧客から解決する
+ * - 発注者表示は当事者表示と独立して、orders.customer_id の所属組織（または company_name）から解決する
+ *   ※ agent_organization_id（担当商社）は発注者ではない
  * @param {object} order
  * @param {{
  *   project?: object|null,
@@ -58,24 +137,20 @@ export function resolveOrderPartyDisplay(
   ).trim();
   const customerFallback = String(order?.customerName ?? order?.customer_name ?? '').trim();
   const orderCustomer = orderingCustomer || customer;
-  const customerName = String(
-    orderCustomer?.company_name || orderCustomer?.name || customerFallback,
+  const ordererCustomerById = {};
+  const orderCustomerId = String(
+    orderCustomer?.id || order?.customer_id || order?.customerId || '',
   ).trim();
-  const managerName = String(orderCustomer?.manager_name || '').trim();
-  const agentOrganizationId = String(
-    order?.agent_organization_id ?? order?.agentOrganizationId ?? '',
-  ).trim();
-  const agentOrganization = agentOrganizationId
-    ? organizationById?.[agentOrganizationId]
-    : null;
-  const orderedByName = agentOrganizationId
-    ? String(agentOrganization?.name || agentOrganization?.company_name || customerName).trim()
-    : customerName;
-  const orderedByLabel = orderedByName
-    ? managerName && !orderedByName.includes(`（${managerName}）`)
-      ? `${orderedByName}（${managerName}）`
-      : orderedByName
-    : managerName || '—';
+  if (orderCustomer && orderCustomerId) {
+    ordererCustomerById[orderCustomerId] = orderCustomer;
+  }
+  const orderedByName = resolveOrdererOrgName(
+    order,
+    ordererCustomerById,
+    organizationById,
+    orderCustomer,
+  ) || customerFallback;
+  const orderedByLabel = resolveOrdererLabel(order, ordererCustomerById, organizationById);
 
   const withOrderedBy = (party) => {
     const comparisonPrime = String(
@@ -84,7 +159,7 @@ export function resolveOrderPartyDisplay(
     return {
       ...party,
       orderedByLabel,
-      /** 発注元の会社・組合・商社名（担当者名は含まない） */
+      /** 発注元の組織名（担当者名は含まない。担当商社名は使わない） */
       orderedByCompanyName: orderedByName || '',
       orderedByIsProxy: Boolean(
         orderedByName &&

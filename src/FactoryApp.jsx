@@ -16,6 +16,7 @@ import {
 import { buildEscalationContext, filterOrdersForFactory, getOrderEscalationStepInfo } from './utils/escalationUtils.js';
 import { isAssignedProject } from './utils/assignedProjectEscalation.js';
 import {
+  resolveOrdererLabel,
   resolveOrderPartyDisplay,
   resolveProjectPartyDisplay,
 } from './utils/projectPartyDisplay.js';
@@ -74,7 +75,6 @@ import { orderPartyInfo } from './utils/orderPartyInfo.js';
 import { setAutoReloadBlocked } from './hooks/useAppReleaseControl.js';
 import {
   resolveOrderContactPersonName,
-  resolveOrdererName,
   resolveSiteContactName,
   resolveSitePhone,
 } from './utils/orderContactInfo.js';
@@ -1762,7 +1762,6 @@ function isUnreadForFactory(messages, readKey) {
       const siteHeroLine = siteNm || addrRaw || '（未入力）';
       const party = orderPartyInfo(order, { preferSiteContact: true });
       const siteContactName = resolveSiteContactName(order);
-      const ordererName = resolveOrdererName(order);
       const sitePhoneFormatted = formatPhoneNumberJP(resolveSitePhone(order));
       const phone = sitePhoneFormatted;
       const projectId = String(order?.project_id ?? order?.projectId ?? '').trim();
@@ -1797,15 +1796,17 @@ function isUnreadForFactory(messages, readKey) {
         billOnSub,
         billingIsSub,
         orderedByLabel,
-        orderedByCompanyName,
         orderedByIsProxy,
       } = orderPartyDisplay;
       const ordererPhoneFormatted = formatPhoneNumberJP(
         String(orderCustomer?.phone_number ?? '').trim(),
       );
       const ordererDisplayLine =
-        [String(orderedByCompanyName || '').trim(), ordererName, ordererPhoneFormatted]
-          .filter(Boolean)
+        [
+          resolveOrdererLabel(order, customerById || {}, organizationById || {}),
+          ordererPhoneFormatted,
+        ]
+          .filter((part) => String(part || '').trim() && String(part).trim() !== '—')
           .join(' ') || '—';
       const missingBillingSub = billingIsSub && displaySub === '—';
       const isSpotOrder = Boolean(order.is_spot);

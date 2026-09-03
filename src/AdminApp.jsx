@@ -92,7 +92,7 @@ import {
   isUnregisteredTradingCompanyName,
   resolveProjectTradingCompanyName,
 } from './utils/projectTradingCompany.js';
-import { resolveProjectPartyDisplay } from './utils/projectPartyDisplay.js';
+import { resolveOrdererLabel, resolveProjectPartyDisplay } from './utils/projectPartyDisplay.js';
 
 function timeToInputValue(t) {
   const s = t != null ? String(t) : '';
@@ -3121,6 +3121,7 @@ function OrdersMonitorSection({
   /** 受注ボタン押下後の工場選択ドラフト { orderId, factoryId } */
   const [acceptDraft, setAcceptDraft] = useState(null);
   const [ordersSearchQuery, setOrdersSearchQuery] = useState('');
+  const [organizations, setOrganizations] = useState([]);
 
   useEffect(() => {
     const editing = Boolean(detailOrder || associationApproveOrder || acceptDraft || savingEdit || savingAssociation || savingReassign);
@@ -3131,11 +3132,15 @@ function OrdersMonitorSection({
   const load = useCallback(async () => {
     setError('');
     try {
-      const [{ orders: rows, chatThreads: threads }, projs, custs, hols, settings, escalationSteps, adminSettings, poolSize, smallVehicleInfo, monthlyVolumes] =
+      const [{ orders: rows, chatThreads: threads }, projs, custs, orgs, hols, settings, escalationSteps, adminSettings, poolSize, smallVehicleInfo, monthlyVolumes] =
         await Promise.all([
         db.fetchOrdersWithChat(),
         db.fetchProjects(),
         db.fetchCustomers(),
+        db.fetchOrganizations().catch((e) => {
+          console.warn('[OrdersMonitorSection] organizations load failed', e);
+          return [];
+        }),
         db.fetchHolidays(),
         db.fetchSystemSettings(),
         db.fetchEscalationSteps(),
@@ -3157,6 +3162,7 @@ function OrdersMonitorSection({
       setChatThreads(threads || {});
       setProjects(projs);
       setCustomers(Array.isArray(custs) ? custs : []);
+      setOrganizations(Array.isArray(orgs) ? orgs : []);
       setHolidays(hols);
       setSystemSettings(settings || {});
       setEscalationStepsByFactoryId(escalationSteps || {});
@@ -3172,28 +3178,18 @@ function OrdersMonitorSection({
     }
   }, []);
 
-  /** customer_id → 表示名（会社名。担当者名があれば併記） */
-  const customerNameById = useMemo(() => {
-    const map = {};
-    for (const c of customers || []) {
-      const id = String(c?.id || '').trim();
-      if (!id) continue;
-      const company = String(c.company_name || c.name || '').trim();
-      const manager = String(c.manager_name || '').trim();
-      map[id] = company && manager ? `${company}（${manager}）` : company || manager || id;
-    }
-    return map;
-  }, [customers]);
+  const customerById = useMemo(
+    () => Object.fromEntries((customers || []).filter((c) => c?.id).map((c) => [String(c.id), c])),
+    [customers],
+  );
+  const organizationById = useMemo(
+    () => Object.fromEntries((organizations || []).filter((o) => o?.id).map((o) => [String(o.id), o])),
+    [organizations],
+  );
 
   const resolveOrderPlacerLabel = useCallback(
-    (order) => {
-      const cid = String(order?.customer_id || order?.customerId || '').trim();
-      if (cid && customerNameById[cid]) return customerNameById[cid];
-      // fetchOrdersWithChat が付与する customerName（company_name）をフォールバック
-      const fallback = String(order?.customerName || order?.customer_name || '').trim();
-      return fallback || '—';
-    },
-    [customerNameById],
+    (order) => resolveOrdererLabel(order, customerById, organizationById),
+    [customerById, organizationById],
   );
 
   const escalationCtx = useMemo(
