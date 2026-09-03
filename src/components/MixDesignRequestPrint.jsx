@@ -1,12 +1,21 @@
 import React from 'react';
 import { APP_BRAND_NAME } from '../constants/brand.js';
-import { mixCodeForItem } from '../utils/mixDesignRequest.js';
+import {
+  MIX_DESIGN_VEHICLE_OPTIONS,
+  formatConstructionPeriod,
+  mixCodeForItem,
+  preventMinusKey,
+  sanitizeNonNegativeInput,
+} from '../utils/mixDesignRequest.js';
 import './mixDesignPrint.css';
 
 const LABEL_CELL = { background: '#f7f7f5' };
 
 function formatVehicleLabel(value) {
-  const raw = Array.isArray(value) ? value.join('、') : String(value || '');
+  const list = Array.isArray(value) ? value : String(value || '').split(/[、,]/);
+  const labels = MIX_DESIGN_VEHICLE_OPTIONS.filter((opt) => list.includes(opt.id)).map((opt) => opt.label);
+  if (labels.length) return labels.join('・');
+  const raw = list.filter(Boolean).join('、');
   if (raw.includes('large') && raw.includes('small')) return '大型・小型';
   if (raw.includes('large')) return '大型';
   if (raw.includes('small')) return '小型';
@@ -21,34 +30,51 @@ function formatDate(value) {
   return `${Number(m[1])}/${Number(m[2])}/${Number(m[3])}`;
 }
 
-function yn(value) {
-  return value ? '要' : '不要';
-}
-
-function testItemsLabel(request) {
-  const parts = [];
-  if (request?.testSalt) parts.push('塩化物');
-  if (request?.testSplitPour) parts.push('分割打設');
-  if (request?.testSpecimenCount != null && request.testSpecimenCount !== '') {
-    parts.push(`供試体 ${request.testSpecimenCount}本`);
-  }
-  if (request?.testThirdParty) parts.push('第三者試験');
-  return parts.length ? parts.join('／') : 'なし';
-}
-
 function submissionLabel(request) {
   if (request?.submissionMethod === 'electronic') return '電子';
   if (request?.submissionMethod === 'original') return '原本';
   return '—';
 }
 
+function PrintField({ editable, value, display, onChange, type = 'text', className = '', placeholder = '—' }) {
+  if (!editable) {
+    return <span>{display ?? (value || placeholder)}</span>;
+  }
+  const isNumber = type === 'number';
+  return (
+    <input
+      type={isNumber ? 'number' : type}
+      min={isNumber ? '0' : undefined}
+      value={value ?? ''}
+      placeholder={placeholder}
+      onKeyDown={isNumber ? preventMinusKey : undefined}
+      onChange={(e) => onChange(isNumber ? sanitizeNonNegativeInput(e.target.value) : e.target.value)}
+      className={`mix-design-print-input ${className}`.trim()}
+    />
+  );
+}
+
 /**
  * 配合計画書作成依頼の A4 帳票（画面プレビュー / 印刷兼用）
+ * editable 時は draft と同じ state を直接更新する。
  */
-export function MixDesignRequestPrint({ header, request, items, className = '' }) {
+export function MixDesignRequestPrint({
+  header,
+  request,
+  items,
+  className = '',
+  editable = false,
+  onHeaderChange,
+  onRequestChange,
+  onItemChange,
+}) {
   const rows = Array.isArray(items) ? items : [];
   const total = header?.totalVolumeM3 ?? request?.totalVolumeM3;
   const requester = String(request?.requestedBy || header?.requestedBy || '').trim();
+  const patchHeader = (patch) => onHeaderChange?.(patch);
+  const patchRequest = (patch) => onRequestChange?.(patch);
+  const periodText =
+    header?.constructionPeriod || formatConstructionPeriod(header?.periodStart, header?.periodEnd);
 
   return (
     <div className={`mix-design-print-sheet ${className}`.trim()}>
@@ -57,31 +83,120 @@ export function MixDesignRequestPrint({ header, request, items, className = '' }
         <tbody>
           <tr>
             <th style={LABEL_CELL}>工事名</th>
-            <td>{header?.projectName || '—'}</td>
+            <td>
+              <PrintField
+                editable={editable}
+                value={header?.projectName}
+                onChange={(v) => patchHeader({ projectName: v })}
+              />
+            </td>
             <th style={LABEL_CELL}>業者名</th>
-            <td>{header?.contractorName || '—'}</td>
+            <td>
+              <PrintField
+                editable={editable}
+                value={header?.contractorName}
+                onChange={(v) => patchHeader({ contractorName: v })}
+              />
+            </td>
           </tr>
           <tr>
             <th style={LABEL_CELL}>商社</th>
-            <td>{header?.traderName || '—'}</td>
-            <th style={LABEL_CELL}>現場担当者連絡先</th>
-            <td>{header?.siteContact || '—'}</td>
+            <td>
+              <PrintField
+                editable={editable}
+                value={header?.traderName}
+                onChange={(v) => patchHeader({ traderName: v })}
+              />
+            </td>
+            <th style={LABEL_CELL}>現場担当者</th>
+            <td>
+              <PrintField
+                editable={editable}
+                value={header?.siteManagerName}
+                onChange={(v) => patchHeader({ siteManagerName: v })}
+              />
+            </td>
           </tr>
           <tr>
             <th style={LABEL_CELL}>元請名</th>
-            <td>{header?.primeContractorName || '—'}</td>
+            <td>
+              <PrintField
+                editable={editable}
+                value={header?.primeContractorName}
+                onChange={(v) => patchHeader({ primeContractorName: v })}
+              />
+            </td>
+            <th style={LABEL_CELL}>現場担当者連絡先</th>
+            <td>
+              <PrintField
+                editable={editable}
+                value={header?.siteManagerContact}
+                onChange={(v) => patchHeader({ siteManagerContact: v })}
+              />
+            </td>
+          </tr>
+          <tr>
             <th style={LABEL_CELL}>現場住所</th>
-            <td>{header?.siteAddress || '—'}</td>
+            <td colSpan={3}>
+              <PrintField
+                editable={editable}
+                value={header?.siteAddress}
+                onChange={(v) => patchHeader({ siteAddress: v })}
+              />
+            </td>
           </tr>
           <tr>
             <th style={LABEL_CELL}>工期</th>
-            <td>{header?.constructionPeriod || '—'}</td>
+            <td>
+              {editable ? (
+                <div className="mix-design-print-period">
+                  <input
+                    type="date"
+                    value={header?.periodStart || ''}
+                    onChange={(e) => patchHeader({ periodStart: e.target.value })}
+                    className="mix-design-print-input"
+                  />
+                  <span>～</span>
+                  <input
+                    type="date"
+                    value={header?.periodEnd || ''}
+                    onChange={(e) => patchHeader({ periodEnd: e.target.value })}
+                    className="mix-design-print-input"
+                  />
+                </div>
+              ) : (
+                periodText || '—'
+              )}
+            </td>
             <th style={LABEL_CELL}>初打設日</th>
             <td>{formatDate(header?.firstPourDate)}</td>
           </tr>
           <tr>
             <th style={LABEL_CELL}>車両</th>
-            <td>{formatVehicleLabel(header?.vehicleTypes ?? request?.vehicleTypes)}</td>
+            <td>
+              {editable ? (
+                <div className="mix-design-print-vehicles">
+                  {MIX_DESIGN_VEHICLE_OPTIONS.map((opt) => (
+                    <label key={opt.id}>
+                      <input
+                        type="checkbox"
+                        checked={(header?.vehicleTypes || []).includes(opt.id)}
+                        onChange={() => {
+                          const current = Array.isArray(header?.vehicleTypes) ? header.vehicleTypes : [];
+                          const next = current.includes(opt.id)
+                            ? current.filter((v) => v !== opt.id)
+                            : [...current, opt.id];
+                          patchHeader({ vehicleTypes: next });
+                        }}
+                      />
+                      {opt.label}
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                formatVehicleLabel(header?.vehicleTypes ?? request?.vehicleTypes)
+              )}
+            </td>
             <th style={LABEL_CELL}>全体数量</th>
             <td>{total != null && total !== '' ? `${total} m³` : '—'}</td>
           </tr>
@@ -106,16 +221,63 @@ export function MixDesignRequestPrint({ header, request, items, className = '' }
               <td className="mix-design-print-no">{index + 1}</td>
               <td className="mix-design-print-code">{mixCodeForItem(item) || '—'}</td>
               <td className="mix-design-print-center">
-                {item.waterCementRatio != null && item.waterCementRatio !== '' ? item.waterCementRatio : '—'}
+                <PrintField
+                  editable={editable}
+                  type="number"
+                  value={item.waterCementRatio}
+                  display={item.waterCementRatio != null && item.waterCementRatio !== '' ? item.waterCementRatio : '—'}
+                  onChange={(v) => onItemChange?.(index, { waterCementRatio: v })}
+                />
               </td>
               <td className="mix-design-print-center">
-                {item.unitWaterContent != null && item.unitWaterContent !== '' ? item.unitWaterContent : '—'}
+                <PrintField
+                  editable={editable}
+                  type="number"
+                  value={item.unitWaterContent}
+                  display={item.unitWaterContent != null && item.unitWaterContent !== '' ? item.unitWaterContent : '—'}
+                  onChange={(v) => onItemChange?.(index, { unitWaterContent: v })}
+                />
               </td>
               <td className="mix-design-print-right">
-                {item.quantityM3 != null && item.quantityM3 !== '' ? item.quantityM3 : '—'}
+                <PrintField
+                  editable={editable}
+                  type="number"
+                  value={item.quantityM3}
+                  display={item.quantityM3 != null && item.quantityM3 !== '' ? item.quantityM3 : '—'}
+                  onChange={(v) => onItemChange?.(index, { quantityM3: v })}
+                />
               </td>
-              <td className="mix-design-print-right">{formatDate(item.pourDate)}</td>
-              <td className="mix-design-print-loc">{item.constructionLocation || '—'}</td>
+              <td className="mix-design-print-right">
+                {editable ? (
+                  <div className="mix-design-print-period">
+                    <PrintField
+                      editable
+                      type="number"
+                      value={item.pourMonth}
+                      placeholder="月"
+                      onChange={(v) => onItemChange?.(index, { pourMonth: v })}
+                    />
+                    <span>/</span>
+                    <PrintField
+                      editable
+                      type="number"
+                      value={item.pourDay}
+                      placeholder="日"
+                      onChange={(v) => onItemChange?.(index, { pourDay: v })}
+                    />
+                  </div>
+                ) : (
+                  formatDate(item.pourDate)
+                )}
+              </td>
+              <td className="mix-design-print-loc">
+                <PrintField
+                  editable={editable}
+                  value={item.constructionLocation}
+                  display={item.constructionLocation || '—'}
+                  onChange={(v) => onItemChange?.(index, { constructionLocation: v })}
+                />
+              </td>
             </tr>
           ))}
         </tbody>
@@ -124,26 +286,65 @@ export function MixDesignRequestPrint({ header, request, items, className = '' }
       <table className="mix-design-print-meta mix-design-print-footer-table">
         <tbody>
           <tr>
-            <th style={LABEL_CELL}>試験項目</th>
-            <td colSpan={3}>{testItemsLabel(request)}</td>
-          </tr>
-          <tr>
             <th style={LABEL_CELL}>提出方法</th>
-            <td>{submissionLabel(request)}</td>
+            <td>
+              {editable ? (
+                <select
+                  value={request?.submissionMethod || ''}
+                  onChange={(e) => patchRequest({ submissionMethod: e.target.value })}
+                  className="mix-design-print-input"
+                >
+                  <option value="">未指定</option>
+                  <option value="original">原本</option>
+                  <option value="electronic">電子</option>
+                </select>
+              ) : (
+                submissionLabel(request)
+              )}
+            </td>
             <th style={LABEL_CELL}>宛先</th>
-            <td>{request?.submissionEmail || '—'}</td>
+            <td>
+              <PrintField
+                editable={editable}
+                type="email"
+                value={request?.submissionEmail}
+                onChange={(v) => patchRequest({ submissionEmail: v })}
+              />
+            </td>
           </tr>
           <tr>
-            <th style={LABEL_CELL}>お見積書要否</th>
-            <td>{request?.quoteRequested == null ? '—' : yn(request.quoteRequested)}</td>
             <th style={LABEL_CELL}>備考</th>
-            <td>{request?.memo || '—'}</td>
+            <td colSpan={3}>
+              {editable ? (
+                <textarea
+                  value={request?.memo || ''}
+                  onChange={(e) => patchRequest({ memo: e.target.value })}
+                  rows={2}
+                  className="mix-design-print-input mix-design-print-memo"
+                />
+              ) : (
+                request?.memo || '—'
+              )}
+            </td>
           </tr>
         </tbody>
       </table>
 
       <div className="mix-design-print-signoff">
-        <p className="mix-design-print-requester">{requester || '—'}</p>
+        <p className="mix-design-print-requester">
+          {editable ? (
+            <PrintField
+              editable
+              value={request?.requestedBy || header?.requestedBy}
+              onChange={(v) => {
+                patchRequest({ requestedBy: v });
+                patchHeader({ requestedBy: v });
+              }}
+            />
+          ) : (
+            requester || '—'
+          )}
+        </p>
         <p className="mix-design-print-issuer">{APP_BRAND_NAME} 発行</p>
       </div>
     </div>

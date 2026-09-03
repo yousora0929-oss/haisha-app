@@ -12,13 +12,20 @@ import {
 
 export const MIX_DESIGN_REGIONS = ['大分市・挟間町', '湯布院・庄内'];
 
+export const MIX_DESIGN_VEHICLE_OPTIONS = [
+  { id: 'large', label: '大型車' },
+  { id: 'small', label: '小型車' },
+  { id: 'partial_small', label: '一部小型車' },
+];
+
 export const MIX_DESIGN_GRID_COLS = [
   'baseStrength',
   'slump',
   'aggregateSize',
   'cementType',
   'quantityM3',
-  'pourDate',
+  'pourMonth',
+  'pourDay',
   'constructionLocation',
   'waterCementRatio',
   'unitWaterContent',
@@ -38,6 +45,10 @@ export function createEmptyMixDesignItem() {
     aeAdmixture: false,
     quantityM3: '',
     pourDate: '',
+    pourMonth: '',
+    pourDay: '',
+    pourYearOverride: '',
+    pourDateOutOfRange: false,
     constructionLocation: '',
     waterCementRatio: '',
     unitWaterContent: '',
@@ -48,7 +59,14 @@ export function createEmptyMixDesignDraft() {
   return {
     projectName: '',
     contractorName: '',
+    primeContractorName: '',
+    traderName: '',
     siteAddress: '',
+    periodStart: '',
+    periodEnd: '',
+    vehicleTypes: [],
+    siteManagerName: '',
+    siteManagerContact: '',
     region: MIX_DESIGN_REGIONS[0],
     requestedToFactoryId: '',
     items: [createEmptyMixDesignItem()],
@@ -92,6 +110,157 @@ export function parseIsoDateLocal(iso) {
   if (!m) return null;
   const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+export function formatIsoDateLocal(year, month, day) {
+  const y = Number(year);
+  const m = Number(month);
+  const d = Number(day);
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return '';
+  if (y < 1900 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return '';
+  const date = new Date(y, m - 1, d);
+  if (date.getFullYear() !== y || date.getMonth() !== m - 1 || date.getDate() !== d) return '';
+  return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+export function pourPartsFromIso(iso) {
+  const date = parseIsoDateLocal(iso);
+  if (!date) return { pourMonth: '', pourDay: '' };
+  return { pourMonth: String(date.getMonth() + 1), pourDay: String(date.getDate()) };
+}
+
+function dateInPeriod(date, start, end) {
+  if (!date) return false;
+  if (start && date < start) return false;
+  if (end && date > end) return false;
+  return true;
+}
+
+export function resolvePourDateFromPeriod({
+  month,
+  day,
+  periodStart,
+  periodEnd,
+  yearOverride,
+} = {}) {
+  const m = Number(month);
+  const d = Number(day);
+  if (!Number.isInteger(m) || !Number.isInteger(d) || m < 1 || m > 12 || d < 1 || d > 31) {
+    return { pourDate: '', outOfRange: false, needsYear: false, years: [] };
+  }
+
+  const overrideYear = Number(yearOverride);
+  if (Number.isInteger(overrideYear) && overrideYear >= 1900 && overrideYear <= 2100) {
+    const iso = formatIsoDateLocal(overrideYear, m, d);
+    return { pourDate: iso, outOfRange: !iso, needsYear: false, years: [overrideYear] };
+  }
+
+  const start = parseIsoDateLocal(periodStart);
+  const end = parseIsoDateLocal(periodEnd);
+  if (!start && !end) {
+    return { pourDate: '', outOfRange: true, needsYear: true, years: [new Date().getFullYear()] };
+  }
+
+  const startYear = start ? start.getFullYear() : end.getFullYear();
+  const endYear = end ? end.getFullYear() : startYear;
+  const years = [...new Set([startYear, startYear + 1, endYear])].filter(
+    (y) => Number.isInteger(y) && y >= 1900 && y <= 2100,
+  );
+
+  if (startYear === endYear) {
+    const iso = formatIsoDateLocal(startYear, m, d);
+    const date = parseIsoDateLocal(iso);
+    const ok = dateInPeriod(date, start, end);
+    return { pourDate: ok ? iso : '', outOfRange: !ok, needsYear: !ok, years };
+  }
+
+  const candidates = years
+    .map((y) => {
+      const iso = formatIsoDateLocal(y, m, d);
+      const date = parseIsoDateLocal(iso);
+      return { iso, date, year: y, ok: dateInPeriod(date, start, end) };
+    })
+    .filter((c) => c.iso);
+
+  const hits = candidates.filter((c) => c.ok);
+  if (hits.length === 1) {
+    return { pourDate: hits[0].iso, outOfRange: false, needsYear: false, years };
+  }
+  if (hits.length > 1) {
+    return { pourDate: hits[0].iso, outOfRange: false, needsYear: false, years };
+  }
+  return { pourDate: '', outOfRange: true, needsYear: true, years };
+}
+
+export function pourYearChoices(periodStart, periodEnd, extraYears = []) {
+  const start = parseIsoDateLocal(periodStart);
+  const end = parseIsoDateLocal(periodEnd);
+  const current = new Date().getFullYear();
+  const base = [current, current + 1];
+  if (start) base.push(start.getFullYear(), start.getFullYear() + 1);
+  if (end) base.push(end.getFullYear());
+  for (const y of extraYears) {
+    const n = Number(y);
+    if (Number.isInteger(n)) base.push(n);
+  }
+  return [...new Set(base)].filter((y) => y >= 1900 && y <= 2100).sort((a, b) => a - b);
+}
+
+export function applyPourDateResolution(item, periodStart, periodEnd) {
+  const next = { ...item };
+  if (!String(next.pourMonth || '').trim() && !String(next.pourDay || '').trim() && next.pourDate) {
+    const parts = pourPartsFromIso(next.pourDate);
+    next.pourMonth = parts.pourMonth;
+    next.pourDay = parts.pourDay;
+  }
+  const resolved = resolvePourDateFromPeriod({
+    month: next.pourMonth,
+    day: next.pourDay,
+    periodStart,
+    periodEnd,
+    yearOverride: next.pourYearOverride,
+  });
+  next.pourDate = resolved.pourDate;
+  next.pourDateOutOfRange = Boolean(resolved.outOfRange);
+  return next;
+}
+
+export function formatConstructionPeriod(periodStart, periodEnd) {
+  const a = parseIsoDateLocal(periodStart);
+  const b = parseIsoDateLocal(periodEnd);
+  const fmt = (date) => `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
+  if (a && b) return `${fmt(a)} ～ ${fmt(b)}`;
+  if (a) return `${fmt(a)} ～`;
+  if (b) return `～ ${fmt(b)}`;
+  return '';
+}
+
+export function sanitizeNonNegativeInput(value) {
+  let raw = String(value ?? '').replace(/[−ー]/g, '-');
+  if (raw.includes('-')) raw = raw.replace(/-/g, '');
+  if (raw === '') return '';
+  const n = Number(raw);
+  if (Number.isFinite(n) && n < 0) return '0';
+  return raw;
+}
+
+export function clampNonNegativeNumber(value) {
+  const n = parseOptionalNumber(value);
+  if (n == null) return null;
+  return n < 0 ? 0 : n;
+}
+
+export function preventMinusKey(event) {
+  if (event?.key === '-' || event?.key === 'Minus' || event?.key === 'Subtract') {
+    event.preventDefault();
+  }
+}
+
+export function toggleMixDesignVehicle(current, id) {
+  const key = String(id || '').trim();
+  const list = Array.isArray(current) ? current.map(String) : [];
+  if (!key) return list;
+  return list.includes(key) ? list.filter((v) => v !== key) : [...list, key];
 }
 
 export function rulesForLookup(allRules, { region, cementType, pourDate }) {
@@ -225,6 +394,18 @@ export function prefillMixDesignDraft(order, project, requestedBy = '') {
   draft.siteAddress =
     String(project?.site_address || '').trim() ||
     String(order?.siteAddress ?? order?.site_address ?? '').trim();
+  draft.primeContractorName = String(
+    project?.contractor_display_name || project?.contractor || draft.contractorName || '',
+  ).trim();
+  draft.traderName =
+    resolveOrderTradingCompanyDisplayName(order) ||
+    String(project?.trading_company_name || '').trim();
+  const contacts = Array.isArray(project?.site_contacts) ? project.site_contacts : [];
+  const firstContact = contacts.find((c) => c && (c.name || c.phone)) || null;
+  draft.siteManagerName = String(firstContact?.name || order?.siteContactName || order?.site_contact_name || '').trim();
+  draft.siteManagerContact = String(firstContact?.phone || order?.sitePhone || order?.site_phone || '').trim();
+  const vehicle = String(order?.vehicleType || '').trim();
+  draft.vehicleTypes = vehicle ? [vehicle] : [];
 
   const factoryId = String(
     order?.preferred_factory_id ??
@@ -271,7 +452,8 @@ export function buildMixDesignAnchorProjectPayload(order, draft) {
         .trim() || null,
     deliveryArea: String(order?.delivery_area ?? order?.deliveryArea ?? '').trim() || null,
     contractor: String(draft?.contractorName || '').trim() || resolveOrderContractorDisplayName(order) || null,
-    tradingCompanyName: resolveOrderTradingCompanyDisplayName(order) || null,
+    tradingCompanyName:
+      String(draft?.traderName || '').trim() || resolveOrderTradingCompanyDisplayName(order) || null,
   };
 }
 
@@ -303,6 +485,8 @@ export function mixDesignHeaderFromOrder(order, project) {
     siteAddress: String(project?.site_address || order?.siteAddress || order?.site_address || '').trim(),
     constructionPeriod: '',
     vehicleTypes: order?.vehicleType ? [order.vehicleType] : [],
+    siteManagerName: '',
+    siteManagerContact: '',
   };
 }
 
@@ -325,9 +509,12 @@ export function buildMixDesignRequestInsertRow({
   const pid = String(projectId || '').trim();
   if (!pid) throw new Error('配合計画書依頼の物件IDがありません');
   const factoryId = String(draft?.requestedToFactoryId || preferredFactoryId || '').trim();
-  const copies = parseRequiredInt(draft?.copiesCount);
-  const specimen = parseRequiredInt(draft?.testSpecimenCount);
-  const vehicle = String(vehicleType || '').trim();
+  const copies = clampNonNegativeNumber(draft?.copiesCount);
+  const specimen = clampNonNegativeNumber(draft?.testSpecimenCount);
+  const vehicles = Array.isArray(draft?.vehicleTypes)
+    ? draft.vehicleTypes.map(String).filter(Boolean)
+    : [];
+  const fallbackVehicle = String(vehicleType || '').trim();
   return {
     project_id: pid,
     requested_to_factory_id: factoryId || null,
@@ -339,15 +526,21 @@ export function buildMixDesignRequestInsertRow({
     submission_email: String(draft?.submissionEmail || '').trim() || null,
     creation_date_specified: Boolean(draft?.creationDateSpecified),
     creation_date: draft?.creationDateSpecified && draft?.creationDate ? draft.creationDate : null,
-    copies_count: copies,
-    vehicle_types: vehicle ? [vehicle] : [],
+    copies_count: copies == null ? null : Math.trunc(copies),
+    vehicle_types: vehicles.length ? vehicles : fallbackVehicle ? [fallbackVehicle] : [],
     total_volume_m3: sumMixDesignQuantityM3(draft),
     test_salt: Boolean(draft?.testSalt),
     test_split_pour: Boolean(draft?.testSplitPour),
-    test_specimen_count: specimen,
+    test_specimen_count: specimen == null ? null : Math.trunc(specimen),
     test_third_party: Boolean(draft?.testThirdParty),
     quote_requested: draft?.quoteRequested === '' || draft?.quoteRequested == null ? null : Boolean(draft.quoteRequested),
     memo: String(draft?.memo || '').trim() || null,
+    prime_contractor_name: String(draft?.primeContractorName || '').trim() || null,
+    trading_company_name: String(draft?.traderName || '').trim() || null,
+    site_manager_name: String(draft?.siteManagerName || '').trim() || null,
+    site_manager_contact: String(draft?.siteManagerContact || '').trim() || null,
+    period_start: String(draft?.periodStart || '').trim() || null,
+    period_end: String(draft?.periodEnd || '').trim() || null,
   };
 }
 
@@ -355,7 +548,8 @@ export function buildMixDesignItemInsertRows(draft) {
   const items = Array.isArray(draft?.items) ? draft.items : [];
   return items.map((item, index) => {
     const baseStrength = parseRequiredInt(item.baseStrength);
-    const correctionValue = parseOptionalNumber(item.correctionValue);
+    const correctionValue = clampNonNegativeNumber(item.correctionValue);
+    const pourDate = String(item.pourDate || '').trim();
     return {
       sort_order: index,
       base_strength: baseStrength,
@@ -366,11 +560,11 @@ export function buildMixDesignItemInsertRows(draft) {
       aggregate_size: parseRequiredInt(item.aggregateSize),
       cement_type: String(item.cementType || 'N'),
       ae_admixture: Boolean(item.aeAdmixture),
-      quantity_m3: parseOptionalNumber(item.quantityM3),
-      pour_date: String(item.pourDate || '').trim() || null,
+      quantity_m3: clampNonNegativeNumber(item.quantityM3),
+      pour_date: pourDate || null,
       construction_location: String(item.constructionLocation || '').trim() || null,
-      water_cement_ratio: parseOptionalNumber(item.waterCementRatio),
-      unit_water_content: parseOptionalNumber(item.unitWaterContent),
+      water_cement_ratio: clampNonNegativeNumber(item.waterCementRatio),
+      unit_water_content: clampNonNegativeNumber(item.unitWaterContent),
     };
   });
 }

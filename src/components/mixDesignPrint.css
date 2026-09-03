@@ -100,6 +100,54 @@
   padding: 12px;
 }
 
+.mix-design-print-input,
+.mix-design-print-memo {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 1pt 2pt;
+  border: 1px dashed transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+}
+
+.mix-design-print-input:hover,
+.mix-design-print-memo:hover {
+  border-color: #94a3b8;
+  background: #fff;
+}
+
+.mix-design-print-input:focus,
+.mix-design-print-memo:focus {
+  border-color: #334155;
+  background: #fff;
+  outline: none;
+}
+
+.mix-design-print-period,
+.mix-design-print-vehicles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4pt;
+}
+
+.mix-design-print-vehicles label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2pt;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.mix-design-print-period .mix-design-print-input {
+  width: auto;
+  min-width: 3.2em;
+}
+
 @media print {
   @page {
     size: A4 portrait;
@@ -134,11 +182,14 @@
     max-width: none;
   }
 
-  body.mix-design-printing .mix-design-print-preview {
-    margin: 0;
-    border: 0;
-    background: #fff;
+  body.mix-design-printing .mix-design-print-input,
+  body.mix-design-printing .mix-design-print-memo {
+    border: none !important;
+    background: transparent !important;
     padding: 0;
-    overflow: visible;
+  }
+
+  body.mix-design-printing .mix-design-print-vehicles input {
+    display: none;
   }
 }

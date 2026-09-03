@@ -9,22 +9,46 @@ import {
 import {
   MIX_DESIGN_GRID_COLS,
   MIX_DESIGN_REGIONS,
+  MIX_DESIGN_VEHICLE_OPTIONS,
   applyAutoCorrection,
+  applyPourDateResolution,
   createEmptyMixDesignItem,
   earliestPourDate,
+  formatConstructionPeriod,
   handleMixDesignNavKeyDown,
   mixCodeForItem,
   mixDesignHeaderFromOrder,
   prefillMixDesignDraft,
+  preventMinusKey,
+  pourYearChoices,
+  sanitizeNonNegativeInput,
   selectAllOnFocus,
   sumMixDesignQuantityM3,
+  toggleMixDesignVehicle,
   validateMixDesignDraft,
 } from '../utils/mixDesignRequest.js';
 
 const FIELD =
   'min-h-[48px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-base text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300';
 
-function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, canRemove }) {
+function NonNegNumberInput({ value, onChange, className, inputMode = 'decimal', ...rest }) {
+  return (
+    <input
+      type="number"
+      min="0"
+      inputMode={inputMode}
+      value={value}
+      onKeyDown={preventMinusKey}
+      onFocus={selectAllOnFocus}
+      onChange={(e) => onChange(sanitizeNonNegativeInput(e.target.value))}
+      onBlur={(e) => onChange(sanitizeNonNegativeInput(e.target.value))}
+      className={className}
+      {...rest}
+    />
+  );
+}
+
+function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, canRemove, periodStart, periodEnd }) {
   const code = mixCodeForItem(item);
   const nav = (col) => `${index},${col}`;
 
@@ -48,40 +72,34 @@ function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, canRemov
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
           設計基準強度
-          <input
+          <NonNegNumberInput
             data-mix-nav={nav(0)}
-            type="number"
             inputMode="numeric"
             list="mix-design-base-strengths"
             value={item.baseStrength}
-            onFocus={selectAllOnFocus}
-            onChange={(e) => onChange({ baseStrength: e.target.value })}
+            onChange={(value) => onChange({ baseStrength: value })}
             className={FIELD}
           />
         </label>
         <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
           スランプ
-          <input
+          <NonNegNumberInput
             data-mix-nav={nav(1)}
-            type="number"
             inputMode="numeric"
             list="mix-design-slumps"
             value={item.slump}
-            onFocus={selectAllOnFocus}
-            onChange={(e) => onChange({ slump: e.target.value })}
+            onChange={(value) => onChange({ slump: value })}
             className={FIELD}
           />
         </label>
         <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
           骨材
-          <input
+          <NonNegNumberInput
             data-mix-nav={nav(2)}
-            type="number"
             inputMode="numeric"
             list="mix-design-aggregates"
             value={item.aggregateSize}
-            onFocus={selectAllOnFocus}
-            onChange={(e) => onChange({ aggregateSize: e.target.value })}
+            onChange={(value) => onChange({ aggregateSize: value })}
             className={FIELD}
           />
         </label>
@@ -99,30 +117,64 @@ function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, canRemov
         </label>
         <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
           数量（m³）
-          <input
+          <NonNegNumberInput
             data-mix-nav={nav(4)}
-            type="number"
-            inputMode="decimal"
             value={item.quantityM3}
-            onFocus={selectAllOnFocus}
-            onChange={(e) => onChange({ quantityM3: e.target.value })}
+            onChange={(value) => onChange({ quantityM3: value })}
             className={FIELD}
           />
         </label>
-        <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
+        <label className="flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-2">
           打設日
-          <input
-            data-mix-nav={nav(5)}
-            type="date"
-            value={item.pourDate}
-            onChange={(e) => onChange({ pourDate: e.target.value })}
-            className={FIELD}
-          />
+          <div className="flex flex-wrap items-center gap-1.5">
+            <NonNegNumberInput
+              data-mix-nav={nav(5)}
+              inputMode="numeric"
+              value={item.pourMonth}
+              onChange={(value) => onChange({ pourMonth: value, pourYearOverride: item.pourYearOverride || '' })}
+              placeholder="月"
+              className={
+                FIELD +
+                ' max-w-[4.5rem] text-center' +
+                (item.pourDateOutOfRange ? ' border-red-500 focus:border-red-500 focus:ring-red-200' : '')
+              }
+            />
+            <span className="text-base font-black text-slate-400">/</span>
+            <NonNegNumberInput
+              data-mix-nav={nav(6)}
+              inputMode="numeric"
+              value={item.pourDay}
+              onChange={(value) => onChange({ pourDay: value, pourYearOverride: item.pourYearOverride || '' })}
+              placeholder="日"
+              className={
+                FIELD +
+                ' max-w-[4.5rem] text-center' +
+                (item.pourDateOutOfRange ? ' border-red-500 focus:border-red-500 focus:ring-red-200' : '')
+              }
+            />
+            {item.pourDateOutOfRange || item.pourYearOverride ? (
+              <select
+                value={item.pourYearOverride || ''}
+                onChange={(e) => onChange({ pourYearOverride: e.target.value })}
+                className={FIELD + ' max-w-[7rem]'}
+              >
+                <option value="">年を選択</option>
+                {pourYearChoices(periodStart, periodEnd, [item.pourYearOverride]).map((year) => (
+                  <option key={year} value={String(year)}>
+                    {year}年
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            {item.pourDate ? (
+              <span className="text-xs font-medium text-slate-500">{item.pourDate.replace(/-/g, '/')}</span>
+            ) : null}
+          </div>
         </label>
         <label className="col-span-2 flex flex-col gap-1 text-xs font-bold text-slate-600">
           施工箇所
           <input
-            data-mix-nav={nav(6)}
+            data-mix-nav={nav(7)}
             type="text"
             value={item.constructionLocation}
             onChange={(e) => onChange({ constructionLocation: e.target.value })}
@@ -131,38 +183,30 @@ function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, canRemov
         </label>
         <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
           W/C比（%）
-          <input
-            data-mix-nav={nav(7)}
-            type="number"
-            inputMode="decimal"
+          <NonNegNumberInput
+            data-mix-nav={nav(8)}
             value={item.waterCementRatio}
-            onFocus={selectAllOnFocus}
-            onChange={(e) => onChange({ waterCementRatio: e.target.value })}
+            onChange={(value) => onChange({ waterCementRatio: value })}
             className={FIELD}
           />
         </label>
         <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
           単位水量
-          <input
-            data-mix-nav={nav(8)}
-            type="number"
-            inputMode="decimal"
+          <NonNegNumberInput
+            data-mix-nav={nav(9)}
             value={item.unitWaterContent}
-            onFocus={selectAllOnFocus}
-            onChange={(e) => onChange({ unitWaterContent: e.target.value })}
+            onChange={(value) => onChange({ unitWaterContent: value })}
             className={FIELD}
           />
         </label>
         <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
           構造体補正値
-          <input
-            data-mix-nav={nav(9)}
-            type="number"
+          <NonNegNumberInput
+            data-mix-nav={nav(10)}
             inputMode="numeric"
             value={item.correctionValue}
             disabled={item.correctionIsAuto}
-            onFocus={selectAllOnFocus}
-            onChange={(e) => onChange({ correctionValue: e.target.value, correctionIsAuto: false })}
+            onChange={(value) => onChange({ correctionValue: value, correctionIsAuto: false })}
             className={FIELD + (item.correctionIsAuto ? ' bg-slate-100 text-slate-500' : '')}
           />
         </label>
@@ -237,7 +281,7 @@ export function MixDesignRequestModal({
       setDraft((prev) => {
         const items = prev.items.map((item, i) => {
           if (i !== index) return item;
-          const next = { ...item, ...patch };
+          const next = applyPourDateResolution({ ...item, ...patch }, prev.periodStart, prev.periodEnd);
           return applyAutoCorrection(next, rules, prev.region);
         });
         return { ...prev, items };
@@ -245,6 +289,22 @@ export function MixDesignRequestModal({
     },
     [rules],
   );
+
+  const patchDraft = useCallback((patch) => {
+    setDraft((prev) => {
+      const next = { ...prev, ...patch };
+      if ('periodStart' in patch || 'periodEnd' in patch) {
+        next.items = prev.items.map((item) =>
+          applyAutoCorrection(
+            applyPourDateResolution(item, next.periodStart, next.periodEnd),
+            rules,
+            next.region,
+          ),
+        );
+      }
+      return next;
+    });
+  }, [rules]);
 
   const setRegion = useCallback(
     (region) => {
@@ -275,7 +335,16 @@ export function MixDesignRequestModal({
       ...headerContext,
       projectName: draft.projectName || headerContext.projectName,
       contractorName: draft.contractorName || headerContext.contractorName,
+      primeContractorName: draft.primeContractorName || headerContext.primeContractorName,
+      traderName: draft.traderName || headerContext.traderName,
       siteAddress: draft.siteAddress || headerContext.siteAddress,
+      constructionPeriod: formatConstructionPeriod(draft.periodStart, draft.periodEnd),
+      periodStart: draft.periodStart,
+      periodEnd: draft.periodEnd,
+      vehicleTypes: draft.vehicleTypes,
+      siteManagerName: draft.siteManagerName,
+      siteManagerContact: draft.siteManagerContact,
+      siteContact: [draft.siteManagerName, draft.siteManagerContact].filter(Boolean).join(' / '),
       firstPourDate: earliestPourDate(draft),
       totalVolumeM3: sumMixDesignQuantityM3(draft),
       requestedBy: draft.requestedBy,
@@ -285,18 +354,13 @@ export function MixDesignRequestModal({
   const printRequest = useMemo(
     () => ({
       requestedBy: draft.requestedBy,
-      vehicleTypes: headerContext.vehicleTypes,
+      vehicleTypes: draft.vehicleTypes,
       totalVolumeM3: sumMixDesignQuantityM3(draft),
-      testSalt: draft.testSalt,
-      testSplitPour: draft.testSplitPour,
-      testSpecimenCount: draft.testSpecimenCount,
-      testThirdParty: draft.testThirdParty,
       submissionMethod: draft.submissionMethod,
       submissionEmail: draft.submissionEmail,
-      quoteRequested: draft.quoteRequested,
       memo: draft.memo,
     }),
-    [draft, headerContext],
+    [draft],
   );
 
   const factoryOptions = Array.isArray(factories) ? factories.filter((f) => f?.id) : [];
@@ -381,7 +445,7 @@ export function MixDesignRequestModal({
               <input
                 type="text"
                 value={draft.projectName}
-                onChange={(e) => setDraft((prev) => ({ ...prev, projectName: e.target.value }))}
+                onChange={(e) => patchDraft({ projectName: e.target.value })}
                 className={FIELD}
               />
             </label>
@@ -390,7 +454,25 @@ export function MixDesignRequestModal({
               <input
                 type="text"
                 value={draft.contractorName}
-                onChange={(e) => setDraft((prev) => ({ ...prev, contractorName: e.target.value }))}
+                onChange={(e) => patchDraft({ contractorName: e.target.value })}
+                className={FIELD}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
+              元請（配合計画書宛名）
+              <input
+                type="text"
+                value={draft.primeContractorName}
+                onChange={(e) => patchDraft({ primeContractorName: e.target.value })}
+                className={FIELD}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
+              商社名
+              <input
+                type="text"
+                value={draft.traderName}
+                onChange={(e) => patchDraft({ traderName: e.target.value })}
                 className={FIELD}
               />
             </label>
@@ -399,13 +481,65 @@ export function MixDesignRequestModal({
               <input
                 type="text"
                 value={draft.siteAddress}
-                onChange={(e) => setDraft((prev) => ({ ...prev, siteAddress: e.target.value }))}
+                onChange={(e) => patchDraft({ siteAddress: e.target.value })}
                 className={FIELD}
               />
             </label>
+            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
+              工期開始
+              <input
+                type="date"
+                value={draft.periodStart}
+                onChange={(e) => patchDraft({ periodStart: e.target.value })}
+                className={FIELD}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
+              工期終了
+              <input
+                type="date"
+                value={draft.periodEnd}
+                onChange={(e) => patchDraft({ periodEnd: e.target.value })}
+                className={FIELD}
+              />
+            </label>
+            <fieldset className="sm:col-span-2">
+              <legend className="mb-1 text-xs font-bold text-slate-600">使用車両</legend>
+              <div className="flex flex-wrap gap-3">
+                {MIX_DESIGN_VEHICLE_OPTIONS.map((opt) => (
+                  <label key={opt.id} className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4"
+                      checked={(draft.vehicleTypes || []).includes(opt.id)}
+                      onChange={() => patchDraft({ vehicleTypes: toggleMixDesignVehicle(draft.vehicleTypes, opt.id) })}
+                    />
+                    {opt.label}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
+              現場担当者
+              <input
+                type="text"
+                value={draft.siteManagerName}
+                onChange={(e) => patchDraft({ siteManagerName: e.target.value })}
+                className={FIELD}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
+              現場担当者連絡先
+              <input
+                type="text"
+                value={draft.siteManagerContact}
+                onChange={(e) => patchDraft({ siteManagerContact: e.target.value })}
+                className={FIELD}
+              />
+            </label>
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
               地域
               <select value={draft.region} onChange={(e) => setRegion(e.target.value)} className={FIELD}>
@@ -474,12 +608,10 @@ export function MixDesignRequestModal({
             ) : null}
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
               作成部数
-              <input
-                type="number"
+              <NonNegNumberInput
                 inputMode="numeric"
                 value={draft.copiesCount}
-                onFocus={selectAllOnFocus}
-                onChange={(e) => setDraft((prev) => ({ ...prev, copiesCount: e.target.value }))}
+                onChange={(value) => patchDraft({ copiesCount: value })}
                 className={FIELD}
               />
             </label>
@@ -501,6 +633,8 @@ export function MixDesignRequestModal({
                 item={item}
                 index={index}
                 rowCount={draft.items.length}
+                periodStart={draft.periodStart}
+                periodEnd={draft.periodEnd}
                 canRemove={draft.items.length > 1}
                 onChange={(patch) => updateItem(index, patch)}
                 onRemove={() =>
@@ -573,7 +707,15 @@ export function MixDesignRequestModal({
           {showPreview ? (
             <div className="mix-design-print-root">
               <div className="mix-design-print-preview">
-                <MixDesignRequestPrint header={printHeader} request={printRequest} items={draft.items} />
+                <MixDesignRequestPrint
+                  header={printHeader}
+                  request={printRequest}
+                  items={draft.items}
+                  editable
+                  onHeaderChange={patchDraft}
+                  onRequestChange={patchDraft}
+                  onItemChange={updateItem}
+                />
               </div>
             </div>
           ) : null}
