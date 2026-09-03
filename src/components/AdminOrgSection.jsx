@@ -1088,7 +1088,7 @@ export function AdminOrgSection({ orgType, label }) {
                             <span>
                               配合計画書作成依頼を許可する
                               <span className="mt-0.5 block font-medium text-slate-500">
-                                ON のとき DispatchApp の新規発注画面に「配合計画書作成依頼」が表示されます
+                                ON のとき DispatchApp の注文履歴に「配合計画書を依頼」ボタンが表示されます
                               </span>
                             </span>
                           </label>
@@ -1333,7 +1333,7 @@ export function AdminOrgSection({ orgType, label }) {
                         <span>
                           配合計画書作成依頼を許可する
                           <span className="mt-0.5 block font-medium text-slate-500">
-                            ON のとき DispatchApp の新規発注画面に「配合計画書作成依頼」が表示されます
+                            ON のとき DispatchApp の注文履歴に「配合計画書を依頼」ボタンが表示されます
                           </span>
                         </span>
                       </label>

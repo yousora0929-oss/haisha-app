@@ -24,6 +24,12 @@ import { normalizeAssociationFactorySelection } from './utils/associationFactory
 import { shouldResetOrderStatusOnFactoryReassign } from './utils/orderFactoryReassign.js';
 import { ensureOrderPreferredFactoryForInsert } from './utils/dispatchBulkOrder.js';
 import { resolveProjectTradingCompanyName } from './utils/projectTradingCompany.js';
+import {
+  buildMixDesignAnchorProjectPayload,
+  buildMixDesignItemInsertRows,
+  buildMixDesignRequestInsertRow,
+  resolveMixDesignProjectId,
+} from './utils/mixDesignRequest.js';
 import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.js';
 import { normalizeCompanyName } from './utils/csvImport.js';
 import {
@@ -1169,6 +1175,43 @@ export async function upgradeProjectToMixDesignOnly(projectId) {
     .eq('id', id)
     .neq('commitment_level', 'allocated');
   if (updateError) throw updateError;
+}
+
+/**
+ * 発注履歴から配合計画書依頼を作成する（RPC内トランザクションで）
+ * - orders は参照のみ。更新しない。
+ * - project_id が無ければ新規 projects を作成し、依頼に紐づける。
+ */
+export async function submitMixDesignRequestFromOrder({ order, draft, requestedBy } = {}) {
+  if (!order || typeof order !== 'object') throw new Error('注文が必要です');
+
+  // history 上の「既存プロジェクト有無」を判定するため、
+  // resolveMixDesignProjectId（insertOrdersBulk後の互換）に order を配列で渡す。
+  const existingProjectId = resolveMixDesignProjectId([order], '') || null;
+
+  // buildMixDesignRequestInsertRow は project_id を必須として扱うので、ダミーで作成する。
+  // 実際の project_id は submit_mix_design_request_from_history RPC が existing/new を判定する。
+  const projectIdForRow = existingProjectId || '00000000-0000-0000-0000-000000000000';
+  const requestRow = buildMixDesignRequestInsertRow({
+    projectId: projectIdForRow,
+    draft,
+    requestedBy,
+    preferredFactoryId: draft?.requestedToFactoryId,
+    vehicleType: order.vehicleType,
+  });
+  const { project_id: _projectIdIgnored, ...requestPayload } = requestRow;
+
+  const itemRows = buildMixDesignItemInsertRows(draft);
+  const { data, error } = await supabase.rpc('submit_mix_design_request_from_history', {
+    p_existing_project_id: existingProjectId,
+    p_anchor: buildMixDesignAnchorProjectPayload(order, draft),
+    p_request: requestPayload,
+    p_items: itemRows,
+  });
+  if (error) throw error;
+
+  const requestId = data != null ? String(data) : '';
+  return { request: { id: requestId }, projectId: existingProjectId };
 }
 
 export async function updateOrderDetails(orderId, updatedData) {

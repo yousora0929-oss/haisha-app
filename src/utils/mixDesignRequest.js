@@ -3,6 +3,12 @@ import {
   lookupCorrectionValue,
   roundUpToNominalStrength,
 } from './mixDesignCalc.js';
+import { parseMixSpec } from './dispatchBulkOrder.js';
+import { resolveOrderSiteDisplayName } from './siteNameDisplay.js';
+import {
+  resolveOrderContractorDisplayName,
+  resolveOrderTradingCompanyDisplayName,
+} from './orderPartyInfo.js';
 
 export const MIX_DESIGN_REGIONS = ['大分市・挟間町', '湯布院・庄内'];
 
@@ -47,6 +53,7 @@ export function createEmptyMixDesignDraft() {
     submissionEmail: '',
     creationDateSpecified: false,
     creationDate: '',
+    requestedBy: '',
     copiesCount: '',
     testSalt: false,
     testSplitPour: false,
@@ -192,6 +199,97 @@ export function earliestPourDate(draft) {
   const items = Array.isArray(draft?.items) ? draft.items : [];
   const dates = items.map((item) => String(item.pourDate || '').trim()).filter(Boolean).sort();
   return dates[0] || '';
+}
+
+export function mixDesignAnchorProjectName(order) {
+  const site = resolveOrderSiteDisplayName(order);
+  if (site) return site;
+  const id = String(order?.id || '').trim();
+  return id ? `スポット注文より自動作成（注文ID: ${id}）` : 'スポット注文より自動作成';
+}
+
+export function prefillMixDesignDraft(order, project, requestedBy = '') {
+  const draft = createEmptyMixDesignDraft();
+  draft.requestedBy = String(requestedBy || '').trim();
+
+  const factoryId = String(
+    order?.preferred_factory_id ??
+      order?.preferredFactoryId ??
+      project?.main_factory_id ??
+      project?.mainFactoryId ??
+      '',
+  ).trim();
+  draft.requestedToFactoryId = factoryId;
+
+  const mixRaw = String(order?.confirmedMixText ?? order?.mixText ?? '')
+    .replace(/・高性能.*$/, '')
+    .trim();
+  const parsed = parseMixSpec(mixRaw);
+  const qty = order?.confirmedQuantityM3 ?? order?.quantityM3 ?? '';
+
+  if (parsed) {
+    const cement = String(parsed.cement || 'N').toUpperCase() === 'BB' ? 'BB' : 'N';
+    draft.items = [
+      {
+        ...createEmptyMixDesignItem(),
+        baseStrength: parsed.strength,
+        slump: parsed.slump,
+        aggregateSize: parsed.aggregate,
+        cementType: cement,
+        aeAdmixture: /高性能/.test(String(order?.confirmedMixText ?? order?.mixText ?? '')),
+        quantityM3: qty == null ? '' : String(qty),
+      },
+    ];
+  } else if (qty != null && String(qty).trim() !== '') {
+    draft.items[0] = { ...draft.items[0], quantityM3: String(qty) };
+  }
+
+  return draft;
+}
+
+export function buildMixDesignAnchorProjectPayload(order, draft) {
+  return {
+    name: mixDesignAnchorProjectName(order),
+    customerId: String(order?.customer_id ?? order?.customerId ?? '').trim() || null,
+    siteAddress: String(order?.siteAddress ?? order?.site_address ?? '').trim() || null,
+    mainFactoryId:
+      String(draft?.requestedToFactoryId || order?.preferred_factory_id || order?.preferredFactoryId || '')
+        .trim() || null,
+    deliveryArea: String(order?.delivery_area ?? order?.deliveryArea ?? '').trim() || null,
+    contractor: resolveOrderContractorDisplayName(order) || null,
+    tradingCompanyName: resolveOrderTradingCompanyDisplayName(order) || null,
+  };
+}
+
+export function mixDesignHeaderFromOrder(order, project) {
+  const projectName =
+    String(project?.name || '').trim() ||
+    resolveOrderSiteDisplayName(order) ||
+    mixDesignAnchorProjectName(order);
+
+  const siteContactParts = [
+    order?.siteContactName ?? order?.site_contact_name ?? order?.orderedBy,
+    order?.sitePhone ?? order?.site_phone ?? order?.phone_number,
+  ]
+    .map((v) => String(v || '').trim())
+    .filter(Boolean);
+
+  return {
+    projectName,
+    contractorName: resolveOrderContractorDisplayName(order) || String(project?.contractor || '').trim(),
+    traderName:
+      resolveOrderTradingCompanyDisplayName(order) || String(project?.trading_company_name || '').trim(),
+    siteContact: siteContactParts.join(' / '),
+    primeContractorName: String(
+      project?.contractor_display_name ||
+        project?.contractor ||
+        resolveOrderContractorDisplayName(order) ||
+        '',
+    ).trim(),
+    siteAddress: String(project?.site_address || order?.siteAddress || order?.site_address || '').trim(),
+    constructionPeriod: '',
+    vehicleTypes: order?.vehicleType ? [order.vehicleType] : [],
+  };
 }
 
 export function resolveMixDesignProjectId(insertedOrders, selectedProjectId) {
