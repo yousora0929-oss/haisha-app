@@ -30,7 +30,7 @@ export function createEmptyMixDesignItem() {
     localId: `mixitem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     baseStrength: '',
     correctionValue: '',
-    correctionIsAuto: true,
+    correctionIsAuto: false,
     nominalStrength: '',
     slump: '',
     aggregateSize: '20',
@@ -46,6 +46,9 @@ export function createEmptyMixDesignItem() {
 
 export function createEmptyMixDesignDraft() {
   return {
+    projectName: '',
+    contractorName: '',
+    siteAddress: '',
     region: MIX_DESIGN_REGIONS[0],
     requestedToFactoryId: '',
     items: [createEmptyMixDesignItem()],
@@ -212,6 +215,17 @@ export function prefillMixDesignDraft(order, project, requestedBy = '') {
   const draft = createEmptyMixDesignDraft();
   draft.requestedBy = String(requestedBy || '').trim();
 
+  draft.projectName =
+    String(project?.name || '').trim() ||
+    resolveOrderSiteDisplayName(order) ||
+    '';
+  draft.contractorName =
+    resolveOrderContractorDisplayName(order) ||
+    String(project?.contractor || '').trim();
+  draft.siteAddress =
+    String(project?.site_address || '').trim() ||
+    String(order?.siteAddress ?? order?.site_address ?? '').trim();
+
   const factoryId = String(
     order?.preferred_factory_id ??
       order?.preferredFactoryId ??
@@ -249,14 +263,14 @@ export function prefillMixDesignDraft(order, project, requestedBy = '') {
 
 export function buildMixDesignAnchorProjectPayload(order, draft) {
   return {
-    name: mixDesignAnchorProjectName(order),
+    name: String(draft?.projectName || '').trim() || mixDesignAnchorProjectName(order),
     customerId: String(order?.customer_id ?? order?.customerId ?? '').trim() || null,
-    siteAddress: String(order?.siteAddress ?? order?.site_address ?? '').trim() || null,
+    siteAddress: String(draft?.siteAddress || order?.siteAddress || order?.site_address || '').trim() || null,
     mainFactoryId:
       String(draft?.requestedToFactoryId || order?.preferred_factory_id || order?.preferredFactoryId || '')
         .trim() || null,
     deliveryArea: String(order?.delivery_area ?? order?.deliveryArea ?? '').trim() || null,
-    contractor: resolveOrderContractorDisplayName(order) || null,
+    contractor: String(draft?.contractorName || '').trim() || resolveOrderContractorDisplayName(order) || null,
     tradingCompanyName: resolveOrderTradingCompanyDisplayName(order) || null,
   };
 }

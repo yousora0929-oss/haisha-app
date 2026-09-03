@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as db from '../haishaDb.js';
 import { MixDesignRequestPrint } from './MixDesignRequestPrint.jsx';
 import {
@@ -209,9 +209,13 @@ export function MixDesignRequestModal({
   const [showPreview, setShowPreview] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const prevOpenRef = useRef(false);
 
   useEffect(() => {
+    const wasOpen = prevOpenRef.current;
+    prevOpenRef.current = open;
     if (!open) return undefined;
+    if (wasOpen) return undefined;
     setDraft(prefillMixDesignDraft(order, project, requestedByDefault));
     setShowPreview(false);
     setError('');
@@ -269,6 +273,9 @@ export function MixDesignRequestModal({
   const printHeader = useMemo(
     () => ({
       ...headerContext,
+      projectName: draft.projectName || headerContext.projectName,
+      contractorName: draft.contractorName || headerContext.contractorName,
+      siteAddress: draft.siteAddress || headerContext.siteAddress,
       firstPourDate: earliestPourDate(draft),
       totalVolumeM3: sumMixDesignQuantityM3(draft),
       requestedBy: draft.requestedBy,
@@ -331,7 +338,7 @@ export function MixDesignRequestModal({
           <div>
             <h2 className="text-base font-black text-slate-900">配合計画書を依頼</h2>
             <p className="mt-1 text-xs font-medium text-slate-500">
-              {headerContext.projectName || '現場未設定'}
+              {draft.projectName || '現場未設定'}
             </p>
           </div>
           <button
@@ -368,20 +375,35 @@ export function MixDesignRequestModal({
             ))}
           </datalist>
 
-          <dl className="mb-4 grid gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs font-bold text-slate-600">
-            <div className="flex gap-2">
-              <dt className="w-20 shrink-0 text-slate-400">工事名</dt>
-              <dd className="min-w-0 flex-1 break-words text-slate-900">{headerContext.projectName || '—'}</dd>
-            </div>
-            <div className="flex gap-2">
-              <dt className="w-20 shrink-0 text-slate-400">業者名</dt>
-              <dd className="min-w-0 flex-1 break-words text-slate-900">{headerContext.contractorName || '—'}</dd>
-            </div>
-            <div className="flex gap-2">
-              <dt className="w-20 shrink-0 text-slate-400">現場住所</dt>
-              <dd className="min-w-0 flex-1 break-words text-slate-900">{headerContext.siteAddress || '—'}</dd>
-            </div>
-          </dl>
+          <div className="mb-4 grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 sm:grid-cols-2">
+            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
+              工事名
+              <input
+                type="text"
+                value={draft.projectName}
+                onChange={(e) => setDraft((prev) => ({ ...prev, projectName: e.target.value }))}
+                className={FIELD}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
+              業者名
+              <input
+                type="text"
+                value={draft.contractorName}
+                onChange={(e) => setDraft((prev) => ({ ...prev, contractorName: e.target.value }))}
+                className={FIELD}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-2">
+              現場住所
+              <input
+                type="text"
+                value={draft.siteAddress}
+                onChange={(e) => setDraft((prev) => ({ ...prev, siteAddress: e.target.value }))}
+                className={FIELD}
+              />
+            </label>
+          </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
@@ -503,55 +525,8 @@ export function MixDesignRequestModal({
             </button>
           </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={draft.testSalt}
-                onChange={(e) => setDraft((prev) => ({ ...prev, testSalt: e.target.checked }))}
-              />
-              塩化物
-            </label>
-            <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={draft.testSplitPour}
-                onChange={(e) => setDraft((prev) => ({ ...prev, testSplitPour: e.target.checked }))}
-              />
-              分割打設
-            </label>
-            <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={draft.testThirdParty}
-                onChange={(e) => setDraft((prev) => ({ ...prev, testThirdParty: e.target.checked }))}
-              />
-              第三者試験
-            </label>
-            <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={Boolean(draft.quoteRequested)}
-                onChange={(e) => setDraft((prev) => ({ ...prev, quoteRequested: e.target.checked }))}
-              />
-              お見積書を依頼
-            </label>
+          <div className="mt-4">
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-              供試体本数
-              <input
-                type="number"
-                inputMode="numeric"
-                value={draft.testSpecimenCount}
-                onFocus={selectAllOnFocus}
-                onChange={(e) => setDraft((prev) => ({ ...prev, testSpecimenCount: e.target.value }))}
-                className={FIELD}
-              />
-            </label>
-            <label className="col-span-2 flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-3">
               備考
               <textarea
                 value={draft.memo}
