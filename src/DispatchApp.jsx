@@ -61,6 +61,7 @@ import {
   validateCartLineForm,
   extractOrderFormDefaultsFromHistory,
 } from './utils/dispatchBulkOrder.js';
+import { MixDesignRequestModal } from './components/MixDesignRequestModal.jsx';
 import {
   COOPERATIVE_OWN_ORG_TRADER_ERROR,
   isCooperativeOwnOrgTraderName,
@@ -1624,6 +1625,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [adminNotice, setAdminNotice] = useState('');
       const [customerOrderTab, setCustomerOrderTab] = useState('active');
       const [newOrderMode, setNewOrderMode] = useState('');
+      const [mixDesignMode, setMixDesignMode] = useState(''); // 'selectProject' | 'newProject' | ''
+      const [mixDesignProjectId, setMixDesignProjectId] = useState('');
+      const [mixDesignProjectSearch, setMixDesignProjectSearch] = useState('');
+      const [mixDesignNewSiteName, setMixDesignNewSiteName] = useState('');
+      const [mixDesignNewSiteAddress, setMixDesignNewSiteAddress] = useState('');
+      const [mixDesignNewContractor, setMixDesignNewContractor] = useState('');
+      const [mixDesignNewTrader, setMixDesignNewTrader] = useState('');
+      const [mixDesignNewFactory, setMixDesignNewFactory] = useState('');
+      const [showMixDesignForm, setShowMixDesignForm] = useState(false);
 
       useEffect(() => {
         const blocking = newOrderMode === 'form' || cartItems.length > 0;
@@ -4461,7 +4471,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 <p className="text-xs font-black uppercase tracking-wider text-indigo-700">新規発注</p>
                 <h2 className="mt-1 text-2xl font-black text-slate-900">発注スタイルを選択</h2>
                 <p className="mt-2 text-sm font-bold leading-relaxed text-slate-500">現場に合わせて、最短の発注方法を選んでください。</p>
-                <div className="mt-6 flex flex-col gap-4 lg:grid lg:grid-cols-3 lg:gap-6">
+                <div className={`mt-6 flex flex-col gap-4 lg:grid lg:gap-6 ${canRequestMixDesign ? 'lg:grid-cols-2' : 'lg:grid-cols-3'}`}>
                   {[
                     {
                       title: '🏢 登録物件から発注',
@@ -4501,6 +4511,26 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         setNewOrderMode('');
                       },
                     },
+                    ...(canRequestMixDesign
+                      ? [
+                          {
+                            title: '📋 配合計画書の作成依頼',
+                            body: '工場へ配合計画書の作成を依頼します。物件を選択するか、新規に現場情報を入力して依頼できます。',
+                            onClick: () => {
+                              setMixDesignMode('');
+                              setMixDesignProjectId('');
+                              setMixDesignProjectSearch('');
+                              setMixDesignNewSiteName('');
+                              setMixDesignNewSiteAddress('');
+                              setMixDesignNewContractor('');
+                              setMixDesignNewTrader('');
+                              setMixDesignNewFactory('');
+                              setShowMixDesignForm(false);
+                              setNewOrderMode('mixDesign');
+                            },
+                          },
+                        ]
+                      : []),
                   ].map((card) => (
                     <button
                       key={card.title}
@@ -4515,7 +4545,216 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </div>
               </section>
               ) : null}
-              {customerOrderTab === 'new' && newOrderMode ? (
+              {customerOrderTab === 'new' && newOrderMode === 'mixDesign' ? (
+              <section className="w-full rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6 lg:p-8">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-wider text-indigo-700">配合計画書</p>
+                    <h2 className="mt-1 text-2xl font-black text-slate-900">作成依頼</h2>
+                    <p className="mt-2 text-sm font-bold leading-relaxed text-slate-500">
+                      物件を選ぶか、新規に現場情報を入力して配合計画書の作成を依頼します。
+                    </p>
+                  </div>
+                  <button type="button" onClick={() => setNewOrderMode('')} className="rounded-xl border-2 border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
+                    メニューへ戻る
+                  </button>
+                </div>
+
+                {!showMixDesignForm ? (
+                  <>
+                    <div className="mt-4 flex gap-2">
+                      {[
+                        { id: 'selectProject', label: '登録物件を選ぶ' },
+                        { id: 'newProject', label: '新規に入力する' },
+                      ].map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => setMixDesignMode(opt.id)}
+                          className={
+                            'min-h-[44px] flex-1 rounded-xl border-2 px-3 py-2 text-sm font-black transition ' +
+                            (mixDesignMode === opt.id
+                              ? 'border-indigo-600 bg-indigo-600 text-white'
+                              : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300')
+                          }
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {mixDesignMode === 'selectProject' ? (
+                      <div className="mt-4 flex flex-col gap-3">
+                        <label className="text-xs font-black text-slate-600">
+                          物件を検索
+                          <input
+                            type="text"
+                            value={mixDesignProjectSearch}
+                            onChange={(e) => setMixDesignProjectSearch(e.target.value)}
+                            placeholder="物件名で検索…"
+                            className="mt-1 min-h-[48px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-base text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
+                          />
+                        </label>
+                        <div className="max-h-[300px] overflow-y-auto rounded-xl border border-slate-200">
+                          {(projects || [])
+                            .filter((p) => {
+                              if (!p?.id) return false;
+                              if (!mixDesignProjectSearch.trim()) return true;
+                              const q = mixDesignProjectSearch.trim().toLowerCase();
+                              return (
+                                String(p.name || '').toLowerCase().includes(q) ||
+                                String(p.site_address || '').toLowerCase().includes(q) ||
+                                String(p.contractor || '').toLowerCase().includes(q)
+                              );
+                            })
+                            .slice(0, 50)
+                            .map((p) => (
+                              <button
+                                key={p.id}
+                                type="button"
+                                onClick={() => setMixDesignProjectId(String(p.id))}
+                                className={
+                                  'flex w-full items-start gap-2 border-b border-slate-100 px-3 py-2.5 text-left text-sm transition last:border-b-0 ' +
+                                  (String(mixDesignProjectId) === String(p.id)
+                                    ? 'bg-indigo-50 font-black text-indigo-900'
+                                    : 'bg-white font-bold text-slate-700 hover:bg-slate-50')
+                                }
+                              >
+                                <span className="min-w-0 flex-1">
+                                  <span className="block break-words">{p.name || '（名称なし）'}</span>
+                                  {p.site_address ? (
+                                    <span className="mt-0.5 block text-xs font-medium text-slate-500">{p.site_address}</span>
+                                  ) : null}
+                                </span>
+                                {String(mixDesignProjectId) === String(p.id) ? (
+                                  <span className="shrink-0 text-indigo-600">✓</span>
+                                ) : null}
+                              </button>
+                            ))}
+                          {!(projects || []).filter((p) => p?.id).length ? (
+                            <p className="px-3 py-4 text-center text-xs font-bold text-slate-400">登録物件がありません</p>
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          disabled={!mixDesignProjectId}
+                          onClick={() => setShowMixDesignForm(true)}
+                          className="mt-2 min-h-[48px] rounded-xl border-2 border-indigo-600 bg-indigo-600 px-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300"
+                        >
+                          この物件で依頼フォームへ進む
+                        </button>
+                      </div>
+                    ) : null}
+
+                    {mixDesignMode === 'newProject' ? (
+                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label className="flex flex-col gap-1 text-xs font-black text-slate-600">
+                          現場名（必須）
+                          <input
+                            type="text"
+                            value={mixDesignNewSiteName}
+                            onChange={(e) => setMixDesignNewSiteName(e.target.value)}
+                            placeholder="例：末広町マンション新築工事"
+                            className="min-h-[48px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-base text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1 text-xs font-black text-slate-600">
+                          現場住所
+                          <input
+                            type="text"
+                            value={mixDesignNewSiteAddress}
+                            onChange={(e) => setMixDesignNewSiteAddress(e.target.value)}
+                            placeholder="例：大分市末広町1-1-1"
+                            className="min-h-[48px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-base text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1 text-xs font-black text-slate-600">
+                          元請名
+                          <input
+                            type="text"
+                            value={mixDesignNewContractor}
+                            onChange={(e) => setMixDesignNewContractor(e.target.value)}
+                            className="min-h-[48px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-base text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1 text-xs font-black text-slate-600">
+                          商社名
+                          <input
+                            type="text"
+                            value={mixDesignNewTrader}
+                            onChange={(e) => setMixDesignNewTrader(e.target.value)}
+                            className="min-h-[48px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-base text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1 text-xs font-black text-slate-600 sm:col-span-2">
+                          依頼先工場
+                          <select
+                            value={mixDesignNewFactory}
+                            onChange={(e) => setMixDesignNewFactory(e.target.value)}
+                            className="min-h-[48px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-base text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
+                          >
+                            <option value="">未指定</option>
+                            {(factories || []).filter((f) => f?.id).map((f) => (
+                              <option key={f.id} value={String(f.id)}>{f.name || f.id}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <div className="sm:col-span-2">
+                          <button
+                            type="button"
+                            disabled={!mixDesignNewSiteName.trim()}
+                            onClick={() => setShowMixDesignForm(true)}
+                            className="mt-2 min-h-[48px] w-full rounded-xl border-2 border-indigo-600 bg-indigo-600 px-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300"
+                          >
+                            依頼フォームへ進む
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+
+                {showMixDesignForm ? (
+                  <MixDesignRequestModal
+                    open
+                    order={
+                      mixDesignMode === 'selectProject'
+                        ? {
+                            project_id: mixDesignProjectId,
+                            customer_id: currentCustomerId,
+                            vehicleType: 'large',
+                          }
+                        : {
+                            project_id: null,
+                            customer_id: currentCustomerId,
+                            siteName: mixDesignNewSiteName,
+                            siteAddress: mixDesignNewSiteAddress,
+                            contractorName: mixDesignNewContractor,
+                            traderName: mixDesignNewTrader,
+                            preferred_factory_id: mixDesignNewFactory,
+                            vehicleType: 'large',
+                          }
+                    }
+                    project={
+                      mixDesignMode === 'selectProject'
+                        ? (projects || []).find((p) => String(p?.id) === String(mixDesignProjectId)) || null
+                        : null
+                    }
+                    factories={factories}
+                    requestedByDefault={currentLoginManagerLabel}
+                    onClose={() => {
+                      setShowMixDesignForm(false);
+                    }}
+                    onSubmitted={() => {
+                      window.alert('配合計画書の作成依頼を送信しました');
+                      setShowMixDesignForm(false);
+                      setNewOrderMode('');
+                    }}
+                  />
+                ) : null}
+              </section>
+              ) : null}
+              {customerOrderTab === 'new' && newOrderMode === 'form' ? (
               <div ref={orderFormRef} className="mx-auto w-full max-w-4xl min-w-0 overflow-x-hidden overflow-y-visible rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6 lg:max-w-4xl lg:p-8">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>

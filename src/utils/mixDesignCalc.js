@@ -1,5 +1,7 @@
 // 呼び強度規格値リスト。39は存在しない（36の次は40）
-const NOMINAL_STRENGTH_LIST = [18, 21, 24, 27, 30, 33, 36, 40, 42, 45, 48, 50, 54, 60];
+export const NOMINAL_STRENGTH_LIST = [18, 21, 24, 27, 30, 33, 36, 40, 42, 45, 48, 50, 54, 60];
+export const SLUMP_CANDIDATES = [8, 10, 12, 15, 18, 21];
+export const AGGREGATE_SIZE_CANDIDATES = [20, 25, 40];
 
 // 与えられた値以上で最小の規格値に切り上げる
 export function roundUpToNominalStrength(rawValue) {
