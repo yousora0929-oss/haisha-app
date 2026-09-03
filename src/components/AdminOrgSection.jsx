@@ -12,6 +12,7 @@ const emptyMember = () => ({
   phone: '',
   password: '',
   canImportSchedule: false,
+  canRequestMixDesign: false,
   isCreditEligible: false,
   creditSource: '',
 });
@@ -155,6 +156,7 @@ function memberToForm(member, orgName = '') {
     phone: member.phone_number ?? '',
     password: member.login_password ?? '',
     canImportSchedule: Boolean(member.can_import_schedule),
+    canRequestMixDesign: Boolean(member.can_request_mix_design),
     isCreditEligible: Boolean(member.is_credit_eligible),
     creditSource: member.credit_source != null ? String(member.credit_source) : '',
   };
@@ -404,6 +406,7 @@ export function AdminOrgSection({ orgType, label }) {
         password: newMember.password,
         companyName: org?.name ?? '',
         canImportSchedule: newMember.canImportSchedule,
+        canRequestMixDesign: newMember.canRequestMixDesign,
         isCreditEligible: isContractorOrg ? newMember.isCreditEligible : false,
         creditSource: isContractorOrg ? newMember.creditSource : '',
       });
@@ -461,6 +464,7 @@ export function AdminOrgSection({ orgType, label }) {
         phone: editingMember.phone,
         password: editingMember.password,
         canImportSchedule: editingMember.canImportSchedule,
+        canRequestMixDesign: editingMember.canRequestMixDesign,
         isCreditEligible: isContractorOrg ? editingMember.isCreditEligible : undefined,
         creditSource: isContractorOrg ? editingMember.creditSource : undefined,
       });
@@ -495,6 +499,7 @@ export function AdminOrgSection({ orgType, label }) {
                   phone_number: editingMember.phone?.trim() ?? null,
                   login_password: editingMember.password?.trim() ?? null,
                   can_import_schedule: Boolean(editingMember.canImportSchedule),
+                  can_request_mix_design: Boolean(editingMember.canRequestMixDesign),
                   is_credit_eligible: isContractorOrg
                     ? Boolean(editingMember.isCreditEligible)
                     : Boolean(m.is_credit_eligible),
@@ -1069,6 +1074,24 @@ export function AdminOrgSection({ orgType, label }) {
                               </span>
                             </span>
                           </label>
+                          <label className="flex items-start gap-2 text-xs font-bold text-slate-700 sm:col-span-2">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4"
+                              checked={Boolean(editingMember.canRequestMixDesign)}
+                              onChange={(e) =>
+                                setEditingMember((cur) =>
+                                  cur ? { ...cur, canRequestMixDesign: e.target.checked } : cur,
+                                )
+                              }
+                            />
+                            <span>
+                              配合計画書作成依頼を許可する
+                              <span className="mt-0.5 block font-medium text-slate-500">
+                                ON のとき DispatchApp の新規発注画面に「配合計画書作成依頼」が表示されます
+                              </span>
+                            </span>
+                          </label>
                           {isContractorOrg ? (
                             <>
                               <label className="flex items-start gap-2 text-xs font-bold text-slate-700 sm:col-span-2">
@@ -1295,6 +1318,22 @@ export function AdminOrgSection({ orgType, label }) {
                           スケジュール取込を許可する
                           <span className="mt-0.5 block font-medium text-slate-500">
                             ON のとき DispatchApp に「スケジュール取込」タブが表示されます
+                          </span>
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-2 text-xs font-bold text-slate-700 sm:col-span-2">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4"
+                          checked={Boolean(newMember.canRequestMixDesign)}
+                          onChange={(e) =>
+                            setNewMember((m) => ({ ...m, canRequestMixDesign: e.target.checked }))
+                          }
+                        />
+                        <span>
+                          配合計画書作成依頼を許可する
+                          <span className="mt-0.5 block font-medium text-slate-500">
+                            ON のとき DispatchApp の新規発注画面に「配合計画書作成依頼」が表示されます
                           </span>
                         </span>
                       </label>

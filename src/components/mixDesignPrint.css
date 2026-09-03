@@ -1,0 +1,144 @@
+.mix-design-print-sheet {
+  box-sizing: border-box;
+  width: 210mm;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 0;
+  background: #fff;
+  color: #111;
+  font-family: 'Yu Gothic', 'YuGothic', 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif;
+  font-size: 11.5pt;
+  line-height: 1.35;
+}
+
+.mix-design-print-title {
+  margin: 0 0 8pt;
+  font-size: 18pt;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-align: center;
+}
+
+.mix-design-print-meta,
+.mix-design-print-items {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+.mix-design-print-meta th,
+.mix-design-print-meta td,
+.mix-design-print-items th,
+.mix-design-print-items td {
+  border: 1px solid #ccc;
+  padding: 4pt 6pt;
+  vertical-align: middle;
+}
+
+.mix-design-print-meta th,
+.mix-design-print-items th {
+  font-weight: 700;
+  white-space: nowrap;
+  width: 1%;
+}
+
+.mix-design-print-items {
+  margin-top: 10pt;
+  font-size: 11pt;
+}
+
+.mix-design-print-code,
+.mix-design-print-loc {
+  white-space: nowrap;
+}
+
+.mix-design-print-center {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.mix-design-print-right {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.mix-design-print-no {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.mix-design-print-footer-table {
+  margin-top: 10pt;
+}
+
+.mix-design-print-signoff {
+  margin-top: 14pt;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+
+.mix-design-print-requester {
+  margin: 0;
+  font-size: 11.5pt;
+  font-weight: 800;
+  color: #111;
+}
+
+.mix-design-print-issuer {
+  margin: 0;
+  font-size: 10pt;
+  font-weight: 700;
+  color: #444;
+}
+
+.mix-design-print-preview {
+  margin-top: 12px;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 18mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body.mix-design-printing * {
+    visibility: hidden;
+  }
+
+  body.mix-design-printing .mix-design-print-root,
+  body.mix-design-printing .mix-design-print-root * {
+    visibility: visible;
+  }
+
+  body.mix-design-printing .mix-design-print-root {
+    position: absolute;
+    inset: 0;
+    width: auto;
+    background: #fff;
+  }
+
+  body.mix-design-printing .mix-design-print-sheet {
+    width: 100%;
+    max-width: none;
+  }
+
+  body.mix-design-printing .mix-design-print-preview {
+    margin: 0;
+    border: 0;
+    background: #fff;
+    padding: 0;
+    overflow: visible;
+  }
+}

@@ -56,11 +56,17 @@ import { AdminScheduleImportSection } from './components/AdminScheduleImportSect
 import { customerSuggestTexts, organizationSuggestTexts, projectSuggestTexts, sortCustomersByUsageFrequency } from './utils/masterSuggest.js';
 import { dedupeCustomersByCompany } from './utils/dedupeCustomersByCompany.js';
 import { resolveEffectiveContractorCustomerId } from './utils/resolveEffectiveContractorCustomerId.js';
+import { MixDesignRequestSection } from './components/MixDesignRequestSection.jsx';
 import {
   buildDispatchOrderForDate,
   validateCartLineForm,
   extractOrderFormDefaultsFromHistory,
 } from './utils/dispatchBulkOrder.js';
+import {
+  buildMixDesignItemInsertRows,
+  buildMixDesignRequestInsertRow,
+  resolveMixDesignProjectId,
+} from './utils/mixDesignRequest.js';
 import {
   COOPERATIVE_OWN_ORG_TRADER_ERROR,
   isCooperativeOwnOrgTraderName,
@@ -1690,6 +1696,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [guestSiteOrderError, setGuestSiteOrderError] = useState('');
       const [guestSiteOrderErrorDetail, setGuestSiteOrderErrorDetail] = useState('');
       const orderFormRef = useRef(null);
+      const mixDesignSectionRef = useRef(null);
       const lastAutofillProjectIdRef = useRef('');
       const guestInitCompletedTokenRef = useRef('');
       const spotFieldDefaultsKeyRef = useRef('');
@@ -1861,6 +1868,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         [currentCustomerRole],
       );
       const canImportSchedule = Boolean(currentCustomer?.can_import_schedule);
+      const canRequestMixDesign = Boolean(currentCustomer?.can_request_mix_design);
       const visibleCustomerOrderTabs = useMemo(() => {
         let tabs =
           isGuestSiteOrder || currentCustomerRole !== 'contractor'
@@ -3939,6 +3947,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         if (orderKind === 'spot') {
           applySpotOrderFieldDefaults();
         }
+        mixDesignSectionRef.current?.reset?.();
       }, [today, isAgentOrCooperative, orderKind, applySpotOrderFieldDefaults]);
 
       const handleAddToCart = useCallback(
@@ -4065,8 +4074,29 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             return;
           }
         }
+        if (canRequestMixDesign && mixDesignSectionRef.current?.isEnabled?.()) {
+          const mixMissing = mixDesignSectionRef.current.validate?.() || [];
+          if (mixMissing.length) {
+            const message = `配合計画書依頼の入力を確認してください: ${mixMissing.join('、')}`;
+            setSubmitError(message);
+            window.alert(message);
+            return;
+          }
+          const mixProjectId = resolveMixDesignProjectId(
+            cartItems.map((item) => item?.order),
+            selectedProjectId,
+          );
+          if (!mixProjectId) {
+            const message =
+              '配合計画書依頼は物件に紐づける必要があります。物件発注を選択するか、チェックを外して発注のみ行ってください。';
+            setSubmitError(message);
+            window.alert(message);
+            return;
+          }
+        }
         setIsSubmittingOrder(true);
         setSubmitError('');
+        let mixDesignSaveFailed = false;
         try {
           const isSpot = orderKind === 'spot';
           const totalVol = sumOrderVolumesM3(cartItems.map((item) => item.order));
@@ -4103,6 +4133,25 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             }
           } else {
             const insertedOrders = await db.insertOrdersBulk(orders, { factories, projects });
+            if (canRequestMixDesign && mixDesignSectionRef.current?.isEnabled?.()) {
+              try {
+                const mixProjectId = resolveMixDesignProjectId(insertedOrders, selectedProjectId);
+                const mixDraft = mixDesignSectionRef.current.getDraft?.();
+                const requestRow = buildMixDesignRequestInsertRow({
+                  projectId: mixProjectId,
+                  draft: mixDraft,
+                  requestedBy: currentLoginManagerLabel,
+                  preferredFactoryId,
+                  vehicleType,
+                });
+                const itemRows = buildMixDesignItemInsertRows(mixDraft);
+                await db.insertMixDesignRequestWithItems(requestRow, itemRows);
+                await db.upgradeProjectToMixDesignOnly(mixProjectId);
+              } catch (mixErr) {
+                console.error('配合計画書依頼の作成に失敗しました', mixErr);
+                mixDesignSaveFailed = true;
+              }
+            }
             if (mapCreateCount > 0 && Array.isArray(insertedOrders) && insertedOrders.length) {
               // popup blocker を避けるため refresh より先に開く
               try {
@@ -4135,8 +4184,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               ? '\n\n地図作成フローの注文があります。開いた地図エディタでスタンプを配置して保存してください（未開封の注文は「進行中」タブから開けます）。'
               : '\n\n⚠️ 地図待ちの注文があります。「進行中」タブの「現場地図URL」から図面を送付してください。'
             : '';
-          setSubmitNotice(message + mapHint);
-          window.alert(message + mapHint);
+          const mixHint = mixDesignSaveFailed
+            ? '\n\n配合計画書依頼の保存に失敗しました。発注自体は完了しています。'
+            : '';
+          setSubmitNotice(message + mapHint + mixHint);
+          window.alert(message + mapHint + mixHint);
           window.setTimeout(() => setSubmitNotice(null), 6000);
         } catch (err) {
           console.error('カート一括登録に失敗しました', err);
@@ -4160,6 +4212,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         adminSettings,
         factories,
         projects,
+        canRequestMixDesign,
+        selectedProjectId,
+        preferredFactoryId,
+        vehicleType,
+        currentLoginManagerLabel,
       ]);
 
       const btnBase =
@@ -5397,6 +5454,27 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   className="min-h-[56px] w-full rounded-xl border-2 border-slate-200 px-4 py-3 text-base text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
                 />
               </div>
+
+              {canRequestMixDesign && !isGuestSiteOrder ? (
+                <MixDesignRequestSection
+                  ref={mixDesignSectionRef}
+                  preferredFactoryId={preferredFactoryId}
+                  headerContext={{
+                    projectName: selectedProject?.name || siteName,
+                    contractorName: effectiveContractorName,
+                    traderName: effectiveTraderName,
+                    siteContactName,
+                    sitePhone,
+                    primeContractorName:
+                      selectedProject?.contractor_display_name ||
+                      selectedProject?.contractor ||
+                      effectiveContractorName,
+                    siteAddress,
+                    vehicleType,
+                    requestedBy: currentLoginManagerLabel,
+                  }}
+                />
+              ) : null}
 
               <div className="flex flex-col gap-3">
                 <Label htmlFor={orderFieldId('unload-duration')}>1台あたりの荷卸し（車返却）予定時間</Label>

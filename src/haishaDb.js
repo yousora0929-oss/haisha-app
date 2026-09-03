@@ -1125,6 +1125,52 @@ export async function insertOrdersBulk(orders, { factories = [], projects = [] }
   return (data || []).map(normalizeOrderRow).filter(Boolean);
 }
 
+export async function fetchCorrectionValueRules() {
+  const { data, error } = await supabase
+    .from('correction_value_rules')
+    .select('*')
+    .order('fiscal_year', { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function insertMixDesignRequestWithItems(requestRow, itemRows) {
+  const { data, error } = await supabase
+    .from('mix_design_requests')
+    .insert(requestRow)
+    .select('*')
+    .single();
+  if (error) throw error;
+  const items = Array.isArray(itemRows) ? itemRows : [];
+  if (items.length) {
+    const { error: itemError } = await supabase.from('mix_design_request_items').insert(
+      items.map((item) => ({ ...item, request_id: data.id })),
+    );
+    if (itemError) throw itemError;
+  }
+  return data;
+}
+
+/** allocated からは落とさない。spot → mix_design_only のみ。 */
+export async function upgradeProjectToMixDesignOnly(projectId) {
+  const id = String(projectId || '').trim();
+  if (!id) return;
+  const { data, error } = await supabase
+    .from('projects')
+    .select('id, commitment_level')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw error;
+  const current = String(data?.commitment_level || 'spot');
+  if (current === 'allocated' || current === 'mix_design_only') return;
+  const { error: updateError } = await supabase
+    .from('projects')
+    .update({ commitment_level: 'mix_design_only' })
+    .eq('id', id)
+    .neq('commitment_level', 'allocated');
+  if (updateError) throw updateError;
+}
+
 export async function updateOrderDetails(orderId, updatedData) {
   const id = String(orderId || '').trim();
   if (!id) throw new Error('orderId が必要です');
@@ -3290,6 +3336,7 @@ function mapProjectRow(row) {
     trading_contact_phone:
       row.trading_contact_phone != null ? String(row.trading_contact_phone).trim() : '',
     map_annotations: coerceMapAnnotationsRaw(row.map_annotations),
+    commitment_level: String(row.commitment_level || 'spot'),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -3440,7 +3487,7 @@ export async function fetchOrganizationsWithMembers(type) {
   const { data, error: ce } = await supabase
     .from('customers')
     .select(
-      'id, company_name, furigana, manager_name, phone_number, login_password, organization_id, can_import_schedule, is_credit_eligible, credit_source',
+      'id, company_name, furigana, manager_name, phone_number, login_password, organization_id, can_import_schedule, can_request_mix_design, is_credit_eligible, credit_source',
     )
     .eq('role', type)
     .order('manager_name');
@@ -3606,6 +3653,7 @@ export async function createOrgMember({
   password,
   furigana,
   canImportSchedule,
+  canRequestMixDesign,
   isCreditEligible,
   creditSource,
 }) {
@@ -3631,6 +3679,7 @@ export async function createOrgMember({
       phone_number: phone?.trim() ?? null,
       login_password: password?.trim() ?? null,
       can_import_schedule: Boolean(canImportSchedule),
+      can_request_mix_design: Boolean(canRequestMixDesign),
       is_credit_eligible: Boolean(isCreditEligible),
       credit_source: String(creditSource ?? '').trim() || null,
     })
@@ -3651,6 +3700,7 @@ export async function updateOrgMember(
     password,
     furigana,
     canImportSchedule,
+    canRequestMixDesign,
     isCreditEligible,
     creditSource,
   },
@@ -3675,6 +3725,9 @@ export async function updateOrgMember(
   };
   if (canImportSchedule !== undefined) {
     updateRow.can_import_schedule = Boolean(canImportSchedule);
+  }
+  if (canRequestMixDesign !== undefined) {
+    updateRow.can_request_mix_design = Boolean(canRequestMixDesign);
   }
   if (isCreditEligible !== undefined) {
     updateRow.is_credit_eligible = Boolean(isCreditEligible);
@@ -3887,6 +3940,7 @@ function mapCustomerRow(row) {
     role: String(row.role ?? 'contractor'),
     organization_id: row.organization_id != null ? String(row.organization_id) : null,
     can_import_schedule: Boolean(row.can_import_schedule),
+    can_request_mix_design: Boolean(row.can_request_mix_design),
     is_credit_eligible: Boolean(row.is_credit_eligible),
     credit_source: row.credit_source != null ? String(row.credit_source) : '',
     created_at: row.created_at,
