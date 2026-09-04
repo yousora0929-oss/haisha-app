@@ -545,6 +545,7 @@ function ProjectForm({
   onSave,
   onCancel,
   saving,
+  hideTitle = false,
 }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [customerId, setCustomerId] = useState(initial?.customer_id ?? '');
@@ -1161,7 +1162,9 @@ function ProjectForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4 rounded-xl border-2 border-indigo-200 bg-indigo-50/40 p-4 sm:p-5">
-      <h3 className="text-base font-black text-slate-900">{initial?.id ? '物件を編集' : '物件を追加'}</h3>
+      {hideTitle ? null : (
+        <h3 className="text-base font-black text-slate-900">{initial?.id ? '物件を編集' : '物件を追加'}</h3>
+      )}
       <div>
         <label className="text-xs font-bold text-slate-600" htmlFor="proj-name">
           物件名 <span className="text-red-600">*</span>
@@ -1607,8 +1610,20 @@ function ProjectForm({
   );
 }
 
+function formatProjectRegisteredAt(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '—';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw.slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}/${m}/${day}`;
+}
+
 function ProjectsSection({ factories, factoryNameById }) {
   const [projects, setProjects] = useState([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [customers, setCustomers] = useState([]);
   const [tradingCompanies, setTradingCompanies] = useState([]);
   const [agentOrganizations, setAgentOrganizations] = useState([]);
@@ -1621,8 +1636,17 @@ function ProjectsSection({ factories, factoryNameById }) {
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
   const [importNotice, setImportNotice] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [sortBy, setSortBy] = useState('created_at');
+  const [sortAscending, setSortAscending] = useState(false);
+  const [highlightedId, setHighlightedId] = useState('');
+  const highlightTimerRef = useRef(null);
 
   const defaultMainFactoryId = factories?.[0]?.id ?? '';
+  const totalPages = Math.max(1, Math.ceil((Number(totalCount) || 0) / pageSize) || 1);
 
   const importResolveCtx = useMemo(
     () => ({
@@ -1635,51 +1659,89 @@ function ProjectsSection({ factories, factoryNameById }) {
     [factories, salesStaff, customers, tradingCompanies, agentOrganizations],
   );
 
-  const load = useCallback(async () => {
+  const loadMasters = useCallback(async () => {
+    const [customerRows, tradingRows, agentOrgRows, settings] = await Promise.all([
+      db.fetchCustomers(),
+      db.fetchTradingCompanies().catch((e) => {
+        console.warn('[ProjectsSection] trading_companies load failed', e);
+        return [];
+      }),
+      db.fetchOrganizationsWithMembers('agent').catch((e) => {
+        console.warn('[ProjectsSection] agent organizations load failed', e);
+        return [];
+      }),
+      db.fetchAdminSettings(),
+    ]);
+    setCustomers(customerRows);
+    setTradingCompanies(tradingRows || []);
+    setAgentOrganizations(agentOrgRows || []);
+    setAllowedDeliveryAreas(normalizeAllowedDeliveryAreas(settings?.allowed_delivery_areas));
+    setSalesStaff(normalizeSalesStaffList(settings?.sales_staff));
+    setDeliveryPrefecture(resolveDeliveryPrefecture(settings));
+  }, []);
+
+  const loadProjects = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const [rows, customerRows, tradingRows, agentOrgRows, settings] = await Promise.all([
-        db.fetchProjects(),
-        db.fetchCustomers(),
-        db.fetchTradingCompanies().catch((e) => {
-          console.warn('[ProjectsSection] trading_companies load failed', e);
-          return [];
-        }),
-        db.fetchOrganizationsWithMembers('agent').catch((e) => {
-          console.warn('[ProjectsSection] agent organizations load failed', e);
-          return [];
-        }),
-        db.fetchAdminSettings(),
-      ]);
+      const { rows, totalCount: count } = await db.searchProjectsPage({
+        keyword: searchKeyword,
+        page,
+        pageSize,
+        sortBy,
+        sortAscending,
+      });
       setProjects(rows);
-      setCustomers(customerRows);
-      setTradingCompanies(tradingRows || []);
-      setAgentOrganizations(agentOrgRows || []);
-      setAllowedDeliveryAreas(normalizeAllowedDeliveryAreas(settings?.allowed_delivery_areas));
-      setSalesStaff(normalizeSalesStaffList(settings?.sales_staff));
-      setDeliveryPrefecture(resolveDeliveryPrefecture(settings));
+      setTotalCount(count);
     } catch (e) {
       console.error('物件取得エラー', e);
       setError(formatSupabaseError(e, '物件一覧の取得に失敗しました'));
+      setProjects([]);
+      setTotalCount(0);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [searchKeyword, page, pageSize, sortBy, sortAscending]);
 
-  useEffect(() => { void load(); }, [load]);
+  const load = useCallback(async () => {
+    setError('');
+    try {
+      await Promise.all([loadMasters(), loadProjects()]);
+    } catch (e) {
+      console.error('物件取得エラー', e);
+      setError(formatSupabaseError(e, '物件一覧の取得に失敗しました'));
+    }
+  }, [loadMasters, loadProjects]);
+
+  useEffect(() => {
+    void loadMasters().catch((e) => {
+      console.error(e);
+      setError(formatSupabaseError(e, 'マスタの取得に失敗しました'));
+    });
+  }, [loadMasters]);
+
+  useEffect(() => {
+    void loadProjects();
+  }, [loadProjects]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setSearchKeyword(String(searchInput || '').trim());
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [searchInput]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   useEffect(() => {
     const refreshProjectAfterMapSave = async (projectId) => {
       const id = String(projectId || '').trim();
       if (!id) return;
       try {
-        const rows = await db.fetchProjects();
-        setProjects(rows);
-        if (String(editing?.id) === id) {
-          const fresh = rows.find((p) => String(p?.id) === id);
-          if (fresh) setEditing(fresh);
-        }
+        await loadProjects();
       } catch (e) {
         console.error('[ProjectsSection] project map saved refresh failed', e);
       }
@@ -1714,7 +1776,7 @@ function ProjectsSection({ factories, factoryNameById }) {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener('message', onMessage);
     };
-  }, [editing?.id]);
+  }, [loadProjects]);
 
   useEffect(() => {
     let timerId = null;
@@ -1736,6 +1798,111 @@ function ProjectsSection({ factories, factoryNameById }) {
     };
   }, [load]);
 
+  useEffect(
+    () => () => {
+      if (highlightTimerRef.current != null) window.clearTimeout(highlightTimerRef.current);
+    },
+    [],
+  );
+
+  const flashHighlight = useCallback((projectId) => {
+    const id = String(projectId || '').trim();
+    if (!id) return;
+    setHighlightedId(id);
+    if (highlightTimerRef.current != null) window.clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedId('');
+      highlightTimerRef.current = null;
+    }, 2500);
+  }, []);
+
+  const closeFormModal = useCallback(() => {
+    setFormMode(null);
+    setEditing(null);
+  }, []);
+
+  const toggleSort = useCallback((column) => {
+    const key = String(column || '').trim();
+    if (!key) return;
+    setPage(1);
+    setSortBy((prev) => {
+      if (prev === key) {
+        setSortAscending((asc) => !asc);
+        return prev;
+      }
+      setSortAscending(key !== 'created_at');
+      return key;
+    });
+  }, []);
+
+  const sortHeaderClass = 'px-3 py-2 font-black text-slate-700';
+  const renderSortHeader = (column, label) => {
+    const active = sortBy === column;
+    const arrow = !active ? '' : sortAscending ? ' ▲' : ' ▼';
+    return (
+      <th className={sortHeaderClass}>
+        <button
+          type="button"
+          onClick={() => toggleSort(column)}
+          className={
+            'inline-flex items-center gap-0.5 text-left font-black hover:text-indigo-700 ' +
+            (active ? 'text-indigo-700' : 'text-slate-700')
+          }
+        >
+          {label}
+          <span className="text-[10px]">{arrow || ' ↕'}</span>
+        </button>
+      </th>
+    );
+  };
+
+  const paginationBar = (
+    <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-slate-600">
+      <p>
+        全{totalCount}件
+        {totalCount > 0
+          ? `（${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, totalCount)}件目）`
+          : ''}
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="inline-flex items-center gap-1">
+          表示件数
+          <select
+            value={String(pageSize)}
+            onChange={(e) => {
+              setPageSize(Number(e.target.value) || 50);
+              setPage(1);
+            }}
+            className="min-h-[36px] rounded-lg border-2 border-slate-200 bg-white px-2 text-sm font-bold text-slate-800"
+          >
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </label>
+        <button
+          type="button"
+          disabled={page <= 1 || loading}
+          onClick={() => setPage((p) => Math.max(1, p - 1))}
+          className="min-h-[36px] rounded-lg border-2 border-slate-300 bg-white px-3 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          前へ
+        </button>
+        <span>
+          {page} / {totalPages}
+        </span>
+        <button
+          type="button"
+          disabled={page >= totalPages || loading}
+          onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+          className="min-h-[36px] rounded-lg border-2 border-slate-300 bg-white px-3 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          次へ
+        </button>
+      </div>
+    </div>
+  );
+
   const handleSave = async (payload, meta = {}) => {
     setSaving(true);
     setError('');
@@ -1744,8 +1911,6 @@ function ProjectsSection({ factories, factoryNameById }) {
       const saved = isEdit
         ? await db.updateProject(editing.id, payload)
         : await db.insertProject(payload);
-      setFormMode('edit');
-      setEditing(saved);
 
       // 物件保存が成功してから元請スタッフを登録する（失敗時に人だけ増えないように）
       let staffAddedCount = 0;
@@ -1784,7 +1949,15 @@ function ProjectsSection({ factories, factoryNameById }) {
           `物件は保存しましたが、現場担当者の業者担当者登録に失敗しました: ${staffError?.message || '不明なエラー'}`,
         );
       }
-      await load();
+      closeFormModal();
+      flashHighlight(saved?.id);
+      if (!isEdit) {
+        setSortBy('created_at');
+        setSortAscending(false);
+        setPage(1);
+      }
+      await loadProjects();
+      await loadMasters();
     } catch (e) {
       console.error(e);
       setError(e?.message || '保存に失敗しました。');
@@ -1799,8 +1972,8 @@ function ProjectsSection({ factories, factoryNameById }) {
     setError('');
     try {
       await db.deleteProject(p.id);
-      if (editing?.id === p.id) { setEditing(null); setFormMode(null); }
-      await load();
+      if (editing?.id === p.id) closeFormModal();
+      await loadProjects();
     } catch (e) {
       console.error(e);
       const code = e?.code ? ` (Code: ${e.code})` : '';
@@ -2055,15 +2228,17 @@ function ProjectsSection({ factories, factoryNameById }) {
               );
             }}
             onComplete={() => {
-              void load();
+              void loadProjects();
+              void loadMasters();
               window.setTimeout(() => setImportNotice(''), 5000);
             }}
           />
           <AdminCsvDownloadButton
             disabled={loading}
-            onDownload={() => {
-              downloadProjectsExportCsv(projects, customers, factories);
-              setImportNotice(`${projects.length}件の物件をCSVでダウンロードしました。`);
+            onDownload={async () => {
+              const all = await db.fetchProjects();
+              downloadProjectsExportCsv(all, customers, factories);
+              setImportNotice(`${all.length}件の物件をCSVでダウンロードしました。`);
               window.setTimeout(() => setImportNotice(''), 4000);
             }}
           />
@@ -2078,38 +2253,80 @@ function ProjectsSection({ factories, factoryNameById }) {
         </p>
       ) : null}
       {error ? <p className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-bold text-red-800" role="alert">{error}</p> : null}
-      {formMode ? (
-        <div className="mt-4">
-          <ProjectForm
-            factories={factories}
-            customers={customers}
-            agentOrganizations={agentOrganizations}
-            allowedDeliveryAreas={allowedDeliveryAreas}
-            deliveryPrefecture={deliveryPrefecture}
-            salesStaffList={salesStaff}
-            initial={editing}
-            onSave={handleSave}
-            onCancel={() => { setFormMode(null); setEditing(null); }}
-            saving={saving}
+
+      <div className="mt-4">
+        <label className="block text-xs font-black text-slate-600">
+          検索
+          <input
+            type="search"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="現場名・業者名・場所・工場で検索…"
+            className="mt-1 min-h-[44px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
           />
+        </label>
+        <p className="mt-1 text-[11px] font-medium text-slate-400">
+          現場名・業者名・住所・エリア・工場名のいずれかに部分一致します（入力後少し待つと検索します）
+        </p>
+      </div>
+
+      <div className="mt-3">{paginationBar}</div>
+
+      {formMode ? (
+        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-900/50 p-0 sm:items-center sm:p-4">
+          <div className="flex max-h-[100dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-h-[92dvh] sm:rounded-2xl">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+              <h3 className="text-base font-black text-slate-900">
+                {editing?.id ? '物件を編集' : '物件を追加'}
+              </h3>
+              <button
+                type="button"
+                onClick={closeFormModal}
+                className="rounded-lg px-3 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100"
+              >
+                閉じる
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <ProjectForm
+                key={editing?.id || 'new-project'}
+                factories={factories}
+                customers={customers}
+                agentOrganizations={agentOrganizations}
+                allowedDeliveryAreas={allowedDeliveryAreas}
+                deliveryPrefecture={deliveryPrefecture}
+                salesStaffList={salesStaff}
+                initial={editing}
+                onSave={handleSave}
+                onCancel={closeFormModal}
+                saving={saving}
+                hideTitle
+              />
+            </div>
+          </div>
         </div>
       ) : null}
       {loading ? <p className="mt-4 text-sm text-slate-500">読み込み中…</p> : null}
-      {!loading && projects.length === 0 && !formMode ? <p className="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-600">登録された物件はありません。</p> : null}
+      {!loading && projects.length === 0 ? (
+        <p className="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-600">
+          {searchKeyword ? '条件に一致する物件はありません。' : '登録された物件はありません。'}
+        </p>
+      ) : null}
       {!loading && projects.length > 0 ? (
         <div className="mt-4 overflow-x-auto">
-          <table className="w-full min-w-[900px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[1000px] border-collapse text-left text-sm">
             <thead>
               <tr className="border-b-2 border-slate-200 bg-slate-50">
-                <th className="px-3 py-2 font-black text-slate-700">物件名</th>
-                <th className="px-3 py-2 font-black text-slate-700">業者（元請）</th>
-                <th className="px-3 py-2 font-black text-slate-700">下請</th>
-                <th className="px-3 py-2 font-black text-slate-700">商社</th>
-                <th className="px-3 py-2 font-black text-slate-700">メイン工場</th>
-                <th className="px-3 py-2 font-black text-slate-700">サブ工場</th>
-                <th className="px-3 py-2 font-black text-slate-700">緯度・経度</th>
-                <th className="px-3 py-2 font-black text-slate-700">リンク</th>
-                <th className="px-3 py-2 font-black text-slate-700">操作</th>
+                {renderSortHeader('name', '物件名')}
+                {renderSortHeader('contractor_display_name', '業者（元請）')}
+                <th className={sortHeaderClass}>下請</th>
+                {renderSortHeader('trading_company_name', '商社')}
+                <th className={sortHeaderClass}>メイン工場</th>
+                <th className={sortHeaderClass}>サブ工場</th>
+                {renderSortHeader('created_at', '登録日')}
+                <th className={sortHeaderClass}>緯度・経度</th>
+                <th className={sortHeaderClass}>リンク</th>
+                <th className={sortHeaderClass}>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -2118,8 +2335,15 @@ function ProjectsSection({ factories, factoryNameById }) {
                   (c) => String(c?.id || '') === String(p.customer_id || ''),
                 );
                 const display = resolveProjectPartyDisplay(p, customer);
+                const isHighlighted = String(highlightedId) === String(p.id);
                 return (
-                  <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50/80">
+                  <tr
+                    key={p.id}
+                    className={
+                      'border-b border-slate-100 hover:bg-slate-50/80 ' +
+                      (isHighlighted ? 'bg-amber-50 ring-2 ring-inset ring-amber-300' : '')
+                    }
+                  >
                     <td className="px-3 py-2.5 font-bold text-slate-900">{p.name}</td>
                     <td className="px-3 py-2.5 font-bold text-slate-800">
                       <span className="inline-flex flex-wrap items-center gap-1.5">
@@ -2146,6 +2370,9 @@ function ProjectsSection({ factories, factoryNameById }) {
                     </td>
                   <td className="px-3 py-2.5">{factoryNameById[p.main_factory_id] || '—'}</td>
                   <td className="max-w-[12rem] px-3 py-2.5 text-xs text-slate-600">{(p.sub_factory_ids || []).map((id) => factoryNameById[id] || id).join('、') || '—'}</td>
+                  <td className="whitespace-nowrap px-3 py-2.5 text-xs font-bold text-slate-700">
+                    {formatProjectRegisteredAt(p.created_at)}
+                  </td>
                   <td className="px-3 py-2.5 font-mono text-xs">{p.lat != null && p.lng != null ? `${p.lat}, ${p.lng}` : '—'}</td>
                   <td className="min-w-[10rem] px-3 py-2.5">
                     <div className="flex flex-col gap-2">
@@ -2174,6 +2401,7 @@ function ProjectsSection({ factories, factoryNameById }) {
           </table>
         </div>
       ) : null}
+      {!loading && projects.length > 0 ? <div className="mt-3">{paginationBar}</div> : null}
     </section>
   );
 }
