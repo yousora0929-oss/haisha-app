@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildMixDesignAnchorProjectPayload,
   buildMixDesignItemInsertRows,
   buildMixDesignRequestInsertRow,
   computeNominalStrength,
@@ -305,5 +306,30 @@ describe('mixDesignItemFromDbRow', () => {
     expect(item.quantityM3).toBe('3');
     expect(item.waterCementRatio).toBe('0');
     expect(item.unitWaterContent).toBe('160');
+  });
+});
+
+describe('buildMixDesignAnchorProjectPayload', () => {
+  it('uses draft.contractorName for p_contractor payload, never requestedBy', () => {
+    const payload = buildMixDesignAnchorProjectPayload(
+      {
+        customer_id: '7c67a6df-1520-4c8d-a9e9-02c20273cf92',
+        vehicleType: 'large',
+      },
+      {
+        projectName: 'テスト工事',
+        contractorName: '後藤建設株式会社',
+        siteAddress: '大分市',
+        traderName: '商社A',
+        requestedBy: '梅田',
+        requestedToFactoryId: '',
+      },
+    );
+    expect(payload.contractor).toBe('後藤建設株式会社');
+    expect(payload.contractor).not.toBe('梅田');
+    expect(payload).not.toHaveProperty('requestedBy');
+    expect(payload.name).toBe('テスト工事');
+    expect(payload.customerId).toBe('7c67a6df-1520-4c8d-a9e9-02c20273cf92');
+    expect(payload.tradingCompanyName).toBe('商社A');
   });
 });

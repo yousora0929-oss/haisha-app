@@ -442,6 +442,7 @@ export function prefillMixDesignDraft(order, project, requestedBy = '') {
   return draft;
 }
 
+/** Pattern B アンカー物件用。`contractor` は RPC の p_contractor 経由で contractor_display_name に保存される（下請系カラムには入れない）。requestedBy は含めない。 */
 export function buildMixDesignAnchorProjectPayload(order, draft) {
   return {
     name: String(draft?.projectName || '').trim() || mixDesignAnchorProjectName(order),
@@ -472,7 +473,9 @@ export function mixDesignHeaderFromOrder(order, project) {
 
   return {
     projectName,
-    contractorName: resolveOrderContractorDisplayName(order) || String(project?.contractor || '').trim(),
+    contractorName:
+      resolveOrderContractorDisplayName(order) ||
+      String(project?.contractor_display_name || project?.contractor || '').trim(),
     traderName:
       resolveOrderTradingCompanyDisplayName(order) || String(project?.trading_company_name || '').trim(),
     siteContact: siteContactParts.join(' / '),

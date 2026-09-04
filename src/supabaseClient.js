@@ -378,36 +378,74 @@ export async function ensureMapEditorPanelAuth() {
   return ensurePanelRealtimeAuth();
 }
 
-function detectPanelCredentials() {
+/**
+ * 現在の画面に対応するパネル種別を推定する。
+ * 同一ブラウザに複数パネルの資格情報が残っているとき、
+ * detectPanelCredentials() が誤って別パネルを選ぶのを防ぐ。
+ */
+function inferPreferredPanelTypeFromLocation() {
+  if (typeof window === 'undefined') return null;
+  try {
+    const path = String(window.location.pathname || '');
+    if (/AdminPrototype\.html/i.test(path)) return 'admin';
+    if (/FactoryTabletPrototype\.html/i.test(path)) return 'factory';
+    if (/CharterTabletPrototype\.html/i.test(path)) return 'charter';
+    if (/\/(?:order|guest-order)\//i.test(path)) return 'guest';
+    if (/DispatchOrderPrototype\.html/i.test(path)) return 'customer';
+    // MapEditor は呼び出し元パネルの資格情報を使う（優先指定なし）
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function collectPanelCredentialCandidates() {
+  const candidates = [];
   try {
     const adminPhone = readPanelAuthValue(ADMIN_PANEL_PHONE_KEY);
     const adminPassword = readPanelAuthValue(ADMIN_PANEL_PASSWORD_KEY);
     if (adminPhone && adminPassword) {
-      return { panelType: 'admin', credentialA: adminPhone, credentialB: adminPassword };
+      candidates.push({ panelType: 'admin', credentialA: adminPhone, credentialB: adminPassword });
     }
     const customerPhone = readPanelAuthValue(CUSTOMER_PANEL_PHONE_KEY);
     const customerPassword = readPanelAuthValue(CUSTOMER_PANEL_PASSWORD_KEY);
     if (customerPhone && customerPassword) {
-      return { panelType: 'customer', credentialA: customerPhone, credentialB: customerPassword };
+      candidates.push({
+        panelType: 'customer',
+        credentialA: customerPhone,
+        credentialB: customerPassword,
+      });
     }
     const factoryId = readPanelAuthValue(FACTORY_PANEL_ID_KEY);
     const factoryPassword = readPanelAuthValue(FACTORY_PANEL_PASSWORD_KEY);
     if (factoryId && factoryPassword) {
-      return { panelType: 'factory', credentialA: factoryId, credentialB: factoryPassword };
+      candidates.push({ panelType: 'factory', credentialA: factoryId, credentialB: factoryPassword });
     }
     const charterId = readPanelAuthValue(CHARTER_PANEL_ID_KEY);
     const charterPassword = readPanelAuthValue(CHARTER_PANEL_PASSWORD_KEY);
     if (charterId && charterPassword) {
-      return { panelType: 'charter', credentialA: charterId, credentialB: charterPassword };
+      candidates.push({ panelType: 'charter', credentialA: charterId, credentialB: charterPassword });
     }
     const guestToken = readPanelAuthValue(GUEST_SITE_ORDER_TOKEN_KEY);
     if (guestToken) {
-      return { panelType: 'guest', credentialA: guestToken, credentialB: null };
+      candidates.push({ panelType: 'guest', credentialA: guestToken, credentialB: null });
     }
   } catch {
-    return null;
+    return [];
   }
-  return null;
+  return candidates;
+}
+
+function detectPanelCredentials() {
+  const candidates = collectPanelCredentialCandidates();
+  if (!candidates.length) return null;
+  const preferred = inferPreferredPanelTypeFromLocation();
+  if (preferred) {
+    const matched = candidates.find((c) => c.panelType === preferred);
+    if (matched) return matched;
+  }
+  // 画面推定できない場合の従来順（admin → customer → factory → charter → guest）
+  return candidates[0] || null;
 }
 
 /** 地図エディタから戻る際のフォールバック先（ログイン画面には飛ばさない） */

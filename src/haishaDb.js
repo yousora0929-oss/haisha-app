@@ -1208,7 +1208,15 @@ export async function submitMixDesignRequestFromOrder({ order, draft, requestedB
     p_request: requestPayload,
     p_items: itemRows,
   });
-  if (error) throw error;
+  if (error) {
+    const msg = String(error.message || '');
+    if (/not authorized/i.test(msg)) {
+      throw new Error(
+        '配合計画書の依頼権限が確認できませんでした。一度ログアウトしてから、カスタマー画面に再ログインしてください。',
+      );
+    }
+    throw error;
+  }
 
   const requestId = data != null ? String(data) : '';
   return { request: { id: requestId }, projectId: existingProjectId };
