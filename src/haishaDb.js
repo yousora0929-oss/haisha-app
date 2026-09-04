@@ -1225,19 +1225,58 @@ function quotePostgrestFilterValue(raw) {
   return `"${String(raw ?? '').replace(/"/g, '""')}"`;
 }
 
+function isMissingColumnError(error) {
+  const code = String(error?.code || '');
+  const message = String(error?.message || '');
+  return code === '42703' || /column .* does not exist/i.test(message);
+}
+
+function normalizeMixDesignRequestSearchRow(row, projectById = new Map()) {
+  if (!row || typeof row !== 'object') return null;
+  const project = projectById.get(String(row.project_id || '')) || null;
+  const projectName =
+    String(row.project_name || '').trim() ||
+    String(project?.name || '').trim() ||
+    '';
+  const contractorName =
+    String(row.contractor_name || '').trim() ||
+    String(project?.contractor_display_name || project?.contractor || '').trim() ||
+    '';
+  const siteAddress =
+    String(row.site_address || '').trim() ||
+    String(project?.site_address || '').trim() ||
+    '';
+  const tradingCompanyName =
+    String(row.trading_company_name || '').trim() ||
+    String(project?.trading_company_name || '').trim() ||
+    '';
+  return {
+    ...row,
+    project_name: projectName || null,
+    contractor_name: contractorName || null,
+    site_address: siteAddress || null,
+    trading_company_name: tradingCompanyName || null,
+  };
+}
+
 /**
  * 配合計画書依頼履歴の一覧・検索（SELECT のみ）。
  * キーワードは project_name / contractor_name / trading_company_name / site_address の部分一致。
+ * スナップショット列が未適用の環境では projects を参照して表示・検索する。
  * 空キーワード時は新しい順の直近一覧。
  */
 export async function searchMixDesignRequests({ keyword = '', limit = 50 } = {}) {
   const q = String(keyword || '').trim();
   const take = Math.min(Math.max(Number(limit) || 50, 1), 200);
+  const snapshotSelect =
+    'id, project_id, project_name, contractor_name, trading_company_name, site_address, requested_to_factory_id, status, created_at, requested_by, total_volume_m3';
+  // Phase1 初期スキーマ（スナップショット列・帳票列が未適用の環境向け）
+  const legacySelect =
+    'id, project_id, requested_to_factory_id, status, created_at, requested_by, total_volume_m3';
+
   let query = supabase
     .from('mix_design_requests')
-    .select(
-      'id, project_id, project_name, contractor_name, trading_company_name, site_address, requested_to_factory_id, status, created_at, requested_by, total_volume_m3',
-    )
+    .select(snapshotSelect)
     .order('created_at', { ascending: false })
     .limit(take);
 
@@ -1253,9 +1292,67 @@ export async function searchMixDesignRequests({ keyword = '', limit = 50 } = {})
     );
   }
 
-  const { data, error } = await query;
-  if (error) throw error;
-  return Array.isArray(data) ? data : [];
+  let { data, error } = await query;
+  let usedLegacy = false;
+
+  if (error && isMissingColumnError(error)) {
+    usedLegacy = true;
+    // スナップショット列未適用: 依頼本体を取り、projects で補完・絞り込みする
+    const legacy = await supabase
+      .from('mix_design_requests')
+      .select(legacySelect)
+      .order('created_at', { ascending: false })
+      .limit(Math.min(take * 4, 200));
+    if (legacy.error) throw legacy.error;
+    data = legacy.data;
+    error = null;
+  } else if (error) {
+    throw error;
+  }
+
+  const rows = Array.isArray(data) ? data : [];
+  if (!rows.length) return [];
+
+  const projectIds = [
+    ...new Set(rows.map((row) => String(row?.project_id || '').trim()).filter(Boolean)),
+  ];
+  const projectById = new Map();
+  if (projectIds.length) {
+    const { data: projects, error: projectError } = await supabase
+      .from('projects')
+      .select('id, name, contractor, contractor_display_name, site_address, trading_company_name')
+      .in('id', projectIds);
+    if (projectError) {
+      console.warn('[searchMixDesignRequests] projects lookup failed', projectError);
+    } else {
+      for (const project of projects || []) {
+        if (project?.id) projectById.set(String(project.id), project);
+      }
+    }
+  }
+
+  const normalized = rows
+    .map((row) => normalizeMixDesignRequestSearchRow(row, projectById))
+    .filter(Boolean);
+
+  if (!q) return normalized.slice(0, take);
+
+  if (!usedLegacy) return normalized;
+
+  const needle = q.toLowerCase();
+  return normalized
+    .filter((row) => {
+      const haystack = [
+        row.project_name,
+        row.contractor_name,
+        row.trading_company_name,
+        row.site_address,
+      ]
+        .map((v) => String(v || '').toLowerCase())
+        .join(' ');
+      return haystack.includes(needle);
+    })
+    .slice(0, take);
 }
 
 /** 1件の依頼 + 配合パターン明細（印刷用） */

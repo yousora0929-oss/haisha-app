@@ -4310,7 +4310,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         <div className="min-h-screen bg-gray-50 text-gray-900 antialiased dark:bg-gray-900 dark:text-gray-100">
           <div className="mx-auto min-h-screen max-w-[1440px] shadow-sm flex flex-col lg:flex-row">
             {!isGuestSiteOrder ? (
-              <aside className="hidden lg:block w-[260px] shrink-0 bg-white border-r border-gray-200 min-h-screen sticky top-0">
+              <aside className="hidden lg:block w-[260px] shrink-0 bg-white border-r border-gray-200 max-h-screen sticky top-0 overflow-y-auto">
                 <div className="p-5 space-y-4">
                   <a
                     href="/"

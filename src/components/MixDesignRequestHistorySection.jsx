@@ -133,7 +133,7 @@ export function MixDesignRequestHistorySection({ factories = [], active = true }
 
       {loading ? (
         <p className="mt-5 text-center text-sm font-bold text-slate-400">読み込み中…</p>
-      ) : rows.length === 0 ? (
+      ) : error ? null : rows.length === 0 ? (
         <p className="mt-5 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm font-bold text-slate-500">
           {submittedKeyword ? '条件に一致する依頼はありません。' : 'まだ配合計画書の依頼がありません。'}
         </p>
