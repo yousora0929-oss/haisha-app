@@ -4452,6 +4452,102 @@ export async function fetchProjects() {
   return enrichProjectsWithTradingCompanyOrgs(withTokens);
 }
 
+const PROJECT_LIST_SORT_COLUMNS = new Set([
+  'name',
+  'trading_company_name',
+  'created_at',
+  'contractor_display_name',
+]);
+
+/**
+ * 物件一覧のサーバー側ページング／検索／並び替え（管理画面用）。
+ * @param {{
+ *   keyword?: string,
+ *   page?: number,
+ *   pageSize?: number,
+ *   sortBy?: string,
+ *   sortAscending?: boolean,
+ * }} [opts]
+ * @returns {Promise<{ rows: object[], totalCount: number }>}
+ */
+export async function searchProjectsPage(opts = {}) {
+  const keyword = String(opts.keyword || '').trim();
+  const pageSize = Math.min(Math.max(Number(opts.pageSize) || 50, 1), 200);
+  const page = Math.max(Number(opts.page) || 1, 1);
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+  const sortBy = PROJECT_LIST_SORT_COLUMNS.has(String(opts.sortBy || ''))
+    ? String(opts.sortBy)
+    : 'created_at';
+  const sortAscending = opts.sortAscending === true;
+
+  let query = supabase.from('projects').select('*', { count: 'exact' });
+
+  if (keyword) {
+    const pattern = quotePostgrestFilterValue(`%${escapeIlikePattern(keyword)}%`);
+    const orParts = [
+      `name.ilike.${pattern}`,
+      `contractor.ilike.${pattern}`,
+      `contractor_display_name.ilike.${pattern}`,
+      `sub_contractor_name.ilike.${pattern}`,
+      `site_address.ilike.${pattern}`,
+      `delivery_area.ilike.${pattern}`,
+      `trading_company_name.ilike.${pattern}`,
+    ];
+
+    try {
+      const { data: customerHits, error: customerErr } = await supabase
+        .from('customers')
+        .select('id')
+        .ilike('company_name', `%${escapeIlikePattern(keyword)}%`)
+        .limit(100);
+      if (!customerErr && Array.isArray(customerHits) && customerHits.length) {
+        const ids = customerHits.map((c) => sanitizeRefId(c?.id)).filter(Boolean);
+        if (ids.length) {
+          orParts.push(`customer_id.in.(${ids.map(quotePostgrestFilterValue).join(',')})`);
+        }
+      }
+    } catch (err) {
+      console.warn('[searchProjectsPage] customer name lookup failed', err);
+    }
+
+    try {
+      const { data: factoryHits, error: factoryErr } = await supabase
+        .from('factories')
+        .select('id')
+        .ilike('name', `%${escapeIlikePattern(keyword)}%`)
+        .limit(50);
+      if (!factoryErr && Array.isArray(factoryHits) && factoryHits.length) {
+        const factoryIds = factoryHits.map((f) => String(f?.id || '').trim()).filter(Boolean);
+        if (factoryIds.length) {
+          orParts.push(`main_factory_id.in.(${factoryIds.map(quotePostgrestFilterValue).join(',')})`);
+          for (const fid of factoryIds) {
+            // jsonb 配列に工場IDが含まれるか（contains）
+            orParts.push(`sub_factory_ids.cs.${quotePostgrestFilterValue(JSON.stringify([fid]))}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[searchProjectsPage] factory name lookup failed', err);
+    }
+
+    query = query.or(orParts.join(','));
+  }
+
+  query = query.order(sortBy, { ascending: sortAscending, nullsFirst: false }).range(from, to);
+
+  const { data, error, count } = await query;
+  if (error) throw error;
+
+  const mapped = (data || []).map(mapProjectRow).filter(Boolean);
+  const withTokens = await enrichProjectsWithCustomerUrlTokens(mapped);
+  const rows = await enrichProjectsWithTradingCompanyOrgs(withTokens);
+  return {
+    rows,
+    totalCount: typeof count === 'number' ? count : rows.length,
+  };
+}
+
 /**
  * 物件の所有会社（organizations, type=contractor）を発注元業者から解決する。
  * customer_id が業者以外（商社の直接発注など）を指す場合や会社未設定の場合は null。
