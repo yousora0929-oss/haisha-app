@@ -5925,6 +5925,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               <MixDesignRequestHistorySection
                 factories={factories}
                 projects={projects}
+                customers={customers}
                 agentOrganizations={agentOrganizations}
                 currentCustomerId={currentCustomerId}
                 requestedByDefault={currentLoginManagerLabel}

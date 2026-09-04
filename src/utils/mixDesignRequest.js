@@ -59,14 +59,19 @@ export function createEmptyMixDesignDraft() {
   return {
     projectName: '',
     contractorName: '',
+    contractorCustomerId: '',
+    registerNewContractor: true,
     primeContractorName: '',
     traderName: '',
+    tradingCompanyOrganizationId: '',
+    registerNewTrader: true,
     siteAddress: '',
     periodStart: '',
     periodEnd: '',
     vehicleTypes: [],
     siteManagerName: '',
     siteManagerContact: '',
+    registerSiteManagerAsContact: false,
     region: MIX_DESIGN_REGIONS[0],
     requestedToFactoryId: '',
     items: [createEmptyMixDesignItem()],
@@ -390,7 +395,8 @@ export function prefillMixDesignDraft(order, project, requestedBy = '') {
     '';
   draft.contractorName =
     resolveOrderContractorDisplayName(order) ||
-    String(project?.contractor || '').trim();
+    String(project?.contractor_display_name || project?.contractor || '').trim();
+  draft.contractorCustomerId = String(project?.customer_id || order?.customer_id || order?.customerId || '').trim();
   draft.siteAddress =
     String(project?.site_address || '').trim() ||
     String(order?.siteAddress ?? order?.site_address ?? '').trim();
@@ -400,10 +406,14 @@ export function prefillMixDesignDraft(order, project, requestedBy = '') {
   draft.traderName =
     resolveOrderTradingCompanyDisplayName(order) ||
     String(project?.trading_company_name || '').trim();
+  draft.tradingCompanyOrganizationId = String(project?.trading_company_organization_id || '').trim();
   const contacts = Array.isArray(project?.site_contacts) ? project.site_contacts : [];
   const firstContact = contacts.find((c) => c && (c.name || c.phone)) || null;
   draft.siteManagerName = String(firstContact?.name || order?.siteContactName || order?.site_contact_name || '').trim();
   draft.siteManagerContact = String(firstContact?.phone || order?.sitePhone || order?.site_phone || '').trim();
+  draft.registerNewContractor = true;
+  draft.registerNewTrader = true;
+  draft.registerSiteManagerAsContact = false;
   const vehicle = String(order?.vehicleType || '').trim();
   draft.vehicleTypes = vehicle ? [vehicle] : [];
 
@@ -442,11 +452,14 @@ export function prefillMixDesignDraft(order, project, requestedBy = '') {
   return draft;
 }
 
-/** Pattern B アンカー物件用。`contractor` は RPC の p_contractor 経由で contractor_display_name に保存される（下請系カラムには入れない）。requestedBy は含めない。 */
+/** Pattern B アンカー物件用。customerId は選択業者。requestedBy は含めない。 */
 export function buildMixDesignAnchorProjectPayload(order, draft) {
   return {
     name: String(draft?.projectName || '').trim() || mixDesignAnchorProjectName(order),
-    customerId: String(order?.customer_id ?? order?.customerId ?? '').trim() || null,
+    customerId:
+      String(draft?.contractorCustomerId || '').trim() ||
+      String(order?.customer_id ?? order?.customerId ?? '').trim() ||
+      null,
     siteAddress: String(draft?.siteAddress || order?.siteAddress || order?.site_address || '').trim() || null,
     mainFactoryId:
       String(draft?.requestedToFactoryId || order?.preferred_factory_id || order?.preferredFactoryId || '')
@@ -455,6 +468,7 @@ export function buildMixDesignAnchorProjectPayload(order, draft) {
     contractor: String(draft?.contractorName || '').trim() || resolveOrderContractorDisplayName(order) || null,
     tradingCompanyName:
       String(draft?.traderName || '').trim() || resolveOrderTradingCompanyDisplayName(order) || null,
+    tradingCompanyOrganizationId: String(draft?.tradingCompanyOrganizationId || '').trim() || null,
   };
 }
 
@@ -666,7 +680,7 @@ function firstNonEmpty(...values) {
 }
 
 /** DB の mix_design_requests + items → MixDesignRequestPrint 用 props（作成時プレビューと同じ形状） */
-export function mixDesignPrintPropsFromDb(request, itemRows = [], project = null) {
+export function mixDesignPrintPropsFromDb(request, itemRows = [], project = null, options = {}) {
   const items = (Array.isArray(itemRows) ? itemRows : [])
     .slice()
     .sort((a, b) => Number(a?.sort_order ?? 0) - Number(b?.sort_order ?? 0))
@@ -697,6 +711,7 @@ export function mixDesignPrintPropsFromDb(request, itemRows = [], project = null
   const siteManagerName = firstNonEmpty(request?.site_manager_name);
   const siteManagerContact = firstNonEmpty(request?.site_manager_contact);
   const requestedBy = firstNonEmpty(request?.requested_by);
+  const lastChangedAt = mixDesignLastChangedAt(request, options.latestChangeLog);
 
   return {
     header: {
@@ -715,6 +730,7 @@ export function mixDesignPrintPropsFromDb(request, itemRows = [], project = null
       firstPourDate: firstPour,
       totalVolumeM3: Number.isFinite(total) ? total : null,
       requestedBy,
+      lastChangedAt,
     },
     request: {
       requestedBy,
@@ -723,7 +739,179 @@ export function mixDesignPrintPropsFromDb(request, itemRows = [], project = null
       submissionMethod: String(request?.submission_method || ''),
       submissionEmail: String(request?.submission_email || ''),
       memo: String(request?.memo || ''),
+      lastChangedAt,
     },
     items,
   };
+}
+
+/** 履歴行から編集用 draft を復元 */
+export function prefillMixDesignDraftFromRequest(request, itemRows = [], project = null, requestedBy = '') {
+  const draft = createEmptyMixDesignDraft();
+  const print = mixDesignPrintPropsFromDb(request, itemRows, project);
+  draft.projectName = print.header.projectName || '';
+  draft.contractorName = print.header.contractorName || '';
+  draft.contractorCustomerId = String(project?.customer_id || '').trim();
+  draft.primeContractorName = print.header.primeContractorName || '';
+  draft.traderName = print.header.traderName || '';
+  draft.tradingCompanyOrganizationId = String(project?.trading_company_organization_id || '').trim();
+  draft.siteAddress = print.header.siteAddress || '';
+  draft.periodStart = print.header.periodStart || '';
+  draft.periodEnd = print.header.periodEnd || '';
+  draft.vehicleTypes = Array.isArray(print.header.vehicleTypes) ? [...print.header.vehicleTypes] : [];
+  draft.siteManagerName = print.header.siteManagerName || '';
+  draft.siteManagerContact = print.header.siteManagerContact || '';
+  draft.requestedToFactoryId = String(request?.requested_to_factory_id || '').trim();
+  draft.requestedBy = firstNonEmpty(requestedBy, request?.requested_by);
+  draft.submissionMethod = String(request?.submission_method || '');
+  draft.submissionEmail = String(request?.submission_email || '');
+  draft.creationDateSpecified = Boolean(request?.creation_date_specified);
+  draft.creationDate =
+    request?.creation_date != null ? String(request.creation_date).slice(0, 10) : '';
+  draft.copiesCount =
+    request?.copies_count != null && request.copies_count !== '' ? String(request.copies_count) : '';
+  draft.testSalt = Boolean(request?.test_salt);
+  draft.testSplitPour = Boolean(request?.test_split_pour);
+  draft.testSpecimenCount =
+    request?.test_specimen_count != null && request.test_specimen_count !== ''
+      ? String(request.test_specimen_count)
+      : '';
+  draft.testThirdParty = Boolean(request?.test_third_party);
+  draft.quoteRequested =
+    request?.quote_requested === true ? true : request?.quote_requested === false ? false : false;
+  draft.memo = String(request?.memo || '');
+  draft.items = print.items.length ? print.items : [createEmptyMixDesignItem()];
+  draft.registerNewContractor = true;
+  draft.registerNewTrader = true;
+  draft.registerSiteManagerAsContact = false;
+  return draft;
+}
+
+export function mixDesignLastChangedAt(request, latestChangeLog = null) {
+  const logAt = String(latestChangeLog?.changed_at || '').trim();
+  if (logAt) return logAt;
+  const updated = String(request?.updated_at || '').trim();
+  const created = String(request?.created_at || '').trim();
+  if (updated && created && updated !== created) return updated;
+  return created || updated || '';
+}
+
+export function buildMixDesignRequestSnapshot(draft, requestedBy = '') {
+  return {
+    header: {
+      projectName: String(draft?.projectName || '').trim(),
+      contractorName: String(draft?.contractorName || '').trim(),
+      primeContractorName: String(draft?.primeContractorName || '').trim(),
+      traderName: String(draft?.traderName || '').trim(),
+      siteAddress: String(draft?.siteAddress || '').trim(),
+      periodStart: String(draft?.periodStart || '').trim(),
+      periodEnd: String(draft?.periodEnd || '').trim(),
+      vehicleTypes: Array.isArray(draft?.vehicleTypes) ? draft.vehicleTypes.map(String) : [],
+      siteManagerName: String(draft?.siteManagerName || '').trim(),
+      siteManagerContact: String(draft?.siteManagerContact || '').trim(),
+      requestedToFactoryId: String(draft?.requestedToFactoryId || '').trim(),
+      requestedBy: String(requestedBy || draft?.requestedBy || '').trim(),
+      submissionMethod: String(draft?.submissionMethod || '').trim(),
+      submissionEmail: String(draft?.submissionEmail || '').trim(),
+      creationDateSpecified: Boolean(draft?.creationDateSpecified),
+      creationDate: String(draft?.creationDate || '').trim(),
+      copiesCount: String(draft?.copiesCount ?? '').trim(),
+      testSalt: Boolean(draft?.testSalt),
+      testSplitPour: Boolean(draft?.testSplitPour),
+      testSpecimenCount: String(draft?.testSpecimenCount ?? '').trim(),
+      testThirdParty: Boolean(draft?.testThirdParty),
+      quoteRequested: draft?.quoteRequested,
+      memo: String(draft?.memo || '').trim(),
+    },
+    items: (Array.isArray(draft?.items) ? draft.items : []).map((item, index) => ({
+      sortOrder: index,
+      baseStrength: String(item?.baseStrength ?? '').trim(),
+      correctionValue: String(item?.correctionValue ?? '').trim(),
+      correctionIsAuto: Boolean(item?.correctionIsAuto),
+      nominalStrength: String(item?.nominalStrength ?? '').trim(),
+      slump: String(item?.slump ?? '').trim(),
+      aggregateSize: String(item?.aggregateSize ?? '').trim(),
+      cementType: String(item?.cementType || 'N').trim(),
+      aeAdmixture: Boolean(item?.aeAdmixture),
+      quantityM3: String(item?.quantityM3 ?? '').trim(),
+      pourDate: String(item?.pourDate || '').trim(),
+      constructionLocation: String(item?.constructionLocation || '').trim(),
+      waterCementRatio: String(item?.waterCementRatio ?? '').trim(),
+      unitWaterContent: String(item?.unitWaterContent ?? '').trim(),
+    })),
+  };
+}
+
+const MIX_DESIGN_CHANGE_LABELS = {
+  projectName: '工事名',
+  contractorName: '業者名',
+  primeContractorName: '元請',
+  traderName: '商社名',
+  siteAddress: '現場住所',
+  periodStart: '工期開始',
+  periodEnd: '工期終了',
+  vehicleTypes: '使用車両',
+  siteManagerName: '現場担当者',
+  siteManagerContact: '現場担当者連絡先',
+  requestedToFactoryId: '依頼先工場',
+  requestedBy: '依頼者',
+  submissionMethod: '提出方法',
+  submissionEmail: '提出メール',
+  creationDateSpecified: '作成日指定',
+  creationDate: '作成日',
+  copiesCount: '部数',
+  testSalt: '塩分試験',
+  testSplitPour: '分割打設',
+  testSpecimenCount: '供試体数',
+  testThirdParty: '第三者試験',
+  quoteRequested: '見積依頼',
+  memo: '備考',
+  items: '配合パターン',
+};
+
+function stringifyChangeValue(value) {
+  if (Array.isArray(value)) return value.map(String).join(',');
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (value == null) return '';
+  return String(value);
+}
+
+/** before/after スナップショットから {field,old,new}[] を生成 */
+export function buildMixDesignChangeEntries(beforeSnapshot, afterSnapshot) {
+  const changes = [];
+  const beforeHeader = beforeSnapshot?.header || {};
+  const afterHeader = afterSnapshot?.header || {};
+  for (const key of Object.keys(MIX_DESIGN_CHANGE_LABELS)) {
+    if (key === 'items') continue;
+    const oldVal = stringifyChangeValue(beforeHeader[key]);
+    const newVal = stringifyChangeValue(afterHeader[key]);
+    if (oldVal === newVal) continue;
+    changes.push({
+      field: key,
+      label: MIX_DESIGN_CHANGE_LABELS[key],
+      old: beforeHeader[key] ?? null,
+      new: afterHeader[key] ?? null,
+    });
+  }
+  const beforeItems = JSON.stringify(beforeSnapshot?.items || []);
+  const afterItems = JSON.stringify(afterSnapshot?.items || []);
+  if (beforeItems !== afterItems) {
+    changes.push({
+      field: 'items',
+      label: MIX_DESIGN_CHANGE_LABELS.items,
+      old: beforeSnapshot?.items || [],
+      new: afterSnapshot?.items || [],
+    });
+  }
+  return changes;
+}
+
+export function formatMixDesignChangeLine(entry) {
+  const label = entry?.label || MIX_DESIGN_CHANGE_LABELS[entry?.field] || entry?.field || '項目';
+  if (entry?.field === 'items') {
+    const oldCount = Array.isArray(entry.old) ? entry.old.length : 0;
+    const newCount = Array.isArray(entry.new) ? entry.new.length : 0;
+    return `${label}: ${oldCount}件 → ${newCount}件`;
+  }
+  return `${label}: ${stringifyChangeValue(entry?.old) || '（空）'} → ${stringifyChangeValue(entry?.new) || '（空）'}`;
 }

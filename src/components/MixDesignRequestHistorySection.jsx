@@ -3,6 +3,8 @@ import * as db from '../haishaDb.js';
 import { MixDesignRequestModal } from './MixDesignRequestModal.jsx';
 import { MixDesignRequestPrint } from './MixDesignRequestPrint.jsx';
 import {
+  formatMixDesignChangeLine,
+  mixDesignLastChangedAt,
   mixDesignPrintPropsFromDb,
   mixDesignStatusLabel,
 } from '../utils/mixDesignRequest.js';
@@ -22,11 +24,12 @@ function formatRequestedAt(value) {
 }
 
 /**
- * 配合依頼タブ: 上部＝作成依頼、下部＝履歴検索・印刷
+ * 配合依頼タブ: 上部＝作成依頼、下部＝履歴検索・印刷・編集
  */
 export function MixDesignRequestHistorySection({
   factories = [],
   projects = [],
+  customers = [],
   agentOrganizations = [],
   currentCustomerId = '',
   requestedByDefault = '',
@@ -39,12 +42,16 @@ export function MixDesignRequestHistorySection({
   const [error, setError] = useState('');
   const [printLoadingId, setPrintLoadingId] = useState('');
   const [printBundle, setPrintBundle] = useState(null);
+  const [changeLogs, setChangeLogs] = useState([]);
 
   const [mixDesignMode, setMixDesignMode] = useState(''); // 'selectProject' | 'newProject' | ''
   const [mixDesignProjectId, setMixDesignProjectId] = useState('');
   const [mixDesignProjectSearch, setMixDesignProjectSearch] = useState('');
   const [showMixDesignForm, setShowMixDesignForm] = useState(false);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
+
+  const [editBundle, setEditBundle] = useState(null);
+  const [editLoadingId, setEditLoadingId] = useState('');
 
   const factoryNameById = useMemo(() => {
     const map = new Map();
@@ -98,8 +105,13 @@ export function MixDesignRequestHistorySection({
     setPrintLoadingId(id);
     setError('');
     try {
-      const { request, items, project } = await db.fetchMixDesignRequestWithItems(id);
-      setPrintBundle(mixDesignPrintPropsFromDb(request, items, project));
+      const [{ request, items, project }, logs] = await Promise.all([
+        db.fetchMixDesignRequestWithItems(id),
+        db.fetchMixDesignRequestChangeLogs(id).catch(() => []),
+      ]);
+      const latestLog = Array.isArray(logs) && logs.length ? logs[0] : null;
+      setChangeLogs(Array.isArray(logs) ? logs : []);
+      setPrintBundle(mixDesignPrintPropsFromDb(request, items, project, { latestChangeLog: latestLog }));
     } catch (err) {
       console.error('配合計画書依頼の印刷データ取得に失敗しました', err);
       const message = err?.message || '印刷データの取得に失敗しました';
@@ -107,6 +119,24 @@ export function MixDesignRequestHistorySection({
       window.alert(message);
     } finally {
       setPrintLoadingId('');
+    }
+  };
+
+  const openEdit = async (requestId) => {
+    const id = String(requestId || '').trim();
+    if (!id) return;
+    setEditLoadingId(id);
+    setError('');
+    try {
+      const { request, items, project } = await db.fetchMixDesignRequestWithItems(id);
+      setEditBundle({ request, items, project });
+    } catch (err) {
+      console.error('配合計画書依頼の編集データ取得に失敗しました', err);
+      const message = err?.message || '編集データの取得に失敗しました';
+      setError(message);
+      window.alert(message);
+    } finally {
+      setEditLoadingId('');
     }
   };
 
@@ -257,6 +287,7 @@ export function MixDesignRequestHistorySection({
               }
               project={selectedProject}
               factories={factories}
+              customers={customers}
               agentOrganizations={agentOrganizations}
               requestedByDefault={requestedByDefault}
               onClose={() => {
@@ -277,7 +308,7 @@ export function MixDesignRequestHistorySection({
           <div>
             <h2 className="text-base font-black text-slate-900">配合計画書依頼履歴</h2>
             <p className="mt-2 text-xs leading-relaxed text-slate-500">
-              過去の配合計画書作成依頼を検索・確認・印刷できます。現場名・業者名・商社名・現場住所のいずれかに部分一致します。
+              過去の配合計画書作成依頼を検索・確認・印刷・編集できます。編集時は変更履歴が残ります。
             </p>
           </div>
         </div>
@@ -319,6 +350,7 @@ export function MixDesignRequestHistorySection({
               const factoryName =
                 factoryNameById.get(String(row.requested_to_factory_id || '')) ||
                 (row.requested_to_factory_id ? String(row.requested_to_factory_id) : '未指定');
+              const lastChanged = mixDesignLastChangedAt(row);
               return (
                 <li key={row.id}>
                   <article className="rounded-2xl border-2 border-slate-200 bg-slate-50 p-4 shadow-sm">
@@ -341,6 +373,10 @@ export function MixDesignRequestHistorySection({
                             <dd className="inline text-slate-800">{formatRequestedAt(row.created_at)}</dd>
                           </div>
                           <div>
+                            <dt className="inline text-slate-400">最終変更 </dt>
+                            <dd className="inline text-slate-800">{formatRequestedAt(lastChanged)}</dd>
+                          </div>
+                          <div>
                             <dt className="inline text-slate-400">ステータス </dt>
                             <dd className="inline text-slate-800">{mixDesignStatusLabel(row.status)}</dd>
                           </div>
@@ -358,14 +394,24 @@ export function MixDesignRequestHistorySection({
                           ) : null}
                         </dl>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => void openPrint(row.id)}
-                        disabled={printLoadingId === String(row.id)}
-                        className="min-h-[44px] shrink-0 rounded-xl border-2 border-slate-800 bg-slate-900 px-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300"
-                      >
-                        {printLoadingId === String(row.id) ? '読込中…' : '印刷'}
-                      </button>
+                      <div className="flex shrink-0 flex-col gap-2 sm:items-stretch">
+                        <button
+                          type="button"
+                          onClick={() => void openEdit(row.id)}
+                          disabled={editLoadingId === String(row.id)}
+                          className="min-h-[44px] rounded-xl border-2 border-indigo-600 bg-white px-4 text-sm font-black text-indigo-700 disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
+                        >
+                          {editLoadingId === String(row.id) ? '読込中…' : '編集'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void openPrint(row.id)}
+                          disabled={printLoadingId === String(row.id)}
+                          className="min-h-[44px] rounded-xl border-2 border-slate-800 bg-slate-900 px-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300"
+                        >
+                          {printLoadingId === String(row.id) ? '読込中…' : '印刷'}
+                        </button>
+                      </div>
                     </div>
                   </article>
                 </li>
@@ -375,6 +421,32 @@ export function MixDesignRequestHistorySection({
         )}
       </section>
 
+      {editBundle ? (
+        <MixDesignRequestModal
+          open
+          mode="edit"
+          editRequestId={editBundle.request?.id}
+          initialRequest={editBundle.request}
+          initialItems={editBundle.items}
+          order={{
+            project_id: editBundle.request?.project_id,
+            customer_id: currentCustomerId,
+            vehicleType: 'large',
+          }}
+          project={editBundle.project}
+          factories={factories}
+          customers={customers}
+          agentOrganizations={agentOrganizations}
+          requestedByDefault={requestedByDefault}
+          onClose={() => setEditBundle(null)}
+          onSubmitted={() => {
+            window.alert('配合計画書依頼を更新しました（変更履歴を保存しました）');
+            setEditBundle(null);
+            setHistoryRefreshKey((n) => n + 1);
+          }}
+        />
+      ) : null}
+
       {printBundle ? (
         <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-900/50 p-0 sm:items-center sm:p-4">
           <div className="flex max-h-[100dvh] w-full max-w-4xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-h-[92dvh] sm:rounded-2xl">
@@ -383,11 +455,17 @@ export function MixDesignRequestHistorySection({
                 <h3 className="text-base font-black text-slate-900">印刷プレビュー</h3>
                 <p className="mt-1 text-xs font-medium text-slate-500">
                   {printBundle.header?.projectName || '現場未設定'}
+                  {printBundle.header?.lastChangedAt
+                    ? ` · 最終変更 ${formatRequestedAt(printBundle.header.lastChangedAt)}`
+                    : ''}
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => setPrintBundle(null)}
+                onClick={() => {
+                  setPrintBundle(null);
+                  setChangeLogs([]);
+                }}
                 className="rounded-lg px-3 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100"
               >
                 閉じる
@@ -403,11 +481,37 @@ export function MixDesignRequestHistorySection({
                   />
                 </div>
               </div>
+              {changeLogs.length ? (
+                <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <h4 className="text-sm font-black text-slate-900">変更履歴</h4>
+                  <ul className="mt-3 space-y-3">
+                    {changeLogs.map((log) => (
+                      <li key={log.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                        <p className="text-xs font-black text-slate-700">
+                          {formatRequestedAt(log.changed_at)}
+                          {log.changed_by ? ` · ${log.changed_by}` : ''}
+                        </p>
+                        <ul className="mt-1 space-y-0.5 text-xs font-medium text-slate-600">
+                          {(Array.isArray(log.changes) ? log.changes : []).map((entry, idx) => (
+                            <li key={`${log.id}-${idx}`}>{formatMixDesignChangeLine(entry)}</li>
+                          ))}
+                          {!Array.isArray(log.changes) || !log.changes.length ? (
+                            <li>変更内容の詳細はありません</li>
+                          ) : null}
+                        </ul>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </div>
             <div className="flex gap-2 border-t border-slate-200 px-4 py-3">
               <button
                 type="button"
-                onClick={() => setPrintBundle(null)}
+                onClick={() => {
+                  setPrintBundle(null);
+                  setChangeLogs([]);
+                }}
                 className="min-h-[48px] flex-1 rounded-xl border-2 border-slate-300 bg-white text-sm font-black text-slate-700"
               >
                 閉じる

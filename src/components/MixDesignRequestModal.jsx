@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as db from '../haishaDb.js';
+import { MasterSuggestInput } from './MasterSuggestInput.jsx';
 import { MixDesignRequestPrint } from './MixDesignRequestPrint.jsx';
 import {
   AGGREGATE_SIZE_CANDIDATES,
   NOMINAL_STRENGTH_LIST,
   SLUMP_CANDIDATES,
 } from '../utils/mixDesignCalc.js';
+import { dedupeCustomersByCompany } from '../utils/dedupeCustomersByCompany.js';
+import { customerSuggestTexts, organizationSuggestTexts } from '../utils/masterSuggest.js';
 import {
   MIX_DESIGN_GRID_COLS,
   MIX_DESIGN_REGIONS,
@@ -19,6 +22,7 @@ import {
   mixCodeForItem,
   mixDesignHeaderFromOrder,
   prefillMixDesignDraft,
+  prefillMixDesignDraftFromRequest,
   preventMinusKey,
   pourYearChoices,
   sanitizeNonNegativeInput,
@@ -244,16 +248,24 @@ export function MixDesignRequestModal({
   order,
   project,
   factories = [],
+  customers = [],
   agentOrganizations = [],
   requestedByDefault = '',
+  mode = 'create',
+  editRequestId = '',
+  initialRequest = null,
+  initialItems = null,
   onClose,
   onSubmitted,
 }) {
+  const isEdit = mode === 'edit' && String(editRequestId || '').trim();
   const [draft, setDraft] = useState(() => prefillMixDesignDraft(null, null, requestedByDefault));
+  const [baselineDraft, setBaselineDraft] = useState(null);
   const [rules, setRules] = useState([]);
   const [showPreview, setShowPreview] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [siteContactCandidates, setSiteContactCandidates] = useState([]);
   const prevOpenRef = useRef(false);
 
   useEffect(() => {
@@ -261,7 +273,11 @@ export function MixDesignRequestModal({
     prevOpenRef.current = open;
     if (!open) return undefined;
     if (wasOpen) return undefined;
-    setDraft(prefillMixDesignDraft(order, project, requestedByDefault));
+    const nextDraft = isEdit
+      ? prefillMixDesignDraftFromRequest(initialRequest, initialItems, project, requestedByDefault)
+      : prefillMixDesignDraft(order, project, requestedByDefault);
+    setDraft(nextDraft);
+    setBaselineDraft(isEdit ? JSON.parse(JSON.stringify(nextDraft)) : null);
     setShowPreview(false);
     setError('');
     let cancelled = false;
@@ -275,7 +291,55 @@ export function MixDesignRequestModal({
     return () => {
       cancelled = true;
     };
-  }, [open, order, project, requestedByDefault]);
+  }, [open, order, project, requestedByDefault, isEdit, initialRequest, initialItems]);
+
+  const contractorCustomers = useMemo(
+    () =>
+      dedupeCustomersByCompany(
+        (Array.isArray(customers) ? customers : []).filter(
+          (c) => String(c?.role || '').trim() === 'contractor',
+        ),
+      ),
+    [customers],
+  );
+
+  const unmatchedContractor = useMemo(() => {
+    const name = String(draft.contractorName || '').trim();
+    if (!name) return false;
+    if (String(draft.contractorCustomerId || '').trim()) return false;
+    return !contractorCustomers.some(
+      (c) => String(c.company_name || c.name || '').trim() === name,
+    );
+  }, [draft.contractorName, draft.contractorCustomerId, contractorCustomers]);
+
+  const unmatchedTrader = useMemo(() => {
+    const name = String(draft.traderName || '').trim();
+    if (!name) return false;
+    if (String(draft.tradingCompanyOrganizationId || '').trim()) return false;
+    return !(Array.isArray(agentOrganizations) ? agentOrganizations : []).some(
+      (o) => String(o.name || '').trim() === name,
+    );
+  }, [draft.traderName, draft.tradingCompanyOrganizationId, agentOrganizations]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const cid = String(draft.contractorCustomerId || '').trim();
+    if (!cid) {
+      setSiteContactCandidates([]);
+      return undefined;
+    }
+    let cancelled = false;
+    db.fetchCompanyMemberSuggestions(cid)
+      .then((rows) => {
+        if (!cancelled) setSiteContactCandidates(Array.isArray(rows) ? rows : []);
+      })
+      .catch(() => {
+        if (!cancelled) setSiteContactCandidates([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, draft.contractorCustomerId]);
 
   const updateItem = useCallback(
     (index, patch) => {
@@ -365,17 +429,6 @@ export function MixDesignRequestModal({
   );
 
   const factoryOptions = Array.isArray(factories) ? factories.filter((f) => f?.id) : [];
-  const traderOptions = useMemo(() => {
-    const list = (Array.isArray(agentOrganizations) ? agentOrganizations : [])
-      .filter((o) => o && String(o.name || '').trim())
-      .slice()
-      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'));
-    return list;
-  }, [agentOrganizations]);
-  const traderNames = useMemo(
-    () => new Set(traderOptions.map((o) => String(o.name || '').trim())),
-    [traderOptions],
-  );
 
   const handleSubmit = async () => {
     const missing = validateMixDesignDraft(draft);
@@ -388,16 +441,27 @@ export function MixDesignRequestModal({
     setSubmitting(true);
     setError('');
     try {
-      await db.submitMixDesignRequestFromOrder({
-        order,
-        draft,
-        requestedBy: draft.requestedBy || requestedByDefault,
-      });
+      const by = draft.requestedBy || requestedByDefault;
+      if (isEdit) {
+        await db.updateMixDesignRequestWithLog({
+          requestId: editRequestId,
+          draft,
+          requestedBy: by,
+          beforeDraft: baselineDraft,
+        });
+      } else {
+        await db.submitMixDesignRequestFromOrder({
+          order,
+          draft,
+          requestedBy: by,
+        });
+      }
       onSubmitted?.();
       onClose?.();
     } catch (err) {
-      console.error('配合計画書依頼の作成に失敗しました', err);
-      const message = err?.message || '配合計画書依頼の作成に失敗しました';
+      console.error(isEdit ? '配合計画書依頼の更新に失敗しました' : '配合計画書依頼の作成に失敗しました', err);
+      const message =
+        err?.message || (isEdit ? '配合計画書依頼の更新に失敗しました' : '配合計画書依頼の作成に失敗しました');
       setError(message);
       window.alert(message);
     } finally {
@@ -405,14 +469,16 @@ export function MixDesignRequestModal({
     }
   };
 
-  if (!open || !order) return null;
+  if (!open || (!order && !isEdit)) return null;
 
   return (
     <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-900/50 p-0 sm:items-center sm:p-4">
       <div className="flex max-h-[100dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-h-[92dvh] sm:rounded-2xl">
         <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
           <div>
-            <h2 className="text-base font-black text-slate-900">配合計画書を依頼</h2>
+            <h2 className="text-base font-black text-slate-900">
+              {isEdit ? '配合計画書依頼を編集' : '配合計画書を依頼'}
+            </h2>
             <p className="mt-1 text-xs font-medium text-slate-500">
               {draft.projectName || '現場未設定'}
             </p>
@@ -461,14 +527,43 @@ export function MixDesignRequestModal({
                 className={FIELD}
               />
             </label>
-            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-              業者名
-              <input
-                type="text"
+            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-2">
+              <MasterSuggestInput
+                label="業者名"
+                name="mix_design_contractor"
                 value={draft.contractorName}
-                onChange={(e) => patchDraft({ contractorName: e.target.value })}
-                className={FIELD}
+                onValueChange={(value) =>
+                  patchDraft({
+                    contractorName: value,
+                    contractorCustomerId: '',
+                  })
+                }
+                onSelect={(c) =>
+                  patchDraft({
+                    contractorName: String(c?.company_name || c?.name || '').trim(),
+                    contractorCustomerId: String(c?.id || '').trim(),
+                    registerNewContractor: false,
+                  })
+                }
+                items={contractorCustomers}
+                getItemKey={(c) => String(c.id)}
+                getItemLabel={(c) => String(c.company_name || c.name || c.id || '').trim()}
+                getSearchTexts={customerSuggestTexts}
+                placeholder="業者名を入力（候補から選択可）"
+                emptyHint="該当する業者がありません（自由入力で新規登録できます）"
+                inputClassName={FIELD}
               />
+              {unmatchedContractor ? (
+                <label className="mt-1 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-[11px] font-bold text-amber-900">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4"
+                    checked={draft.registerNewContractor !== false}
+                    onChange={(e) => patchDraft({ registerNewContractor: e.target.checked })}
+                  />
+                  <span>候補にないため、業者マスタに新規登録する</span>
+                </label>
+              ) : null}
             </label>
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
               元請（配合計画書宛名）
@@ -480,22 +575,42 @@ export function MixDesignRequestModal({
               />
             </label>
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-2">
-              商社名
-              <select
+              <MasterSuggestInput
+                label="商社名"
+                name="mix_design_trader"
                 value={draft.traderName}
-                onChange={(e) => patchDraft({ traderName: e.target.value })}
-                className={FIELD}
-              >
-                <option value="">未指定</option>
-                {traderOptions.map((org) => (
-                  <option key={org.id} value={String(org.name || '').trim()}>
-                    {String(org.name || '').trim()}
-                  </option>
-                ))}
-                {draft.traderName && !traderNames.has(String(draft.traderName).trim()) ? (
-                  <option value={draft.traderName}>{draft.traderName}（一覧外）</option>
-                ) : null}
-              </select>
+                onValueChange={(value) =>
+                  patchDraft({
+                    traderName: value,
+                    tradingCompanyOrganizationId: '',
+                  })
+                }
+                onSelect={(o) =>
+                  patchDraft({
+                    traderName: String(o?.name || '').trim(),
+                    tradingCompanyOrganizationId: String(o?.id || '').trim(),
+                    registerNewTrader: false,
+                  })
+                }
+                items={Array.isArray(agentOrganizations) ? agentOrganizations : []}
+                getItemKey={(o) => String(o.id)}
+                getItemLabel={(o) => String(o.name || '').trim()}
+                getSearchTexts={organizationSuggestTexts}
+                placeholder="商社名を入力（候補から選択可）"
+                emptyHint="該当する商社がありません（自由入力で新規登録できます）"
+                inputClassName={FIELD}
+              />
+              {unmatchedTrader ? (
+                <label className="mt-1 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-[11px] font-bold text-amber-900">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4"
+                    checked={draft.registerNewTrader !== false}
+                    onChange={(e) => patchDraft({ registerNewTrader: e.target.checked })}
+                  />
+                  <span>候補にないため、商社マスタに新規登録する</span>
+                </label>
+              ) : null}
             </label>
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-2">
               現場住所
@@ -544,12 +659,25 @@ export function MixDesignRequestModal({
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-              現場担当者
-              <input
-                type="text"
+              <MasterSuggestInput
+                label="現場担当者"
+                name="mix_design_site_manager"
                 value={draft.siteManagerName}
-                onChange={(e) => patchDraft({ siteManagerName: e.target.value })}
-                className={FIELD}
+                onValueChange={(value) => patchDraft({ siteManagerName: value })}
+                onSelect={(c) =>
+                  patchDraft({
+                    siteManagerName: String(c?.name || '').trim(),
+                    siteManagerContact: String(c?.phone_number || c?.phone || '').trim(),
+                  })
+                }
+                items={siteContactCandidates}
+                getItemKey={(c) => String(c.id || c.name)}
+                getItemLabel={(c) => String(c.name || '').trim()}
+                getItemSubLabel={(c) => String(c.phone_number || c.phone || '').trim()}
+                getSearchTexts={(c) => [c?.name, c?.phone_number, c?.phone].filter(Boolean).map(String)}
+                placeholder="担当者名（業者連絡先から候補表示）"
+                emptyHint="候補がありません（自由入力可）"
+                inputClassName={FIELD}
               />
             </label>
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
@@ -560,6 +688,21 @@ export function MixDesignRequestModal({
                 onChange={(e) => patchDraft({ siteManagerContact: e.target.value })}
                 className={FIELD}
               />
+            </label>
+            <label className="sm:col-span-2 flex items-start gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4"
+                checked={Boolean(draft.registerSiteManagerAsContact)}
+                disabled={!String(draft.contractorCustomerId || '').trim() && unmatchedContractor && draft.registerNewContractor === false}
+                onChange={(e) => patchDraft({ registerSiteManagerAsContact: e.target.checked })}
+              />
+              <span>
+                この担当者を業者の連絡先に登録する
+                <span className="mt-0.5 block text-[11px] font-medium text-slate-500">
+                  業者を候補から選ぶか新規登録すると保存できます（同名・同電話は重複登録しません）
+                </span>
+              </span>
             </label>
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
               地域
@@ -756,7 +899,7 @@ export function MixDesignRequestModal({
             disabled={submitting}
             className="min-h-[48px] flex-1 rounded-xl border-2 border-indigo-600 bg-indigo-600 text-sm font-black text-white disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300"
           >
-            {submitting ? '送信中…' : '依頼を送信'}
+            {submitting ? (isEdit ? '保存中…' : '送信中…') : isEdit ? '変更を保存' : '依頼を送信'}
           </button>
         </div>
       </div>

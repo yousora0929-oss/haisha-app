@@ -26,8 +26,10 @@ import { ensureOrderPreferredFactoryForInsert } from './utils/dispatchBulkOrder.
 import { resolveProjectTradingCompanyName } from './utils/projectTradingCompany.js';
 import {
   buildMixDesignAnchorProjectPayload,
+  buildMixDesignChangeEntries,
   buildMixDesignItemInsertRows,
   buildMixDesignRequestInsertRow,
+  buildMixDesignRequestSnapshot,
   resolveMixDesignProjectId,
 } from './utils/mixDesignRequest.js';
 import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.js';
@@ -1185,6 +1187,8 @@ export async function upgradeProjectToMixDesignOnly(projectId) {
 export async function submitMixDesignRequestFromOrder({ order, draft, requestedBy } = {}) {
   if (!order || typeof order !== 'object') throw new Error('注文が必要です');
 
+  const resolvedDraft = await resolveMixDesignDraftParties(draft);
+
   // history 上の「既存プロジェクト有無」を判定するため、
   // resolveMixDesignProjectId（insertOrdersBulk後の互換）に order を配列で渡す。
   const existingProjectId = resolveMixDesignProjectId([order], '') || null;
@@ -1194,17 +1198,17 @@ export async function submitMixDesignRequestFromOrder({ order, draft, requestedB
   const projectIdForRow = existingProjectId || '00000000-0000-0000-0000-000000000000';
   const requestRow = buildMixDesignRequestInsertRow({
     projectId: projectIdForRow,
-    draft,
+    draft: resolvedDraft,
     requestedBy,
-    preferredFactoryId: draft?.requestedToFactoryId,
+    preferredFactoryId: resolvedDraft?.requestedToFactoryId,
     vehicleType: order.vehicleType,
   });
   const { project_id: _projectIdIgnored, ...requestPayload } = requestRow;
 
-  const itemRows = buildMixDesignItemInsertRows(draft);
+  const itemRows = buildMixDesignItemInsertRows(resolvedDraft);
   const { data, error } = await supabase.rpc('submit_mix_design_request_from_history', {
     p_existing_project_id: existingProjectId,
-    p_anchor: buildMixDesignAnchorProjectPayload(order, draft),
+    p_anchor: buildMixDesignAnchorProjectPayload(order, resolvedDraft),
     p_request: requestPayload,
     p_items: itemRows,
   });
@@ -1219,7 +1223,113 @@ export async function submitMixDesignRequestFromOrder({ order, draft, requestedB
   }
 
   const requestId = data != null ? String(data) : '';
-  return { request: { id: requestId }, projectId: existingProjectId };
+  await maybeRegisterMixDesignSiteManagerContact(resolvedDraft);
+  return { request: { id: requestId }, projectId: existingProjectId, draft: resolvedDraft };
+}
+
+async function resolveMixDesignDraftParties(draft) {
+  const next = { ...(draft && typeof draft === 'object' ? draft : {}) };
+  const contractorName = String(next.contractorName || '').trim();
+  let contractorCustomerId = String(next.contractorCustomerId || '').trim();
+
+  if (!contractorCustomerId && contractorName && next.registerNewContractor !== false) {
+    const { data, error } = await supabase.rpc('ensure_mix_design_contractor_customer', {
+      p_company_name: contractorName,
+    });
+    if (error) throw error;
+    contractorCustomerId = data != null ? String(data) : '';
+    next.contractorCustomerId = contractorCustomerId;
+  }
+
+  const traderName = String(next.traderName || '').trim();
+  let tradingOrgId = String(next.tradingCompanyOrganizationId || '').trim();
+  if (!tradingOrgId && traderName && next.registerNewTrader !== false) {
+    const { data, error } = await supabase.rpc('ensure_mix_design_agent_organization', {
+      p_company_name: traderName,
+    });
+    if (error) throw error;
+    tradingOrgId = data != null ? String(data) : '';
+    next.tradingCompanyOrganizationId = tradingOrgId;
+  }
+
+  return next;
+}
+
+async function maybeRegisterMixDesignSiteManagerContact(draft) {
+  if (!draft?.registerSiteManagerAsContact) return null;
+  const contractorCustomerId = String(draft.contractorCustomerId || '').trim();
+  const managerName = String(draft.siteManagerName || '').trim();
+  const phone = String(draft.siteManagerContact || '').trim();
+  if (!contractorCustomerId || !managerName) return null;
+  const { data, error } = await supabase.rpc('register_mix_design_company_contact', {
+    p_contractor_customer_id: contractorCustomerId,
+    p_manager_name: managerName,
+    p_phone: phone || null,
+  });
+  if (error) throw error;
+  return data != null ? String(data) : null;
+}
+
+export async function updateMixDesignRequestWithLog({
+  requestId,
+  draft,
+  requestedBy,
+  beforeDraft,
+} = {}) {
+  const id = String(requestId || '').trim();
+  if (!id) throw new Error('依頼IDが必要です');
+
+  const resolvedDraft = await resolveMixDesignDraftParties(draft);
+  const afterSnapshot = buildMixDesignRequestSnapshot(resolvedDraft, requestedBy);
+  const beforeSnapshot = beforeDraft
+    ? buildMixDesignRequestSnapshot(beforeDraft, beforeDraft?.requestedBy || requestedBy)
+    : null;
+  const changes = beforeSnapshot
+    ? buildMixDesignChangeEntries(beforeSnapshot, afterSnapshot)
+    : [];
+
+  const requestRow = buildMixDesignRequestInsertRow({
+    projectId: '00000000-0000-0000-0000-000000000000',
+    draft: resolvedDraft,
+    requestedBy,
+    preferredFactoryId: resolvedDraft?.requestedToFactoryId,
+  });
+  const { project_id: _ignored, ...requestPayload } = requestRow;
+  const itemRows = buildMixDesignItemInsertRows(resolvedDraft);
+
+  const { data, error } = await supabase.rpc('update_mix_design_request_with_log', {
+    p_request_id: id,
+    p_request: requestPayload,
+    p_items: itemRows,
+    p_changes: changes,
+    p_before_snapshot: beforeSnapshot,
+    p_after_snapshot: afterSnapshot,
+    p_changed_by: String(requestedBy || resolvedDraft?.requestedBy || '').trim() || null,
+  });
+  if (error) {
+    const msg = String(error.message || '');
+    if (/not authorized/i.test(msg)) {
+      throw new Error(
+        '配合計画書の編集権限が確認できませんでした。一度ログアウトしてから、カスタマー画面に再ログインしてください。',
+      );
+    }
+    throw error;
+  }
+
+  await maybeRegisterMixDesignSiteManagerContact(resolvedDraft);
+  return { requestId: data != null ? String(data) : id, changes, draft: resolvedDraft };
+}
+
+export async function fetchMixDesignRequestChangeLogs(requestId) {
+  const id = String(requestId || '').trim();
+  if (!id) return [];
+  const { data, error } = await supabase
+    .from('mix_design_request_change_logs')
+    .select('id, request_id, changed_at, changed_by, changes, before_snapshot, after_snapshot')
+    .eq('request_id', id)
+    .order('changed_at', { ascending: false });
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
 }
 
 function escapeIlikePattern(raw) {
@@ -1387,7 +1497,7 @@ export async function fetchMixDesignRequestWithItems(requestId) {
     const { data: projectRow, error: projectError } = await supabase
       .from('projects')
       .select(
-        'id, name, contractor, contractor_display_name, site_address, trading_company_name, delivery_area',
+        'id, name, customer_id, contractor, contractor_display_name, site_address, trading_company_name, trading_company_organization_id, delivery_area',
       )
       .eq('id', projectId)
       .maybeSingle();

@@ -319,17 +319,42 @@ describe('buildMixDesignAnchorProjectPayload', () => {
       {
         projectName: 'テスト工事',
         contractorName: '後藤建設株式会社',
+        contractorCustomerId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
         siteAddress: '大分市',
         traderName: '商社A',
+        tradingCompanyOrganizationId: '11111111-2222-3333-4444-555555555555',
         requestedBy: '梅田',
         requestedToFactoryId: '',
       },
     );
     expect(payload.contractor).toBe('後藤建設株式会社');
     expect(payload.contractor).not.toBe('梅田');
+    expect(payload.customerId).toBe('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+    expect(payload.customerId).not.toBe('7c67a6df-1520-4c8d-a9e9-02c20273cf92');
+    expect(payload.tradingCompanyOrganizationId).toBe('11111111-2222-3333-4444-555555555555');
     expect(payload).not.toHaveProperty('requestedBy');
     expect(payload.name).toBe('テスト工事');
-    expect(payload.customerId).toBe('7c67a6df-1520-4c8d-a9e9-02c20273cf92');
     expect(payload.tradingCompanyName).toBe('商社A');
+  });
+});
+
+describe('buildMixDesignChangeEntries', () => {
+  it('records header field diffs', async () => {
+    const { buildMixDesignChangeEntries, buildMixDesignRequestSnapshot } = await import(
+      './mixDesignRequest.js'
+    );
+    const before = buildMixDesignRequestSnapshot({
+      projectName: 'A',
+      contractorName: '旧業者',
+      items: [{ baseStrength: '24', slump: '18', aggregateSize: '20', cementType: 'N' }],
+    });
+    const after = buildMixDesignRequestSnapshot({
+      projectName: 'A',
+      contractorName: '新業者',
+      items: [{ baseStrength: '27', slump: '18', aggregateSize: '20', cementType: 'N' }],
+    });
+    const changes = buildMixDesignChangeEntries(before, after);
+    expect(changes.some((c) => c.field === 'contractorName')).toBe(true);
+    expect(changes.some((c) => c.field === 'items')).toBe(true);
   });
 });
