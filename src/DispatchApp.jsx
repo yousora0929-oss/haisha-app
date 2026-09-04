@@ -62,6 +62,7 @@ import {
   extractOrderFormDefaultsFromHistory,
 } from './utils/dispatchBulkOrder.js';
 import { MixDesignRequestModal } from './components/MixDesignRequestModal.jsx';
+import { MixDesignRequestHistorySection } from './components/MixDesignRequestHistorySection.jsx';
 import {
   COOPERATIVE_OWN_ORG_TRADER_ERROR,
   isCooperativeOwnOrgTraderName,
@@ -193,6 +194,7 @@ const CUSTOMER_ORDER_TABS = [
 ];
 
 const SCHEDULE_IMPORT_TAB = ['scheduleImport', '取込', '📄'];
+const MIX_DESIGN_HISTORY_TAB = ['mixDesignHistory', '配合依頼', '📑'];
 
 /** 進行中タブの物件グループ折りたたみ（true = 折りたたみ）。物件ID単位で保持。 */
 const INPROGRESS_GROUP_COLLAPSED_STORAGE_PREFIX = 'haisha_dispatch_inprogress_group_collapsed_v1';
@@ -1880,8 +1882,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         if (canImportSchedule && !isGuestSiteOrder) {
           tabs = [...tabs, SCHEDULE_IMPORT_TAB];
         }
+        if (canRequestMixDesign && !isGuestSiteOrder) {
+          tabs = [...tabs, MIX_DESIGN_HISTORY_TAB];
+        }
         return tabs;
-      }, [isGuestSiteOrder, currentCustomerRole, canImportSchedule]);
+      }, [isGuestSiteOrder, currentCustomerRole, canImportSchedule, canRequestMixDesign]);
 
       // 現場名サジェスト / 現場担当者サジェスト共通の実質業者ID
       const effectiveContractorCustomerId = useMemo(
@@ -4677,6 +4682,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         : null
                     }
                     factories={factories}
+                    agentOrganizations={agentOrganizations}
                     requestedByDefault={currentLoginManagerLabel}
                     onClose={() => {
                       setShowMixDesignForm(false);
@@ -6089,6 +6095,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 mode="customer"
                 uploadedBy={currentCustomerId}
                 lockedOrderPlacerName={String(currentCustomer?.manager_name || '').trim()}
+              />
+            ) : null}
+            {customerOrderTab === 'mixDesignHistory' && canRequestMixDesign ? (
+              <MixDesignRequestHistorySection
+                factories={factories}
+                active={customerOrderTab === 'mixDesignHistory'}
               />
             ) : null}
               </PullToRefresh>

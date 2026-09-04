@@ -541,6 +541,9 @@ export function buildMixDesignRequestInsertRow({
     site_manager_contact: String(draft?.siteManagerContact || '').trim() || null,
     period_start: String(draft?.periodStart || '').trim() || null,
     period_end: String(draft?.periodEnd || '').trim() || null,
+    project_name: String(draft?.projectName || '').trim() || null,
+    contractor_name: String(draft?.contractorName || '').trim() || null,
+    site_address: String(draft?.siteAddress || '').trim() || null,
   };
 }
 
@@ -602,4 +605,89 @@ export function selectAllOnFocus(event) {
       /* ignore */
     }
   });
+}
+
+export const MIX_DESIGN_STATUS_LABELS = {
+  not_started: '未着手',
+  requested: '依頼中',
+  in_progress: '作成中',
+  completed: '完了',
+};
+
+export function mixDesignStatusLabel(status) {
+  const key = String(status || '').trim();
+  return MIX_DESIGN_STATUS_LABELS[key] || key || '—';
+}
+
+/** DB の mix_design_request_items 行 → 印刷/フォーム用 item */
+export function mixDesignItemFromDbRow(row, index = 0) {
+  const pourDate = row?.pour_date != null ? String(row.pour_date).slice(0, 10) : '';
+  const parts = pourPartsFromIso(pourDate);
+  return {
+    localId: String(row?.id || `mixitem_db_${index}`),
+    baseStrength: row?.base_strength != null ? String(row.base_strength) : '',
+    correctionValue: row?.correction_value != null ? String(row.correction_value) : '',
+    correctionIsAuto: Boolean(row?.correction_is_auto),
+    nominalStrength: row?.nominal_strength != null ? String(row.nominal_strength) : '',
+    slump: row?.slump != null ? String(row.slump) : '',
+    aggregateSize: row?.aggregate_size != null ? String(row.aggregate_size) : '',
+    cementType: String(row?.cement_type || 'N'),
+    aeAdmixture: Boolean(row?.ae_admixture),
+    quantityM3: row?.quantity_m3 != null ? String(row.quantity_m3) : '',
+    pourDate,
+    pourMonth: parts.pourMonth,
+    pourDay: parts.pourDay,
+    pourYearOverride: '',
+    pourDateOutOfRange: false,
+    constructionLocation: String(row?.construction_location || ''),
+    waterCementRatio: row?.water_cement_ratio != null ? String(row.water_cement_ratio) : '',
+    unitWaterContent: row?.unit_water_content != null ? String(row.unit_water_content) : '',
+  };
+}
+
+/** DB の mix_design_requests + items → MixDesignRequestPrint 用 props */
+export function mixDesignPrintPropsFromDb(request, itemRows = []) {
+  const items = (Array.isArray(itemRows) ? itemRows : [])
+    .slice()
+    .sort((a, b) => Number(a?.sort_order ?? 0) - Number(b?.sort_order ?? 0))
+    .map((row, index) => mixDesignItemFromDbRow(row, index));
+  const periodStart = request?.period_start != null ? String(request.period_start).slice(0, 10) : '';
+  const periodEnd = request?.period_end != null ? String(request.period_end).slice(0, 10) : '';
+  const vehicleTypes = Array.isArray(request?.vehicle_types) ? request.vehicle_types.map(String) : [];
+  const firstPour = items.map((i) => i.pourDate).filter(Boolean).sort()[0] || '';
+  const total =
+    request?.total_volume_m3 != null && request.total_volume_m3 !== ''
+      ? Number(request.total_volume_m3)
+      : sumMixDesignQuantityM3({ items });
+  return {
+    header: {
+      projectName: String(request?.project_name || '').trim(),
+      contractorName: String(request?.contractor_name || '').trim(),
+      primeContractorName: String(request?.prime_contractor_name || '').trim(),
+      traderName: String(request?.trading_company_name || '').trim(),
+      siteAddress: String(request?.site_address || '').trim(),
+      constructionPeriod: formatConstructionPeriod(periodStart, periodEnd),
+      periodStart,
+      periodEnd,
+      vehicleTypes,
+      siteManagerName: String(request?.site_manager_name || '').trim(),
+      siteManagerContact: String(request?.site_manager_contact || '').trim(),
+      siteContact: [request?.site_manager_name, request?.site_manager_contact]
+        .map((v) => String(v || '').trim())
+        .filter(Boolean)
+        .join(' / '),
+      firstPourDate: firstPour,
+      totalVolumeM3: Number.isFinite(total) ? total : null,
+      requestedBy: String(request?.requested_by || '').trim(),
+    },
+    request: {
+      requestedBy: String(request?.requested_by || '').trim(),
+      vehicleTypes,
+      totalVolumeM3: Number.isFinite(total) ? total : null,
+      submissionMethod: String(request?.submission_method || ''),
+      submissionEmail: String(request?.submission_email || ''),
+      memo: String(request?.memo || ''),
+    },
+    items,
+  };
 }

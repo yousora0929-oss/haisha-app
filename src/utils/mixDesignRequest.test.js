@@ -193,4 +193,21 @@ describe('buildMixDesignRequestInsertRow', () => {
     expect(row.site_manager_name).toBe('山田');
     expect(row.period_start).toBe('2026-04-01');
   });
+
+  it('includes project_name contractor_name site_address snapshots', () => {
+    const row = buildMixDesignRequestInsertRow({
+      projectId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      draft: {
+        projectName: '末広町工事',
+        contractorName: '業者C',
+        siteAddress: '大分市末広町1',
+        traderName: '商社D',
+        items: [],
+      },
+      requestedBy: '依頼者',
+    });
+    expect(row.project_name).toBe('末広町工事');
+    expect(row.contractor_name).toBe('業者C');
+    expect(row.site_address).toBe('大分市末広町1');
+  });
 });

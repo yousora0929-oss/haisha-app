@@ -244,6 +244,7 @@ export function MixDesignRequestModal({
   order,
   project,
   factories = [],
+  agentOrganizations = [],
   requestedByDefault = '',
   onClose,
   onSubmitted,
@@ -364,6 +365,17 @@ export function MixDesignRequestModal({
   );
 
   const factoryOptions = Array.isArray(factories) ? factories.filter((f) => f?.id) : [];
+  const traderOptions = useMemo(() => {
+    const list = (Array.isArray(agentOrganizations) ? agentOrganizations : [])
+      .filter((o) => o && String(o.name || '').trim())
+      .slice()
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'));
+    return list;
+  }, [agentOrganizations]);
+  const traderNames = useMemo(
+    () => new Set(traderOptions.map((o) => String(o.name || '').trim())),
+    [traderOptions],
+  );
 
   const handleSubmit = async () => {
     const missing = validateMixDesignDraft(draft);
@@ -440,7 +452,7 @@ export function MixDesignRequestModal({
           </datalist>
 
           <div className="mb-4 grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 sm:grid-cols-2">
-            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
+            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-2">
               工事名
               <input
                 type="text"
@@ -467,14 +479,23 @@ export function MixDesignRequestModal({
                 className={FIELD}
               />
             </label>
-            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
+            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-2">
               商社名
-              <input
-                type="text"
+              <select
                 value={draft.traderName}
                 onChange={(e) => patchDraft({ traderName: e.target.value })}
                 className={FIELD}
-              />
+              >
+                <option value="">未指定</option>
+                {traderOptions.map((org) => (
+                  <option key={org.id} value={String(org.name || '').trim()}>
+                    {String(org.name || '').trim()}
+                  </option>
+                ))}
+                {draft.traderName && !traderNames.has(String(draft.traderName).trim()) ? (
+                  <option value={draft.traderName}>{draft.traderName}（一覧外）</option>
+                ) : null}
+              </select>
             </label>
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-2">
               現場住所

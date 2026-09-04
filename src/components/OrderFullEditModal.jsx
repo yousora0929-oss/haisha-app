@@ -73,11 +73,16 @@ export function buildChangeRequestPatch(order, patch) {
   const out = {};
 
   const setIfChanged = (key, before, after) => {
-    const b = before == null ? '' : String(before);
-    const a = after == null ? '' : String(after);
+    const b = before == null ? '' : String(before).trim();
+    const a = after == null ? '' : String(after).trim();
     if (b === a) return;
     if (typeof after === 'boolean') {
       out[key] = after;
+      return;
+    }
+    // 文字列は trim 後の値を保存（空は空文字のまま）
+    if (typeof after === 'string') {
+      out[key] = a;
       return;
     }
     out[key] = after;
@@ -85,8 +90,9 @@ export function buildChangeRequestPatch(order, patch) {
 
   setIfChanged('preferredDate', o.preferredDate, p.preferredDate);
   if (
-    String(o.timeSlot ?? '') !== String(p.timeSlot ?? '') ||
-    String(o.timePointLabel || o.timeSlotLabel || '') !== String(p.timePointLabel || p.timeSlotLabel || '')
+    String(o.timeSlot ?? '').trim() !== String(p.timeSlot ?? '').trim() ||
+    String(o.timePointLabel || o.timeSlotLabel || '').trim() !==
+      String(p.timePointLabel || p.timeSlotLabel || '').trim()
   ) {
     if (p.timeSlot != null) out.timeSlot = p.timeSlot;
     if (p.timeSlotMinutes != null) out.timeSlotMinutes = p.timeSlotMinutes;
@@ -101,20 +107,20 @@ export function buildChangeRequestPatch(order, patch) {
   if (out.vehicleType !== undefined) {
     out.vehicleLabel = p.vehicleLabel ?? (p.vehicleType === 'small' ? '小型' : '大型');
   }
-  setIfChanged(
-    'quantityM3',
-    o.confirmedQuantityM3 ?? o.quantityM3,
-    p.quantityM3,
-  );
+  setIfChanged('quantityM3', o.confirmedQuantityM3 ?? o.quantityM3, p.quantityM3);
   if (
-    String(o.unloadDurationMinutes || o.unloadDuration || o.unloadingTime || '') !==
-    String(p.unloadDuration || p.unloadDurationMinutes || '')
+    String(o.unloadDurationMinutes || o.unloadDuration || o.unloadingTime || '').trim() !==
+    String(p.unloadDuration || p.unloadDurationMinutes || '').trim()
   ) {
     out.unloadDuration = p.unloadDuration;
     out.unloadDurationMinutes = p.unloadDurationMinutes ?? p.unloadDuration;
     out.unloadDurationLabel = p.unloadDurationLabel;
   }
   setIfChanged('mixText', o.confirmedMixText ?? o.mixText, p.mixText);
+  if (out.mixText !== undefined) {
+    // 工場承諾時に confirmedMixText へも反映できるよう同値を載せる
+    out.confirmedMixText = out.mixText;
+  }
   setIfChanged('siteName', o.siteName ?? o.projectName, p.siteName);
   setIfChanged('siteAddress', o.siteAddress, p.siteAddress);
   setIfChanged('sitePhone', o.sitePhone, p.sitePhone);
@@ -123,15 +129,19 @@ export function buildChangeRequestPatch(order, patch) {
     out.has_test = Boolean(p.has_test);
   }
 
-  // 商社: agent_organization_id の ID 比較のみ（表示名一致ではスキップしない）
-  // 未選択（null）への変更も検出する
-  if (hasAgentOrganizationIdChanged(o, p)) {
-    const afterId = normalizeAgentOrganizationId(p.agent_organization_id);
-    out.agent_organization_id = afterId || null;
-    const traderName = afterId ? resolveTraderDisplayName(p) : '';
-    out.traderName = traderName;
-    out.trading_company_name = traderName;
-    out.projectTradingCompanyName = traderName;
+  // 商社: ID 変更、または表示名の変更のどちらかがあればパッチへ含める
+  const traderIdChanged = hasAgentOrganizationIdChanged(o, p);
+  const beforeTraderName = resolveTraderDisplayName(o);
+  const afterTraderName = resolveTraderDisplayName(p);
+  const traderNameChanged = beforeTraderName !== afterTraderName;
+  if (traderIdChanged || traderNameChanged) {
+    if (Object.prototype.hasOwnProperty.call(p, 'agent_organization_id')) {
+      const afterId = normalizeAgentOrganizationId(p.agent_organization_id);
+      out.agent_organization_id = afterId || null;
+    }
+    out.traderName = afterTraderName;
+    out.trading_company_name = afterTraderName;
+    out.projectTradingCompanyName = afterTraderName;
   }
   return out;
 }
@@ -251,14 +261,15 @@ export function buildChangeRequestDiffRows(order, patch) {
     });
   }
 
-  // 商社は ID 比較で検出（表示名の一致では落とさない。未選択→選択／選択→未選択も対象）
-  if (hasAgentOrganizationIdChanged(o, p)) {
-    const beforeName = resolveTraderDisplayName(o);
-    const afterName = resolveTraderDisplayName(p);
+  // 商社: ID または表示名の変更を検出（チャットと structuredPatch を一致させる）
+  const traderIdChanged = hasAgentOrganizationIdChanged(o, p);
+  const beforeTraderName = resolveTraderDisplayName(o);
+  const afterTraderName = resolveTraderDisplayName(p);
+  if (traderIdChanged || beforeTraderName !== afterTraderName) {
     rows.push({
       label: '商社',
-      before: beforeName || '（未設定）',
-      after: afterName || '（未設定）',
+      before: beforeTraderName || '（未設定）',
+      after: afterTraderName || '（未設定）',
     });
   }
   return rows;
@@ -360,7 +371,7 @@ export function OrderFullEditModal({
     if (!order || !open) return;
     const ts = order.timeSlot != null ? String(order.timeSlot) : '';
     const ok = TIME_SLOTS.some((s) => s.value === ts);
-    const q = order.quantityM3 ?? order.quantityCube;
+    const q = order.confirmedQuantityM3 ?? order.quantityM3 ?? order.quantityCube;
     const projectId = String(order?.project_id ?? order?.projectId ?? '').trim();
     const linkedProject = projectId ? projectById?.[projectId] : null;
     const linkedCustomerId = String(
@@ -383,6 +394,7 @@ export function OrderFullEditModal({
       order.contractorName != null ? String(order.contractorName).trim() : '';
     const agentId =
       order.agent_organization_id != null ? String(order.agent_organization_id).trim() : '';
+    const mixInitial = String(order.confirmedMixText ?? order.mixText ?? '').trim();
     setEditData({
       preferredDate:
         order.preferredDate && typeof order.preferredDate === 'string' ? order.preferredDate : '',
@@ -400,7 +412,7 @@ export function OrderFullEditModal({
         sanitizeSiteNameValue(order.siteName) || sanitizeSiteNameValue(order.projectName) || '',
       siteAddress: order.siteAddress != null ? String(order.siteAddress) : '',
       sitePhone: order.sitePhone != null ? String(order.sitePhone) : '',
-      mixText: order.mixText != null ? String(order.mixText) : '',
+      mixText: mixInitial,
       hasTest: Boolean(order.has_test),
     });
     setSaveError('');

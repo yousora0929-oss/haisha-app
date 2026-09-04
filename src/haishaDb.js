@@ -1214,6 +1214,70 @@ export async function submitMixDesignRequestFromOrder({ order, draft, requestedB
   return { request: { id: requestId }, projectId: existingProjectId };
 }
 
+function escapeIlikePattern(raw) {
+  return String(raw || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/%/g, '\\%')
+    .replace(/_/g, '\\_');
+}
+
+function quotePostgrestFilterValue(raw) {
+  return `"${String(raw ?? '').replace(/"/g, '""')}"`;
+}
+
+/**
+ * 配合計画書依頼履歴の一覧・検索（SELECT のみ）。
+ * キーワードは project_name / contractor_name / trading_company_name / site_address の部分一致。
+ * 空キーワード時は新しい順の直近一覧。
+ */
+export async function searchMixDesignRequests({ keyword = '', limit = 50 } = {}) {
+  const q = String(keyword || '').trim();
+  const take = Math.min(Math.max(Number(limit) || 50, 1), 200);
+  let query = supabase
+    .from('mix_design_requests')
+    .select(
+      'id, project_id, project_name, contractor_name, trading_company_name, site_address, requested_to_factory_id, status, created_at, requested_by, total_volume_m3',
+    )
+    .order('created_at', { ascending: false })
+    .limit(take);
+
+  if (q) {
+    const pattern = quotePostgrestFilterValue(`%${escapeIlikePattern(q)}%`);
+    query = query.or(
+      [
+        `project_name.ilike.${pattern}`,
+        `contractor_name.ilike.${pattern}`,
+        `trading_company_name.ilike.${pattern}`,
+        `site_address.ilike.${pattern}`,
+      ].join(','),
+    );
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
+
+/** 1件の依頼 + 配合パターン明細（印刷用） */
+export async function fetchMixDesignRequestWithItems(requestId) {
+  const id = String(requestId || '').trim();
+  if (!id) throw new Error('依頼IDが必要です');
+  const { data: request, error } = await supabase
+    .from('mix_design_requests')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw error;
+  if (!request) throw new Error('依頼が見つかりません');
+  const { data: items, error: itemError } = await supabase
+    .from('mix_design_request_items')
+    .select('*')
+    .eq('request_id', id)
+    .order('sort_order', { ascending: true });
+  if (itemError) throw itemError;
+  return { request, items: Array.isArray(items) ? items : [] };
+}
+
 export async function updateOrderDetails(orderId, updatedData) {
   const id = String(orderId || '').trim();
   if (!id) throw new Error('orderId が必要です');
@@ -1522,11 +1586,12 @@ export async function submitOrderChangeRequest(orderId, messageBody, structuredP
     throw new Error('変更内容がありません');
   }
 
-  await appendChatMessage(id, 'customer', body);
-
   if (!supabase?.from) {
     throw new Error('Supabase client is not ready');
   }
+
+  // フラグ／パッチを先に確定してからチャット投稿する。
+  // 逆順だとチャットだけ残り has_pending_change_request が立たない事故が起きる。
   const { data, error } = await supabase
     .from('orders')
     .update({
@@ -1540,7 +1605,23 @@ export async function submitOrderChangeRequest(orderId, messageBody, structuredP
     console.error('[haisha] has_pending_change_request 更新失敗', error);
     throw error;
   }
-  return data ? normalizeOrderRow(data) : null;
+  if (!data?.id) {
+    const denied = new Error(
+      '変更依頼の保存に失敗しました。権限または通信状態を確認してください。',
+    );
+    denied.code = 'CHANGE_REQUEST_UPDATE_DENIED';
+    console.error('[haisha] has_pending_change_request 更新が空応答', { orderId: id });
+    throw denied;
+  }
+
+  try {
+    await appendChatMessage(id, 'customer', body);
+  } catch (chatErr) {
+    // パッチは保存済み。チャット失敗は警告に留め、依頼自体は成功扱いにする。
+    console.warn('[haisha] 変更依頼チャット投稿失敗（パッチは保存済み）', chatErr);
+  }
+
+  return normalizeOrderRow(data);
 }
 
 /** 変更依頼フラグを明示的に下ろす（対応済み） */
