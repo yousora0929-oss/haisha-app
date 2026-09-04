@@ -3,6 +3,9 @@ import {
   buildMixDesignItemInsertRows,
   buildMixDesignRequestInsertRow,
   computeNominalStrength,
+  mixCodeForItem,
+  mixDesignItemFromDbRow,
+  mixDesignPrintPropsFromDb,
   resolveMixDesignProjectId,
   resolvePourDateFromPeriod,
   sanitizeNonNegativeInput,
@@ -209,5 +212,98 @@ describe('buildMixDesignRequestInsertRow', () => {
     expect(row.project_name).toBe('末広町工事');
     expect(row.contractor_name).toBe('業者C');
     expect(row.site_address).toBe('大分市末広町1');
+  });
+});
+
+describe('mixDesignPrintPropsFromDb', () => {
+  it('maps all item columns and enriches header from project when snapshots are missing', () => {
+    const props = mixDesignPrintPropsFromDb(
+      {
+        requested_by: '梅田',
+        vehicle_types: ['large'],
+        total_volume_m3: 12.5,
+        memo: 'メモ',
+        submission_method: 'original',
+      },
+      [
+        {
+          id: 'item-1',
+          sort_order: 0,
+          base_strength: 18,
+          correction_value: 3,
+          correction_is_auto: false,
+          nominal_strength: 21,
+          slump: 8,
+          aggregate_size: 20,
+          cement_type: 'N',
+          ae_admixture: true,
+          quantity_m3: '12.5',
+          pour_date: '2026-09-15',
+          construction_location: '1階スラブ',
+          water_cement_ratio: 55,
+          unit_water_content: 175,
+        },
+      ],
+      {
+        name: '棚林川復旧工事',
+        contractor_display_name: '表示業者',
+        contractor: '業者名',
+        trading_company_name: '商社X',
+        site_address: '大分市xxx',
+      },
+    );
+
+    expect(props.header.projectName).toBe('棚林川復旧工事');
+    expect(props.header.contractorName).toBe('表示業者');
+    expect(props.header.traderName).toBe('商社X');
+    expect(props.header.siteAddress).toBe('大分市xxx');
+    expect(props.header.requestedBy).toBe('梅田');
+    expect(props.items).toHaveLength(1);
+    expect(props.items[0].waterCementRatio).toBe('55');
+    expect(props.items[0].unitWaterContent).toBe('175');
+    expect(props.items[0].quantityM3).toBe('12.5');
+    expect(props.items[0].constructionLocation).toBe('1階スラブ');
+    expect(props.items[0].pourDate).toBe('2026-09-15');
+    expect(mixCodeForItem(props.items[0])).toContain('18');
+  });
+
+  it('prefers request snapshot fields over project fallback', () => {
+    const props = mixDesignPrintPropsFromDb(
+      {
+        project_name: '依頼時の工事名',
+        contractor_name: '依頼時の業者',
+        site_address: '依頼時住所',
+        trading_company_name: '依頼時商社',
+      },
+      [],
+      {
+        name: '物件名',
+        contractor: '物件業者',
+        site_address: '物件住所',
+        trading_company_name: '物件商社',
+      },
+    );
+    expect(props.header.projectName).toBe('依頼時の工事名');
+    expect(props.header.contractorName).toBe('依頼時の業者');
+    expect(props.header.siteAddress).toBe('依頼時住所');
+    expect(props.header.traderName).toBe('依頼時商社');
+  });
+});
+
+describe('mixDesignItemFromDbRow', () => {
+  it('keeps numeric DB values as printable strings', () => {
+    const item = mixDesignItemFromDbRow({
+      base_strength: 24,
+      slump: 12,
+      aggregate_size: 25,
+      cement_type: 'BB',
+      quantity_m3: 3,
+      water_cement_ratio: 0,
+      unit_water_content: 160,
+    });
+    expect(item.baseStrength).toBe('24');
+    expect(item.quantityM3).toBe('3');
+    expect(item.waterCementRatio).toBe('0');
+    expect(item.unitWaterContent).toBe('160');
   });
 });

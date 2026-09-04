@@ -1355,7 +1355,7 @@ export async function searchMixDesignRequests({ keyword = '', limit = 50 } = {})
     .slice(0, take);
 }
 
-/** 1件の依頼 + 配合パターン明細（印刷用） */
+/** 1件の依頼 + 配合パターン明細（印刷用）。project はスナップショット欠落時の補完用。 */
 export async function fetchMixDesignRequestWithItems(requestId) {
   const id = String(requestId || '').trim();
   if (!id) throw new Error('依頼IDが必要です');
@@ -1372,7 +1372,25 @@ export async function fetchMixDesignRequestWithItems(requestId) {
     .eq('request_id', id)
     .order('sort_order', { ascending: true });
   if (itemError) throw itemError;
-  return { request, items: Array.isArray(items) ? items : [] };
+
+  let project = null;
+  const projectId = String(request.project_id || '').trim();
+  if (projectId) {
+    const { data: projectRow, error: projectError } = await supabase
+      .from('projects')
+      .select(
+        'id, name, contractor, contractor_display_name, site_address, trading_company_name, delivery_area',
+      )
+      .eq('id', projectId)
+      .maybeSingle();
+    if (projectError) {
+      console.warn('[fetchMixDesignRequestWithItems] project lookup failed', projectError);
+    } else {
+      project = projectRow || null;
+    }
+  }
+
+  return { request, items: Array.isArray(items) ? items : [], project };
 }
 
 export async function updateOrderDetails(orderId, updatedData) {

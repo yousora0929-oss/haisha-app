@@ -619,34 +619,51 @@ export function mixDesignStatusLabel(status) {
   return MIX_DESIGN_STATUS_LABELS[key] || key || '—';
 }
 
-/** DB の mix_design_request_items 行 → 印刷/フォーム用 item */
+/** DB の mix_design_request_items 行 → 印刷/フォーム用 item（作成時 draft item と同じキー） */
 export function mixDesignItemFromDbRow(row, index = 0) {
   const pourDate = row?.pour_date != null ? String(row.pour_date).slice(0, 10) : '';
   const parts = pourPartsFromIso(pourDate);
+  const quantityRaw = row?.quantity_m3;
   return {
     localId: String(row?.id || `mixitem_db_${index}`),
-    baseStrength: row?.base_strength != null ? String(row.base_strength) : '',
-    correctionValue: row?.correction_value != null ? String(row.correction_value) : '',
+    baseStrength: row?.base_strength != null && row.base_strength !== '' ? String(row.base_strength) : '',
+    correctionValue:
+      row?.correction_value != null && row.correction_value !== '' ? String(row.correction_value) : '',
     correctionIsAuto: Boolean(row?.correction_is_auto),
-    nominalStrength: row?.nominal_strength != null ? String(row.nominal_strength) : '',
-    slump: row?.slump != null ? String(row.slump) : '',
-    aggregateSize: row?.aggregate_size != null ? String(row.aggregate_size) : '',
+    nominalStrength:
+      row?.nominal_strength != null && row.nominal_strength !== '' ? String(row.nominal_strength) : '',
+    slump: row?.slump != null && row.slump !== '' ? String(row.slump) : '',
+    aggregateSize: row?.aggregate_size != null && row.aggregate_size !== '' ? String(row.aggregate_size) : '',
     cementType: String(row?.cement_type || 'N'),
     aeAdmixture: Boolean(row?.ae_admixture),
-    quantityM3: row?.quantity_m3 != null ? String(row.quantity_m3) : '',
+    quantityM3: quantityRaw != null && quantityRaw !== '' ? String(quantityRaw) : '',
     pourDate,
     pourMonth: parts.pourMonth,
     pourDay: parts.pourDay,
     pourYearOverride: '',
     pourDateOutOfRange: false,
     constructionLocation: String(row?.construction_location || ''),
-    waterCementRatio: row?.water_cement_ratio != null ? String(row.water_cement_ratio) : '',
-    unitWaterContent: row?.unit_water_content != null ? String(row.unit_water_content) : '',
+    waterCementRatio:
+      row?.water_cement_ratio != null && row.water_cement_ratio !== ''
+        ? String(row.water_cement_ratio)
+        : '',
+    unitWaterContent:
+      row?.unit_water_content != null && row.unit_water_content !== ''
+        ? String(row.unit_water_content)
+        : '',
   };
 }
 
-/** DB の mix_design_requests + items → MixDesignRequestPrint 用 props */
-export function mixDesignPrintPropsFromDb(request, itemRows = []) {
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const text = String(value ?? '').trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+/** DB の mix_design_requests + items → MixDesignRequestPrint 用 props（作成時プレビューと同じ形状） */
+export function mixDesignPrintPropsFromDb(request, itemRows = [], project = null) {
   const items = (Array.isArray(itemRows) ? itemRows : [])
     .slice()
     .sort((a, b) => Number(a?.sort_order ?? 0) - Number(b?.sort_order ?? 0))
@@ -659,29 +676,45 @@ export function mixDesignPrintPropsFromDb(request, itemRows = []) {
     request?.total_volume_m3 != null && request.total_volume_m3 !== ''
       ? Number(request.total_volume_m3)
       : sumMixDesignQuantityM3({ items });
+
+  const projectName = firstNonEmpty(request?.project_name, project?.name);
+  const contractorName = firstNonEmpty(
+    request?.contractor_name,
+    project?.contractor_display_name,
+    project?.contractor,
+  );
+  const primeContractorName = firstNonEmpty(
+    request?.prime_contractor_name,
+    project?.contractor_display_name,
+    project?.contractor,
+    contractorName,
+  );
+  const traderName = firstNonEmpty(request?.trading_company_name, project?.trading_company_name);
+  const siteAddress = firstNonEmpty(request?.site_address, project?.site_address);
+  const siteManagerName = firstNonEmpty(request?.site_manager_name);
+  const siteManagerContact = firstNonEmpty(request?.site_manager_contact);
+  const requestedBy = firstNonEmpty(request?.requested_by);
+
   return {
     header: {
-      projectName: String(request?.project_name || '').trim(),
-      contractorName: String(request?.contractor_name || '').trim(),
-      primeContractorName: String(request?.prime_contractor_name || '').trim(),
-      traderName: String(request?.trading_company_name || '').trim(),
-      siteAddress: String(request?.site_address || '').trim(),
+      projectName,
+      contractorName,
+      primeContractorName,
+      traderName,
+      siteAddress,
       constructionPeriod: formatConstructionPeriod(periodStart, periodEnd),
       periodStart,
       periodEnd,
       vehicleTypes,
-      siteManagerName: String(request?.site_manager_name || '').trim(),
-      siteManagerContact: String(request?.site_manager_contact || '').trim(),
-      siteContact: [request?.site_manager_name, request?.site_manager_contact]
-        .map((v) => String(v || '').trim())
-        .filter(Boolean)
-        .join(' / '),
+      siteManagerName,
+      siteManagerContact,
+      siteContact: [siteManagerName, siteManagerContact].filter(Boolean).join(' / '),
       firstPourDate: firstPour,
       totalVolumeM3: Number.isFinite(total) ? total : null,
-      requestedBy: String(request?.requested_by || '').trim(),
+      requestedBy,
     },
     request: {
-      requestedBy: String(request?.requested_by || '').trim(),
+      requestedBy,
       vehicleTypes,
       totalVolumeM3: Number.isFinite(total) ? total : null,
       submissionMethod: String(request?.submission_method || ''),
