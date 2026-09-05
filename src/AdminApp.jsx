@@ -62,6 +62,7 @@ import { SCHEDULE_BLOCK_IDS, normalizeDayBlockSchedule, todayLocalISODate } from
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { orderPartyInfo } from './utils/orderPartyInfo.js';
 // 業者欄: contractorName 優先（utils/orderPartyInfo）。代理発注で業者名未設定時は発注者名を業者の代役にしない。
+import { unloadDurationLabel } from './utils/unloadDurationLabel.js';
 import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
@@ -2822,20 +2823,36 @@ function AdminOrderDetailModal({
   const [quantityM3, setQuantityM3] = useState('');
   const [mixText, setMixText] = useState('');
   const [siteName, setSiteName] = useState('');
+  const [vehicleType, setVehicleType] = useState('large');
+  const [unloadDuration, setUnloadDuration] = useState('30');
+  const [hasTest, setHasTest] = useState(false);
+  const [traderName, setTraderName] = useState('');
+  const [contractorName, setContractorName] = useState('');
+  const [siteAddress, setSiteAddress] = useState('');
+  const [sitePhone, setSitePhone] = useState('');
+  const [managerName, setManagerName] = useState('');
+  const [deliveryLat, setDeliveryLat] = useState('');
+  const [deliveryLng, setDeliveryLng] = useState('');
+  const [locationOpen, setLocationOpen] = useState(false);
   const [agentOrganizationId, setAgentOrganizationId] = useState('');
   const [agentOrganizations, setAgentOrganizations] = useState([]);
   const [editingFactories, setEditingFactories] = useState(false);
   const agentOrganizationIdRef = useRef('');
 
-  const applyAgentOrganizationId = (next) => {
+  const applyAgentOrganizationId = (next, options = agentOrganizations) => {
     const value = next != null ? String(next).trim() : '';
     agentOrganizationIdRef.current = value;
     setAgentOrganizationId(value);
+    const sync = buildAgentOrganizationSyncPatch(value || null, options);
+    if (Object.prototype.hasOwnProperty.call(sync, 'traderName')) {
+      setTraderName(String(sync.traderName || ''));
+    }
   };
 
   useEffect(() => {
     if (!open || !order) return;
     setEditingFactories(false);
+    setLocationOpen(false);
     setPreferredDate(orderDeliveryDate(order));
     const t = formatOrderTime(order);
     setTimeValue(t === '—' ? '' : t);
@@ -2843,9 +2860,24 @@ function AdminOrderDetailModal({
     setQuantityM3(q != null ? String(q) : '');
     setMixText(order.mixText != null ? String(order.mixText) : '');
     setSiteName(orderSiteName(order) === '（現場名未入力）' ? '' : orderSiteName(order));
+    setVehicleType(order.vehicleType === 'small' ? 'small' : 'large');
+    setUnloadDuration(
+      String(order.unloadDurationMinutes || order.unloadDuration || order.unloadingTime || '30'),
+    );
+    setHasTest(Boolean(order.has_test));
+    setTraderName(order.traderName != null ? String(order.traderName) : '');
+    setContractorName(order.contractorName != null ? String(order.contractorName) : '');
+    setSiteAddress(order.siteAddress != null ? String(order.siteAddress) : '');
+    setSitePhone(order.sitePhone != null ? String(order.sitePhone) : '');
+    setManagerName(order.manager_name != null ? String(order.manager_name) : '');
+    setDeliveryLat(order.delivery_lat != null ? String(order.delivery_lat) : '');
+    setDeliveryLng(order.delivery_lng != null ? String(order.delivery_lng) : '');
     applyAgentOrganizationId(
       order.agent_organization_id != null ? String(order.agent_organization_id).trim() : '',
+      [],
     );
+    // traderName は order の表示名を優先（空の agent list で sync が空上書きしないよう再セット）
+    setTraderName(order.traderName != null ? String(order.traderName) : '');
     // order オブジェクト参照ではなく id で初期化する。親の再レンダーで選択値を空へ戻さない。
   }, [open, order?.id]);
 
@@ -2912,10 +2944,22 @@ function AdminOrderDetailModal({
 
   const submit = (e) => {
     e.preventDefault();
+    const qtyRaw = String(quantityM3 || '').trim();
+    if (qtyRaw !== '') {
+      const qtyNum = Number(qtyRaw);
+      if (!Number.isFinite(qtyNum) || qtyNum < 0) {
+        window.alert('数量は0以上の数値で入力してください。');
+        return;
+      }
+    }
     const minutes = parseTimeInputToMinutes(timeValue);
     // 空文字は「商社なし」として有効。falsy フォールバックで UUID を復活させない。
     const selectedId = String(agentOrganizationIdRef.current ?? agentOrganizationId ?? '').trim();
     const agentSync = buildAgentOrganizationSyncPatch(selectedId || null, agentSelectOptions);
+    const latRaw = String(deliveryLat || '').trim();
+    const lngRaw = String(deliveryLng || '').trim();
+    const latNum = latRaw !== '' ? Number(latRaw) : NaN;
+    const lngNum = lngRaw !== '' ? Number(lngRaw) : NaN;
     onSave(order.id, {
       preferredDate,
       delivery_date: preferredDate,
@@ -2925,14 +2969,30 @@ function AdminOrderDetailModal({
       timePointLabel: timeValue,
       scheduleMatchDate: preferredDate,
       scheduleMatchMinutes: minutes,
-      quantityM3: quantityM3.trim(),
+      quantityM3: qtyRaw,
       mixText: mixText.trim(),
       siteName: siteName.trim(),
+      vehicleType,
+      vehicleLabel: vehicleType === 'large' ? '大型' : '小型',
+      unloadDuration,
+      unloadDurationMinutes: unloadDuration,
+      unloadDurationLabel: unloadDurationLabel(unloadDuration),
+      has_test: hasTest,
       ...agentSync,
+      // 表示用商社名は手動入力を優先（agent_organization_id は agentSync 側）
+      traderName: traderName.trim(),
+      trading_company_name: traderName.trim(),
+      contractorName: contractorName.trim(),
+      siteAddress: siteAddress.trim(),
+      sitePhone: sitePhone.trim(),
+      manager_name: managerName.trim() || null,
+      ...(Number.isFinite(latNum) ? { delivery_lat: latNum, deliveryLat: latNum } : {}),
+      ...(Number.isFinite(lngNum) ? { delivery_lng: lngNum, deliveryLng: lngNum } : {}),
     });
   };
 
   const inputClass = 'mt-1 min-h-[42px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-bold text-slate-900';
+  const sectionTitleClass = 'sm:col-span-2 mt-1 text-xs font-black uppercase tracking-wider text-slate-500';
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <form onSubmit={submit} className="flex max-h-[min(92vh,900px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border-2 border-slate-200 bg-white shadow-2xl">
@@ -3080,18 +3140,87 @@ function AdminOrderDetailModal({
 
           <h4 className="mt-5 text-sm font-black text-slate-800">内容を編集</h4>
           <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            <h5 className={sectionTitleClass}>基本情報</h5>
             <label className="text-xs font-black text-slate-600">希望日<input type="date" value={preferredDate} onChange={(e) => setPreferredDate(e.target.value)} className={inputClass} /></label>
             <label className="text-xs font-black text-slate-600">希望時刻<input type="time" value={timeValue} onChange={(e) => setTimeValue(e.target.value)} className={inputClass} /></label>
-            <label className="text-xs font-black text-slate-600">数量<input type="text" value={quantityM3} onChange={(e) => setQuantityM3(e.target.value)} className={inputClass} /></label>
+            <label className="text-xs font-black text-slate-600">
+              数量
+              <input
+                type="number"
+                min="0"
+                step="any"
+                inputMode="decimal"
+                value={quantityM3}
+                onChange={(e) => setQuantityM3(e.target.value)}
+                className={inputClass}
+              />
+            </label>
             <label className="text-xs font-black text-slate-600">配合<input type="text" value={mixText} onChange={(e) => setMixText(e.target.value)} className={inputClass} /></label>
             <label className="text-xs font-black text-slate-600 sm:col-span-2">現場名<input type="text" value={siteName} onChange={(e) => setSiteName(e.target.value)} className={inputClass} /></label>
+
+            <h5 className={sectionTitleClass}>車両・荷卸し・試験</h5>
+            <div className="sm:col-span-2">
+              <span className="text-xs font-black text-slate-600">車両</span>
+              <div className="mt-2 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setVehicleType('large')}
+                  className={
+                    'min-h-[44px] flex-1 rounded-lg border-2 text-sm font-black ' +
+                    (vehicleType === 'large'
+                      ? 'border-indigo-600 bg-indigo-600 text-white'
+                      : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50')
+                  }
+                >
+                  大型
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVehicleType('small')}
+                  className={
+                    'min-h-[44px] flex-1 rounded-lg border-2 text-sm font-black ' +
+                    (vehicleType === 'small'
+                      ? 'border-indigo-600 bg-indigo-600 text-white'
+                      : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50')
+                  }
+                >
+                  小型
+                </button>
+              </div>
+            </div>
+            <label className="text-xs font-black text-slate-600 sm:col-span-2">
+              荷卸し時間
+              <select value={unloadDuration} onChange={(e) => setUnloadDuration(e.target.value)} className={inputClass}>
+                <option value="15">15分</option>
+                <option value="30">30分（標準）</option>
+                <option value="45">45分</option>
+                <option value="60">60分（手押し車など時間要）</option>
+                <option value="95_plus">95分以上（要相談）</option>
+              </select>
+            </label>
+            <label className="sm:col-span-2 flex cursor-pointer items-start gap-3 rounded-lg border-2 border-indigo-200 bg-white px-3 py-3">
+              <input
+                type="checkbox"
+                checked={hasTest}
+                onChange={(e) => setHasTest(e.target.checked)}
+                className="mt-0.5 h-5 w-5 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <span className="text-sm font-bold text-slate-800">
+                試験の有無（試験あり）
+                <span className="mt-1 block text-xs font-medium text-slate-500">
+                  未チェックは試験なしとして保存されます。
+                </span>
+              </span>
+            </label>
+
+            <h5 className={sectionTitleClass}>当事者情報</h5>
             <label className="text-xs font-black text-slate-600 sm:col-span-2" htmlFor="admin-order-agent-org">
-              商社
+              商社（請求先組織）
               <select
                 id="admin-order-agent-org"
                 name="agentOrganizationId"
                 value={agentOrganizationId}
-                onChange={(e) => applyAgentOrganizationId(e.currentTarget.value)}
+                onChange={(e) => applyAgentOrganizationId(e.currentTarget.value, agentSelectOptions)}
                 className={inputClass}
               >
                 <option value="">商社なし（直接請求）</option>
@@ -3102,6 +3231,86 @@ function AdminOrderDetailModal({
                 ))}
               </select>
             </label>
+            <label className="text-xs font-black text-slate-600 sm:col-span-2">
+              商社名（表示用・任意）
+              <input
+                type="text"
+                value={traderName}
+                onChange={(e) => setTraderName(e.target.value)}
+                className={inputClass}
+                placeholder="帳票・一覧の表示名"
+              />
+            </label>
+            <label className="text-xs font-black text-slate-600 sm:col-span-2">
+              業者名
+              <input type="text" value={contractorName} onChange={(e) => setContractorName(e.target.value)} className={inputClass} />
+            </label>
+            <label className="text-xs font-black text-slate-600 sm:col-span-2">
+              現場住所
+              <input type="text" value={siteAddress} onChange={(e) => setSiteAddress(e.target.value)} className={inputClass} />
+            </label>
+            <label className="text-xs font-black text-slate-600 sm:col-span-2">
+              電話番号
+              <input
+                type="text"
+                inputMode="tel"
+                value={sitePhone}
+                onChange={(e) => setSitePhone(e.target.value)}
+                className={inputClass}
+              />
+            </label>
+
+            <h5 className={sectionTitleClass}>担当者情報</h5>
+            <label className="text-xs font-black text-slate-600 sm:col-span-2">
+              担当者名（現場・帳票表示用）
+              <input
+                type="text"
+                value={managerName}
+                onChange={(e) => setManagerName(e.target.value)}
+                className={inputClass}
+                placeholder="未登録の場合は『担当者』と表示されます"
+              />
+            </label>
+
+            <div className="sm:col-span-2">
+              <button
+                type="button"
+                onClick={() => setLocationOpen((v) => !v)}
+                className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left text-xs font-black text-slate-600 hover:bg-slate-100"
+              >
+                <span>現場位置（詳細）</span>
+                <span className="font-bold text-slate-400">{locationOpen ? '▲' : '▼'}</span>
+              </button>
+              {locationOpen ? (
+                <div className="mt-2 grid gap-3 rounded-lg border border-dashed border-slate-200 bg-white p-3 sm:grid-cols-2">
+                  <p className="sm:col-span-2 text-[11px] font-medium text-slate-500">
+                    地図編集が主の入力です。ここは補助的な手動修正用です。
+                  </p>
+                  <label className="text-xs font-black text-slate-600">
+                    緯度
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={deliveryLat}
+                      onChange={(e) => setDeliveryLat(e.target.value)}
+                      className={inputClass}
+                      placeholder="例: 33.238"
+                    />
+                  </label>
+                  <label className="text-xs font-black text-slate-600">
+                    経度
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={deliveryLng}
+                      onChange={(e) => setDeliveryLng(e.target.value)}
+                      className={inputClass}
+                      placeholder="例: 131.612"
+                    />
+                  </label>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
         <div className="flex shrink-0 gap-2 border-t border-slate-200 bg-white p-4">

@@ -1704,6 +1704,22 @@ export async function updateOrderDetails(orderId, updatedData) {
       sanitizeRefId(patch.agent_organization_id ?? patch.agentOrganizationId) || null;
     // 表示名は order_data 側（mergedOrderData）に既に含まれている想定
   }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'delivery_lat') ||
+    Object.prototype.hasOwnProperty.call(patch, 'deliveryLat')
+  ) {
+    const raw = patch.delivery_lat ?? patch.deliveryLat;
+    const n = raw == null || raw === '' ? NaN : Number(raw);
+    updateRow.delivery_lat = Number.isFinite(n) ? n : null;
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'delivery_lng') ||
+    Object.prototype.hasOwnProperty.call(patch, 'deliveryLng')
+  ) {
+    const raw = patch.delivery_lng ?? patch.deliveryLng;
+    const n = raw == null || raw === '' ? NaN : Number(raw);
+    updateRow.delivery_lng = Number.isFinite(n) ? n : null;
+  }
   const { data: updated, error: upErr } = await supabase
     .from('orders')
     .update(updateRow)

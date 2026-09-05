@@ -20,6 +20,7 @@ import {
   resolveOrderPartyDisplay,
   resolveProjectPartyDisplay,
 } from './utils/projectPartyDisplay.js';
+import { factoryUnloadDurationLabel } from './utils/unloadDurationLabel.js';
 import BillingMark from './components/BillingMark.jsx';
 import {
   OrderFullEditModal,
@@ -169,17 +170,6 @@ function factoryOrderQuantity(order) {
   const raw = order?.confirmedQuantityM3 ?? order?.quantityM3 ?? order?.quantityCube;
   const n = Number(raw);
   return Number.isFinite(n) ? n : 0;
-}
-
-function factoryUnloadDurationLabel(order) {
-  const raw = order?.unloadDurationLabel || order?.unloadDurationMinutes || order?.unloadDuration || order?.unloadingTime;
-  const value = String(raw || '30');
-  if (value === '15') return '15分';
-  if (value === '30') return '30分（標準）';
-  if (value === '45') return '45分';
-  if (value === '60') return '60分（手押し車など時間要）';
-  if (value === '95_plus') return '95分以上（要相談）';
-  return String(raw || '30分（標準）');
 }
 
 function orderContactPersonName(order, fallback = '担当者', customer = null) {

@@ -10,16 +10,7 @@ import {
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from '../utils/siteNameDisplay.js';
 import { buildAgentOrganizationSyncPatch } from '../utils/orderAgentOrganization.js';
 import { isValidSiteOrderUrlToken } from '../utils/urlValidation.js';
-
-function unloadDurationLabel(value) {
-  const v = String(value || '30');
-  if (v === '15') return '15分';
-  if (v === '30') return '30分（標準）';
-  if (v === '45') return '45分';
-  if (v === '60') return '60分（手押し車など時間要）';
-  if (v === '95_plus') return '95分以上（要相談）';
-  return String(value || '30分（標準）');
-}
+import { unloadDurationLabel } from '../utils/unloadDurationLabel.js';
 
 function vehicleTypeLabel(value) {
   return String(value || '') === 'small' ? '小型' : '大型';
