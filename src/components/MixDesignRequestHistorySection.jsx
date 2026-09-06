@@ -4,6 +4,7 @@ import { MixDesignRequestModal } from './MixDesignRequestModal.jsx';
 import { MixDesignRequestPrint } from './MixDesignRequestPrint.jsx';
 import {
   formatMixDesignChangeLine,
+  formatMixDesignFactoryNames,
   mixDesignLastChangedAt,
   mixDesignPrintPropsFromDb,
   mixDesignStatusLabel,
@@ -105,13 +106,19 @@ export function MixDesignRequestHistorySection({
     setPrintLoadingId(id);
     setError('');
     try {
-      const [{ request, items, project }, logs] = await Promise.all([
+      const [{ request, items, project, factoryIds }, logs] = await Promise.all([
         db.fetchMixDesignRequestWithItems(id),
         db.fetchMixDesignRequestChangeLogs(id).catch(() => []),
       ]);
       const latestLog = Array.isArray(logs) && logs.length ? logs[0] : null;
       setChangeLogs(Array.isArray(logs) ? logs : []);
-      setPrintBundle(mixDesignPrintPropsFromDb(request, items, project, { latestChangeLog: latestLog }));
+      setPrintBundle(
+        mixDesignPrintPropsFromDb(request, items, project, {
+          latestChangeLog: latestLog,
+          factoryIds,
+          factoryNameById,
+        }),
+      );
     } catch (err) {
       console.error('配合計画書依頼の印刷データ取得に失敗しました', err);
       const message = err?.message || '印刷データの取得に失敗しました';
@@ -128,8 +135,8 @@ export function MixDesignRequestHistorySection({
     setEditLoadingId(id);
     setError('');
     try {
-      const { request, items, project } = await db.fetchMixDesignRequestWithItems(id);
-      setEditBundle({ request, items, project });
+      const { request, items, project, factoryIds } = await db.fetchMixDesignRequestWithItems(id);
+      setEditBundle({ request, items, project, factoryIds });
     } catch (err) {
       console.error('配合計画書依頼の編集データ取得に失敗しました', err);
       const message = err?.message || '編集データの取得に失敗しました';
@@ -309,6 +316,7 @@ export function MixDesignRequestHistorySection({
             <h2 className="text-base font-black text-slate-900">配合計画書依頼履歴</h2>
             <p className="mt-2 text-xs leading-relaxed text-slate-500">
               過去の配合計画書作成依頼を検索・確認・印刷・編集できます。編集時は変更履歴が残ります。
+              現場担当者名・連絡先でも検索できます。
             </p>
           </div>
         </div>
@@ -320,7 +328,7 @@ export function MixDesignRequestHistorySection({
               type="search"
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
-              placeholder="現場名・業者名・商社名・現場住所"
+              placeholder="現場名・業者名・商社名・現場住所・担当者名・電話"
               className="mt-1 min-h-[48px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-base text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
             />
           </label>
@@ -347,9 +355,14 @@ export function MixDesignRequestHistorySection({
         ) : (
           <ul className="mt-5 grid grid-cols-1 gap-3">
             {rows.map((row) => {
-              const factoryName =
-                factoryNameById.get(String(row.requested_to_factory_id || '')) ||
-                (row.requested_to_factory_id ? String(row.requested_to_factory_id) : '未指定');
+              const factoryName = formatMixDesignFactoryNames(
+                row.requested_to_factory_ids?.length
+                  ? row.requested_to_factory_ids
+                  : row.requested_to_factory_id
+                    ? [row.requested_to_factory_id]
+                    : [],
+                factoryNameById,
+              );
               const lastChanged = mixDesignLastChangedAt(row);
               return (
                 <li key={row.id}>
@@ -428,6 +441,7 @@ export function MixDesignRequestHistorySection({
           editRequestId={editBundle.request?.id}
           initialRequest={editBundle.request}
           initialItems={editBundle.items}
+          initialFactoryIds={editBundle.factoryIds || []}
           order={{
             project_id: editBundle.request?.project_id,
             customer_id: currentCustomerId,

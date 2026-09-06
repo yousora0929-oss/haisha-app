@@ -137,6 +137,12 @@ export function MixDesignRequestPrint({
             </td>
           </tr>
           <tr>
+            <th style={LABEL_CELL}>依頼先工場</th>
+            <td colSpan={3}>
+              {header?.factoryNames || request?.factoryNames || '—'}
+            </td>
+          </tr>
+          <tr>
             <th style={LABEL_CELL}>元請名</th>
             <td>
               <PrintField

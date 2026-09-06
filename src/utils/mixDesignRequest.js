@@ -73,7 +73,7 @@ export function createEmptyMixDesignDraft() {
     siteManagerContact: '',
     registerSiteManagerAsContact: false,
     region: MIX_DESIGN_REGIONS[0],
-    requestedToFactoryId: '',
+    requestedToFactoryIds: [],
     items: [createEmptyMixDesignItem()],
     submissionMethod: '',
     submissionEmail: '',
@@ -424,7 +424,7 @@ export function prefillMixDesignDraft(order, project, requestedBy = '') {
       project?.mainFactoryId ??
       '',
   ).trim();
-  draft.requestedToFactoryId = factoryId;
+  draft.requestedToFactoryIds = factoryId ? [factoryId] : [];
 
   const mixRaw = String(order?.confirmedMixText ?? order?.mixText ?? '')
     .replace(/・高性能.*$/, '')
@@ -462,8 +462,9 @@ export function buildMixDesignAnchorProjectPayload(order, draft) {
       null,
     siteAddress: String(draft?.siteAddress || order?.siteAddress || order?.site_address || '').trim() || null,
     mainFactoryId:
-      String(draft?.requestedToFactoryId || order?.preferred_factory_id || order?.preferredFactoryId || '')
-        .trim() || null,
+      normalizeMixDesignFactoryIds(draft)[0] ||
+      String(order?.preferred_factory_id || order?.preferredFactoryId || '').trim() ||
+      null,
     deliveryArea: String(order?.delivery_area ?? order?.deliveryArea ?? '').trim() || null,
     contractor: String(draft?.contractorName || '').trim() || resolveOrderContractorDisplayName(order) || null,
     tradingCompanyName:
@@ -507,6 +508,45 @@ export function mixDesignHeaderFromOrder(order, project) {
   };
 }
 
+export function normalizeMixDesignFactoryIds(draftOrIds, preferredFactoryId = '') {
+  if (Array.isArray(draftOrIds)) {
+    return [
+      ...new Set(
+        draftOrIds
+          .map((id) => String(id || '').trim())
+          .filter(Boolean),
+      ),
+    ];
+  }
+  const draft = draftOrIds && typeof draftOrIds === 'object' ? draftOrIds : {};
+  const fromArray = Array.isArray(draft.requestedToFactoryIds)
+    ? draft.requestedToFactoryIds.map((id) => String(id || '').trim()).filter(Boolean)
+    : [];
+  if (fromArray.length) return [...new Set(fromArray)];
+  const single = String(draft.requestedToFactoryId || preferredFactoryId || '').trim();
+  return single ? [single] : [];
+}
+
+export function formatMixDesignFactoryNames(factoryIds, factoryNameById = {}) {
+  const ids = normalizeMixDesignFactoryIds(factoryIds);
+  if (!ids.length) return '未指定';
+  const map =
+    factoryNameById instanceof Map
+      ? factoryNameById
+      : factoryNameById && typeof factoryNameById === 'object'
+        ? new Map(Object.entries(factoryNameById))
+        : new Map();
+  return ids.map((id) => map.get(String(id)) || id).join('、');
+}
+
+export function toggleMixDesignFactoryId(ids, factoryId) {
+  const id = String(factoryId || '').trim();
+  if (!id) return normalizeMixDesignFactoryIds(ids);
+  const list = normalizeMixDesignFactoryIds(ids);
+  if (list.includes(id)) return list.filter((x) => x !== id);
+  return [...list, id];
+}
+
 export function resolveMixDesignProjectId(insertedOrders, selectedProjectId) {
   const list = Array.isArray(insertedOrders) ? insertedOrders : [];
   for (const order of list) {
@@ -525,7 +565,8 @@ export function buildMixDesignRequestInsertRow({
 }) {
   const pid = String(projectId || '').trim();
   if (!pid) throw new Error('配合計画書依頼の物件IDがありません');
-  const factoryId = String(draft?.requestedToFactoryId || preferredFactoryId || '').trim();
+  const factoryIds = normalizeMixDesignFactoryIds(draft, preferredFactoryId);
+  const factoryId = factoryIds[0] || '';
   const copies = clampNonNegativeNumber(draft?.copiesCount);
   const specimen = clampNonNegativeNumber(draft?.testSpecimenCount);
   const vehicles = Array.isArray(draft?.vehicleTypes)
@@ -535,6 +576,7 @@ export function buildMixDesignRequestInsertRow({
   return {
     project_id: pid,
     requested_to_factory_id: factoryId || null,
+    requested_to_factory_ids: factoryIds,
     requested_by: String(requestedBy || '').trim() || null,
     status: 'requested',
     submission_method: ['original', 'electronic'].includes(String(draft?.submissionMethod || ''))
@@ -712,6 +754,14 @@ export function mixDesignPrintPropsFromDb(request, itemRows = [], project = null
   const siteManagerContact = firstNonEmpty(request?.site_manager_contact);
   const requestedBy = firstNonEmpty(request?.requested_by);
   const lastChangedAt = mixDesignLastChangedAt(request, options.latestChangeLog);
+  const factoryIds = normalizeMixDesignFactoryIds(
+    Array.isArray(options.factoryIds) && options.factoryIds.length
+      ? options.factoryIds
+      : request?.requested_to_factory_id
+        ? [request.requested_to_factory_id]
+        : [],
+  );
+  const factoryNames = formatMixDesignFactoryNames(factoryIds, options.factoryNameById);
 
   return {
     header: {
@@ -731,6 +781,8 @@ export function mixDesignPrintPropsFromDb(request, itemRows = [], project = null
       totalVolumeM3: Number.isFinite(total) ? total : null,
       requestedBy,
       lastChangedAt,
+      requestedToFactoryIds: factoryIds,
+      factoryNames,
     },
     request: {
       requestedBy,
@@ -740,13 +792,21 @@ export function mixDesignPrintPropsFromDb(request, itemRows = [], project = null
       submissionEmail: String(request?.submission_email || ''),
       memo: String(request?.memo || ''),
       lastChangedAt,
+      requestedToFactoryIds: factoryIds,
+      factoryNames,
     },
     items,
   };
 }
 
 /** 履歴行から編集用 draft を復元 */
-export function prefillMixDesignDraftFromRequest(request, itemRows = [], project = null, requestedBy = '') {
+export function prefillMixDesignDraftFromRequest(
+  request,
+  itemRows = [],
+  project = null,
+  requestedBy = '',
+  factoryIds = [],
+) {
   const draft = createEmptyMixDesignDraft();
   const print = mixDesignPrintPropsFromDb(request, itemRows, project);
   draft.projectName = print.header.projectName || '';
@@ -761,7 +821,13 @@ export function prefillMixDesignDraftFromRequest(request, itemRows = [], project
   draft.vehicleTypes = Array.isArray(print.header.vehicleTypes) ? [...print.header.vehicleTypes] : [];
   draft.siteManagerName = print.header.siteManagerName || '';
   draft.siteManagerContact = print.header.siteManagerContact || '';
-  draft.requestedToFactoryId = String(request?.requested_to_factory_id || '').trim();
+  draft.requestedToFactoryIds = normalizeMixDesignFactoryIds(
+    Array.isArray(factoryIds) && factoryIds.length
+      ? factoryIds
+      : request?.requested_to_factory_id
+        ? [request.requested_to_factory_id]
+        : [],
+  );
   draft.requestedBy = firstNonEmpty(requestedBy, request?.requested_by);
   draft.submissionMethod = String(request?.submission_method || '');
   draft.submissionEmail = String(request?.submission_email || '');
@@ -809,7 +875,7 @@ export function buildMixDesignRequestSnapshot(draft, requestedBy = '') {
       vehicleTypes: Array.isArray(draft?.vehicleTypes) ? draft.vehicleTypes.map(String) : [],
       siteManagerName: String(draft?.siteManagerName || '').trim(),
       siteManagerContact: String(draft?.siteManagerContact || '').trim(),
-      requestedToFactoryId: String(draft?.requestedToFactoryId || '').trim(),
+      requestedToFactoryIds: normalizeMixDesignFactoryIds(draft),
       requestedBy: String(requestedBy || draft?.requestedBy || '').trim(),
       submissionMethod: String(draft?.submissionMethod || '').trim(),
       submissionEmail: String(draft?.submissionEmail || '').trim(),
@@ -854,6 +920,7 @@ const MIX_DESIGN_CHANGE_LABELS = {
   siteManagerName: '現場担当者',
   siteManagerContact: '現場担当者連絡先',
   requestedToFactoryId: '依頼先工場',
+  requestedToFactoryIds: '依頼先工場',
   requestedBy: '依頼者',
   submissionMethod: '提出方法',
   submissionEmail: '提出メール',
@@ -912,6 +979,11 @@ export function formatMixDesignChangeLine(entry) {
     const oldCount = Array.isArray(entry.old) ? entry.old.length : 0;
     const newCount = Array.isArray(entry.new) ? entry.new.length : 0;
     return `${label}: ${oldCount}件 → ${newCount}件`;
+  }
+  if (entry?.field === 'requestedToFactoryIds') {
+    const oldIds = Array.isArray(entry.old) ? entry.old.join('、') : stringifyChangeValue(entry?.old);
+    const newIds = Array.isArray(entry.new) ? entry.new.join('、') : stringifyChangeValue(entry?.new);
+    return `${label}: ${oldIds || '（空）'} → ${newIds || '（空）'}`;
   }
   return `${label}: ${stringifyChangeValue(entry?.old) || '（空）'} → ${stringifyChangeValue(entry?.new) || '（空）'}`;
 }

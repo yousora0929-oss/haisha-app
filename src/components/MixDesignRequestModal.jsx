@@ -28,6 +28,7 @@ import {
   sanitizeNonNegativeInput,
   selectAllOnFocus,
   sumMixDesignQuantityM3,
+  toggleMixDesignFactoryId,
   toggleMixDesignVehicle,
   validateMixDesignDraft,
 } from '../utils/mixDesignRequest.js';
@@ -255,6 +256,7 @@ export function MixDesignRequestModal({
   editRequestId = '',
   initialRequest = null,
   initialItems = null,
+  initialFactoryIds = [],
   onClose,
   onSubmitted,
 }) {
@@ -274,7 +276,13 @@ export function MixDesignRequestModal({
     if (!open) return undefined;
     if (wasOpen) return undefined;
     const nextDraft = isEdit
-      ? prefillMixDesignDraftFromRequest(initialRequest, initialItems, project, requestedByDefault)
+      ? prefillMixDesignDraftFromRequest(
+          initialRequest,
+          initialItems,
+          project,
+          requestedByDefault,
+          initialFactoryIds,
+        )
       : prefillMixDesignDraft(order, project, requestedByDefault);
     setDraft(nextDraft);
     setBaselineDraft(isEdit ? JSON.parse(JSON.stringify(nextDraft)) : null);
@@ -291,7 +299,7 @@ export function MixDesignRequestModal({
     return () => {
       cancelled = true;
     };
-  }, [open, order, project, requestedByDefault, isEdit, initialRequest, initialItems]);
+  }, [open, order, project, requestedByDefault, isEdit, initialRequest, initialItems, initialFactoryIds]);
 
   const contractorCustomers = useMemo(
     () =>
@@ -714,21 +722,37 @@ export function MixDesignRequestModal({
                 ))}
               </select>
             </label>
-            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-              依頼先工場
-              <select
-                value={draft.requestedToFactoryId}
-                onChange={(e) => setDraft((prev) => ({ ...prev, requestedToFactoryId: e.target.value }))}
-                className={FIELD}
-              >
-                <option value="">未指定</option>
-                {factoryOptions.map((factory) => (
-                  <option key={factory.id} value={String(factory.id)}>
-                    {factory.name || factory.id}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <fieldset className="flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-2">
+              <legend className="mb-1">依頼先工場（複数選択可）</legend>
+              <div className="flex flex-col gap-2 rounded-xl border-2 border-slate-200 bg-white px-3 py-2">
+                {factoryOptions.length ? (
+                  factoryOptions.map((factory) => {
+                    const fid = String(factory.id);
+                    const checked = (draft.requestedToFactoryIds || []).includes(fid);
+                    return (
+                      <label key={fid} className="flex items-center gap-2 text-sm font-bold text-slate-700">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4"
+                          checked={checked}
+                          onChange={() =>
+                            patchDraft({
+                              requestedToFactoryIds: toggleMixDesignFactoryId(
+                                draft.requestedToFactoryIds,
+                                fid,
+                              ),
+                            })
+                          }
+                        />
+                        {factory.name || factory.id}
+                      </label>
+                    );
+                  })
+                ) : (
+                  <p className="text-xs font-medium text-slate-400">工場マスタがありません</p>
+                )}
+              </div>
+            </fieldset>
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
               提出方法
               <select

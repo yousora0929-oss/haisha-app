@@ -7,6 +7,7 @@ import {
   mixCodeForItem,
   mixDesignItemFromDbRow,
   mixDesignPrintPropsFromDb,
+  normalizeMixDesignFactoryIds,
   resolveMixDesignProjectId,
   resolvePourDateFromPeriod,
   sanitizeNonNegativeInput,
@@ -335,6 +336,21 @@ describe('buildMixDesignAnchorProjectPayload', () => {
     expect(payload).not.toHaveProperty('requestedBy');
     expect(payload.name).toBe('テスト工事');
     expect(payload.tradingCompanyName).toBe('商社A');
+  });
+});
+
+describe('normalizeMixDesignFactoryIds', () => {
+  it('prefers array and dedupes', () => {
+    expect(
+      normalizeMixDesignFactoryIds({
+        requestedToFactoryIds: ['a', 'b', 'a'],
+        requestedToFactoryId: 'z',
+      }),
+    ).toEqual(['a', 'b']);
+  });
+
+  it('falls back to single id', () => {
+    expect(normalizeMixDesignFactoryIds({ requestedToFactoryId: 'f1' })).toEqual(['f1']);
   });
 });
 

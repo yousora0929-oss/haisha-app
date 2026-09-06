@@ -30,6 +30,7 @@ import {
   buildMixDesignItemInsertRows,
   buildMixDesignRequestInsertRow,
   buildMixDesignRequestSnapshot,
+  normalizeMixDesignFactoryIds,
   resolveMixDesignProjectId,
 } from './utils/mixDesignRequest.js';
 import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.js';
@@ -1200,7 +1201,7 @@ export async function submitMixDesignRequestFromOrder({ order, draft, requestedB
     projectId: projectIdForRow,
     draft: resolvedDraft,
     requestedBy,
-    preferredFactoryId: resolvedDraft?.requestedToFactoryId,
+    preferredFactoryId: normalizeMixDesignFactoryIds(resolvedDraft)[0] || '',
     vehicleType: order.vehicleType,
   });
   const { project_id: _projectIdIgnored, ...requestPayload } = requestRow;
@@ -1292,7 +1293,7 @@ export async function updateMixDesignRequestWithLog({
     projectId: '00000000-0000-0000-0000-000000000000',
     draft: resolvedDraft,
     requestedBy,
-    preferredFactoryId: resolvedDraft?.requestedToFactoryId,
+    preferredFactoryId: normalizeMixDesignFactoryIds(resolvedDraft)[0] || '',
   });
   const { project_id: _ignored, ...requestPayload } = requestRow;
   const itemRows = buildMixDesignItemInsertRows(resolvedDraft);
@@ -1387,7 +1388,7 @@ export async function searchMixDesignRequests({ keyword = '', limit = 50 } = {})
   const q = String(keyword || '').trim();
   const take = Math.min(Math.max(Number(limit) || 50, 1), 200);
   const snapshotSelect =
-    'id, project_id, project_name, contractor_name, trading_company_name, site_address, requested_to_factory_id, status, created_at, requested_by, total_volume_m3';
+    'id, project_id, project_name, contractor_name, trading_company_name, site_address, site_manager_name, site_manager_contact, requested_to_factory_id, status, created_at, updated_at, requested_by, total_volume_m3';
   // Phase1 初期スキーマ（スナップショット列・帳票列が未適用の環境向け）
   const legacySelect =
     'id, project_id, requested_to_factory_id, status, created_at, requested_by, total_volume_m3';
@@ -1406,6 +1407,8 @@ export async function searchMixDesignRequests({ keyword = '', limit = 50 } = {})
         `contractor_name.ilike.${pattern}`,
         `trading_company_name.ilike.${pattern}`,
         `site_address.ilike.${pattern}`,
+        `site_manager_name.ilike.${pattern}`,
+        `site_manager_contact.ilike.${pattern}`,
       ].join(','),
     );
   }
@@ -1453,18 +1456,51 @@ export async function searchMixDesignRequests({ keyword = '', limit = 50 } = {})
     .map((row) => normalizeMixDesignRequestSearchRow(row, projectById))
     .filter(Boolean);
 
-  if (!q) return normalized.slice(0, take);
+  const requestIds = normalized.map((row) => String(row.id || '').trim()).filter(Boolean);
+  const factoryIdsByRequestId = new Map();
+  if (requestIds.length) {
+    const { data: factoryRows, error: factoryError } = await supabase
+      .from('mix_design_request_factories')
+      .select('request_id, factory_id, created_at')
+      .in('request_id', requestIds)
+      .order('created_at', { ascending: true });
+    if (factoryError) {
+      console.warn('[searchMixDesignRequests] factories lookup failed', factoryError);
+    } else {
+      for (const row of factoryRows || []) {
+        const rid = String(row?.request_id || '').trim();
+        const fid = String(row?.factory_id || '').trim();
+        if (!rid || !fid) continue;
+        const list = factoryIdsByRequestId.get(rid) || [];
+        if (!list.includes(fid)) list.push(fid);
+        factoryIdsByRequestId.set(rid, list);
+      }
+    }
+  }
 
-  if (!usedLegacy) return normalized;
+  const withFactories = normalized.map((row) => {
+    const rid = String(row.id || '').trim();
+    const fromJunction = factoryIdsByRequestId.get(rid) || [];
+    const factoryIds = fromJunction.length
+      ? fromJunction
+      : normalizeMixDesignFactoryIds(row.requested_to_factory_id ? [row.requested_to_factory_id] : []);
+    return { ...row, requested_to_factory_ids: factoryIds };
+  });
+
+  if (!q) return withFactories.slice(0, take);
+
+  if (!usedLegacy) return withFactories;
 
   const needle = q.toLowerCase();
-  return normalized
+  return withFactories
     .filter((row) => {
       const haystack = [
         row.project_name,
         row.contractor_name,
         row.trading_company_name,
         row.site_address,
+        row.site_manager_name,
+        row.site_manager_contact,
       ]
         .map((v) => String(v || '').toLowerCase())
         .join(' ');
@@ -1508,7 +1544,30 @@ export async function fetchMixDesignRequestWithItems(requestId) {
     }
   }
 
-  return { request, items: Array.isArray(items) ? items : [], project };
+  let factoryIds = [];
+  const { data: factoryRows, error: factoryError } = await supabase
+    .from('mix_design_request_factories')
+    .select('factory_id, created_at')
+    .eq('request_id', id)
+    .order('created_at', { ascending: true });
+  if (factoryError) {
+    console.warn('[fetchMixDesignRequestWithItems] factories lookup failed', factoryError);
+    factoryIds = normalizeMixDesignFactoryIds(
+      request.requested_to_factory_id ? [request.requested_to_factory_id] : [],
+    );
+  } else {
+    factoryIds = normalizeMixDesignFactoryIds((factoryRows || []).map((r) => r.factory_id));
+    if (!factoryIds.length && request.requested_to_factory_id) {
+      factoryIds = [String(request.requested_to_factory_id).trim()].filter(Boolean);
+    }
+  }
+
+  return {
+    request,
+    items: Array.isArray(items) ? items : [],
+    project,
+    factoryIds,
+  };
 }
 
 export async function updateOrderDetails(orderId, updatedData) {
