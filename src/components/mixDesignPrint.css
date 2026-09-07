@@ -173,24 +173,32 @@
   html,
   body {
     background: #fff !important;
+    height: auto !important;
+    overflow: visible !important;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
 
-  body.mix-design-printing * {
-    visibility: hidden;
+  /* ポータル直下だけ印刷。visibility:hidden だと空白ページになるため display:none を使う */
+  body.mix-design-printing > *:not(.mix-design-print-portal) {
+    display: none !important;
   }
 
-  body.mix-design-printing .mix-design-print-root,
-  body.mix-design-printing .mix-design-print-root * {
-    visibility: visible;
+  body.mix-design-printing > .mix-design-print-portal,
+  body.mix-design-printing > .mix-design-print-portal * {
+    display: revert !important;
+    visibility: visible !important;
   }
 
-  body.mix-design-printing .mix-design-print-root {
-    position: absolute;
-    inset: 0;
-    width: auto;
-    background: #fff;
+  body.mix-design-printing > .mix-design-print-portal {
+    position: static !important;
+    inset: auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    overflow: visible !important;
   }
 
   body.mix-design-printing .mix-design-print-sheet {

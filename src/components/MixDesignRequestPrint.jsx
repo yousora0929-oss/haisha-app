@@ -2,7 +2,9 @@ import React from 'react';
 import { APP_BRAND_NAME } from '../constants/brand.js';
 import {
   MIX_DESIGN_VEHICLE_OPTIONS,
+  factoryNamesText,
   formatConstructionPeriod,
+  formatRequesterDisplay,
   mixCodeForItem,
   preventMinusKey,
   sanitizeNonNegativeInput,
@@ -68,9 +70,16 @@ export function MixDesignRequestPrint({
   onRequestChange,
   onItemChange,
 }) {
-  const rows = Array.isArray(items) ? items : [];
+  const rows = (Array.isArray(items) ? items : []).filter((item) => item && typeof item === 'object');
   const total = header?.totalVolumeM3 ?? request?.totalVolumeM3;
-  const requester = String(request?.requestedBy || header?.requestedBy || '').trim();
+  const requester = formatRequesterDisplay(
+    request?.requestedBy || header?.requestedBy,
+    request?.requestedByAffiliation || header?.requestedByAffiliation,
+  );
+  const factoryLabel =
+    factoryNamesText(header?.factoryNames) ||
+    factoryNamesText(request?.factoryNames) ||
+    '—';
   const lastChangedAt = String(header?.lastChangedAt || request?.lastChangedAt || '').trim();
   const patchHeader = (patch) => onHeaderChange?.(patch);
   const patchRequest = (patch) => onRequestChange?.(patch);
@@ -139,7 +148,7 @@ export function MixDesignRequestPrint({
           <tr>
             <th style={LABEL_CELL}>依頼先工場</th>
             <td colSpan={3}>
-              {header?.factoryNames || request?.factoryNames || '—'}
+              {factoryLabel}
             </td>
           </tr>
           <tr>

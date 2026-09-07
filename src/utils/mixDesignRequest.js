@@ -9,6 +9,7 @@ import {
   resolveOrderContractorDisplayName,
   resolveOrderTradingCompanyDisplayName,
 } from './orderPartyInfo.js';
+import { combineDeliveryAddress, splitDeliveryAddress } from './deliveryAreas.js';
 
 export const MIX_DESIGN_REGIONS = ['大分市・挟間町', '湯布院・庄内'];
 
@@ -37,7 +38,7 @@ export function createEmptyMixDesignItem() {
     localId: `mixitem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     baseStrength: '',
     correctionValue: '',
-    correctionIsAuto: false,
+    correctionIsAuto: true,
     nominalStrength: '',
     slump: '',
     aggregateSize: '20',
@@ -66,6 +67,9 @@ export function createEmptyMixDesignDraft() {
     tradingCompanyOrganizationId: '',
     registerNewTrader: true,
     siteAddress: '',
+    siteDeliveryArea: '',
+    siteAddressDetail: '',
+    totalVolumeM3: '',
     periodStart: '',
     periodEnd: '',
     vehicleTypes: [],
@@ -80,6 +84,7 @@ export function createEmptyMixDesignDraft() {
     creationDateSpecified: false,
     creationDate: '',
     requestedBy: '',
+    requestedByAffiliation: '',
     copiesCount: '',
     testSalt: false,
     testSplitPour: false,
@@ -163,7 +168,9 @@ export function resolvePourDateFromPeriod({
   const start = parseIsoDateLocal(periodStart);
   const end = parseIsoDateLocal(periodEnd);
   if (!start && !end) {
-    return { pourDate: '', outOfRange: true, needsYear: true, years: [new Date().getFullYear()] };
+    const y = new Date().getFullYear();
+    const iso = formatIsoDateLocal(y, m, d);
+    return { pourDate: iso, outOfRange: !iso, needsYear: !iso, years: [y] };
   }
 
   const startYear = start ? start.getFullYear() : end.getFullYear();
@@ -316,7 +323,7 @@ export function applyAutoCorrection(item, allRules, region) {
       next = {
         ...next,
         correctionValue: hit ? String(hit.value) : '',
-        correctionLabel: hit?.label || '',
+        correctionLabel: hit?.label || '該当期間なし',
       };
     }
   }
@@ -342,6 +349,113 @@ export function mixCodeForItem(item) {
     aggregateSize,
     aeAdmixture: Boolean(item?.aeAdmixture),
   });
+}
+
+export function duplicateMixDesignItem(item) {
+  const source = item && typeof item === 'object' ? item : {};
+  return {
+    ...createEmptyMixDesignItem(),
+    ...source,
+    localId: `mixitem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+  };
+}
+
+/** 矢印キー用: 指定候補リストの前後値へジャンプ（リスト外なら最も近い値） */
+export function stepCandidateValue(current, candidates, direction) {
+  const list = (Array.isArray(candidates) ? candidates : [])
+    .map((n) => Number(n))
+    .filter((n) => Number.isFinite(n));
+  if (!list.length) return String(current ?? '');
+  const sorted = [...new Set(list)].sort((a, b) => a - b);
+  const n = Number(current);
+  const delta = direction === 'up' ? 1 : -1;
+  if (!Number.isFinite(n)) {
+    return String(delta > 0 ? sorted[0] : sorted[sorted.length - 1]);
+  }
+  const exact = sorted.indexOf(n);
+  if (exact >= 0) {
+    const next = sorted[exact + delta];
+    return String(next == null ? sorted[exact] : next);
+  }
+  if (delta > 0) {
+    const higher = sorted.find((v) => v > n);
+    return String(higher == null ? sorted[sorted.length - 1] : higher);
+  }
+  let lower = sorted[0];
+  for (const v of sorted) {
+    if (v < n) lower = v;
+  }
+  return String(lower);
+}
+
+export function formatRequesterDisplay(name, affiliation) {
+  const n = String(name || '').trim();
+  const a = String(affiliation || '').trim();
+  if (!n) return a;
+  if (!a) return n;
+  if (n.includes(`（${a}）`) || n.includes(`(${a})`)) return n;
+  return `${n}（${a}）`;
+}
+
+export function parseRequesterDisplay(raw) {
+  const text = String(raw || '').trim();
+  const m = text.match(/^(.*)[（(]([^（）()]+)[）)]$/);
+  if (m && String(m[1] || '').trim()) {
+    return { name: String(m[1]).trim(), affiliation: String(m[2]).trim() };
+  }
+  return { name: text, affiliation: '' };
+}
+
+export function applySiteAddressParts(draft, allowedAreas = []) {
+  const next = draft && typeof draft === 'object' ? { ...draft } : createEmptyMixDesignDraft();
+  const area = String(next.siteDeliveryArea || '').trim();
+  const detail = String(next.siteAddressDetail || '').trim();
+  if (area || detail) {
+    next.siteAddress = combineDeliveryAddress(area, detail);
+    return next;
+  }
+  const split = splitDeliveryAddress(next.siteAddress, allowedAreas);
+  next.siteDeliveryArea = split.deliveryArea || '';
+  next.siteAddressDetail = split.addressDetail || '';
+  return next;
+}
+
+/** 帳票を body 直下へ複製して印刷する（モーダル内印刷の白紙化対策） */
+export function printMixDesignSheet(rootEl) {
+  if (typeof document === 'undefined' || typeof window === 'undefined') return;
+  const source = rootEl || document.querySelector('.mix-design-print-root');
+  const sheet = source?.querySelector?.('.mix-design-print-sheet') || source;
+  if (!sheet) {
+    window.print();
+    return;
+  }
+  document.querySelectorAll('.mix-design-print-portal').forEach((el) => el.remove());
+  const holder = document.createElement('div');
+  holder.className = 'mix-design-print-root mix-design-print-portal';
+  holder.appendChild(sheet.cloneNode(true));
+  document.body.appendChild(holder);
+  document.body.classList.add('mix-design-printing');
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    document.body.classList.remove('mix-design-printing');
+    holder.remove();
+    window.removeEventListener('afterprint', cleanup);
+  };
+  window.addEventListener('afterprint', cleanup);
+  window.setTimeout(() => {
+    window.print();
+    window.setTimeout(cleanup, 1500);
+  }, 50);
+}
+
+export function factoryNamesText(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value.trim();
+  if (Array.isArray(value)) return value.map((v) => String(v || '').trim()).filter(Boolean).join('、');
+  if (typeof value === 'object') return '';
+  return String(value);
 }
 
 export function validateMixDesignDraft(draft) {
@@ -385,9 +499,11 @@ export function mixDesignAnchorProjectName(order) {
   return id ? `スポット注文より自動作成（注文ID: ${id}）` : 'スポット注文より自動作成';
 }
 
-export function prefillMixDesignDraft(order, project, requestedBy = '') {
+export function prefillMixDesignDraft(order, project, requestedBy = '', allowedAreas = []) {
   const draft = createEmptyMixDesignDraft();
-  draft.requestedBy = String(requestedBy || '').trim();
+  const parsedRequester = parseRequesterDisplay(requestedBy);
+  draft.requestedBy = parsedRequester.name;
+  draft.requestedByAffiliation = parsedRequester.affiliation;
 
   draft.projectName =
     String(project?.name || '').trim() ||
@@ -400,6 +516,9 @@ export function prefillMixDesignDraft(order, project, requestedBy = '') {
   draft.siteAddress =
     String(project?.site_address || '').trim() ||
     String(order?.siteAddress ?? order?.site_address ?? '').trim();
+  const splitSite = splitDeliveryAddress(draft.siteAddress, allowedAreas);
+  draft.siteDeliveryArea = splitSite.deliveryArea || '';
+  draft.siteAddressDetail = splitSite.addressDetail || '';
   draft.primeContractorName = String(
     project?.contractor_display_name || project?.contractor || draft.contractorName || '',
   ).trim();
@@ -577,7 +696,7 @@ export function buildMixDesignRequestInsertRow({
     project_id: pid,
     requested_to_factory_id: factoryId || null,
     requested_to_factory_ids: factoryIds,
-    requested_by: String(requestedBy || '').trim() || null,
+    requested_by: formatRequesterDisplay(requestedBy, draft?.requestedByAffiliation) || null,
     status: 'requested',
     submission_method: ['original', 'electronic'].includes(String(draft?.submissionMethod || ''))
       ? draft.submissionMethod
@@ -587,7 +706,7 @@ export function buildMixDesignRequestInsertRow({
     creation_date: draft?.creationDateSpecified && draft?.creationDate ? draft.creationDate : null,
     copies_count: copies == null ? null : Math.trunc(copies),
     vehicle_types: vehicles.length ? vehicles : fallbackVehicle ? [fallbackVehicle] : [],
-    total_volume_m3: sumMixDesignQuantityM3(draft),
+    total_volume_m3: parseOptionalNumber(draft?.totalVolumeM3),
     test_salt: Boolean(draft?.testSalt),
     test_split_pour: Boolean(draft?.testSplitPour),
     test_specimen_count: specimen == null ? null : Math.trunc(specimen),
@@ -752,7 +871,9 @@ export function mixDesignPrintPropsFromDb(request, itemRows = [], project = null
   const siteAddress = firstNonEmpty(request?.site_address, project?.site_address);
   const siteManagerName = firstNonEmpty(request?.site_manager_name);
   const siteManagerContact = firstNonEmpty(request?.site_manager_contact);
-  const requestedBy = firstNonEmpty(request?.requested_by);
+  const requestedByRaw = firstNonEmpty(request?.requested_by);
+  const parsedRequester = parseRequesterDisplay(requestedByRaw);
+  const requestedBy = formatRequesterDisplay(parsedRequester.name, parsedRequester.affiliation);
   const lastChangedAt = mixDesignLastChangedAt(request, options.latestChangeLog);
   const factoryIds = normalizeMixDesignFactoryIds(
     Array.isArray(options.factoryIds) && options.factoryIds.length
@@ -780,12 +901,14 @@ export function mixDesignPrintPropsFromDb(request, itemRows = [], project = null
       firstPourDate: firstPour,
       totalVolumeM3: Number.isFinite(total) ? total : null,
       requestedBy,
+      requestedByAffiliation: parsedRequester.affiliation,
       lastChangedAt,
       requestedToFactoryIds: factoryIds,
       factoryNames,
     },
     request: {
       requestedBy,
+      requestedByAffiliation: parsedRequester.affiliation,
       vehicleTypes,
       totalVolumeM3: Number.isFinite(total) ? total : null,
       submissionMethod: String(request?.submission_method || ''),
@@ -806,6 +929,7 @@ export function prefillMixDesignDraftFromRequest(
   project = null,
   requestedBy = '',
   factoryIds = [],
+  allowedAreas = [],
 ) {
   const draft = createEmptyMixDesignDraft();
   const print = mixDesignPrintPropsFromDb(request, itemRows, project);
@@ -816,6 +940,13 @@ export function prefillMixDesignDraftFromRequest(
   draft.traderName = print.header.traderName || '';
   draft.tradingCompanyOrganizationId = String(project?.trading_company_organization_id || '').trim();
   draft.siteAddress = print.header.siteAddress || '';
+  const splitSite = splitDeliveryAddress(draft.siteAddress, allowedAreas);
+  draft.siteDeliveryArea = splitSite.deliveryArea || '';
+  draft.siteAddressDetail = splitSite.addressDetail || '';
+  draft.totalVolumeM3 =
+    print.header.totalVolumeM3 != null && print.header.totalVolumeM3 !== ''
+      ? String(print.header.totalVolumeM3)
+      : '';
   draft.periodStart = print.header.periodStart || '';
   draft.periodEnd = print.header.periodEnd || '';
   draft.vehicleTypes = Array.isArray(print.header.vehicleTypes) ? [...print.header.vehicleTypes] : [];
@@ -828,7 +959,9 @@ export function prefillMixDesignDraftFromRequest(
         ? [request.requested_to_factory_id]
         : [],
   );
-  draft.requestedBy = firstNonEmpty(requestedBy, request?.requested_by);
+  const parsedRequester = parseRequesterDisplay(firstNonEmpty(request?.requested_by, requestedBy));
+  draft.requestedBy = parsedRequester.name;
+  draft.requestedByAffiliation = parsedRequester.affiliation;
   draft.submissionMethod = String(request?.submission_method || '');
   draft.submissionEmail = String(request?.submission_email || '');
   draft.creationDateSpecified = Boolean(request?.creation_date_specified);
@@ -876,7 +1009,9 @@ export function buildMixDesignRequestSnapshot(draft, requestedBy = '') {
       siteManagerName: String(draft?.siteManagerName || '').trim(),
       siteManagerContact: String(draft?.siteManagerContact || '').trim(),
       requestedToFactoryIds: normalizeMixDesignFactoryIds(draft),
-      requestedBy: String(requestedBy || draft?.requestedBy || '').trim(),
+      requestedBy: formatRequesterDisplay(requestedBy || draft?.requestedBy, draft?.requestedByAffiliation),
+      requestedByAffiliation: String(draft?.requestedByAffiliation || '').trim(),
+      totalVolumeM3: String(draft?.totalVolumeM3 ?? '').trim(),
       submissionMethod: String(draft?.submissionMethod || '').trim(),
       submissionEmail: String(draft?.submissionEmail || '').trim(),
       creationDateSpecified: Boolean(draft?.creationDateSpecified),
@@ -922,6 +1057,8 @@ const MIX_DESIGN_CHANGE_LABELS = {
   requestedToFactoryId: '依頼先工場',
   requestedToFactoryIds: '依頼先工場',
   requestedBy: '依頼者',
+  requestedByAffiliation: '依頼者所属',
+  totalVolumeM3: '全体数量',
   submissionMethod: '提出方法',
   submissionEmail: '提出メール',
   creationDateSpecified: '作成日指定',

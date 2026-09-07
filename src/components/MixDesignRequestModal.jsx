@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as db from '../haishaDb.js';
 import { MasterSuggestInput } from './MasterSuggestInput.jsx';
+import { DeliveryAreaAddressField } from './DeliveryAreaAddressField.jsx';
 import { MixDesignRequestPrint } from './MixDesignRequestPrint.jsx';
 import {
   AGGREGATE_SIZE_CANDIDATES,
-  NOMINAL_STRENGTH_LIST,
+  BASE_STRENGTH_CANDIDATES,
   SLUMP_CANDIDATES,
 } from '../utils/mixDesignCalc.js';
 import { dedupeCustomersByCompany } from '../utils/dedupeCustomersByCompany.js';
@@ -16,8 +17,11 @@ import {
   applyAutoCorrection,
   applyPourDateResolution,
   createEmptyMixDesignItem,
+  duplicateMixDesignItem,
   earliestPourDate,
   formatConstructionPeriod,
+  formatMixDesignFactoryNames,
+  formatRequesterDisplay,
   handleMixDesignNavKeyDown,
   mixCodeForItem,
   mixDesignHeaderFromOrder,
@@ -25,13 +29,19 @@ import {
   prefillMixDesignDraftFromRequest,
   preventMinusKey,
   pourYearChoices,
+  printMixDesignSheet,
   sanitizeNonNegativeInput,
   selectAllOnFocus,
-  sumMixDesignQuantityM3,
+  stepCandidateValue,
   toggleMixDesignFactoryId,
   toggleMixDesignVehicle,
   validateMixDesignDraft,
 } from '../utils/mixDesignRequest.js';
+import { combineDeliveryAddress } from '../utils/deliveryAreas.js';
+import {
+  DEFAULT_DELIVERY_PREFECTURE,
+  fetchTownLocationsForMunicipality,
+} from '../utils/heartrailsGeo.js';
 
 const FIELD =
   'min-h-[48px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-2 text-base text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300';
@@ -53,7 +63,39 @@ function NonNegNumberInput({ value, onChange, className, inputMode = 'decimal', 
   );
 }
 
-function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, canRemove, periodStart, periodEnd }) {
+function MixNumericSuggestInput({
+  label,
+  value,
+  onChange,
+  candidates,
+  nav,
+  placeholder = '',
+}) {
+  const items = (Array.isArray(candidates) ? candidates : []).map(String);
+  return (
+    <MasterSuggestInput
+      label={label}
+      value={value == null ? '' : String(value)}
+      onValueChange={onChange}
+      onSelect={(item) => onChange(String(item))}
+      items={items}
+      getItemKey={(item) => String(item)}
+      getItemLabel={(item) => String(item)}
+      placeholder={placeholder}
+      emptyHint="候補にない値も直接入力できます"
+      inputClassName={FIELD}
+      inputProps={{ 'data-mix-nav': nav, inputMode: 'numeric' }}
+      onInputKeyDown={(event) => {
+        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+        event.preventDefault();
+        event.stopPropagation();
+        onChange(stepCandidateValue(value, candidates, event.key === 'ArrowUp' ? 'up' : 'down'));
+      }}
+    />
+  );
+}
+
+function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, onDuplicate, canRemove, periodStart, periodEnd }) {
   const code = mixCodeForItem(item);
   const nav = (col) => `${index},${col}`;
 
@@ -61,53 +103,53 @@ function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, canRemov
     <div className="rounded-2xl border-2 border-slate-200 bg-white p-3 shadow-sm">
       <div className="mb-2 flex items-center justify-between gap-2">
         <p className="text-sm font-black text-slate-800">配合 {index + 1}</p>
-        {canRemove ? (
+        <div className="flex items-center gap-1">
           <button
             type="button"
-            onClick={onRemove}
-            className="rounded-lg px-2 py-1 text-xs font-bold text-slate-500 hover:bg-slate-100 hover:text-red-700"
+            onClick={onDuplicate}
+            className="rounded-lg px-2 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-50"
           >
-            削除
+            複製
           </button>
-        ) : null}
+          {canRemove ? (
+            <button
+              type="button"
+              onClick={onRemove}
+              className="rounded-lg px-2 py-1 text-xs font-bold text-slate-500 hover:bg-slate-100 hover:text-red-700"
+            >
+              削除
+            </button>
+          ) : null}
+        </div>
       </div>
       {code ? (
         <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-sm font-bold text-slate-800">{code}</p>
       ) : null}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-          設計基準強度
-          <NonNegNumberInput
-            data-mix-nav={nav(0)}
-            inputMode="numeric"
-            list="mix-design-base-strengths"
-            value={item.baseStrength}
-            onChange={(value) => onChange({ baseStrength: value })}
-            className={FIELD}
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-          スランプ
-          <NonNegNumberInput
-            data-mix-nav={nav(1)}
-            inputMode="numeric"
-            list="mix-design-slumps"
-            value={item.slump}
-            onChange={(value) => onChange({ slump: value })}
-            className={FIELD}
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-          骨材
-          <NonNegNumberInput
-            data-mix-nav={nav(2)}
-            inputMode="numeric"
-            list="mix-design-aggregates"
-            value={item.aggregateSize}
-            onChange={(value) => onChange({ aggregateSize: value })}
-            className={FIELD}
-          />
-        </label>
+        <MixNumericSuggestInput
+          label="設計基準強度"
+          nav={nav(0)}
+          value={item.baseStrength}
+          candidates={BASE_STRENGTH_CANDIDATES}
+          onChange={(value) => onChange({ baseStrength: value })}
+          placeholder="例：30"
+        />
+        <MixNumericSuggestInput
+          label="スランプ"
+          nav={nav(1)}
+          value={item.slump}
+          candidates={SLUMP_CANDIDATES}
+          onChange={(value) => onChange({ slump: value })}
+          placeholder="例：15"
+        />
+        <MixNumericSuggestInput
+          label="骨材"
+          nav={nav(2)}
+          value={item.aggregateSize}
+          candidates={AGGREGATE_SIZE_CANDIDATES}
+          onChange={(value) => onChange({ aggregateSize: value })}
+          placeholder="例：20"
+        />
         <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
           セメント
           <select
@@ -251,6 +293,8 @@ export function MixDesignRequestModal({
   factories = [],
   customers = [],
   agentOrganizations = [],
+  allowedDeliveryAreas = [],
+  deliveryPrefecture = DEFAULT_DELIVERY_PREFECTURE,
   requestedByDefault = '',
   mode = 'create',
   editRequestId = '',
@@ -268,7 +312,11 @@ export function MixDesignRequestModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [siteContactCandidates, setSiteContactCandidates] = useState([]);
+  const [townList, setTownList] = useState([]);
+  const [townOptionsLoading, setTownOptionsLoading] = useState(false);
+  const [townOptionsError, setTownOptionsError] = useState('');
   const prevOpenRef = useRef(false);
+  const printRootRef = useRef(null);
 
   useEffect(() => {
     const wasOpen = prevOpenRef.current;
@@ -282,8 +330,9 @@ export function MixDesignRequestModal({
           project,
           requestedByDefault,
           initialFactoryIds,
+          allowedDeliveryAreas,
         )
-      : prefillMixDesignDraft(order, project, requestedByDefault);
+      : prefillMixDesignDraft(order, project, requestedByDefault, allowedDeliveryAreas);
     setDraft(nextDraft);
     setBaselineDraft(isEdit ? JSON.parse(JSON.stringify(nextDraft)) : null);
     setShowPreview(false);
@@ -299,7 +348,7 @@ export function MixDesignRequestModal({
     return () => {
       cancelled = true;
     };
-  }, [open, order, project, requestedByDefault, isEdit, initialRequest, initialItems, initialFactoryIds]);
+  }, [open, order, project, requestedByDefault, isEdit, initialRequest, initialItems, initialFactoryIds, allowedDeliveryAreas]);
 
   const contractorCustomers = useMemo(
     () =>
@@ -348,6 +397,45 @@ export function MixDesignRequestModal({
       cancelled = true;
     };
   }, [open, draft.contractorCustomerId]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const municipality = String(draft.siteDeliveryArea || '').trim();
+    if (!municipality) {
+      setTownList([]);
+      setTownOptionsError('');
+      setTownOptionsLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setTownOptionsLoading(true);
+    setTownOptionsError('');
+    fetchTownLocationsForMunicipality(municipality, deliveryPrefecture)
+      .then((rows) => {
+        if (cancelled) return;
+        setTownList(Array.isArray(rows) ? rows : []);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setTownList([]);
+        setTownOptionsError(err?.message || '町名候補の取得に失敗しました');
+      })
+      .finally(() => {
+        if (!cancelled) setTownOptionsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, draft.siteDeliveryArea, deliveryPrefecture]);
+
+  const townSuggestionNames = useMemo(
+    () =>
+      (Array.isArray(townList) ? townList : []).map((row) => ({
+        town: row?.town ?? '',
+        town_kana: row?.town_kana ?? row?.kana ?? '',
+      })),
+    [townList],
+  );
 
   const updateItem = useCallback(
     (index, patch) => {
@@ -403,6 +491,14 @@ export function MixDesignRequestModal({
   }, [rules, open]);
 
   const headerContext = useMemo(() => mixDesignHeaderFromOrder(order, project), [order, project]);
+  const factoryNameById = useMemo(() => {
+    const map = {};
+    for (const f of Array.isArray(factories) ? factories : []) {
+      if (!f?.id) continue;
+      map[String(f.id)] = String(f.name || f.id);
+    }
+    return map;
+  }, [factories]);
   const printHeader = useMemo(
     () => ({
       ...headerContext,
@@ -419,21 +515,26 @@ export function MixDesignRequestModal({
       siteManagerContact: draft.siteManagerContact,
       siteContact: [draft.siteManagerName, draft.siteManagerContact].filter(Boolean).join(' / '),
       firstPourDate: earliestPourDate(draft),
-      totalVolumeM3: sumMixDesignQuantityM3(draft),
-      requestedBy: draft.requestedBy,
+      totalVolumeM3: draft.totalVolumeM3,
+      requestedBy: formatRequesterDisplay(draft.requestedBy, draft.requestedByAffiliation),
+      requestedByAffiliation: draft.requestedByAffiliation,
+      requestedToFactoryIds: draft.requestedToFactoryIds,
+      factoryNames: formatMixDesignFactoryNames(draft.requestedToFactoryIds, factoryNameById),
     }),
-    [draft, headerContext],
+    [draft, headerContext, factoryNameById],
   );
   const printRequest = useMemo(
     () => ({
-      requestedBy: draft.requestedBy,
+      requestedBy: formatRequesterDisplay(draft.requestedBy, draft.requestedByAffiliation),
+      requestedByAffiliation: draft.requestedByAffiliation,
       vehicleTypes: draft.vehicleTypes,
-      totalVolumeM3: sumMixDesignQuantityM3(draft),
+      totalVolumeM3: draft.totalVolumeM3,
       submissionMethod: draft.submissionMethod,
       submissionEmail: draft.submissionEmail,
       memo: draft.memo,
+      factoryNames: formatMixDesignFactoryNames(draft.requestedToFactoryIds, factoryNameById),
     }),
-    [draft],
+    [draft, factoryNameById],
   );
 
   const factoryOptions = Array.isArray(factories) ? factories.filter((f) => f?.id) : [];
@@ -509,22 +610,6 @@ export function MixDesignRequestModal({
             })
           }
         >
-          <datalist id="mix-design-base-strengths">
-            {NOMINAL_STRENGTH_LIST.map((v) => (
-              <option key={v} value={v} />
-            ))}
-          </datalist>
-          <datalist id="mix-design-slumps">
-            {SLUMP_CANDIDATES.map((v) => (
-              <option key={v} value={v} />
-            ))}
-          </datalist>
-          <datalist id="mix-design-aggregates">
-            {AGGREGATE_SIZE_CANDIDATES.map((v) => (
-              <option key={v} value={v} />
-            ))}
-          </datalist>
-
           <div className="mb-4 grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-2">
               工事名
@@ -620,14 +705,46 @@ export function MixDesignRequestModal({
                 </label>
               ) : null}
             </label>
-            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-2">
-              現場住所
-              <input
-                type="text"
-                value={draft.siteAddress}
-                onChange={(e) => patchDraft({ siteAddress: e.target.value })}
-                className={FIELD}
+            <div className="sm:col-span-2">
+              <DeliveryAreaAddressField
+                idPrefix="mix-design-site"
+                label="現場住所"
+                allowedAreas={allowedDeliveryAreas}
+                deliveryArea={draft.siteDeliveryArea}
+                onDeliveryAreaChange={(v) =>
+                  patchDraft({
+                    siteDeliveryArea: v,
+                    siteAddress: combineDeliveryAddress(v, draft.siteAddressDetail),
+                  })
+                }
+                addressDetail={draft.siteAddressDetail}
+                onAddressDetailChange={(v) =>
+                  patchDraft({
+                    siteAddressDetail: v,
+                    siteAddress: combineDeliveryAddress(draft.siteDeliveryArea, v),
+                  })
+                }
+                detailLabel="番地・町名など"
+                detailPlaceholder="町名・番地を入力"
+                detailHint="市町村を選んだあと、番地などは自由入力できます"
+                detailRequired={false}
+                showTownSuggestions
+                townSuggestions={townSuggestionNames}
+                townSuggestionsLoading={townOptionsLoading}
+                townSuggestionsError={townOptionsError}
               />
+            </div>
+            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
+              全体数量（m³）
+              <NonNegNumberInput
+                value={draft.totalVolumeM3}
+                onChange={(value) => patchDraft({ totalVolumeM3: value })}
+                className={FIELD}
+                placeholder="物件全体の予定数量"
+              />
+              <span className="text-[11px] font-medium text-slate-500">
+                配合パターンごとの数量とは別に、物件全体のおおよその数量を入力します。
+              </span>
             </label>
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
               工期開始
@@ -808,7 +925,17 @@ export function MixDesignRequestModal({
               <input
                 type="text"
                 value={draft.requestedBy}
-                onChange={(e) => setDraft((prev) => ({ ...prev, requestedBy: e.target.value }))}
+                onChange={(e) => patchDraft({ requestedBy: e.target.value })}
+                className={FIELD}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
+              依頼者の所属
+              <input
+                type="text"
+                value={draft.requestedByAffiliation}
+                onChange={(e) => patchDraft({ requestedByAffiliation: e.target.value })}
+                placeholder="例：協同組合事務局"
                 className={FIELD}
               />
             </label>
@@ -830,6 +957,14 @@ export function MixDesignRequestModal({
                     ...prev,
                     items: prev.items.filter((_, i) => i !== index),
                   }))
+                }
+                onDuplicate={() =>
+                  setDraft((prev) => {
+                    const copy = duplicateMixDesignItem(prev.items[index]);
+                    const items = [...prev.items];
+                    items.splice(index + 1, 0, copy);
+                    return { ...prev, items };
+                  })
                 }
               />
             ))}
@@ -876,15 +1011,7 @@ export function MixDesignRequestModal({
             {showPreview ? (
               <button
                 type="button"
-                onClick={() => {
-                  document.body.classList.add('mix-design-printing');
-                  const cleanup = () => {
-                    document.body.classList.remove('mix-design-printing');
-                    window.removeEventListener('afterprint', cleanup);
-                  };
-                  window.addEventListener('afterprint', cleanup);
-                  window.setTimeout(() => window.print(), 50);
-                }}
+                onClick={() => printMixDesignSheet(printRootRef.current)}
                 className="min-h-[44px] rounded-xl bg-slate-900 px-4 text-sm font-bold text-white"
               >
                 印刷 / PDF
@@ -893,7 +1020,7 @@ export function MixDesignRequestModal({
           </div>
 
           {showPreview ? (
-            <div className="mix-design-print-root">
+            <div ref={printRootRef} className="mix-design-print-root">
               <div className="mix-design-print-preview">
                 <MixDesignRequestPrint
                   header={printHeader}

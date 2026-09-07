@@ -1,18 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyAutoCorrection,
+  applyPourDateResolution,
   buildMixDesignAnchorProjectPayload,
   buildMixDesignItemInsertRows,
   buildMixDesignRequestInsertRow,
   computeNominalStrength,
+  createEmptyMixDesignItem,
+  duplicateMixDesignItem,
+  factoryNamesText,
+  formatRequesterDisplay,
   mixCodeForItem,
   mixDesignItemFromDbRow,
   mixDesignPrintPropsFromDb,
   normalizeMixDesignFactoryIds,
+  parseRequesterDisplay,
   resolveMixDesignProjectId,
   resolvePourDateFromPeriod,
   sanitizeNonNegativeInput,
+  stepCandidateValue,
   validateMixDesignDraft,
 } from './mixDesignRequest.js';
+import { BASE_STRENGTH_CANDIDATES, SLUMP_CANDIDATES, AGGREGATE_SIZE_CANDIDATES } from './mixDesignCalc.js';
 
 describe('computeNominalStrength', () => {
   it('rounds 30+6 to 36', () => {
@@ -163,6 +172,18 @@ describe('resolvePourDateFromPeriod', () => {
       }),
     ).toMatchObject({ pourDate: '2026-07-10', outOfRange: false });
   });
+
+  it('uses the current calendar year when no construction period is set', () => {
+    const y = new Date().getFullYear();
+    expect(
+      resolvePourDateFromPeriod({
+        month: 12,
+        day: 6,
+        periodStart: '',
+        periodEnd: '',
+      }),
+    ).toMatchObject({ pourDate: `${y}-12-06`, outOfRange: false });
+  });
 });
 
 describe('sanitizeNonNegativeInput', () => {
@@ -214,6 +235,20 @@ describe('buildMixDesignRequestInsertRow', () => {
     expect(row.project_name).toBe('末広町工事');
     expect(row.contractor_name).toBe('業者C');
     expect(row.site_address).toBe('大分市末広町1');
+  });
+
+  it('persists entered totalVolumeM3 instead of summing item quantities', () => {
+    const row = buildMixDesignRequestInsertRow({
+      projectId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      draft: {
+        totalVolumeM3: '80',
+        requestedByAffiliation: '協同組合事務局',
+        items: [{ quantityM3: '12' }, { quantityM3: '8' }],
+      },
+      requestedBy: '佐藤',
+    });
+    expect(row.total_volume_m3).toBe(80);
+    expect(row.requested_by).toBe('佐藤（協同組合事務局）');
   });
 });
 
@@ -351,6 +386,151 @@ describe('normalizeMixDesignFactoryIds', () => {
 
   it('falls back to single id', () => {
     expect(normalizeMixDesignFactoryIds({ requestedToFactoryId: 'f1' })).toEqual(['f1']);
+  });
+});
+
+describe('formatRequesterDisplay / parseRequesterDisplay', () => {
+  it('formats name and affiliation together', () => {
+    expect(formatRequesterDisplay('佐藤', '協同組合事務局')).toBe('佐藤（協同組合事務局）');
+    expect(parseRequesterDisplay('佐藤（協同組合事務局）')).toEqual({
+      name: '佐藤',
+      affiliation: '協同組合事務局',
+    });
+  });
+
+  it('does not double-wrap an already formatted name', () => {
+    expect(formatRequesterDisplay('佐藤（協同組合事務局）', '協同組合事務局')).toBe(
+      '佐藤（協同組合事務局）',
+    );
+  });
+});
+
+describe('stepCandidateValue', () => {
+  it('jumps along the specified candidate lists', () => {
+    expect(stepCandidateValue('24', BASE_STRENGTH_CANDIDATES, 'up')).toBe('27');
+    expect(stepCandidateValue('36', BASE_STRENGTH_CANDIDATES, 'up')).toBe('40');
+    expect(stepCandidateValue('12', SLUMP_CANDIDATES, 'down')).toBe('8');
+    expect(stepCandidateValue('20', AGGREGATE_SIZE_CANDIDATES, 'up')).toBe('40');
+    expect(stepCandidateValue('25', AGGREGATE_SIZE_CANDIDATES, 'up')).toBe('40');
+    expect(stepCandidateValue('', BASE_STRENGTH_CANDIDATES, 'up')).toBe('18');
+  });
+});
+
+describe('applyAutoCorrection', () => {
+  const winterRules = [
+    {
+      fiscal_year: 2026,
+      region: '大分市・挟間町',
+      cement_type: 'N',
+      date_start_month: 12,
+      date_start_day: 6,
+      date_end_month: 2,
+      date_end_day: 7,
+      correction_value: 6,
+      category_label: '0℃以上8℃未満',
+    },
+  ];
+
+  it('looks up the correction value from pour month/day even without a construction period', () => {
+    const withDate = applyPourDateResolution(
+      { ...createEmptyMixDesignItem(), pourMonth: '12', pourDay: '20', cementType: 'N', correctionIsAuto: true },
+      '',
+      '',
+    );
+    const next = applyAutoCorrection(withDate, winterRules, '大分市・挟間町');
+    expect(next.correctionValue).toBe('6');
+    expect(next.correctionLabel).toBe('0℃以上8℃未満');
+  });
+
+  it('uses 湯布院・庄内 rules for a year-wrapping winter date', () => {
+    const yufuRules = [
+      {
+        fiscal_year: 2026,
+        region: '湯布院・庄内',
+        cement_type: 'N',
+        date_start_month: 11,
+        date_start_day: 11,
+        date_end_month: 3,
+        date_end_day: 3,
+        correction_value: 6,
+        category_label: '0℃以上8℃未満',
+      },
+    ];
+    const withDate = applyPourDateResolution(
+      { ...createEmptyMixDesignItem(), pourMonth: '1', pourDay: '15', cementType: 'N', correctionIsAuto: true },
+      '2026-11-01',
+      '2027-03-31',
+    );
+    const next = applyAutoCorrection(withDate, yufuRules, '湯布院・庄内');
+    expect(withDate.pourDate).toBe('2027-01-15');
+    expect(next.correctionValue).toBe('6');
+  });
+
+  it('leaves a manual value untouched when auto is off', () => {
+    const next = applyAutoCorrection(
+      {
+        ...createEmptyMixDesignItem(),
+        pourDate: '2026-12-20',
+        cementType: 'N',
+        correctionIsAuto: false,
+        correctionValue: '3',
+      },
+      winterRules,
+      '大分市・挟間町',
+    );
+    expect(next.correctionValue).toBe('3');
+  });
+});
+
+describe('duplicateMixDesignItem', () => {
+  it('copies fields onto a new card with a new localId', () => {
+    const source = {
+      ...createEmptyMixDesignItem(),
+      localId: 'mixitem_src',
+      baseStrength: '30',
+      slump: '15',
+      aggregateSize: '20',
+      cementType: 'BB',
+      quantityM3: '12',
+      constructionLocation: '基礎',
+      pourMonth: '8',
+      pourDay: '1',
+      waterCementRatio: '50',
+      unitWaterContent: '175',
+      aeAdmixture: true,
+      correctionIsAuto: true,
+      correctionValue: '6',
+    };
+    const copy = duplicateMixDesignItem(source);
+    expect(copy.localId).not.toBe(source.localId);
+    expect(copy.baseStrength).toBe('30');
+    expect(copy.constructionLocation).toBe('基礎');
+    expect(copy.aeAdmixture).toBe(true);
+    expect(copy.correctionValue).toBe('6');
+  });
+});
+
+describe('factoryNamesText', () => {
+  it('never returns a non-string that would crash React print', () => {
+    expect(factoryNamesText(null)).toBe('');
+    expect(factoryNamesText(['A工場', 'B工場'])).toBe('A工場、B工場');
+    expect(factoryNamesText({ name: 'obj' })).toBe('');
+  });
+});
+
+describe('mixDesignPrintPropsFromDb requester affiliation', () => {
+  it('parses affiliation from requested_by and keeps entered total volume', () => {
+    const props = mixDesignPrintPropsFromDb(
+      {
+        requested_by: '佐藤（協同組合事務局）',
+        total_volume_m3: 80,
+      },
+      [{ quantity_m3: 12, base_strength: 24, slump: 15, aggregate_size: 20, cement_type: 'N' }],
+      null,
+    );
+    expect(props.header.requestedBy).toBe('佐藤（協同組合事務局）');
+    expect(props.header.requestedByAffiliation).toBe('協同組合事務局');
+    expect(props.header.totalVolumeM3).toBe(80);
   });
 });
 

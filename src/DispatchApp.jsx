@@ -2181,10 +2181,21 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return String(currentCustomer?.company_name || currentCustomer?.name || '').trim();
       }, [isAgentOrCooperative, currentCustomer]);
       const effectiveTraderName = useMemo(() => {
-        const typed = String(traderName || '').trim();
-        if (currentCustomerRole === 'agent') return typed || proxyTraderName;
-        return typed;
-      }, [currentCustomerRole, traderName, proxyTraderName]);
+        if (!isAgentOrCooperative) return String(traderName || '').trim();
+        if (currentCustomerRole === 'agent') return proxyTraderName;
+        // 組合: 商社名に組合名は入れない。経由商社担当者がいればその会社名をスナップショットする
+        const agentId = String(tradingAgentCustomerId || '').trim();
+        if (!agentId) return '';
+        const agent = (customers || []).find((c) => String(c.id) === agentId);
+        return String(agent?.company_name || agent?.name || '').trim();
+      }, [
+        isAgentOrCooperative,
+        currentCustomerRole,
+        traderName,
+        proxyTraderName,
+        tradingAgentCustomerId,
+        customers,
+      ]);
 
       // 商社ログイン時のみ、空の商社欄を自社名で埋める（組合名は商社欄に入れない）
       useEffect(() => {
@@ -2243,6 +2254,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             projectContractorLabels,
           );
         }
+        if (isAgentOrCooperative) {
+          return String(
+            contractorCustomer?.company_name || contractorCustomer?.name || contractorName || '',
+          ).trim();
+        }
         return String(contractorName || '').trim();
       }, [
         orderKind,
@@ -2251,6 +2267,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         contractorDisplayMode,
         contractorDisplayCustomText,
         projectContractorLabels,
+        isAgentOrCooperative,
+        contractorCustomer,
         contractorName,
       ]);
 
@@ -5066,85 +5084,40 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     </div>
                   </div>
 
-                  {!isGuestSiteOrder ? (
+                  {!isGuestSiteOrder && !isAgentOrCooperative ? (
                     <>
-                      {isAgentOrCooperative ? (
-                        <>
-                          <GuestLockedField
-                            label={currentCustomerRole === 'cooperative' ? '発注組織' : '商社名'}
-                            value={
-                              currentCustomerRole === 'cooperative'
-                                ? currentCustomerDisplayName
-                                : effectiveTraderName || currentCustomerDisplayName
-                            }
-                          />
-                          {currentCustomerRole === 'cooperative' ? (
-                            <MasterSuggestInput
-                              label="商社名（任意）"
-                              name={orderFieldName('trader_name')}
-                              value={traderName}
-                              onValueChange={handleTraderNameChange}
-                              items={agentOrganizations}
-                              getItemKey={(o) => String(o.id)}
-                              getItemLabel={(o) => String(o.name || '').trim()}
-                              getSearchTexts={organizationSuggestTexts}
-                              onSelect={(org) => {
-                                handleTraderNameChange(String(org?.name || '').trim());
-                              }}
-                              placeholder="商社を経由しない場合は空欄"
-                              emptyHint="該当する商社がありません（自由入力もできます）"
-                              autoComplete="organization"
-                            />
-                          ) : null}
-                          {currentCustomerRole === 'cooperative' &&
-                          submitError === COOPERATIVE_OWN_ORG_TRADER_ERROR ? (
-                            <p className="text-sm font-bold text-red-700" role="alert">
-                              {COOPERATIVE_OWN_ORG_TRADER_ERROR}
-                            </p>
-                          ) : null}
-                        </>
-                      ) : (
-                        <MasterSuggestInput
-                          label="商社名（任意）"
-                          name={orderFieldName('trader_name')}
-                          value={traderName}
-                          onValueChange={handleTraderNameChange}
-                          items={agentOrganizations}
-                          getItemKey={(o) => String(o.id)}
-                          getItemLabel={(o) => String(o.name || '').trim()}
-                          getSearchTexts={organizationSuggestTexts}
-                          onSelect={(org) => {
-                            handleTraderNameChange(String(org?.name || '').trim());
-                          }}
-                          placeholder="商社名を入力（登録商社から選択、または自由入力）"
-                          emptyHint="該当する商社がありません（自由入力もできます）"
+                      <MasterSuggestInput
+                        label="商社名（任意）"
+                        name={orderFieldName('trader_name')}
+                        value={traderName}
+                        onValueChange={handleTraderNameChange}
+                        items={agentOrganizations}
+                        getItemKey={(o) => String(o.id)}
+                        getItemLabel={(o) => String(o.name || '').trim()}
+                        getSearchTexts={organizationSuggestTexts}
+                        onSelect={(org) => {
+                          handleTraderNameChange(String(org?.name || '').trim());
+                        }}
+                        placeholder="商社名を入力（登録商社から選択、または自由入力）"
+                        emptyHint="該当する商社がありません（自由入力もできます）"
+                        autoComplete="organization"
+                      />
+                      <div className="flex flex-col gap-3">
+                        <Label htmlFor={orderFieldId('contractor-name')}>業者名</Label>
+                        <input
+                          id={orderFieldId('contractor-name')}
+                          name={orderFieldName('contractor_name')}
+                          type="text"
                           autoComplete="organization"
+                          placeholder="発注している業者名"
+                          value={contractorName}
+                          onChange={(e) => {
+                            setContractorName(e.target.value);
+                            setSubmitError('');
+                          }}
+                          className={CUSTOMER_FIELD_CLASS}
                         />
-                      )}
-
-                      {isAgentOrCooperative ? (
-                        <p className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs font-bold text-amber-900">
-                          発注先業者は上の「代理発注モード」で選択・入力してください
-                          {contractorName ? `（現在: ${contractorName}）` : ''}
-                        </p>
-                      ) : (
-                        <div className="flex flex-col gap-3">
-                          <Label htmlFor={orderFieldId('contractor-name')}>業者名</Label>
-                          <input
-                            id={orderFieldId('contractor-name')}
-                            name={orderFieldName('contractor_name')}
-                            type="text"
-                            autoComplete="organization"
-                            placeholder="発注している業者名"
-                            value={contractorName}
-                            onChange={(e) => {
-                              setContractorName(e.target.value);
-                              setSubmitError('');
-                            }}
-                            className={CUSTOMER_FIELD_CLASS}
-                          />
-                        </div>
-                      )}
+                      </div>
                     </>
                   ) : null}
                 </div>
@@ -5305,47 +5278,22 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </div>
               </div>
 
-              {!isGuestSiteOrder && orderKind === 'project' && currentCustomerRole !== 'agent' ? (
+              {!isGuestSiteOrder && orderKind === 'project' && !isAgentOrCooperative ? (
                 <MasterSuggestInput
                   label="商社（任意）"
                   name={orderFieldName('trader_name')}
                   value={traderName}
                   onValueChange={handleTraderNameChange}
-                  items={currentCustomerRole === 'cooperative' ? agentOrganizations : MASTER_TRADER_SUGGESTIONS}
-                  getItemKey={(item) =>
-                    currentCustomerRole === 'cooperative' ? String(item?.id || '') : String(item || '')
-                  }
-                  getItemLabel={(item) =>
-                    currentCustomerRole === 'cooperative'
-                      ? String(item?.name || '').trim()
-                      : String(item || '')
-                  }
-                  getSearchTexts={
-                    currentCustomerRole === 'cooperative' ? organizationSuggestTexts : undefined
-                  }
+                  items={MASTER_TRADER_SUGGESTIONS}
+                  getItemKey={(item) => String(item || '')}
+                  getItemLabel={(item) => String(item || '')}
                   onSelect={(item) => {
-                    const next =
-                      currentCustomerRole === 'cooperative'
-                        ? String(item?.name || '').trim()
-                        : String(item || '');
-                    handleTraderNameChange(next);
+                    handleTraderNameChange(String(item || ''));
                   }}
-                  placeholder={
-                    currentCustomerRole === 'cooperative'
-                      ? '商社を経由しない場合は空欄'
-                      : '例：梅田建材（入力すると候補が表示されます）'
-                  }
+                  placeholder="例：梅田建材（入力すると候補が表示されます）"
                   emptyHint="該当する商社がありません（自由入力もできます）"
                   autoComplete="organization"
                 />
-              ) : null}
-              {!isGuestSiteOrder &&
-              orderKind === 'project' &&
-              currentCustomerRole === 'cooperative' &&
-              submitError === COOPERATIVE_OWN_ORG_TRADER_ERROR ? (
-                <p className="-mt-4 text-sm font-bold text-red-700" role="alert">
-                  {COOPERATIVE_OWN_ORG_TRADER_ERROR}
-                </p>
               ) : null}
 
               <div className="flex flex-col gap-3">
@@ -5929,6 +5877,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 agentOrganizations={agentOrganizations}
                 currentCustomerId={currentCustomerId}
                 requestedByDefault={currentLoginManagerLabel}
+                allowedDeliveryAreas={allowedDeliveryAreas}
+                deliveryPrefecture={resolveDeliveryPrefecture(adminSettings)}
                 active={customerOrderTab === 'mixDesignHistory'}
               />
             ) : null}

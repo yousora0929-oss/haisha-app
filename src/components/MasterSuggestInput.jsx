@@ -72,6 +72,8 @@ export function MasterSuggestInput({
   /** true: 空欄時はピン留めのみ表示（マスタ全件は出さない） */
   emptyQueryShowsPinnedOnly = false,
   searchResultLimit = 80,
+  onInputKeyDown,
+  inputProps = {},
 }) {
   const autoId = useStableId();
   const inputId = htmlFor || autoId;
@@ -365,6 +367,11 @@ export function MasterSuggestInput({
           aria-autocomplete="list"
           aria-expanded={showList}
           aria-controls={showList ? `${inputId}-listbox` : undefined}
+          {...inputProps}
+          onKeyDown={(e) => {
+            inputProps?.onKeyDown?.(e);
+            onInputKeyDown?.(e);
+          }}
         />
         {showList ? (
           <ul

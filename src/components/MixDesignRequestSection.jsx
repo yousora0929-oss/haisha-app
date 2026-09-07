@@ -10,6 +10,7 @@ import {
   earliestPourDate,
   handleMixDesignNavKeyDown,
   mixCodeForItem,
+  printMixDesignSheet,
   selectAllOnFocus,
   sumMixDesignQuantityM3,
   validateMixDesignDraft,
@@ -489,15 +490,7 @@ export const MixDesignRequestSection = forwardRef(function MixDesignRequestSecti
             {showPreview ? (
               <button
                 type="button"
-                onClick={() => {
-                  document.body.classList.add('mix-design-printing');
-                  const cleanup = () => {
-                    document.body.classList.remove('mix-design-printing');
-                    window.removeEventListener('afterprint', cleanup);
-                  };
-                  window.addEventListener('afterprint', cleanup);
-                  window.setTimeout(() => window.print(), 50);
-                }}
+                onClick={() => printMixDesignSheet()}
                 className="min-h-[44px] rounded-xl bg-slate-900 px-4 text-sm font-bold text-white"
               >
                 印刷 / PDF

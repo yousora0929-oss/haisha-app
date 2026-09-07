@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as db from '../haishaDb.js';
 import { MixDesignRequestModal } from './MixDesignRequestModal.jsx';
 import { MixDesignRequestPrint } from './MixDesignRequestPrint.jsx';
@@ -8,6 +8,7 @@ import {
   mixDesignLastChangedAt,
   mixDesignPrintPropsFromDb,
   mixDesignStatusLabel,
+  printMixDesignSheet,
 } from '../utils/mixDesignRequest.js';
 import './mixDesignPrint.css';
 
@@ -34,6 +35,8 @@ export function MixDesignRequestHistorySection({
   agentOrganizations = [],
   currentCustomerId = '',
   requestedByDefault = '',
+  allowedDeliveryAreas = [],
+  deliveryPrefecture = '大分県',
   active = true,
 }) {
   const [keyword, setKeyword] = useState('');
@@ -53,6 +56,7 @@ export function MixDesignRequestHistorySection({
 
   const [editBundle, setEditBundle] = useState(null);
   const [editLoadingId, setEditLoadingId] = useState('');
+  const printRootRef = useRef(null);
 
   const factoryNameById = useMemo(() => {
     const map = new Map();
@@ -148,13 +152,7 @@ export function MixDesignRequestHistorySection({
   };
 
   const runPrint = () => {
-    document.body.classList.add('mix-design-printing');
-    const cleanup = () => {
-      document.body.classList.remove('mix-design-printing');
-      window.removeEventListener('afterprint', cleanup);
-    };
-    window.addEventListener('afterprint', cleanup);
-    window.setTimeout(() => window.print(), 50);
+    printMixDesignSheet(printRootRef.current);
   };
 
   const selectedProject =
@@ -296,6 +294,8 @@ export function MixDesignRequestHistorySection({
               factories={factories}
               customers={customers}
               agentOrganizations={agentOrganizations}
+              allowedDeliveryAreas={allowedDeliveryAreas}
+              deliveryPrefecture={deliveryPrefecture}
               requestedByDefault={requestedByDefault}
               onClose={() => {
                 setShowMixDesignForm(false);
@@ -399,6 +399,12 @@ export function MixDesignRequestHistorySection({
                               <dd className="inline text-slate-800">{row.trading_company_name}</dd>
                             </div>
                           ) : null}
+                          {row.requested_by ? (
+                            <div className="sm:col-span-2">
+                              <dt className="inline text-slate-400">依頼者 </dt>
+                              <dd className="inline text-slate-800">{row.requested_by}</dd>
+                            </div>
+                          ) : null}
                           {row.site_address ? (
                             <div className="sm:col-span-2">
                               <dt className="inline text-slate-400">現場住所 </dt>
@@ -451,6 +457,8 @@ export function MixDesignRequestHistorySection({
           factories={factories}
           customers={customers}
           agentOrganizations={agentOrganizations}
+          allowedDeliveryAreas={allowedDeliveryAreas}
+          deliveryPrefecture={deliveryPrefecture}
           requestedByDefault={requestedByDefault}
           onClose={() => setEditBundle(null)}
           onSubmitted={() => {
@@ -463,7 +471,7 @@ export function MixDesignRequestHistorySection({
 
       {printBundle ? (
         <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-900/50 p-0 sm:items-center sm:p-4">
-          <div className="flex max-h-[100dvh] w-full max-w-4xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-h-[92dvh] sm:rounded-2xl">
+          <div className="flex max-h-[100dvh] min-h-[75vh] w-full max-w-4xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-h-[92dvh] sm:min-h-[80vh] sm:rounded-2xl">
             <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
               <div>
                 <h3 className="text-base font-black text-slate-900">印刷プレビュー</h3>
@@ -485,8 +493,8 @@ export function MixDesignRequestHistorySection({
                 閉じる
               </button>
             </div>
-            <div className="min-h-0 flex-1 overflow-x-auto overflow-y-auto p-4">
-              <div className="mix-design-print-root">
+            <div className="min-h-[50vh] flex-1 overflow-x-auto overflow-y-auto p-4">
+              <div ref={printRootRef} className="mix-design-print-root">
                 <div className="mix-design-print-preview">
                   <MixDesignRequestPrint
                     header={printBundle.header}
