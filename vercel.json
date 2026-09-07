@@ -1,6 +1,7 @@
 {
   "rewrites": [
     { "source": "/map-editor/:path*", "destination": "/MapEditor.html" },
-    { "source": "/order/:path*", "destination": "/DispatchOrderPrototype.html" }
+    { "source": "/order/:path*", "destination": "/DispatchOrderPrototype.html" },
+    { "source": "/mix-design/accept/:path*", "destination": "/MixDesignAccept.html" }
   ]
 }

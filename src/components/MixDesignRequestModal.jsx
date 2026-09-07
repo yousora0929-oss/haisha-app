@@ -3,6 +3,7 @@ import * as db from '../haishaDb.js';
 import { MasterSuggestInput } from './MasterSuggestInput.jsx';
 import { DeliveryAreaAddressField } from './DeliveryAreaAddressField.jsx';
 import { MixDesignRequestPrint } from './MixDesignRequestPrint.jsx';
+import { MixDesignEmailActions } from './MixDesignEmailActions.jsx';
 import {
   AGGREGATE_SIZE_CANDIDATES,
   BASE_STRENGTH_CANDIDATES,
@@ -305,6 +306,7 @@ export function MixDesignRequestModal({
   initialRequest = null,
   initialItems = null,
   initialFactoryIds = [],
+  initialFactoryLinks = [],
   onClose,
   onSubmitted,
 }) {
@@ -1077,19 +1079,30 @@ export function MixDesignRequestModal({
           </div>
 
           {showPreview ? (
-            <div ref={printRootRef} className="mix-design-print-root">
-              <div className="mix-design-print-preview">
-                <MixDesignRequestPrint
-                  header={printHeader}
-                  request={printRequest}
-                  items={draft.items}
-                  editable
-                  onHeaderChange={patchDraft}
-                  onRequestChange={patchDraft}
-                  onItemChange={updateItem}
-                />
+            <>
+              <div ref={printRootRef} className="mix-design-print-root">
+                <div className="mix-design-print-preview">
+                  <MixDesignRequestPrint
+                    header={printHeader}
+                    request={printRequest}
+                    items={draft.items}
+                    editable
+                    onHeaderChange={patchDraft}
+                    onRequestChange={patchDraft}
+                    onItemChange={updateItem}
+                  />
+                </div>
               </div>
-            </div>
+              {isEdit ? (
+                <MixDesignEmailActions
+                  factoryLinks={(Array.isArray(initialFactoryLinks) ? initialFactoryLinks : []).filter((link) =>
+                    (draft.requestedToFactoryIds || []).map(String).includes(String(link.factoryId)),
+                  )}
+                  factories={factories}
+                  header={printHeader}
+                />
+              ) : null}
+            </>
           ) : null}
         </div>
 

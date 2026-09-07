@@ -33,6 +33,7 @@ import {
   normalizeMixDesignFactoryIds,
   resolveMixDesignProjectId,
 } from './utils/mixDesignRequest.js';
+import { mapMixDesignFactoryLinks } from './utils/mixDesignAccept.js';
 import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.js';
 import { normalizeCompanyName } from './utils/csvImport.js';
 import {
@@ -1545,11 +1546,21 @@ export async function fetchMixDesignRequestWithItems(requestId) {
   }
 
   let factoryIds = [];
-  const { data: factoryRows, error: factoryError } = await supabase
+  let factoryLinks = [];
+  let factoryRows = null;
+  let factoryError = null;
+  ({ data: factoryRows, error: factoryError } = await supabase
     .from('mix_design_request_factories')
-    .select('factory_id, created_at')
+    .select('factory_id, accept_token, accepted_at, created_at')
     .eq('request_id', id)
-    .order('created_at', { ascending: true });
+    .order('created_at', { ascending: true }));
+  if (factoryError) {
+    ({ data: factoryRows, error: factoryError } = await supabase
+      .from('mix_design_request_factories')
+      .select('factory_id, created_at')
+      .eq('request_id', id)
+      .order('created_at', { ascending: true }));
+  }
   if (factoryError) {
     console.warn('[fetchMixDesignRequestWithItems] factories lookup failed', factoryError);
     factoryIds = normalizeMixDesignFactoryIds(
@@ -1557,6 +1568,7 @@ export async function fetchMixDesignRequestWithItems(requestId) {
     );
   } else {
     factoryIds = normalizeMixDesignFactoryIds((factoryRows || []).map((r) => r.factory_id));
+    factoryLinks = mapMixDesignFactoryLinks(factoryRows || []);
     if (!factoryIds.length && request.requested_to_factory_id) {
       factoryIds = [String(request.requested_to_factory_id).trim()].filter(Boolean);
     }
@@ -1567,6 +1579,7 @@ export async function fetchMixDesignRequestWithItems(requestId) {
     items: Array.isArray(items) ? items : [],
     project,
     factoryIds,
+    factoryLinks,
   };
 }
 
@@ -3371,6 +3384,7 @@ function mapFactoryRow(row) {
     id,
     name,
     phone_number: row.phone_number != null ? String(row.phone_number) : '',
+    email: String(row.email || row.contact_email || row.mail || '').trim(),
     latitude,
     longitude,
     allowed_delivery_areas: normalizeAllowedDeliveryAreas(row?.allowed_delivery_areas),

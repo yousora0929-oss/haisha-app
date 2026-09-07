@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as db from '../haishaDb.js';
 import { MixDesignRequestModal } from './MixDesignRequestModal.jsx';
 import { MixDesignRequestPrint } from './MixDesignRequestPrint.jsx';
+import { MixDesignEmailActions } from './MixDesignEmailActions.jsx';
 import {
   formatMixDesignChangeLine,
   formatMixDesignFactoryNames,
@@ -111,19 +112,20 @@ export function MixDesignRequestHistorySection({
     setPrintLoadingId(id);
     setError('');
     try {
-      const [{ request, items, project, factoryIds }, logs] = await Promise.all([
+      const [{ request, items, project, factoryIds, factoryLinks }, logs] = await Promise.all([
         db.fetchMixDesignRequestWithItems(id),
         db.fetchMixDesignRequestChangeLogs(id).catch(() => []),
       ]);
       const latestLog = Array.isArray(logs) && logs.length ? logs[0] : null;
       setChangeLogs(Array.isArray(logs) ? logs : []);
-      setPrintBundle(
-        mixDesignPrintPropsFromDb(request, items, project, {
+      setPrintBundle({
+        ...mixDesignPrintPropsFromDb(request, items, project, {
           latestChangeLog: latestLog,
           factoryIds,
           factoryNameById,
         }),
-      );
+        factoryLinks: factoryLinks || [],
+      });
     } catch (err) {
       console.error('配合計画書依頼の印刷データ取得に失敗しました', err);
       const message = err?.message || '印刷データの取得に失敗しました';
@@ -140,8 +142,8 @@ export function MixDesignRequestHistorySection({
     setEditLoadingId(id);
     setError('');
     try {
-      const { request, items, project, factoryIds } = await db.fetchMixDesignRequestWithItems(id);
-      setEditBundle({ request, items, project, factoryIds });
+      const { request, items, project, factoryIds, factoryLinks } = await db.fetchMixDesignRequestWithItems(id);
+      setEditBundle({ request, items, project, factoryIds, factoryLinks: factoryLinks || [] });
     } catch (err) {
       console.error('配合計画書依頼の編集データ取得に失敗しました', err);
       const message = err?.message || '編集データの取得に失敗しました';
@@ -450,6 +452,7 @@ export function MixDesignRequestHistorySection({
           initialRequest={editBundle.request}
           initialItems={editBundle.items}
           initialFactoryIds={editBundle.factoryIds || []}
+          initialFactoryLinks={editBundle.factoryLinks || []}
           order={{
             project_id: editBundle.request?.project_id,
             customer_id: currentCustomerId,
@@ -506,6 +509,11 @@ export function MixDesignRequestHistorySection({
                   />
                 </div>
               </div>
+              <MixDesignEmailActions
+                factoryLinks={printBundle.factoryLinks || []}
+                factories={factories}
+                header={printBundle.header}
+              />
               {changeLogs.length ? (
                 <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <h4 className="text-sm font-black text-slate-900">変更履歴</h4>

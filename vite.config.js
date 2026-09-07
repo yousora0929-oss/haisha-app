@@ -5,18 +5,29 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
-/** /map-editor/:id および /order/:token を各 HTML にフォールバック（開発サーバー用） */
+/** /map-editor/:id、/order/:token、/mix-design/accept/:token を各 HTML にフォールバック */
 function spaHtmlFallback() {
+  const rewrite = (req) => {
+    const url = req.url?.split('?')[0] || '';
+    if (/^\/map-editor\/project\/[^/]+\/?$/.test(url) || /^\/map-editor\/[^/]+\/?$/.test(url)) {
+      req.url = '/MapEditor.html';
+    } else if (/^\/order\/[^/]+\/?$/.test(url) || /^\/guest-order\/[^/]+\/?$/.test(url)) {
+      req.url = '/DispatchOrderPrototype.html';
+    } else if (/^\/mix-design\/accept\/[^/]+\/?$/.test(url)) {
+      req.url = '/MixDesignAccept.html';
+    }
+  };
   return {
     name: 'spa-html-fallback',
     configureServer(server) {
       server.middlewares.use((req, _res, next) => {
-        const url = req.url?.split('?')[0] || '';
-        if (/^\/map-editor\/project\/[^/]+\/?$/.test(url) || /^\/map-editor\/[^/]+\/?$/.test(url)) {
-          req.url = '/MapEditor.html';
-        } else if (/^\/order\/[^/]+\/?$/.test(url) || /^\/guest-order\/[^/]+\/?$/.test(url)) {
-          req.url = '/DispatchOrderPrototype.html';
-        }
+        rewrite(req);
+        next();
+      });
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        rewrite(req);
         next();
       });
     },
@@ -37,6 +48,7 @@ export default defineConfig({
         charter: resolve(__dirname, 'CharterTabletPrototype.html'),
         admin: resolve(__dirname, 'AdminPrototype.html'),
         mapEditor: resolve(__dirname, 'MapEditor.html'),
+        mixDesignAccept: resolve(__dirname, 'MixDesignAccept.html'),
       },
       output: {
         manualChunks(id) {
