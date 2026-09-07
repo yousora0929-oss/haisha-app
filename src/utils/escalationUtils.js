@@ -617,21 +617,34 @@ export function filterFactoriesForSmallVehicleOrder(factories, order, infoMap) {
   return filtered;
 }
 
+function compareId(a, b) {
+  return String(a.id || '').localeCompare(String(b.id || ''));
+}
+
+function compareDistanceThenId(a, b) {
+  if (a.dist !== b.dist) return a.dist - b.dist;
+  return compareId(a, b);
+}
+
+/** 出荷量昇順。同量なら距離昇順を維持（ID タイブレークで距離順が消えないようにする） */
+function compareVolumeThenDistance(a, b) {
+  if (a.vol !== b.vol) return a.vol - b.vol;
+  return compareDistanceThenId(a, b);
+}
+
 /**
  * 距離順上位N社を「近い候補」とし、その中を当月出荷量の少ない順に並べ替える。
+ * 出荷量が同じ（または未設定同士）なら距離昇順を維持する。
  * 出荷量未設定(null)の工場は既知データの中央に挿入（中立扱い）。N社の外側は距離順のまま後方連結。
  */
 export function rankFactoryIdsNearestThenCheapest(items, nearPoolSize) {
-  const byDistance = [...items].sort((a, b) => {
-    if (a.dist !== b.dist) return a.dist - b.dist;
-    return a.id.localeCompare(b.id);
-  });
+  const byDistance = [...items].sort(compareDistanceThenId);
   const poolSize = Math.max(1, Number(nearPoolSize) || 5);
   const near = byDistance.slice(0, poolSize);
   const far = byDistance.slice(poolSize);
   const known = near
     .filter((x) => x.vol != null)
-    .sort((a, b) => a.vol - b.vol || a.id.localeCompare(b.id));
+    .sort(compareVolumeThenDistance);
   const unknown = near.filter((x) => x.vol == null);
   let nearSorted;
   if (!unknown.length) nearSorted = known;
