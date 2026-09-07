@@ -1,0 +1,17 @@
+{
+  "name": "CONCRETELINK (haisha-app)",
+  "install": "npm ci",
+  "terminals": [
+    {
+      "name": "vite-dev",
+      "command": "npm run dev -- --host 0.0.0.0 --port 5173",
+      "description": "Vite dev server for the CONCRETELINK multi-page app (landing, customer/dispatch, factory, admin, charter, map editor). Reads VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY (and optional VITE_ONESIGNAL_APP_ID) from the environment."
+    }
+  ],
+  "ports": [
+    {
+      "name": "Vite dev server",
+      "port": 5173
+    }
+  ]
+}
