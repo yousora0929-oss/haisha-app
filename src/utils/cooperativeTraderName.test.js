@@ -109,4 +109,32 @@ describe('validateCartLineForm cooperative trader rule', () => {
     );
     expect(missing).not.toContain(COOPERATIVE_OWN_ORG_TRADER_ERROR);
   });
+
+  it('does not require 業者名 for agent spot when 発注先業者 is optional', () => {
+    const missing = validateCartLineForm(
+      spotContext({
+        currentCustomerRole: 'agent',
+        currentCustomer: { company_name: 'トクヤマ通商㈱' },
+        isAgentOrCooperative: true,
+        contractorName: '',
+        traderName: 'トクヤマ通商㈱',
+      }),
+      '2026-09-10',
+      opts,
+    );
+    expect(missing).not.toContain('業者名');
+  });
+
+  it('still requires 業者名 for direct contractor spot orders', () => {
+    const missing = validateCartLineForm(
+      spotContext({
+        currentCustomerRole: 'contractor',
+        currentCustomer: { company_name: '業者A' },
+        contractorName: '',
+      }),
+      '2026-09-10',
+      opts,
+    );
+    expect(missing).toContain('業者名');
+  });
 });

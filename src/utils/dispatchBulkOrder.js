@@ -336,7 +336,12 @@ export function buildDispatchOrderForDate(preferredDate, context) {
   const resolvedSiteContactName = String(siteContactName ?? '').trim();
 
   const projectTraderName = selectedProject ? resolveProjectTradingCompanyName(selectedProject) : '';
-  const resolvedTraderName = projectTraderName || String(traderName || '').trim();
+  const loggedInCompanyName = String(currentCustomer?.company_name || currentCustomer?.name || '').trim();
+  const payloadTraderName =
+    isAgentOrCooperative && currentCustomerRole === 'agent'
+      ? loggedInCompanyName || String(traderName || '').trim()
+      : String(traderName || '').trim();
+  const resolvedTraderName = projectTraderName || payloadTraderName;
 
   return {
     createdAt: new Date().toISOString(),
@@ -385,7 +390,7 @@ export function buildDispatchOrderForDate(preferredDate, context) {
     unloadDuration,
     unloadDurationMinutes: unloadDuration,
     unloadDurationLabel: unloadDurationLabel(unloadDuration),
-    traderName: String(traderName || '').trim(),
+    traderName: payloadTraderName,
     contractorName: String(contractorName || '').trim(),
     mixText,
     siteName: resolvedSiteName,
@@ -457,7 +462,10 @@ export function validateMultiDateOrderForm(context, dates, { today, isPastPrefer
   if (!isGuestSiteOrder) {
     if (context.orderKind === 'project') {
       if (!String(context.contractorName || '').trim()) missing.push('業者');
-    } else if (!String(context.contractorName || '').trim()) {
+    } else if (
+      !(context.isAgentOrCooperative && context.orderKind === 'spot') &&
+      !String(context.contractorName || '').trim()
+    ) {
       missing.push('業者名');
     }
   }
