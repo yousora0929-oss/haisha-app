@@ -5877,6 +5877,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 agentOrganizations={agentOrganizations}
                 currentCustomerId={currentCustomerId}
                 requestedByDefault={currentLoginManagerLabel}
+                requestedByAffiliationDefault={currentCustomerDisplayName}
                 allowedDeliveryAreas={allowedDeliveryAreas}
                 deliveryPrefecture={resolveDeliveryPrefecture(adminSettings)}
                 active={customerOrderTab === 'mixDesignHistory'}

@@ -35,6 +35,7 @@ export function MixDesignRequestHistorySection({
   agentOrganizations = [],
   currentCustomerId = '',
   requestedByDefault = '',
+  requestedByAffiliationDefault = '',
   allowedDeliveryAreas = [],
   deliveryPrefecture = '大分県',
   active = true,
@@ -297,6 +298,7 @@ export function MixDesignRequestHistorySection({
               allowedDeliveryAreas={allowedDeliveryAreas}
               deliveryPrefecture={deliveryPrefecture}
               requestedByDefault={requestedByDefault}
+              requestedByAffiliationDefault={requestedByAffiliationDefault}
               onClose={() => {
                 setShowMixDesignForm(false);
               }}
@@ -460,6 +462,7 @@ export function MixDesignRequestHistorySection({
           allowedDeliveryAreas={allowedDeliveryAreas}
           deliveryPrefecture={deliveryPrefecture}
           requestedByDefault={requestedByDefault}
+          requestedByAffiliationDefault={requestedByAffiliationDefault}
           onClose={() => setEditBundle(null)}
           onSubmitted={() => {
             window.alert('配合計画書依頼を更新しました（変更履歴を保存しました）');

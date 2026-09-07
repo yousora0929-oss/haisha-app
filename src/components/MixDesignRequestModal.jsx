@@ -30,6 +30,7 @@ import {
   preventMinusKey,
   pourYearChoices,
   printMixDesignSheet,
+  regionFromDeliveryArea,
   sanitizeNonNegativeInput,
   selectAllOnFocus,
   stepCandidateValue,
@@ -83,6 +84,8 @@ function MixNumericSuggestInput({
       getItemLabel={(item) => String(item)}
       placeholder={placeholder}
       emptyHint="候補にない値も直接入力できます"
+      compact
+      labelClassName="text-xs font-bold text-slate-600"
       inputClassName={FIELD}
       inputProps={{ 'data-mix-nav': nav, inputMode: 'numeric' }}
       onInputKeyDown={(event) => {
@@ -296,6 +299,7 @@ export function MixDesignRequestModal({
   allowedDeliveryAreas = [],
   deliveryPrefecture = DEFAULT_DELIVERY_PREFECTURE,
   requestedByDefault = '',
+  requestedByAffiliationDefault = '',
   mode = 'create',
   editRequestId = '',
   initialRequest = null,
@@ -308,6 +312,7 @@ export function MixDesignRequestModal({
   const [draft, setDraft] = useState(() => prefillMixDesignDraft(null, null, requestedByDefault));
   const [baselineDraft, setBaselineDraft] = useState(null);
   const [rules, setRules] = useState([]);
+  const [rulesError, setRulesError] = useState('');
   const [showPreview, setShowPreview] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -319,9 +324,12 @@ export function MixDesignRequestModal({
   const printRootRef = useRef(null);
 
   useEffect(() => {
+    if (!open) {
+      prevOpenRef.current = false;
+      return undefined;
+    }
     const wasOpen = prevOpenRef.current;
-    prevOpenRef.current = open;
-    if (!open) return undefined;
+    prevOpenRef.current = true;
     if (wasOpen) return undefined;
     const nextDraft = isEdit
       ? prefillMixDesignDraftFromRequest(
@@ -332,23 +340,51 @@ export function MixDesignRequestModal({
           initialFactoryIds,
           allowedDeliveryAreas,
         )
-      : prefillMixDesignDraft(order, project, requestedByDefault, allowedDeliveryAreas);
+      : prefillMixDesignDraft(
+          order,
+          project,
+          requestedByDefault,
+          allowedDeliveryAreas,
+          requestedByAffiliationDefault,
+        );
     setDraft(nextDraft);
     setBaselineDraft(isEdit ? JSON.parse(JSON.stringify(nextDraft)) : null);
     setShowPreview(false);
     setError('');
+    return undefined;
+  }, [
+    open,
+    order,
+    project,
+    requestedByDefault,
+    requestedByAffiliationDefault,
+    isEdit,
+    initialRequest,
+    initialItems,
+    initialFactoryIds,
+    allowedDeliveryAreas,
+  ]);
+
+  useEffect(() => {
+    if (!open) return undefined;
     let cancelled = false;
+    setRulesError('');
     db.fetchCorrectionValueRules()
       .then((rows) => {
-        if (!cancelled) setRules(Array.isArray(rows) ? rows : []);
+        if (cancelled) return;
+        setRules(Array.isArray(rows) ? rows : []);
       })
       .catch((err) => {
         console.error('correction_value_rules の取得に失敗しました', err);
+        if (!cancelled) {
+          setRules([]);
+          setRulesError(err?.message || '補正値ルールの取得に失敗しました');
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [open, order, project, requestedByDefault, isEdit, initialRequest, initialItems, initialFactoryIds, allowedDeliveryAreas]);
+  }, [open]);
 
   const contractorCustomers = useMemo(
     () =>
@@ -454,7 +490,7 @@ export function MixDesignRequestModal({
   const patchDraft = useCallback((patch) => {
     setDraft((prev) => {
       const next = { ...prev, ...patch };
-      if ('periodStart' in patch || 'periodEnd' in patch) {
+      if ('periodStart' in patch || 'periodEnd' in patch || 'region' in patch) {
         next.items = prev.items.map((item) =>
           applyAutoCorrection(
             applyPourDateResolution(item, next.periodStart, next.periodEnd),
@@ -711,12 +747,14 @@ export function MixDesignRequestModal({
                 label="現場住所"
                 allowedAreas={allowedDeliveryAreas}
                 deliveryArea={draft.siteDeliveryArea}
-                onDeliveryAreaChange={(v) =>
+                onDeliveryAreaChange={(v) => {
+                  const mapped = regionFromDeliveryArea(v);
                   patchDraft({
                     siteDeliveryArea: v,
                     siteAddress: combineDeliveryAddress(v, draft.siteAddressDetail),
-                  })
-                }
+                    ...(mapped ? { region: mapped } : {}),
+                  });
+                }}
                 addressDetail={draft.siteAddressDetail}
                 onAddressDetailChange={(v) =>
                   patchDraft({
@@ -735,35 +773,38 @@ export function MixDesignRequestModal({
               />
             </div>
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-              全体数量（m³）
-              <NonNegNumberInput
-                value={draft.totalVolumeM3}
-                onChange={(value) => patchDraft({ totalVolumeM3: value })}
-                className={FIELD}
-                placeholder="物件全体の予定数量"
-              />
+              地域（構造体補正値）
+              <select value={draft.region} onChange={(e) => setRegion(e.target.value)} className={FIELD}>
+                {MIX_DESIGN_REGIONS.map((region) => (
+                  <option key={region} value={region}>
+                    {region}
+                  </option>
+                ))}
+              </select>
               <span className="text-[11px] font-medium text-slate-500">
-                配合パターンごとの数量とは別に、物件全体のおおよその数量を入力します。
+                補正値表の地域です。大分市・挟間は自動で「大分市・挟間町」、湯布院・庄内は自動で切り替わります。由布市は現場に合わせて選んでください。
               </span>
             </label>
-            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-              工期開始
-              <input
-                type="date"
-                value={draft.periodStart}
-                onChange={(e) => patchDraft({ periodStart: e.target.value })}
-                className={FIELD}
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-              工期終了
-              <input
-                type="date"
-                value={draft.periodEnd}
-                onChange={(e) => patchDraft({ periodEnd: e.target.value })}
-                className={FIELD}
-              />
-            </label>
+            <div className="grid grid-cols-1 gap-3 sm:col-span-2 sm:grid-cols-2">
+              <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
+                工期開始
+                <input
+                  type="date"
+                  value={draft.periodStart}
+                  onChange={(e) => patchDraft({ periodStart: e.target.value })}
+                  className={FIELD}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
+                工期終了
+                <input
+                  type="date"
+                  value={draft.periodEnd}
+                  onChange={(e) => patchDraft({ periodEnd: e.target.value })}
+                  className={FIELD}
+                />
+              </label>
+            </div>
             <fieldset className="sm:col-span-2">
               <legend className="mb-1 text-xs font-bold text-slate-600">使用車両</legend>
               <div className="flex flex-wrap gap-3">
@@ -782,29 +823,29 @@ export function MixDesignRequestModal({
             </fieldset>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-              <MasterSuggestInput
-                label="現場担当者"
-                name="mix_design_site_manager"
-                value={draft.siteManagerName}
-                onValueChange={(value) => patchDraft({ siteManagerName: value })}
-                onSelect={(c) =>
-                  patchDraft({
-                    siteManagerName: String(c?.name || '').trim(),
-                    siteManagerContact: String(c?.phone_number || c?.phone || '').trim(),
-                  })
-                }
-                items={siteContactCandidates}
-                getItemKey={(c) => String(c.id || c.name)}
-                getItemLabel={(c) => String(c.name || '').trim()}
-                getItemSubLabel={(c) => String(c.phone_number || c.phone || '').trim()}
-                getSearchTexts={(c) => [c?.name, c?.phone_number, c?.phone].filter(Boolean).map(String)}
-                placeholder="担当者名（業者連絡先から候補表示）"
-                emptyHint="候補がありません（自由入力可）"
-                inputClassName={FIELD}
-              />
-            </label>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-end">
+            <MasterSuggestInput
+              label="現場担当者"
+              name="mix_design_site_manager"
+              value={draft.siteManagerName}
+              onValueChange={(value) => patchDraft({ siteManagerName: value })}
+              onSelect={(c) =>
+                patchDraft({
+                  siteManagerName: String(c?.name || '').trim(),
+                  siteManagerContact: String(c?.phone_number || c?.phone || '').trim(),
+                })
+              }
+              items={siteContactCandidates}
+              getItemKey={(c) => String(c.id || c.name)}
+              getItemLabel={(c) => String(c.name || '').trim()}
+              getItemSubLabel={(c) => String(c.phone_number || c.phone || '').trim()}
+              getSearchTexts={(c) => [c?.name, c?.phone_number, c?.phone].filter(Boolean).map(String)}
+              placeholder="担当者名（業者連絡先から候補表示）"
+              emptyHint="候補がありません（自由入力可）"
+              compact
+              labelClassName="text-xs font-bold text-slate-600"
+              inputClassName={FIELD}
+            />
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
               現場担当者連絡先
               <input
@@ -828,16 +869,6 @@ export function MixDesignRequestModal({
                   業者を候補から選ぶか新規登録すると保存できます（同名・同電話は重複登録しません）
                 </span>
               </span>
-            </label>
-            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-              地域
-              <select value={draft.region} onChange={(e) => setRegion(e.target.value)} className={FIELD}>
-                {MIX_DESIGN_REGIONS.map((region) => (
-                  <option key={region} value={region}>
-                    {region}
-                  </option>
-                ))}
-              </select>
             </label>
             <fieldset className="flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-2">
               <legend className="mb-1">依頼先工場（複数選択可）</legend>
@@ -920,24 +951,44 @@ export function MixDesignRequestModal({
                 className={FIELD}
               />
             </label>
-            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-              依頼者
-              <input
-                type="text"
-                value={draft.requestedBy}
-                onChange={(e) => patchDraft({ requestedBy: e.target.value })}
+            <div className="sm:col-span-2 rounded-xl border-2 border-slate-200 bg-white px-3 py-3">
+              <p className="text-xs font-bold text-slate-600">依頼者</p>
+              <label className="mt-2 flex flex-col gap-1 text-xs font-bold text-slate-600">
+                氏名
+                <input
+                  type="text"
+                  value={draft.requestedBy}
+                  onChange={(e) => patchDraft({ requestedBy: e.target.value })}
+                  className={FIELD}
+                />
+              </label>
+              <label className="mt-2 flex flex-col gap-1 text-[11px] font-bold text-slate-500">
+                所属
+                <input
+                  type="text"
+                  value={draft.requestedByAffiliation}
+                  onChange={(e) => patchDraft({ requestedByAffiliation: e.target.value })}
+                  placeholder="ログイン中の会社名が入っていなければ手入力"
+                  className={FIELD}
+                />
+              </label>
+              {draft.requestedBy && draft.requestedByAffiliation ? (
+                <p className="mt-2 text-[11px] font-medium text-slate-500">
+                  表示: {formatRequesterDisplay(draft.requestedBy, draft.requestedByAffiliation)}
+                </p>
+              ) : null}
+            </div>
+            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-2">
+              全体数量（m³）
+              <NonNegNumberInput
+                value={draft.totalVolumeM3}
+                onChange={(value) => patchDraft({ totalVolumeM3: value })}
                 className={FIELD}
+                placeholder="物件全体の予定数量"
               />
-            </label>
-            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-              依頼者の所属
-              <input
-                type="text"
-                value={draft.requestedByAffiliation}
-                onChange={(e) => patchDraft({ requestedByAffiliation: e.target.value })}
-                placeholder="例：協同組合事務局"
-                className={FIELD}
-              />
+              <span className="text-[11px] font-medium text-slate-500">
+                配合パターンごとの数量とは別に、物件全体のおおよその数量を入力します。
+              </span>
             </label>
           </div>
 
@@ -993,6 +1044,12 @@ export function MixDesignRequestModal({
               />
             </label>
           </div>
+
+          {rulesError ? (
+            <p className="mt-3 text-xs font-bold text-amber-800" role="status">
+              補正値表の取得に失敗したため、内蔵の2026年度表で自動計算します（{rulesError}）
+            </p>
+          ) : null}
 
           {error ? (
             <p className="mt-3 text-sm font-bold text-red-700" role="alert">

@@ -1,5 +1,6 @@
 import {
   buildMixCode,
+  FALLBACK_CORRECTION_VALUE_RULES,
   lookupCorrectionValue,
   roundUpToNominalStrength,
 } from './mixDesignCalc.js';
@@ -12,6 +13,19 @@ import {
 import { combineDeliveryAddress, splitDeliveryAddress } from './deliveryAreas.js';
 
 export const MIX_DESIGN_REGIONS = ['大分市・挟間町', '湯布院・庄内'];
+
+/** 納入市から補正値地域を推定。由布市は挟間/湯布院が混在するため空文字（手選択） */
+export function regionFromDeliveryArea(area) {
+  const t = String(area || '').trim();
+  if (!t) return '';
+  if (t.includes('湯布院') || t.includes('庄内')) return '湯布院・庄内';
+  if (t.includes('大分市') || t.includes('挟間')) return '大分市・挟間町';
+  return '';
+}
+
+export function effectiveCorrectionRules(fetched) {
+  return Array.isArray(fetched) && fetched.length ? fetched : FALLBACK_CORRECTION_VALUE_RULES;
+}
 
 export const MIX_DESIGN_VEHICLE_OPTIONS = [
   { id: 'large', label: '大型車' },
@@ -307,14 +321,28 @@ export function computeNominalStrength(baseStrength, correctionValue) {
   return roundUpToNominalStrength(raw);
 }
 
+/** 工期外で pourDate が空でも、月日があれば補正値検索用の日付を作る */
+export function correctionLookupDate(item) {
+  const fromIso = parseIsoDateLocal(item?.pourDate);
+  if (fromIso) return fromIso;
+  const resolved = resolvePourDateFromPeriod({
+    month: item?.pourMonth,
+    day: item?.pourDay,
+    periodStart: '',
+    periodEnd: '',
+    yearOverride: item?.pourYearOverride,
+  });
+  return parseIsoDateLocal(resolved.pourDate);
+}
+
 export function applyAutoCorrection(item, allRules, region) {
   let next = { ...item };
   if (next.correctionIsAuto) {
-    const pourDate = parseIsoDateLocal(next.pourDate);
+    const pourDate = correctionLookupDate(next);
     if (!pourDate) {
       next = { ...next, correctionValue: '', correctionLabel: '' };
     } else {
-      const lookupRules = rulesForLookup(allRules, {
+      const lookupRules = rulesForLookup(effectiveCorrectionRules(allRules), {
         region,
         cementType: next.cementType,
         pourDate,
@@ -499,11 +527,18 @@ export function mixDesignAnchorProjectName(order) {
   return id ? `スポット注文より自動作成（注文ID: ${id}）` : 'スポット注文より自動作成';
 }
 
-export function prefillMixDesignDraft(order, project, requestedBy = '', allowedAreas = []) {
+export function prefillMixDesignDraft(
+  order,
+  project,
+  requestedBy = '',
+  allowedAreas = [],
+  affiliationDefault = '',
+) {
   const draft = createEmptyMixDesignDraft();
   const parsedRequester = parseRequesterDisplay(requestedBy);
   draft.requestedBy = parsedRequester.name;
-  draft.requestedByAffiliation = parsedRequester.affiliation;
+  draft.requestedByAffiliation =
+    parsedRequester.affiliation || String(affiliationDefault || '').trim();
 
   draft.projectName =
     String(project?.name || '').trim() ||
@@ -519,6 +554,8 @@ export function prefillMixDesignDraft(order, project, requestedBy = '', allowedA
   const splitSite = splitDeliveryAddress(draft.siteAddress, allowedAreas);
   draft.siteDeliveryArea = splitSite.deliveryArea || '';
   draft.siteAddressDetail = splitSite.addressDetail || '';
+  const mappedRegion = regionFromDeliveryArea(draft.siteDeliveryArea);
+  if (mappedRegion) draft.region = mappedRegion;
   draft.primeContractorName = String(
     project?.contractor_display_name || project?.contractor || draft.contractorName || '',
   ).trim();
@@ -943,6 +980,8 @@ export function prefillMixDesignDraftFromRequest(
   const splitSite = splitDeliveryAddress(draft.siteAddress, allowedAreas);
   draft.siteDeliveryArea = splitSite.deliveryArea || '';
   draft.siteAddressDetail = splitSite.addressDetail || '';
+  const mappedRegion = regionFromDeliveryArea(draft.siteDeliveryArea);
+  if (mappedRegion) draft.region = mappedRegion;
   draft.totalVolumeM3 =
     print.header.totalVolumeM3 != null && print.header.totalVolumeM3 !== ''
       ? String(print.header.totalVolumeM3)

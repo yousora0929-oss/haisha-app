@@ -74,6 +74,8 @@ export function MasterSuggestInput({
   searchResultLimit = 80,
   onInputKeyDown,
   inputProps = {},
+  labelClassName = '',
+  compact = false,
 }) {
   const autoId = useStableId();
   const inputId = htmlFor || autoId;
@@ -339,10 +341,21 @@ export function MasterSuggestInput({
     );
   };
 
+  const inputMinHOverridden = compact || /\bmin-h-/.test(String(inputClassName || ''));
+  const baseInputClass = inputMinHOverridden
+    ? INPUT_CLASS.replace('min-h-[56px] ', '').replace('px-4 py-3 ', 'px-3 py-2 ')
+    : INPUT_CLASS;
+
   return (
-    <div className="flex flex-col gap-2">
+    <div className={compact ? 'flex flex-col gap-1' : 'flex flex-col gap-2'}>
       {label != null && label !== '' ? (
-        <label htmlFor={inputId} className="block text-sm font-semibold text-slate-700 dark:text-slate-300">
+        <label
+          htmlFor={inputId}
+          className={
+            labelClassName ||
+            'block text-sm font-semibold text-slate-700 dark:text-slate-300'
+          }
+        >
           {label}
         </label>
       ) : null}
@@ -363,7 +376,7 @@ export function MasterSuggestInput({
           }}
           onFocus={handleFocus}
           onBlur={closePanelSoon}
-          className={INPUT_CLASS + (inputClassName ? ` ${inputClassName}` : '')}
+          className={baseInputClass + (inputClassName ? ` ${inputClassName}` : '')}
           aria-autocomplete="list"
           aria-expanded={showList}
           aria-controls={showList ? `${inputId}-listbox` : undefined}

@@ -15,6 +15,7 @@ import {
   mixDesignPrintPropsFromDb,
   normalizeMixDesignFactoryIds,
   parseRequesterDisplay,
+  regionFromDeliveryArea,
   resolveMixDesignProjectId,
   resolvePourDateFromPeriod,
   sanitizeNonNegativeInput,
@@ -389,6 +390,14 @@ describe('normalizeMixDesignFactoryIds', () => {
   });
 });
 
+describe('regionFromDeliveryArea', () => {
+  it('maps unambiguous cities and leaves 由布市 for manual pick', () => {
+    expect(regionFromDeliveryArea('大分市')).toBe('大分市・挟間町');
+    expect(regionFromDeliveryArea('湯布院町')).toBe('湯布院・庄内');
+    expect(regionFromDeliveryArea('由布市')).toBe('');
+  });
+});
+
 describe('formatRequesterDisplay / parseRequesterDisplay', () => {
   it('formats name and affiliation together', () => {
     expect(formatRequesterDisplay('佐藤', '協同組合事務局')).toBe('佐藤（協同組合事務局）');
@@ -479,6 +488,18 @@ describe('applyAutoCorrection', () => {
       '大分市・挟間町',
     );
     expect(next.correctionValue).toBe('3');
+  });
+
+  it('still looks up when construction period excludes the pour month/day', () => {
+    const withDate = applyPourDateResolution(
+      { ...createEmptyMixDesignItem(), pourMonth: '12', pourDay: '20', cementType: 'N', correctionIsAuto: true },
+      '2026-04-01',
+      '2026-10-31',
+    );
+    expect(withDate.pourDate).toBe('');
+    const next = applyAutoCorrection(withDate, [], '大分市・挟間町');
+    expect(next.correctionValue).toBe('6');
+    expect(next.correctionLabel).toBe('0℃以上8℃未満');
   });
 });
 
