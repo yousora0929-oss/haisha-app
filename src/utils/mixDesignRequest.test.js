@@ -11,6 +11,7 @@ import {
   factoryNamesText,
   formatRequesterDisplay,
   mixCodeForItem,
+  mixCodeLinesForPrint,
   mixDesignItemFromDbRow,
   mixDesignPrintPropsFromDb,
   normalizeMixDesignFactoryIds,
@@ -328,6 +329,20 @@ describe('mixDesignPrintPropsFromDb', () => {
   });
 });
 
+describe('mixCodeLinesForPrint', () => {
+  it('splits a long mix code onto two lines', () => {
+    expect(
+      mixCodeLinesForPrint({
+        baseStrength: 27,
+        correctionValue: 3,
+        slump: 18,
+        aggregateSize: 20,
+        cementType: 'BB',
+      }),
+    ).toEqual(['30（27+3BB）', '18-20BB']);
+  });
+});
+
 describe('mixDesignItemFromDbRow', () => {
   it('keeps numeric DB values as printable strings', () => {
     const item = mixDesignItemFromDbRow({
@@ -573,5 +588,37 @@ describe('buildMixDesignChangeEntries', () => {
     const changes = buildMixDesignChangeEntries(before, after);
     expect(changes.some((c) => c.field === 'contractorName')).toBe(true);
     expect(changes.some((c) => c.field === 'items')).toBe(true);
+  });
+});
+
+describe('mixDesignStatusLabel', () => {
+  it('maps five stages to the new display labels', async () => {
+    const { mixDesignStatusLabel, MIX_DESIGN_STATUS_VALUES } = await import('./mixDesignRequest.js');
+    expect(MIX_DESIGN_STATUS_VALUES).toEqual([
+      'not_started',
+      'requested',
+      'in_progress',
+      'completed',
+      'submitted',
+    ]);
+    expect(mixDesignStatusLabel('not_started')).toBe('保留中');
+    expect(mixDesignStatusLabel('requested')).toBe('依頼中');
+    expect(mixDesignStatusLabel('in_progress')).toBe('作成中');
+    expect(mixDesignStatusLabel('completed')).toBe('完成');
+    expect(mixDesignStatusLabel('submitted')).toBe('提出済み');
+  });
+});
+
+describe('formatMixDesignChangeLine status', () => {
+  it('renders status diffs with Japanese labels', async () => {
+    const { formatMixDesignChangeLine } = await import('./mixDesignRequest.js');
+    expect(
+      formatMixDesignChangeLine({
+        field: 'status',
+        label: 'ステータス',
+        old: 'in_progress',
+        new: 'completed',
+      }),
+    ).toBe('ステータス: 作成中 → 完成');
   });
 });

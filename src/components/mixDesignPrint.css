@@ -1,111 +1,224 @@
 .mix-design-print-sheet {
   box-sizing: border-box;
-  width: 210mm;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
   max-width: 100%;
+  min-height: 273mm; /* A4 297mm − 上下 12mm */
   margin: 0 auto;
   padding: 0;
   background: #fff;
   color: #111;
   font-family: 'Yu Gothic', 'YuGothic', 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif;
-  font-size: 11.5pt;
-  line-height: 1.35;
+  font-size: 16pt;
+  line-height: 1.25;
+  overflow-x: hidden;
+}
+
+.mix-design-print-main {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .mix-design-print-title-row {
-  position: relative;
   margin: 0 0 8pt;
+  padding-bottom: 6pt;
+  border-bottom: 2.5pt solid #1e2937;
 }
 
 .mix-design-print-title {
   margin: 0;
-  font-size: 18pt;
+  font-size: 22pt;
   font-weight: 800;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-align: center;
+  color: #0f172a;
 }
 
-.mix-design-print-last-changed {
-  position: absolute;
-  top: 0;
-  right: 0;
-  margin: 0;
-  font-size: 9pt;
-  font-weight: 700;
-  color: #444;
-  white-space: nowrap;
+.mix-design-print-section {
+  box-sizing: border-box;
+  margin: 7pt 0 0;
+  padding: 6pt 7pt 7pt;
+  background: #f8fafc;
+  border: 1px solid #dbe3ee;
+}
+
+.mix-design-print-section-mix {
+  background: #fff;
+  border-color: #c5d0de;
+}
+
+.mix-design-print-section-title {
+  margin: 0 0 5pt;
+  padding-left: 6pt;
+  border-left: 4pt solid #1e2937;
+  font-size: 11.5pt;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #1e2937;
 }
 
 .mix-design-print-meta,
 .mix-design-print-items {
+  box-sizing: border-box;
   width: 100%;
+  max-width: 100%;
   border-collapse: collapse;
-  table-layout: auto;
+  table-layout: fixed;
+}
+
+.mix-design-print-col-label {
+  width: 14%;
+}
+
+.mix-design-print-col-value {
+  width: 36%;
 }
 
 .mix-design-print-meta th,
 .mix-design-print-meta td,
 .mix-design-print-items th,
 .mix-design-print-items td {
-  border: 1px solid #ccc;
-  padding: 4pt 6pt;
+  border: 1px solid #b7c0cc;
+  padding: 5pt 8pt;
   vertical-align: middle;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .mix-design-print-meta th,
 .mix-design-print-items th {
-  font-weight: 700;
-  white-space: nowrap;
-  width: 1%;
+  font-size: 11pt;
+  font-weight: 800;
+  color: #334155;
+  background: #eef2f7;
+  white-space: normal;
+}
+
+.mix-design-print-meta td {
+  white-space: normal;
+  background: #fff;
 }
 
 .mix-design-print-items {
-  margin-top: 10pt;
-  font-size: 11pt;
+  margin-top: 0;
+  font-size: 14.5pt;
 }
 
-.mix-design-print-code,
-.mix-design-print-loc {
+.mix-design-print-items col.mix-design-print-col-no {
+  width: 8%;
+}
+
+.mix-design-print-items col.mix-design-print-col-wc,
+.mix-design-print-items col.mix-design-print-col-water,
+.mix-design-print-items col.mix-design-print-col-qty,
+.mix-design-print-items col.mix-design-print-col-date,
+.mix-design-print-items col.mix-design-print-col-loc {
+  width: 18.4%;
+}
+
+.mix-design-print-item {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.mix-design-print-item-main {
+  break-after: avoid;
+  page-break-after: avoid;
+}
+
+.mix-design-print-item-main td {
+  background: #eef4fb;
+}
+
+.mix-design-print-item-main td.mix-design-print-no {
+  background: #d7e4f4;
+  font-weight: 800;
+}
+
+.mix-design-print-item-sub td {
+  background: #f7fafc;
+  vertical-align: top;
+  text-align: left;
+}
+
+.mix-design-print-sub-cell {
+  vertical-align: top;
+  text-align: left;
+}
+
+.mix-design-print-code {
+  white-space: normal;
+  font-weight: 800;
+}
+
+.mix-design-print-item-memo {
+  vertical-align: top;
+  white-space: pre-wrap;
+}
+
+.mix-design-print-sub-label {
+  display: block;
+  margin: 0 0 1pt;
+  font-size: 9.5pt;
+  font-weight: 800;
+  color: #475569;
   white-space: nowrap;
+  text-align: left;
+}
+
+.mix-design-print-loc,
+.mix-design-print-center,
+.mix-design-print-right,
+.mix-design-print-no {
+  white-space: normal;
 }
 
 .mix-design-print-center {
   text-align: center;
-  white-space: nowrap;
 }
 
 .mix-design-print-right {
   text-align: right;
-  white-space: nowrap;
 }
 
 .mix-design-print-no {
   text-align: center;
-  white-space: nowrap;
 }
 
 .mix-design-print-footer-table {
-  margin-top: 10pt;
+  margin-top: 0;
 }
 
 .mix-design-print-signoff {
-  margin-top: 14pt;
   display: flex;
   justify-content: space-between;
-  align-items: flex-end;
+  align-items: baseline;
+  gap: 8pt;
+  margin-top: auto;
+  padding-top: 8pt;
+  border-top: 2pt solid #1e2937;
 }
 
 .mix-design-print-requester {
   margin: 0;
-  font-size: 11.5pt;
+  font-size: 13.5pt;
   font-weight: 800;
-  color: #111;
+  color: #0f172a;
+}
+
+.mix-design-print-last-changed {
+  margin: 0;
+  font-size: 10pt;
+  font-weight: 700;
+  color: #475569;
 }
 
 .mix-design-print-issuer {
   margin: 0;
-  font-size: 10pt;
+  font-size: 11pt;
   font-weight: 700;
-  color: #444;
+  color: #475569;
 }
 
 .mix-design-print-preview {
@@ -128,6 +241,11 @@
   color: inherit;
   font: inherit;
   text-align: inherit;
+  white-space: normal;
+}
+
+.mix-design-print-memo {
+  white-space: pre-wrap;
 }
 
 .mix-design-print-input:hover,
@@ -167,7 +285,7 @@
 @media print {
   @page {
     size: A4 portrait;
-    margin: 18mm;
+    margin: 12mm;
   }
 
   html,
@@ -179,7 +297,6 @@
     print-color-adjust: exact;
   }
 
-  /* ポータル直下だけ印刷。visibility:hidden だと空白ページになるため display:none を使う */
   body.mix-design-printing > *:not(.mix-design-print-portal) {
     display: none !important;
   }
@@ -204,6 +321,7 @@
   body.mix-design-printing .mix-design-print-sheet {
     width: 100%;
     max-width: none;
+    min-height: calc(297mm - 24mm);
   }
 
   body.mix-design-printing .mix-design-print-input,

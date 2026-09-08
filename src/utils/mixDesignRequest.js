@@ -379,6 +379,23 @@ export function mixCodeForItem(item) {
   });
 }
 
+/** 印刷用。長い配合記号を 呼び強度（補正） / スランプ-骨材 の2行に分ける */
+export function mixCodeLinesForPrint(item) {
+  const code = mixCodeForItem(item);
+  if (!code) return [];
+  const close = code.indexOf('）');
+  if (close >= 0) {
+    const line1 = code.slice(0, close + 1);
+    const line2 = code.slice(close + 1).replace(/^-/, '');
+    return line2 ? [line1, line2] : [line1];
+  }
+  const dash = code.indexOf('-');
+  if (dash > 0) {
+    return [code.slice(0, dash), code.slice(dash + 1)];
+  }
+  return [code];
+}
+
 export function duplicateMixDesignItem(item) {
   const source = item && typeof item === 'object' ? item : {};
   return {
@@ -822,12 +839,25 @@ export function selectAllOnFocus(event) {
   });
 }
 
+export const MIX_DESIGN_STATUS_VALUES = [
+  'not_started',
+  'requested',
+  'in_progress',
+  'completed',
+  'submitted',
+];
+
 export const MIX_DESIGN_STATUS_LABELS = {
-  not_started: '未着手',
+  not_started: '保留中',
   requested: '依頼中',
   in_progress: '作成中',
-  completed: '完了',
+  completed: '完成',
+  submitted: '提出済み',
 };
+
+export function isMixDesignStatus(status) {
+  return MIX_DESIGN_STATUS_VALUES.includes(String(status || '').trim());
+}
 
 export function mixDesignStatusLabel(status) {
   const key = String(status || '').trim();
@@ -1110,6 +1140,7 @@ const MIX_DESIGN_CHANGE_LABELS = {
   quoteRequested: '見積依頼',
   memo: '備考',
   items: '配合パターン',
+  status: 'ステータス',
 };
 
 function stringifyChangeValue(value) {
@@ -1151,6 +1182,9 @@ export function buildMixDesignChangeEntries(beforeSnapshot, afterSnapshot) {
 
 export function formatMixDesignChangeLine(entry) {
   const label = entry?.label || MIX_DESIGN_CHANGE_LABELS[entry?.field] || entry?.field || '項目';
+  if (entry?.field === 'status') {
+    return `${label}: ${mixDesignStatusLabel(entry?.old)} → ${mixDesignStatusLabel(entry?.new)}`;
+  }
   if (entry?.field === 'items') {
     const oldCount = Array.isArray(entry.old) ? entry.old.length : 0;
     const newCount = Array.isArray(entry.new) ? entry.new.length : 0;

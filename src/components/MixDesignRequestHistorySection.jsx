@@ -3,6 +3,7 @@ import * as db from '../haishaDb.js';
 import { MixDesignRequestModal } from './MixDesignRequestModal.jsx';
 import { MixDesignRequestPrint } from './MixDesignRequestPrint.jsx';
 import { MixDesignEmailActions } from './MixDesignEmailActions.jsx';
+import { MixDesignStatusButtons } from './MixDesignStatusButtons.jsx';
 import {
   formatMixDesignChangeLine,
   formatMixDesignFactoryNames,
@@ -58,6 +59,7 @@ export function MixDesignRequestHistorySection({
 
   const [editBundle, setEditBundle] = useState(null);
   const [editLoadingId, setEditLoadingId] = useState('');
+  const [statusSavingId, setStatusSavingId] = useState('');
   const printRootRef = useRef(null);
 
   const factoryNameById = useMemo(() => {
@@ -125,6 +127,8 @@ export function MixDesignRequestHistorySection({
           factoryNameById,
         }),
         factoryLinks: factoryLinks || [],
+        requestId: request?.id,
+        status: request?.status || 'requested',
       });
     } catch (err) {
       console.error('配合計画書依頼の印刷データ取得に失敗しました', err);
@@ -151,6 +155,51 @@ export function MixDesignRequestHistorySection({
       window.alert(message);
     } finally {
       setEditLoadingId('');
+    }
+  };
+
+  const applyLocalStatus = useCallback((requestId, nextStatus) => {
+    const id = String(requestId || '').trim();
+    if (!id) return;
+    setRows((prev) =>
+      (Array.isArray(prev) ? prev : []).map((row) =>
+        String(row?.id) === id ? { ...row, status: nextStatus } : row,
+      ),
+    );
+    setPrintBundle((prev) =>
+      prev && String(prev.requestId) === id ? { ...prev, status: nextStatus } : prev,
+    );
+    setEditBundle((prev) =>
+      prev && String(prev.request?.id) === id
+        ? { ...prev, request: { ...prev.request, status: nextStatus } }
+        : prev,
+    );
+  }, []);
+
+  const handleStatusChange = async (requestId, nextStatus) => {
+    const id = String(requestId || '').trim();
+    const next = String(nextStatus || '').trim();
+    if (!id || !next) return;
+    setStatusSavingId(id);
+    setError('');
+    try {
+      await db.updateMixDesignRequestStatus({
+        requestId: id,
+        status: next,
+        changedBy: requestedByDefault,
+      });
+      applyLocalStatus(id, next);
+      if (printBundle && String(printBundle.requestId) === id) {
+        const logs = await db.fetchMixDesignRequestChangeLogs(id).catch(() => []);
+        setChangeLogs(Array.isArray(logs) ? logs : []);
+      }
+    } catch (err) {
+      console.error('配合計画書依頼のステータス更新に失敗しました', err);
+      const message = err?.message || 'ステータスの更新に失敗しました';
+      setError(message);
+      window.alert(message);
+    } finally {
+      setStatusSavingId('');
     }
   };
 
@@ -472,6 +521,7 @@ export function MixDesignRequestHistorySection({
             setEditBundle(null);
             setHistoryRefreshKey((n) => n + 1);
           }}
+          onStatusChanged={(next) => applyLocalStatus(editBundle.request?.id, next)}
         />
       ) : null}
 
@@ -483,6 +533,7 @@ export function MixDesignRequestHistorySection({
                 <h3 className="text-base font-black text-slate-900">印刷プレビュー</h3>
                 <p className="mt-1 text-xs font-medium text-slate-500">
                   {printBundle.header?.projectName || '現場未設定'}
+                  {printBundle.status ? ` · ${mixDesignStatusLabel(printBundle.status)}` : ''}
                   {printBundle.header?.lastChangedAt
                     ? ` · 最終変更 ${formatRequestedAt(printBundle.header.lastChangedAt)}`
                     : ''}
@@ -500,6 +551,13 @@ export function MixDesignRequestHistorySection({
               </button>
             </div>
             <div className="min-h-[50vh] flex-1 overflow-x-auto overflow-y-auto p-4">
+              <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                <MixDesignStatusButtons
+                  value={printBundle.status}
+                  saving={statusSavingId === String(printBundle.requestId || '')}
+                  onChange={(next) => void handleStatusChange(printBundle.requestId, next)}
+                />
+              </div>
               <div ref={printRootRef} className="mix-design-print-root">
                 <div className="mix-design-print-preview">
                   <MixDesignRequestPrint

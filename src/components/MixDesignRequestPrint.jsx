@@ -101,23 +101,31 @@ export function MixDesignRequestPrint({
 
   return (
     <div className={`mix-design-print-sheet ${className}`.trim()}>
-      <div className="mix-design-print-title-row">
+      <div className="mix-design-print-main">
+      <header className="mix-design-print-title-row">
         <h1 className="mix-design-print-title">配合計画書 作成依頼</h1>
-        {lastChangedAt ? (
-          <p className="mix-design-print-last-changed">最終変更: {formatLastChanged(lastChangedAt)}</p>
-        ) : null}
-      </div>
+      </header>
+      <section className="mix-design-print-section">
+        <h2 className="mix-design-print-section-title">基本情報</h2>
       <table className="mix-design-print-meta">
+        <colgroup>
+          <col className="mix-design-print-col-label" />
+          <col className="mix-design-print-col-value" />
+          <col className="mix-design-print-col-label" />
+          <col className="mix-design-print-col-value" />
+        </colgroup>
         <tbody>
           <tr>
             <th style={LABEL_CELL}>工事名</th>
-            <td>
+            <td colSpan={3}>
               <PrintField
                 editable={editable}
                 value={header?.projectName}
                 onChange={(v) => patchHeader({ projectName: v })}
               />
             </td>
+          </tr>
+          <tr>
             <th style={LABEL_CELL}>業者名</th>
             <td>
               <PrintField
@@ -126,10 +134,20 @@ export function MixDesignRequestPrint({
                 onChange={(v) => patchHeader({ contractorName: v })}
               />
             </td>
+            <th style={LABEL_CELL}>元請名</th>
+            <td>
+              <PrintField
+                editable={editable}
+                value={header?.primeContractorName}
+                onChange={(v) => patchHeader({ primeContractorName: v })}
+              />
+            </td>
           </tr>
           <tr>
-            <th style={LABEL_CELL}>商社</th>
-            <td>
+            <th style={LABEL_CELL} rowSpan={2}>
+              商社
+            </th>
+            <td rowSpan={2}>
               <PrintField
                 editable={editable}
                 value={header?.traderName}
@@ -146,20 +164,6 @@ export function MixDesignRequestPrint({
             </td>
           </tr>
           <tr>
-            <th style={LABEL_CELL}>依頼先工場</th>
-            <td colSpan={3}>
-              {factoryLabel}
-            </td>
-          </tr>
-          <tr>
-            <th style={LABEL_CELL}>元請名</th>
-            <td>
-              <PrintField
-                editable={editable}
-                value={header?.primeContractorName}
-                onChange={(v) => patchHeader({ primeContractorName: v })}
-              />
-            </td>
             <th style={LABEL_CELL}>現場担当者連絡先</th>
             <td>
               <PrintField
@@ -236,88 +240,135 @@ export function MixDesignRequestPrint({
           </tr>
         </tbody>
       </table>
+      </section>
 
+      <section className="mix-design-print-section mix-design-print-section-mix">
+        <h2 className="mix-design-print-section-title">配合パターン</h2>
       <table className="mix-design-print-items">
+        <colgroup>
+          <col className="mix-design-print-col-no" />
+          <col className="mix-design-print-col-wc" />
+          <col className="mix-design-print-col-water" />
+          <col className="mix-design-print-col-qty" />
+          <col className="mix-design-print-col-date" />
+          <col className="mix-design-print-col-loc" />
+        </colgroup>
         <thead>
           <tr>
             <th style={LABEL_CELL}>No</th>
-            <th style={LABEL_CELL}>配合</th>
-            <th style={LABEL_CELL}>W/C</th>
-            <th style={LABEL_CELL}>単位水量</th>
-            <th style={LABEL_CELL}>数量</th>
-            <th style={LABEL_CELL}>打設日</th>
-            <th style={LABEL_CELL}>施工箇所</th>
+            <th style={LABEL_CELL} colSpan={3}>
+              配合
+            </th>
+            <th style={LABEL_CELL} colSpan={2}>
+              備考
+            </th>
           </tr>
         </thead>
-        <tbody>
           {rows.map((item, index) => (
-            <tr key={item.localId || item.id || index}>
-              <td className="mix-design-print-no">{index + 1}</td>
-              <td className="mix-design-print-code">{mixCodeForItem(item) || '—'}</td>
-              <td className="mix-design-print-center">
-                <PrintField
-                  editable={editable}
-                  type="number"
-                  value={item.waterCementRatio}
-                  display={item.waterCementRatio != null && item.waterCementRatio !== '' ? item.waterCementRatio : '—'}
-                  onChange={(v) => onItemChange?.(index, { waterCementRatio: v })}
-                />
-              </td>
-              <td className="mix-design-print-center">
-                <PrintField
-                  editable={editable}
-                  type="number"
-                  value={item.unitWaterContent}
-                  display={item.unitWaterContent != null && item.unitWaterContent !== '' ? item.unitWaterContent : '—'}
-                  onChange={(v) => onItemChange?.(index, { unitWaterContent: v })}
-                />
-              </td>
-              <td className="mix-design-print-right">
-                <PrintField
-                  editable={editable}
-                  type="number"
-                  value={item.quantityM3}
-                  display={item.quantityM3 != null && item.quantityM3 !== '' ? item.quantityM3 : '—'}
-                  onChange={(v) => onItemChange?.(index, { quantityM3: v })}
-                />
-              </td>
-              <td className="mix-design-print-right">
-                {editable ? (
-                  <div className="mix-design-print-period">
-                    <PrintField
-                      editable
-                      type="number"
-                      value={item.pourMonth}
-                      placeholder="月"
-                      onChange={(v) => onItemChange?.(index, { pourMonth: v })}
-                    />
-                    <span>/</span>
-                    <PrintField
-                      editable
-                      type="number"
-                      value={item.pourDay}
-                      placeholder="日"
-                      onChange={(v) => onItemChange?.(index, { pourDay: v })}
-                    />
-                  </div>
-                ) : (
-                  formatDate(item.pourDate)
-                )}
-              </td>
-              <td className="mix-design-print-loc">
-                <PrintField
-                  editable={editable}
-                  value={item.constructionLocation}
-                  display={item.constructionLocation || '—'}
-                  onChange={(v) => onItemChange?.(index, { constructionLocation: v })}
-                />
-              </td>
-            </tr>
+            <tbody key={item.localId || item.id || index} className="mix-design-print-item">
+              <tr className="mix-design-print-item-main">
+                <td className="mix-design-print-no" rowSpan={2}>
+                  {index + 1}
+                </td>
+                <td className="mix-design-print-code" colSpan={3}>
+                  {mixCodeForItem(item) || '—'}
+                </td>
+                <td className="mix-design-print-item-memo" colSpan={2}>
+                  {index === 0 ? (
+                    editable ? (
+                      <textarea
+                        value={request?.memo || ''}
+                        onChange={(e) => patchRequest({ memo: e.target.value })}
+                        rows={2}
+                        className="mix-design-print-input mix-design-print-memo"
+                      />
+                    ) : (
+                      request?.memo || '—'
+                    )
+                  ) : (
+                    '—'
+                  )}
+                </td>
+              </tr>
+              <tr className="mix-design-print-item-sub">
+                <td className="mix-design-print-sub-cell">
+                  <span className="mix-design-print-sub-label">W/C</span>
+                  <PrintField
+                    editable={editable}
+                    type="number"
+                    value={item.waterCementRatio}
+                    display={item.waterCementRatio != null && item.waterCementRatio !== '' ? item.waterCementRatio : '—'}
+                    onChange={(v) => onItemChange?.(index, { waterCementRatio: v })}
+                  />
+                </td>
+                <td className="mix-design-print-sub-cell">
+                  <span className="mix-design-print-sub-label">単位水量</span>
+                  <PrintField
+                    editable={editable}
+                    type="number"
+                    value={item.unitWaterContent}
+                    display={item.unitWaterContent != null && item.unitWaterContent !== '' ? item.unitWaterContent : '—'}
+                    onChange={(v) => onItemChange?.(index, { unitWaterContent: v })}
+                  />
+                </td>
+                <td className="mix-design-print-sub-cell">
+                  <span className="mix-design-print-sub-label">数量</span>
+                  <PrintField
+                    editable={editable}
+                    type="number"
+                    value={item.quantityM3}
+                    display={item.quantityM3 != null && item.quantityM3 !== '' ? item.quantityM3 : '—'}
+                    onChange={(v) => onItemChange?.(index, { quantityM3: v })}
+                  />
+                </td>
+                <td className="mix-design-print-sub-cell">
+                  <span className="mix-design-print-sub-label">日付</span>
+                  {editable ? (
+                    <div className="mix-design-print-period">
+                      <PrintField
+                        editable
+                        type="number"
+                        value={item.pourMonth}
+                        placeholder="月"
+                        onChange={(v) => onItemChange?.(index, { pourMonth: v })}
+                      />
+                      <span>/</span>
+                      <PrintField
+                        editable
+                        type="number"
+                        value={item.pourDay}
+                        placeholder="日"
+                        onChange={(v) => onItemChange?.(index, { pourDay: v })}
+                      />
+                    </div>
+                  ) : (
+                    formatDate(item.pourDate)
+                  )}
+                </td>
+                <td className="mix-design-print-sub-cell">
+                  <span className="mix-design-print-sub-label">箇所</span>
+                  <PrintField
+                    editable={editable}
+                    value={item.constructionLocation}
+                    display={item.constructionLocation || '—'}
+                    onChange={(v) => onItemChange?.(index, { constructionLocation: v })}
+                  />
+                </td>
+              </tr>
+            </tbody>
           ))}
-        </tbody>
       </table>
+      </section>
 
+      <section className="mix-design-print-section">
+        <h2 className="mix-design-print-section-title">提出・依頼先</h2>
       <table className="mix-design-print-meta mix-design-print-footer-table">
+        <colgroup>
+          <col className="mix-design-print-col-label" />
+          <col className="mix-design-print-col-value" />
+          <col className="mix-design-print-col-label" />
+          <col className="mix-design-print-col-value" />
+        </colgroup>
         <tbody>
           <tr>
             <th style={LABEL_CELL}>提出方法</th>
@@ -346,25 +397,33 @@ export function MixDesignRequestPrint({
               />
             </td>
           </tr>
+          {rows.length === 0 ? (
+            <tr>
+              <th style={LABEL_CELL}>備考</th>
+              <td colSpan={3}>
+                {editable ? (
+                  <textarea
+                    value={request?.memo || ''}
+                    onChange={(e) => patchRequest({ memo: e.target.value })}
+                    rows={2}
+                    className="mix-design-print-input mix-design-print-memo"
+                  />
+                ) : (
+                  request?.memo || '—'
+                )}
+              </td>
+            </tr>
+          ) : null}
           <tr>
-            <th style={LABEL_CELL}>備考</th>
-            <td colSpan={3}>
-              {editable ? (
-                <textarea
-                  value={request?.memo || ''}
-                  onChange={(e) => patchRequest({ memo: e.target.value })}
-                  rows={2}
-                  className="mix-design-print-input mix-design-print-memo"
-                />
-              ) : (
-                request?.memo || '—'
-              )}
-            </td>
+            <th style={LABEL_CELL}>依頼先工場</th>
+            <td colSpan={3}>{factoryLabel}</td>
           </tr>
         </tbody>
       </table>
+      </section>
+      </div>
 
-      <div className="mix-design-print-signoff">
+      <footer className="mix-design-print-signoff">
         <p className="mix-design-print-requester">
           {editable ? (
             <PrintField
@@ -379,8 +438,11 @@ export function MixDesignRequestPrint({
             requester || '—'
           )}
         </p>
+        {lastChangedAt ? (
+          <p className="mix-design-print-last-changed">最終変更: {formatLastChanged(lastChangedAt)}</p>
+        ) : null}
         <p className="mix-design-print-issuer">{APP_BRAND_NAME} 発行</p>
-      </div>
+      </footer>
     </div>
   );
 }

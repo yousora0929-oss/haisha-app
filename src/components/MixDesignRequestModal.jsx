@@ -4,6 +4,7 @@ import { MasterSuggestInput } from './MasterSuggestInput.jsx';
 import { DeliveryAreaAddressField } from './DeliveryAreaAddressField.jsx';
 import { MixDesignRequestPrint } from './MixDesignRequestPrint.jsx';
 import { MixDesignEmailActions } from './MixDesignEmailActions.jsx';
+import { MixDesignStatusButtons } from './MixDesignStatusButtons.jsx';
 import {
   AGGREGATE_SIZE_CANDIDATES,
   BASE_STRENGTH_CANDIDATES,
@@ -26,6 +27,7 @@ import {
   handleMixDesignNavKeyDown,
   mixCodeForItem,
   mixDesignHeaderFromOrder,
+  mixDesignStatusLabel,
   prefillMixDesignDraft,
   prefillMixDesignDraftFromRequest,
   preventMinusKey,
@@ -309,6 +311,7 @@ export function MixDesignRequestModal({
   initialFactoryLinks = [],
   onClose,
   onSubmitted,
+  onStatusChanged,
 }) {
   const isEdit = mode === 'edit' && String(editRequestId || '').trim();
   const [draft, setDraft] = useState(() => prefillMixDesignDraft(null, null, requestedByDefault));
@@ -318,6 +321,10 @@ export function MixDesignRequestModal({
   const [showPreview, setShowPreview] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [requestStatus, setRequestStatus] = useState(() =>
+    String(initialRequest?.status || 'requested'),
+  );
+  const [statusSaving, setStatusSaving] = useState(false);
   const [siteContactCandidates, setSiteContactCandidates] = useState([]);
   const [townList, setTownList] = useState([]);
   const [townOptionsLoading, setTownOptionsLoading] = useState(false);
@@ -351,6 +358,7 @@ export function MixDesignRequestModal({
         );
     setDraft(nextDraft);
     setBaselineDraft(isEdit ? JSON.parse(JSON.stringify(nextDraft)) : null);
+    setRequestStatus(isEdit ? String(initialRequest?.status || 'requested') : 'requested');
     setShowPreview(false);
     setError('');
     return undefined;
@@ -616,6 +624,29 @@ export function MixDesignRequestModal({
     }
   };
 
+  const handleStatusChange = async (nextStatus) => {
+    const next = String(nextStatus || '').trim();
+    if (!isEdit || !next || next === requestStatus) return;
+    setStatusSaving(true);
+    setError('');
+    try {
+      await db.updateMixDesignRequestStatus({
+        requestId: editRequestId,
+        status: next,
+        changedBy: draft.requestedBy || requestedByDefault,
+      });
+      setRequestStatus(next);
+      onStatusChanged?.(next);
+    } catch (err) {
+      console.error('配合計画書依頼のステータス更新に失敗しました', err);
+      const message = err?.message || 'ステータスの更新に失敗しました';
+      setError(message);
+      window.alert(message);
+    } finally {
+      setStatusSaving(false);
+    }
+  };
+
   if (!open || (!order && !isEdit)) return null;
 
   return (
@@ -628,6 +659,7 @@ export function MixDesignRequestModal({
             </h2>
             <p className="mt-1 text-xs font-medium text-slate-500">
               {draft.projectName || '現場未設定'}
+              {isEdit ? ` · ${mixDesignStatusLabel(requestStatus)}` : ''}
             </p>
           </div>
           <button
@@ -638,6 +670,17 @@ export function MixDesignRequestModal({
             閉じる
           </button>
         </div>
+
+        {isEdit ? (
+          <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+            <MixDesignStatusButtons
+              value={requestStatus}
+              saving={statusSaving}
+              disabled={submitting}
+              onChange={(next) => void handleStatusChange(next)}
+            />
+          </div>
+        ) : null}
 
         <div
           className="min-h-0 flex-1 overflow-y-auto p-4"

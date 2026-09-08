@@ -30,6 +30,7 @@ import {
   buildMixDesignItemInsertRows,
   buildMixDesignRequestInsertRow,
   buildMixDesignRequestSnapshot,
+  isMixDesignStatus,
   normalizeMixDesignFactoryIds,
   resolveMixDesignProjectId,
 } from './utils/mixDesignRequest.js';
@@ -1320,6 +1321,40 @@ export async function updateMixDesignRequestWithLog({
 
   await maybeRegisterMixDesignSiteManagerContact(resolvedDraft);
   return { requestId: data != null ? String(data) : id, changes, draft: resolvedDraft };
+}
+
+export async function updateMixDesignRequestStatus({
+  requestId,
+  status,
+  changedBy,
+} = {}) {
+  const id = String(requestId || '').trim();
+  const next = String(status || '').trim();
+  if (!id) throw new Error('依頼IDが必要です');
+  if (!isMixDesignStatus(next)) throw new Error('不正なステータスです');
+
+  const { data, error } = await supabase.rpc('update_mix_design_request_status', {
+    p_request_id: id,
+    p_status: next,
+    p_changed_by: String(changedBy || '').trim() || null,
+  });
+  if (error) {
+    const msg = String(error.message || '');
+    if (/not authorized/i.test(msg)) {
+      throw new Error(
+        '配合計画書の編集権限が確認できませんでした。一度ログアウトしてから、カスタマー画面に再ログインしてください。',
+      );
+    }
+    if (/invalid status/i.test(msg)) {
+      throw new Error('不正なステータスです');
+    }
+    throw error;
+  }
+  return {
+    requestId: id,
+    status: next,
+    previousStatus: data != null ? String(data) : '',
+  };
 }
 
 export async function fetchMixDesignRequestChangeLogs(requestId) {
