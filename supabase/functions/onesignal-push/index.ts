@@ -1253,6 +1253,7 @@ async function postOneSignalRequest(payload: Record<string, unknown>): Promise<b
     ios_badgeType: 'SetTo',
     ios_badgeCount: 1,
     web_badge: 1,
+    priority: 10,
     ...payload,
   };
 
