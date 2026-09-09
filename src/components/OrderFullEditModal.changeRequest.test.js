@@ -42,6 +42,21 @@ describe('buildChangeRequestPatch', () => {
     expect(patch.trading_company_name).toBe('新商社');
   });
 
+  it('includes contractor_customer_id when the contractor changes', () => {
+    const patch = buildChangeRequestPatch(
+      {
+        contractor_customer_id: 'cust-old',
+        contractorName: '旧業者',
+      },
+      {
+        contractor_customer_id: 'cust-new',
+        contractorName: '新業者',
+      },
+    );
+    expect(patch.contractor_customer_id).toBe('cust-new');
+    expect(patch.contractorName).toBe('新業者');
+  });
+
   it('still includes contractorName and timeSlot', () => {
     const patch = buildChangeRequestPatch(
       { contractorName: '', timeSlot: '480', timeSlotLabel: '8:00' },

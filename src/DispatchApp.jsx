@@ -263,6 +263,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         order.siteAddress,
         order.traderName,
         order.contractorName,
+        order.displayTraderName,
+        order.displayContractorName,
         order.factorySiteName,
         order.acceptedFactoryLabel,
         order.factoryPendingByName,
@@ -316,7 +318,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       return chatMessageReadKey(latest) !== readKey;
     }
 
-    // 業者表示は utils/orderPartyInfo（contractorName 優先。代理発注で業者名空なら発注者名へ落とさない）
+    // 業者表示は utils/orderPartyInfo（ID 優先。fetch 時に displayContractorName / displayTraderName を付与）
     function orderPartyInfo(order) {
       return buildOrderPartyInfo(order, { preferSiteContact: true });
     }
@@ -5897,6 +5899,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               mode={customerEditMode === 'request' ? 'request' : 'edit'}
               projectById={projectById}
               customerById={customerById}
+              organizations={agentOrganizations}
               onSave={handleCustomerOrderFullSave}
             />
 

@@ -72,7 +72,7 @@ import { isLocationPendingOrder } from './utils/orderWorkflow.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { normalizeAllowedDeliveryAreas } from './utils/deliveryAreas.js';
 import { orderPartyInfo } from './utils/orderPartyInfo.js';
-// 業者欄: contractorName 優先（utils/orderPartyInfo）。代理発注で業者名未設定時は発注者名を業者の代役にしない。
+// 業者欄: contractor_customer_id 優先。発注者名は業者の代役にしない。
 import { setAutoReloadBlocked } from './hooks/useAppReleaseControl.js';
 import {
   resolveOrderContactPersonName,
@@ -1278,6 +1278,8 @@ function isUnreadForFactory(messages, readKey) {
         order.siteAddress,
         order.traderName,
         order.contractorName,
+        order.displayTraderName,
+        order.displayContractorName,
         order.factorySiteName,
         order.acceptedFactoryLabel,
         order.factoryPendingByName,
@@ -1750,7 +1752,11 @@ function isUnreadForFactory(messages, readKey) {
       const addr = addrRaw || '（住所未入力）';
       const mixDisplay = String(order.confirmedMixText ?? order.mixText ?? '').trim() || '—';
       const siteHeroLine = siteNm || addrRaw || '（未入力）';
-      const party = orderPartyInfo(order, { preferSiteContact: true });
+      const party = orderPartyInfo(order, {
+        preferSiteContact: true,
+        customersById: customerById,
+        organizationsById: organizationById,
+      });
       const siteContactName = resolveSiteContactName(order);
       const sitePhoneFormatted = formatPhoneNumberJP(resolveSitePhone(order));
       const phone = sitePhoneFormatted;
@@ -1777,6 +1783,7 @@ function isUnreadForFactory(messages, readKey) {
         contractorCustomer,
         orderingCustomer: orderCustomer,
         organizationById: organizationById || {},
+        customersById: customerById || {},
       });
       const {
         prime: displayPrime,
@@ -2556,6 +2563,7 @@ function isUnreadForFactory(messages, readKey) {
               editorRole="factory"
               projectById={projectById}
               customerById={customerById}
+              organizations={Object.values(organizationById || {})}
               onSiteUrlCopied={onSiteUrlCopied}
               onSave={async (id, patch) => {
                 const ok = await onOrderFullPatch(id, patch);
@@ -5290,7 +5298,11 @@ function isUnreadForFactory(messages, readKey) {
         const rows = [
           ['注文ID', '希望日', '希望時刻', 'ステータス', '業者', '現場名', '担当者', '連絡先', '数量', '配合'],
           ...(orders || []).map((o) => {
-            const party = orderPartyInfo(o, { preferSiteContact: true });
+            const party = orderPartyInfo(o, {
+              preferSiteContact: true,
+              customersById: customerById,
+              organizationsById: organizationById,
+            });
             return [
               o.id,
               factoryOrderDate(o),
@@ -5306,7 +5318,7 @@ function isUnreadForFactory(messages, readKey) {
           }),
         ];
         downloadCsv(`concrete-link-factory-${todayLocalISODate()}.csv`, rows);
-      }, [orders]);
+      }, [orders, customerById, organizationById]);
 
       if (!isFactoryAuthenticated) {
         return (
@@ -5839,7 +5851,11 @@ function isUnreadForFactory(messages, readKey) {
                   ) : (
                     <ul className="max-h-[min(70vh,640px)] space-y-2 overflow-y-auto rounded-2xl border-2 border-slate-200 bg-white p-2 dark:border-slate-600 dark:bg-slate-800">
                       {visibleFactoryHistoryOrders.map((order) => {
-                        const party = orderPartyInfo(order, { preferSiteContact: true });
+                        const party = orderPartyInfo(order, {
+                          preferSiteContact: true,
+                          customersById: customerById,
+                          organizationsById: organizationById,
+                        });
                         const delivery = factoryOrderDate(order);
                         const autoPast =
                           !isOrderManuallyCompleted(order) &&

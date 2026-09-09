@@ -1,3 +1,5 @@
+import { resolveOrderParties } from './orderPartyInfo.js';
+
 function lookupById(map, id) {
   const key = String(id || '').trim();
   if (!key || map == null) return null;
@@ -108,17 +110,17 @@ export function resolveProjectPartyDisplay(project, customer) {
  * 注文カード・モーダル用の当事者表示
  *
  * 優先順位:
- * - 物件がある注文は、発注者に関係なく元請・下請・商社・請求先を必ず物件基準で確定する
- * - 物件がない注文だけ、発注先業者（contractor_customer_id）から注文スナップショットへフォールバックする
- * - 発注者表示は当事者表示と独立して、orders.customer_id の所属組織（または company_name）から解決する
- *   ※ agent_organization_id（担当商社）は発注者ではない
+ * - 業者・商社は注文の ID（contractor_customer_id / agent_organization_id / trading_agent_customer_id）を正とする
+ * - 物件がある場合、下請・請求マークだけ物件から補う
+ * - 発注者表示は当事者表示と独立して、orders.customer_id から解決する
  * @param {object} order
  * @param {{
  *   project?: object|null,
  *   customer?: object|null,
  *   contractorCustomer?: object|null,
  *   orderingCustomer?: object|null,
- *   organizationById?: Record<string, object>
+ *   organizationById?: Record<string, object>|Map,
+ *   customersById?: Record<string, object>|Map,
  * }} [options]
  */
 export function resolveOrderPartyDisplay(
@@ -129,21 +131,31 @@ export function resolveOrderPartyDisplay(
     contractorCustomer = null,
     orderingCustomer = null,
     organizationById = {},
+    customersById = {},
   } = {},
 ) {
-  const explicitTrader = String(order?.traderName ?? order?.trader_name ?? '').trim();
-  const explicitContractor = String(
-    order?.contractorName ?? order?.contractor_name ?? '',
-  ).trim();
   const customerFallback = String(order?.customerName ?? order?.customer_name ?? '').trim();
   const orderCustomer = orderingCustomer || customer;
-  const ordererCustomerById = {};
+  const ordererCustomerById =
+    customersById && typeof customersById.get === 'function'
+      ? Object.fromEntries(customersById)
+      : { ...(customersById || {}) };
   const orderCustomerId = String(
     orderCustomer?.id || order?.customer_id || order?.customerId || '',
   ).trim();
   if (orderCustomer && orderCustomerId) {
     ordererCustomerById[orderCustomerId] = orderCustomer;
   }
+  const contractorId = String(
+    order?.contractor_customer_id ?? order?.contractorCustomerId ?? contractorCustomer?.id ?? '',
+  ).trim();
+  if (contractorCustomer && contractorId) {
+    ordererCustomerById[contractorId] = contractorCustomer;
+  }
+  const parties = resolveOrderParties(order, {
+    customersById: ordererCustomerById,
+    organizationsById: organizationById,
+  });
   const orderedByName = resolveOrdererOrgName(
     order,
     ordererCustomerById,
@@ -169,20 +181,18 @@ export function resolveOrderPartyDisplay(
     };
   };
 
+  const prime = parties.contractorName;
+  const trader = parties.traderName;
+
   if (project && typeof project === 'object') {
     const party = resolveProjectPartyDisplay(project, customer);
-    return withOrderedBy(party);
+    return withOrderedBy({
+      ...party,
+      prime: prime || (party.prime !== '—' ? party.prime : '') || '—',
+      trader: trader || (party.trader !== '—' ? party.trader : '') || '—',
+    });
   }
 
-  const contractorCustomerName = String(
-    contractorCustomer?.company_name || contractorCustomer?.name || '',
-  ).trim();
-  const prime =
-    contractorCustomerName ||
-    explicitContractor ||
-    String(order?.displayContractorName ?? customerFallback).trim();
-  const trader =
-    explicitTrader || String(order?.displayTraderName ?? '').trim();
   return withOrderedBy({
     prime: prime || '—',
     sub: '—',

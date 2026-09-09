@@ -60,10 +60,10 @@ import { formatPhoneNumberJP } from './utils/phoneFormat.js';
 import { fetchTownLocationsForMunicipality, resolveDeliveryPrefecture } from './utils/heartrailsGeo.js';
 import { SCHEDULE_BLOCK_IDS, normalizeDayBlockSchedule, todayLocalISODate } from './haishaConstants.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
-import { orderPartyInfo } from './utils/orderPartyInfo.js';
-// 業者欄: contractorName 優先（utils/orderPartyInfo）。代理発注で業者名未設定時は発注者名を業者の代役にしない。
+import { orderPartyInfo, buildOrderPartyPersistPatch, resolveOrderParties } from './utils/orderPartyInfo.js';
+// 業者欄: contractor_customer_id 優先。発注者名は業者の代役にしない。
 import { unloadDurationLabel } from './utils/unloadDurationLabel.js';
-import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.js';
+import { OrderPartyEditFields } from './components/OrderPartyEditFields.jsx';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
@@ -2813,6 +2813,8 @@ function AdminOrderDetailModal({
   escalationCtx,
   factoryNameById,
   factories,
+  customers = [],
+  organizations = [],
   onApproveAssociation,
   onReassignFactories,
   onClose,
@@ -2826,28 +2828,25 @@ function AdminOrderDetailModal({
   const [vehicleType, setVehicleType] = useState('large');
   const [unloadDuration, setUnloadDuration] = useState('30');
   const [hasTest, setHasTest] = useState(false);
-  const [traderName, setTraderName] = useState('');
-  const [contractorName, setContractorName] = useState('');
+  const [contractorCustomerId, setContractorCustomerId] = useState('');
+  const [agentOrganizationId, setAgentOrganizationId] = useState('');
+  const [tradingAgentCustomerId, setTradingAgentCustomerId] = useState('');
   const [siteAddress, setSiteAddress] = useState('');
   const [sitePhone, setSitePhone] = useState('');
   const [managerName, setManagerName] = useState('');
   const [deliveryLat, setDeliveryLat] = useState('');
   const [deliveryLng, setDeliveryLng] = useState('');
   const [locationOpen, setLocationOpen] = useState(false);
-  const [agentOrganizationId, setAgentOrganizationId] = useState('');
-  const [agentOrganizations, setAgentOrganizations] = useState([]);
   const [editingFactories, setEditingFactories] = useState(false);
-  const agentOrganizationIdRef = useRef('');
 
-  const applyAgentOrganizationId = (next, options = agentOrganizations) => {
-    const value = next != null ? String(next).trim() : '';
-    agentOrganizationIdRef.current = value;
-    setAgentOrganizationId(value);
-    const sync = buildAgentOrganizationSyncPatch(value || null, options);
-    if (Object.prototype.hasOwnProperty.call(sync, 'traderName')) {
-      setTraderName(String(sync.traderName || ''));
-    }
-  };
+  const customersById = useMemo(
+    () => Object.fromEntries((customers || []).filter((c) => c?.id).map((c) => [String(c.id), c])),
+    [customers],
+  );
+  const organizationsById = useMemo(
+    () => Object.fromEntries((organizations || []).filter((o) => o?.id).map((o) => [String(o.id), o])),
+    [organizations],
+  );
 
   useEffect(() => {
     if (!open || !order) return;
@@ -2865,56 +2864,24 @@ function AdminOrderDetailModal({
       String(order.unloadDurationMinutes || order.unloadDuration || order.unloadingTime || '30'),
     );
     setHasTest(Boolean(order.has_test));
-    setTraderName(order.traderName != null ? String(order.traderName) : '');
-    setContractorName(order.contractorName != null ? String(order.contractorName) : '');
+    const parties = resolveOrderParties(order, { customersById, organizationsById });
+    setContractorCustomerId(parties.contractorCustomerId);
+    setAgentOrganizationId(parties.agentOrganizationId);
+    setTradingAgentCustomerId(parties.tradingAgentCustomerId);
     setSiteAddress(order.siteAddress != null ? String(order.siteAddress) : '');
     setSitePhone(order.sitePhone != null ? String(order.sitePhone) : '');
     setManagerName(order.manager_name != null ? String(order.manager_name) : '');
     setDeliveryLat(order.delivery_lat != null ? String(order.delivery_lat) : '');
     setDeliveryLng(order.delivery_lng != null ? String(order.delivery_lng) : '');
-    applyAgentOrganizationId(
-      order.agent_organization_id != null ? String(order.agent_organization_id).trim() : '',
-      [],
-    );
-    // traderName は order の表示名を優先（空の agent list で sync が空上書きしないよう再セット）
-    setTraderName(order.traderName != null ? String(order.traderName) : '');
-    // order オブジェクト参照ではなく id で初期化する。親の再レンダーで選択値を空へ戻さない。
-  }, [open, order?.id]);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    let cancelled = false;
-    (async () => {
-      try {
-        const orgs = await db.fetchOrganizations();
-        if (cancelled) return;
-        const next = (Array.isArray(orgs) ? orgs : []).filter(
-          (o) => o && String(o.type || '').trim() === 'agent' && o.id,
-        );
-        setAgentOrganizations((prev) => {
-          if (
-            prev.length === next.length &&
-            prev.every(
-              (p, i) =>
-                String(p?.id) === String(next[i]?.id) && String(p?.name || '') === String(next[i]?.name || ''),
-            )
-          ) {
-            return prev;
-          }
-          return next;
-        });
-      } catch (e) {
-        console.warn('[AdminOrderDetailModal] agent organizations load failed', e);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
+  }, [open, order?.id, customersById, organizationsById]);
 
   if (!open || !order) return null;
 
-  const party = orderPartyInfo(order, { preferSiteContact: true });
+  const party = orderPartyInfo(order, {
+    preferSiteContact: true,
+    customersById,
+    organizationsById,
+  });
   const st = orderStatus(order);
   const assignedIds = associationAssignedFactoryIds(order);
   const preferredId = String(order.preferred_factory_id || order.preferredFactoryId || '').trim();
@@ -2926,21 +2893,6 @@ function AdminOrderDetailModal({
         : '—';
   const canReassign = canAdminReassignOrderFactories(order);
   const willResetOnReassign = shouldResetOrderStatusOnFactoryReassign(order);
-  const agentSelectOptions = (() => {
-    const list = Array.isArray(agentOrganizations) ? agentOrganizations : [];
-    const selected = String(agentOrganizationId || '').trim();
-    if (selected && !list.some((o) => o && String(o.id) === selected)) {
-      const label =
-        String(
-          order.trading_company_name ||
-            order.traderName ||
-            order.projectTradingCompanyName ||
-            '',
-        ).trim() || '（現在の設定）';
-      return [{ id: selected, name: label }, ...list];
-    }
-    return list;
-  })();
 
   const submit = (e) => {
     e.preventDefault();
@@ -2953,9 +2905,14 @@ function AdminOrderDetailModal({
       }
     }
     const minutes = parseTimeInputToMinutes(timeValue);
-    // 空文字は「商社なし」として有効。falsy フォールバックで UUID を復活させない。
-    const selectedId = String(agentOrganizationIdRef.current ?? agentOrganizationId ?? '').trim();
-    const agentSync = buildAgentOrganizationSyncPatch(selectedId || null, agentSelectOptions);
+    const partyPatch = buildOrderPartyPersistPatch(
+      {
+        contractorCustomerId,
+        agentOrganizationId,
+        tradingAgentCustomerId,
+      },
+      { customersById, organizationsById, previousOrder: order },
+    );
     const latRaw = String(deliveryLat || '').trim();
     const lngRaw = String(deliveryLng || '').trim();
     const latNum = latRaw !== '' ? Number(latRaw) : NaN;
@@ -2978,11 +2935,7 @@ function AdminOrderDetailModal({
       unloadDurationMinutes: unloadDuration,
       unloadDurationLabel: unloadDurationLabel(unloadDuration),
       has_test: hasTest,
-      ...agentSync,
-      // 表示用商社名は手動入力を優先（agent_organization_id は agentSync 側）
-      traderName: traderName.trim(),
-      trading_company_name: traderName.trim(),
-      contractorName: contractorName.trim(),
+      ...partyPatch,
       siteAddress: siteAddress.trim(),
       sitePhone: sitePhone.trim(),
       manager_name: managerName.trim() || null,
@@ -3119,8 +3072,20 @@ function AdminOrderDetailModal({
               <dd className="font-black text-slate-900">{formatDateJp(orderDeliveryDate(order))} {formatOrderTime(order)}</dd>
             </div>
             <div>
-              <dt className="text-xs font-bold text-slate-500">業者 / 現場</dt>
-              <dd className="font-bold text-slate-900">{party.contractor} · {party.site}</dd>
+              <dt className="text-xs font-bold text-slate-500">業者（元請）</dt>
+              <dd className="font-bold text-slate-900">{party.contractorName}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-bold text-slate-500">商社</dt>
+              <dd className="font-bold text-slate-900">{party.traderName}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-bold text-slate-500">発注者</dt>
+              <dd className="font-bold text-slate-900">{party.orderer}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-bold text-slate-500">現場</dt>
+              <dd className="font-bold text-slate-900">{party.site}</dd>
             </div>
             <div>
               <dt className="text-xs font-bold text-slate-500">数量</dt>
@@ -3214,37 +3179,21 @@ function AdminOrderDetailModal({
             </label>
 
             <h5 className={sectionTitleClass}>当事者情報</h5>
-            <label className="text-xs font-black text-slate-600 sm:col-span-2" htmlFor="admin-order-agent-org">
-              商社（請求先組織）
-              <select
-                id="admin-order-agent-org"
-                name="agentOrganizationId"
-                value={agentOrganizationId}
-                onChange={(e) => applyAgentOrganizationId(e.currentTarget.value, agentSelectOptions)}
-                className={inputClass}
-              >
-                <option value="">商社なし（直接請求）</option>
-                {agentSelectOptions.map((org) => (
-                  <option key={org.id} value={String(org.id)}>
-                    {org.name || org.id}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-xs font-black text-slate-600 sm:col-span-2">
-              商社名（表示用・任意）
-              <input
-                type="text"
-                value={traderName}
-                onChange={(e) => setTraderName(e.target.value)}
-                className={inputClass}
-                placeholder="帳票・一覧の表示名"
-              />
-            </label>
-            <label className="text-xs font-black text-slate-600 sm:col-span-2">
-              業者名
-              <input type="text" value={contractorName} onChange={(e) => setContractorName(e.target.value)} className={inputClass} />
-            </label>
+            <OrderPartyEditFields
+              order={order}
+              customers={customers}
+              organizations={organizations}
+              contractorCustomerId={contractorCustomerId}
+              agentOrganizationId={agentOrganizationId}
+              tradingAgentCustomerId={tradingAgentCustomerId}
+              onChange={(next) => {
+                setContractorCustomerId(String(next.contractorCustomerId || '').trim());
+                setAgentOrganizationId(String(next.agentOrganizationId || '').trim());
+                setTradingAgentCustomerId(String(next.tradingAgentCustomerId || '').trim());
+              }}
+              inputClassName={inputClass}
+              labelClassName="text-xs font-black text-slate-600"
+            />
             <label className="text-xs font-black text-slate-600 sm:col-span-2">
               現場住所
               <input type="text" value={siteAddress} onChange={(e) => setSiteAddress(e.target.value)} className={inputClass} />
@@ -3328,6 +3277,8 @@ function AdminFollowupOrderCard({
   factoryNameById,
   chatMessages,
   adminName,
+  customersById,
+  organizationsById,
   onOpenDetail,
   onOrderUpdated,
 }) {
@@ -3339,7 +3290,11 @@ function AdminFollowupOrderCard({
   const [localError, setLocalError] = useState('');
   const [showChat, setShowChat] = useState(false);
 
-  const party = orderPartyInfo(order, { preferSiteContact: true });
+  const party = orderPartyInfo(order, {
+    preferSiteContact: true,
+    customersById,
+    organizationsById,
+  });
   const rejectedIds = Array.isArray(order.rejected_factory_ids) ? order.rejected_factory_ids : [];
   const notes = Array.isArray(order.admin_followup_notes)
     ? order.admin_followup_notes
@@ -3628,6 +3583,15 @@ function OrdersMonitorSection({
     (order) => resolveOrdererLabel(order, customerById, organizationById),
     [customerById, organizationById],
   );
+  const partyInfo = useCallback(
+    (order) =>
+      orderPartyInfo(order, {
+        preferSiteContact: true,
+        customersById: customerById,
+        organizationsById: organizationById,
+      }),
+    [customerById, organizationById],
+  );
 
   const escalationCtx = useMemo(
     () =>
@@ -3728,7 +3692,7 @@ function OrdersMonitorSection({
       .trim();
     if (!q) return visibleOrders;
     return visibleOrders.filter((o) => {
-      const party = orderPartyInfo(o, { preferSiteContact: true });
+      const party = partyInfo(o);
       const haystack = [
         resolveOrderPlacerLabel(o),
         party.contractor,
@@ -3743,7 +3707,7 @@ function OrdersMonitorSection({
         .join('\n');
       return haystack.includes(q);
     });
-  }, [visibleOrders, ordersSearchQuery, resolveOrderPlacerLabel]);
+  }, [visibleOrders, ordersSearchQuery, resolveOrderPlacerLabel, partyInfo]);
 
   const handleSaveEdit = async (orderId, patch) => {
     setSavingEdit(true);
@@ -3928,7 +3892,7 @@ function OrdersMonitorSection({
       ['注文ID', 'ステータス', '希望日', '希望時刻', '種別', '業者', '現場名', '担当者', '連絡先', '受注工場', '数量', '配合'],
       ...filteredVisibleOrders.map((o) => {
         const fid = String(o.factory_site_id || '').trim();
-        const party = orderPartyInfo(o, { preferSiteContact: true });
+        const party = partyInfo(o);
         return [
           o.id,
           orderStatusLabel(orderStatus(o)),
@@ -4021,7 +3985,7 @@ function OrdersMonitorSection({
           </p>
           <ul className="mt-3 space-y-2">
             {pendingAssociationOrders.map((o) => {
-              const party = orderPartyInfo(o, { preferSiteContact: true });
+              const party = partyInfo(o);
               return (
                 <li key={o.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2 dark:border-violet-700 dark:bg-slate-800">
                   <div className="min-w-0">
@@ -4061,6 +4025,8 @@ function OrdersMonitorSection({
                 factoryNameById={factoryNameById}
                 chatMessages={chatThreads[o.id]}
                 adminName={adminName}
+                customersById={customerById}
+                organizationsById={organizationById}
                 onOpenDetail={setDetailOrder}
                 onOrderUpdated={applyOrderUpdate}
               />
@@ -4120,7 +4086,7 @@ function OrdersMonitorSection({
                 filteredVisibleOrders.map((o) => {
                   const st = orderStatus(o);
                   const fid = String(o.factory_site_id || '').trim();
-                  const party = orderPartyInfo(o, { preferSiteContact: true });
+                  const party = partyInfo(o);
                   const placerLabel = resolveOrderPlacerLabel(o);
                   const isAcceptingThis = acceptDraft?.orderId === String(o.id);
                   return (
@@ -4285,7 +4251,7 @@ function OrdersMonitorSection({
                 </div>
                 <ul className="mt-3 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white dark:divide-slate-600 dark:border-slate-600 dark:bg-slate-800">
                   {group.orders.map((o) => {
-                    const party = orderPartyInfo(o, { preferSiteContact: true });
+                    const party = partyInfo(o);
                     return (
                       <li key={o.id} className="grid gap-2 px-3 py-3 sm:grid-cols-[12rem_5rem_repeat(4,minmax(0,1fr))] sm:items-center">
                         <p className="font-mono text-sm font-black text-slate-900">{formatDateJp(orderDeliveryDate(o))} {formatOrderTime(o)}</p>
@@ -4326,6 +4292,8 @@ function OrdersMonitorSection({
         escalationCtx={escalationCtx}
         factoryNameById={factoryNameById}
         factories={factories}
+        customers={customers}
+        organizations={organizations}
         saving={savingEdit}
         savingReassign={savingReassign}
         onClose={() => setDetailOrder(null)}

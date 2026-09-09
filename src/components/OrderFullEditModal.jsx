@@ -1,16 +1,22 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as db from '../haishaDb.js';
 import { TIME_SLOTS } from '../haishaConstants.js';
 import BillingMark from './BillingMark.jsx';
 import { SiteOrderUrlActions } from './SiteOrderUrlActions.jsx';
+import { OrderPartyEditFields } from './OrderPartyEditFields.jsx';
 import {
   resolveOrderPartyDisplay,
-  resolveProjectPartyDisplay,
 } from '../utils/projectPartyDisplay.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from '../utils/siteNameDisplay.js';
-import { buildAgentOrganizationSyncPatch } from '../utils/orderAgentOrganization.js';
 import { isValidSiteOrderUrlToken } from '../utils/urlValidation.js';
 import { unloadDurationLabel } from '../utils/unloadDurationLabel.js';
+import {
+  buildOrderPartyPersistPatch,
+  orderAgentOrganizationId,
+  orderContractorCustomerId,
+  orderTradingAgentCustomerId,
+  resolveOrderParties,
+} from '../utils/orderPartyInfo.js';
 
 function vehicleTypeLabel(value) {
   return String(value || '') === 'small' ? '小型' : '大型';
@@ -116,6 +122,34 @@ export function buildChangeRequestPatch(order, patch) {
   setIfChanged('siteAddress', o.siteAddress, p.siteAddress);
   setIfChanged('sitePhone', o.sitePhone, p.sitePhone);
   setIfChanged('contractorName', o.contractorName, p.contractorName);
+  if (
+    Object.prototype.hasOwnProperty.call(p, 'contractor_customer_id') ||
+    Object.prototype.hasOwnProperty.call(p, 'contractorCustomerId')
+  ) {
+    const before = normalizeAgentOrganizationId(
+      o.contractor_customer_id ?? o.contractorCustomerId,
+    );
+    const after = normalizeAgentOrganizationId(
+      p.contractor_customer_id ?? p.contractorCustomerId,
+    );
+    if (before !== after) {
+      out.contractor_customer_id = after || null;
+    }
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(p, 'trading_agent_customer_id') ||
+    Object.prototype.hasOwnProperty.call(p, 'tradingAgentCustomerId')
+  ) {
+    const before = normalizeAgentOrganizationId(
+      o.trading_agent_customer_id ?? o.tradingAgentCustomerId,
+    );
+    const after = normalizeAgentOrganizationId(
+      p.trading_agent_customer_id ?? p.tradingAgentCustomerId,
+    );
+    if (before !== after) {
+      out.trading_agent_customer_id = after || null;
+    }
+  }
   if (Boolean(o.has_test) !== Boolean(p.has_test)) {
     out.has_test = Boolean(p.has_test);
   }
@@ -153,8 +187,10 @@ export function formatChangeRequestPatchSummary(patch) {
     siteAddress: '現場住所',
     sitePhone: '電話番号',
     contractorName: '業者名',
+    contractor_customer_id: '業者名',
     has_test: '試験体',
     agent_organization_id: '商社',
+    trading_agent_customer_id: '商社担当者',
     traderName: '商社',
     trading_company_name: '商社',
   };
@@ -291,6 +327,7 @@ export function OrderFullEditModal({
   onSave,
   projectById,
   customerById,
+  organizations: organizationsProp,
   onSiteUrlCopied,
   editorRole = 'factory',
   mode = 'edit',
@@ -310,16 +347,16 @@ export function OrderFullEditModal({
     vehicleType: 'large',
     quantityM3: '',
     unloadDuration: '30',
+    contractorCustomerId: '',
     agentOrganizationId: '',
-    traderName: '',
-    contractorName: '',
+    tradingAgentCustomerId: '',
     siteName: '',
     siteAddress: '',
     sitePhone: '',
     mixText: '',
     hasTest: false,
   });
-  const [agentOrganizations, setAgentOrganizations] = useState([]);
+  const [fetchedOrganizations, setFetchedOrganizations] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [saveError, setSaveError] = useState('');
   /** 依頼モードのみ: 'edit' | 'confirm' */
@@ -327,6 +364,21 @@ export function OrderFullEditModal({
   const [confirmDiffRows, setConfirmDiffRows] = useState([]);
   const [confirmPayload, setConfirmPayload] = useState(null);
   const submittingRef = useRef(false);
+
+  const customers = useMemo(
+    () => Object.values(customerById || {}).filter((c) => c?.id),
+    [customerById],
+  );
+  const organizations = useMemo(() => {
+    const fromProp = Array.isArray(organizationsProp) ? organizationsProp.filter((o) => o?.id) : [];
+    if (fromProp.length) return fromProp;
+    return fetchedOrganizations;
+  }, [organizationsProp, fetchedOrganizations]);
+  const customersById = customerById || {};
+  const organizationsById = useMemo(
+    () => Object.fromEntries((organizations || []).filter((o) => o?.id).map((o) => [String(o.id), o])),
+    [organizations],
+  );
 
   useEffect(() => {
     if (open) return;
@@ -345,12 +397,10 @@ export function OrderFullEditModal({
       try {
         const orgs = await db.fetchOrganizations();
         if (cancelled) return;
-        setAgentOrganizations(
-          (Array.isArray(orgs) ? orgs : []).filter((o) => o && String(o.type) === 'agent' && o.id),
-        );
+        setFetchedOrganizations((Array.isArray(orgs) ? orgs : []).filter((o) => o && o.id));
       } catch (e) {
-        console.warn('[OrderFullEditModal] agent organizations load failed', e);
-        if (!cancelled) setAgentOrganizations([]);
+        console.warn('[OrderFullEditModal] organizations load failed', e);
+        if (!cancelled) setFetchedOrganizations([]);
       }
     })();
     return () => {
@@ -363,28 +413,6 @@ export function OrderFullEditModal({
     const ts = order.timeSlot != null ? String(order.timeSlot) : '';
     const ok = TIME_SLOTS.some((s) => s.value === ts);
     const q = order.confirmedQuantityM3 ?? order.quantityM3 ?? order.quantityCube;
-    const projectId = String(order?.project_id ?? order?.projectId ?? '').trim();
-    const linkedProject = projectId ? projectById?.[projectId] : null;
-    const linkedCustomerId = String(
-      linkedProject?.customer_id ?? order?.customer_id ?? order?.customerId ?? '',
-    ).trim();
-    const linkedCustomer =
-      (linkedCustomerId ? customerById?.[linkedCustomerId] : null) ?? null;
-    const contractorCustomerId = String(
-      order?.contractor_customer_id ?? order?.contractorCustomerId ?? '',
-    ).trim();
-    const contractorCustomer =
-      (contractorCustomerId ? customerById?.[contractorCustomerId] : null) ?? null;
-    const partyDisplay = resolveOrderPartyDisplay(order, {
-      project: linkedProject,
-      customer: linkedCustomer,
-      contractorCustomer,
-    });
-    const explicitTrader = order.traderName != null ? String(order.traderName).trim() : '';
-    const explicitContractor =
-      order.contractorName != null ? String(order.contractorName).trim() : '';
-    const agentId =
-      order.agent_organization_id != null ? String(order.agent_organization_id).trim() : '';
     const mixInitial = String(order.confirmedMixText ?? order.mixText ?? '').trim();
     setEditData({
       preferredDate:
@@ -395,10 +423,9 @@ export function OrderFullEditModal({
       unloadDuration: String(
         order.unloadDurationMinutes || order.unloadDuration || order.unloadingTime || '30',
       ),
-      agentOrganizationId: agentId,
-      traderName: explicitTrader || (partyDisplay.trader !== '—' ? partyDisplay.trader : ''),
-      contractorName:
-        explicitContractor || (partyDisplay.prime !== '—' ? partyDisplay.prime : ''),
+      contractorCustomerId: orderContractorCustomerId(order),
+      agentOrganizationId: orderAgentOrganizationId(order),
+      tradingAgentCustomerId: orderTradingAgentCustomerId(order),
       siteName:
         sanitizeSiteNameValue(order.siteName) || sanitizeSiteNameValue(order.projectName) || '',
       siteAddress: order.siteAddress != null ? String(order.siteAddress) : '',
@@ -422,8 +449,22 @@ export function OrderFullEditModal({
   const linkedCustomer =
     (linkedCustomerId ? customerById?.[linkedCustomerId] : null) ?? null;
   const projectPartyDisplay = linkedProject
-    ? resolveProjectPartyDisplay(linkedProject, linkedCustomer)
+    ? resolveOrderPartyDisplay(order, {
+        project: linkedProject,
+        customer: linkedCustomer,
+        customersById: customerById || {},
+        organizationById: organizationsById,
+      })
     : null;
+  const currentParties = resolveOrderParties(
+    {
+      ...order,
+      contractor_customer_id: editData.contractorCustomerId,
+      agent_organization_id: editData.agentOrganizationId,
+      trading_agent_customer_id: editData.tradingAgentCustomerId,
+    },
+    { customersById, organizationsById },
+  );
   const fieldLabel = 'mb-1 block text-sm font-bold text-slate-600 dark:text-slate-300 sm:text-base';
   const fieldInput =
     'box-border mt-1 min-h-[48px] w-full min-w-0 max-w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 sm:text-lg';
@@ -442,23 +483,18 @@ export function OrderFullEditModal({
   const setEditField = (name, value) => {
     setEditData((prev) => ({ ...prev, [name]: value }));
   };
-  const handleAgentChange = (e) => {
-    const nextId = e.target.value;
-    const sync = buildAgentOrganizationSyncPatch(nextId || null, agentOrganizations);
-    setEditData((prev) => ({
-      ...prev,
-      agentOrganizationId: nextId,
-      traderName: sync.traderName,
-    }));
-  };
 
   const buildFormPatch = () => {
     const slotMeta = TIME_SLOTS.find((s) => s.value === editData.timeSlot);
     const timeMinutes = parseInt(editData.timeSlot, 10);
     const slotLabel = slotMeta?.label ?? '';
-    const agentSync = buildAgentOrganizationSyncPatch(
-      editData.agentOrganizationId || null,
-      agentOrganizations,
+    const partyPatch = buildOrderPartyPersistPatch(
+      {
+        contractorCustomerId: editData.contractorCustomerId,
+        agentOrganizationId: editData.agentOrganizationId,
+        tradingAgentCustomerId: editData.tradingAgentCustomerId,
+      },
+      { customersById, organizationsById, previousOrder: order },
     );
     return {
       preferredDate: editData.preferredDate,
@@ -474,13 +510,12 @@ export function OrderFullEditModal({
       unloadDuration: editData.unloadDuration,
       unloadDurationMinutes: editData.unloadDuration,
       unloadDurationLabel: unloadDurationLabel(editData.unloadDuration),
-      contractorName: editData.contractorName.trim(),
       siteName: sanitizeSiteNameValue(editData.siteName),
       siteAddress: editData.siteAddress.trim(),
       sitePhone: editData.sitePhone.trim(),
       mixText: editData.mixText.trim(),
       has_test: editData.hasTest,
-      ...agentSync,
+      ...partyPatch,
     };
   };
 
@@ -775,38 +810,24 @@ export function OrderFullEditModal({
                   </div>
                 </dl>
               ) : null}
-              <div>
-                <label className={fieldLabel} htmlFor="foe-contractor">
-                  業者名
-                </label>
-                <input
-                  id="foe-contractor"
-                  name="contractorName"
-                  type="text"
-                  value={editData.contractorName}
-                  onChange={handleInputChange}
-                  className={fieldInput}
-                />
-              </div>
-              <div>
-                <label className={fieldLabel} htmlFor="foe-trader">
-                  商社
-                </label>
-                <select
-                  id="foe-trader"
-                  name="agentOrganizationId"
-                  value={editData.agentOrganizationId}
-                  onChange={handleAgentChange}
-                  className={fieldInput}
-                >
-                  <option value="">商社なし（直接請求）</option>
-                  {agentOrganizations.map((org) => (
-                    <option key={org.id} value={String(org.id)}>
-                      {org.name || org.id}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <OrderPartyEditFields
+                order={order}
+                customers={customers}
+                organizations={organizations}
+                contractorCustomerId={editData.contractorCustomerId}
+                agentOrganizationId={editData.agentOrganizationId}
+                tradingAgentCustomerId={editData.tradingAgentCustomerId}
+                onChange={(next) => {
+                  setEditData((prev) => ({
+                    ...prev,
+                    contractorCustomerId: String(next.contractorCustomerId || '').trim(),
+                    agentOrganizationId: String(next.agentOrganizationId || '').trim(),
+                    tradingAgentCustomerId: String(next.tradingAgentCustomerId || '').trim(),
+                  }));
+                }}
+                inputClassName={fieldInput}
+                labelClassName={fieldLabel}
+              />
               <div>
                 <label className={fieldLabel} htmlFor="foe-site">
                   現場名
@@ -828,9 +849,9 @@ export function OrderFullEditModal({
                       siteName={editData.siteName || resolveOrderSiteDisplayName(order)}
                       customerName={
                         customerById?.[String(order?.customer_id ?? order?.customerId ?? '')]
-                          ?.company_name || editData.contractorName
+                          ?.company_name || ''
                       }
-                      traderName={editData.traderName}
+                      traderName={currentParties.traderName}
                       project={projectById?.[String(order?.project_id ?? order?.projectId ?? '')]}
                       customer={customerById?.[String(order?.customer_id ?? order?.customerId ?? '')]}
                       onCopied={onSiteUrlCopied}

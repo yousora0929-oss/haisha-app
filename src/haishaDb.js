@@ -36,6 +36,7 @@ import {
 } from './utils/mixDesignRequest.js';
 import { mapMixDesignFactoryLinks } from './utils/mixDesignAccept.js';
 import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.js';
+import { resolveOrderParties } from './utils/orderPartyInfo.js';
 import { normalizeCompanyName } from './utils/csvImport.js';
 import {
   customerFactoryRejectionChatMessage,
@@ -227,8 +228,16 @@ function sanitizeOrderDataForDb(order) {
   const o = sanitizeOrderRefs(order);
   const siteName = sanitizeSiteNameValue(o.siteName ?? o.site_name);
   const projectName = sanitizeSiteNameValue(o.projectName ?? o.project_name);
+  const {
+    displayContractorName: _displayContractorName,
+    displayTraderName: _displayTraderName,
+    contractorCustomer: _contractorCustomer,
+    tradingAgentCustomer: _tradingAgentCustomer,
+    linkedProject: _linkedProject,
+    ...rest
+  } = o;
   return {
-    ...o,
+    ...rest,
     siteName,
     site_name: siteName,
     projectName,
@@ -347,6 +356,12 @@ export function normalizeOrderRow(row) {
           : od.traderName != null
             ? String(od.traderName)
             : '',
+    contractorName:
+      od.contractorName != null
+        ? String(od.contractorName)
+        : od.contractor_name != null
+          ? String(od.contractor_name)
+          : '',
     ordered_by: row.ordered_by != null ? String(row.ordered_by) : od.order_placer_name != null ? String(od.order_placer_name) : od.orderPlacerName != null ? String(od.orderPlacerName) : od.ordered_by != null ? String(od.ordered_by) : '',
     orderedBy:
       od.siteContactName != null && String(od.siteContactName).trim()
@@ -855,8 +870,10 @@ export async function fetchOrdersWithChat() {
     ),
   ];
   const projectIds = [...new Set(orders.map((o) => o.project_id).filter(Boolean))];
+  const organizationIds = [...new Set(orders.map((o) => o.agent_organization_id).filter(Boolean))];
   let customerById = new Map();
   let projectById = new Map();
+  let organizationById = new Map();
   if (customerIds.length) {
     const { data: customers } = await supabase.from('customers').select(CUSTOMER_SELECT_MIN).in('id', customerIds);
     customerById = new Map((customers || []).map((c) => [String(c.id), c]));
@@ -888,11 +905,27 @@ export async function fetchOrdersWithChat() {
         .map((p) => [String(p.id), p]),
     );
   }
+  if (organizationIds.length) {
+    const { data: orgs, error: orgErr } = await supabase
+      .from('organizations')
+      .select('id, name, type')
+      .in('id', organizationIds);
+    if (orgErr) {
+      console.warn('[fetchOrdersWithChat] organizations load failed', orgErr);
+    } else {
+      organizationById = new Map((orgs || []).filter((o) => o?.id).map((o) => [String(o.id), o]));
+    }
+  }
   for (let i = 0; i < orders.length; i += 1) {
     const o = orders[i];
     const c = o.customer_id ? customerById.get(String(o.customer_id)) : null;
     const p = o.project_id ? projectById.get(String(o.project_id)) : null;
     const tradingAgentId = String(o.trading_agent_customer_id || '').trim();
+    const contractorId = String(o.contractor_customer_id || '').trim();
+    const parties = resolveOrderParties(o, {
+      customersById: customerById,
+      organizationsById: organizationById,
+    });
     orders[i] = {
       ...o,
       customerName: o.customerName || (c?.company_name != null ? String(c.company_name) : ''),
@@ -903,16 +936,21 @@ export async function fetchOrdersWithChat() {
         sanitizeSiteNameValue(p?.name) ||
         '',
       trading_company_name:
+        parties.traderName ||
         o.trading_company_name ||
         o.projectTradingCompanyName ||
         resolveProjectTradingCompanyName(p),
       projectTradingCompanyName:
+        parties.traderName ||
         o.projectTradingCompanyName ||
         o.trading_company_name ||
         resolveProjectTradingCompanyName(p),
+      displayContractorName: parties.contractorName,
+      displayTraderName: parties.traderName,
       url_token: pickSiteUrlToken(p, c),
       linkedProject: p || null,
       tradingAgentCustomer: tradingAgentId ? customerById.get(tradingAgentId) || null : null,
+      contractorCustomer: contractorId ? customerById.get(contractorId) || null : null,
     };
   }
   return { orders, chatThreads };
@@ -1809,7 +1847,20 @@ export async function updateOrderDetails(orderId, updatedData) {
   ) {
     updateRow.agent_organization_id =
       sanitizeRefId(patch.agent_organization_id ?? patch.agentOrganizationId) || null;
-    // 表示名は order_data 側（mergedOrderData）に既に含まれている想定
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'contractor_customer_id') ||
+    Object.prototype.hasOwnProperty.call(patch, 'contractorCustomerId')
+  ) {
+    updateRow.contractor_customer_id =
+      sanitizeRefId(patch.contractor_customer_id ?? patch.contractorCustomerId) || null;
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'trading_agent_customer_id') ||
+    Object.prototype.hasOwnProperty.call(patch, 'tradingAgentCustomerId')
+  ) {
+    updateRow.trading_agent_customer_id =
+      sanitizeRefId(patch.trading_agent_customer_id ?? patch.tradingAgentCustomerId) || null;
   }
   if (
     Object.prototype.hasOwnProperty.call(patch, 'delivery_lat') ||
