@@ -6,6 +6,9 @@ export const RESERVATION_GROUP_STATUS_LABELS = {
   conflict: '要調整',
 };
 
+export const RESERVATION_GROUP_MIN_DAYS = 2;
+export const RESERVATION_GROUP_MAX_DAYS = 7;
+
 const WATCH_STORAGE_KEY = 'haisha_reservation_group_watch_v1';
 
 export function reservationGroupStatusLabel(status) {
@@ -23,8 +26,34 @@ export function addDaysIso(isoDate, days) {
   return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
 }
 
-export function defaultReservationDayDates(today = todayLocalISODate()) {
-  return [0, 1, 2].map((offset) => addDaysIso(today, offset));
+export function defaultReservationDayDates(today = todayLocalISODate(), count = RESERVATION_GROUP_MIN_DAYS) {
+  const n = Math.min(
+    RESERVATION_GROUP_MAX_DAYS,
+    Math.max(RESERVATION_GROUP_MIN_DAYS, Number(count) || RESERVATION_GROUP_MIN_DAYS),
+  );
+  return Array.from({ length: n }, (_, offset) => addDaysIso(today, offset));
+}
+
+export function nextReservationDate(existingDates, today = todayLocalISODate()) {
+  const used = new Set(
+    (Array.isArray(existingDates) ? existingDates : [])
+      .map((d) => String(d || '').trim())
+      .filter(Boolean),
+  );
+  const start = [...used].sort().pop();
+  let candidate = start && start >= today ? addDaysIso(start, 1) : today;
+  while (used.has(candidate)) {
+    candidate = addDaysIso(candidate, 1);
+  }
+  return candidate;
+}
+
+export function reservationDayCountError(count) {
+  const n = Number(count);
+  if (!Number.isInteger(n) || n < RESERVATION_GROUP_MIN_DAYS || n > RESERVATION_GROUP_MAX_DAYS) {
+    return `予約日は${RESERVATION_GROUP_MIN_DAYS}〜${RESERVATION_GROUP_MAX_DAYS}日で指定してください。`;
+  }
+  return '';
 }
 
 export function parseSubmitReservationGroupResult(data) {

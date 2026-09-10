@@ -3970,13 +3970,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             };
             rememberWatchedReservationGroup(watched);
             setWatchedReservationGroup(watched);
-            const message = '3日間予約を受け付けました。工場の回答状況はこの画面で確認できます。';
+            const message = '複数日予約を受け付けました。工場の回答状況はこの画面で確認できます。';
             setSubmitNotice(message);
             window.alert(message);
             window.setTimeout(() => setSubmitNotice(null), 6000);
           } catch (err) {
-            console.error('3日間予約の送信に失敗しました', err);
-            const message = formatSupabaseError(err, '3日間予約の送信に失敗しました');
+            console.error('複数日予約の送信に失敗しました', err);
+            const message = formatSupabaseError(err, '複数日予約の送信に失敗しました');
             setSubmitError(message);
             window.alert(message);
             throw err;
@@ -4596,8 +4596,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       },
                     },
                     {
-                      title: '📅 3日間予約',
-                      body: '同じ現場の3日分をまとめて予約します。同一工場必須の指定もできます。',
+                      title: '📅 複数日予約',
+                      body: '同じ現場の複数日をまとめて予約します。同一工場必須の指定もできます。',
                       onClick: () => {
                         setOrderKind('project');
                         setDeliveryLat('');
@@ -4648,7 +4648,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         : 'border-slate-200 bg-white text-slate-700')
                     }
                   >
-                    3日間予約
+                    複数日予約
                   </button>
                 </div>
               ) : null}

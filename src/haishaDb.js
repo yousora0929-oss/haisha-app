@@ -4934,7 +4934,7 @@ export async function submitGuestOrders(urlToken, orders, { factories = [], proj
 }
 
 /**
- * ゲスト専用URLからの3日間予約グループ登録。
+ * ゲスト専用発注URLからの複数日予約グループ登録。
  * 既存の submitGuestOrders / submit_guest_orders は使わない。
  */
 export async function submitGuestReservationGroup(

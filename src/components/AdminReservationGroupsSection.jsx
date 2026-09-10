@@ -75,7 +75,7 @@ export function AdminReservationGroupsSection({ factories = [] }) {
         <div>
           <h2 className="text-lg font-black text-slate-900">予約グループ</h2>
           <p className="mt-1 text-xs text-slate-500">
-            3日間予約の状態です。別工場で確定したグループは「要調整」として先頭に出ます。
+            複数日予約の状態です。別工場で確定したグループは「要調整」として先頭に出ます。
           </p>
         </div>
         <button
@@ -91,7 +91,7 @@ export function AdminReservationGroupsSection({ factories = [] }) {
         <div className="cl-alert-warning-panel mt-4 rounded-xl border-2 border-rose-500 bg-rose-50 p-4">
           <p className="text-base font-black text-rose-950">要調整が {conflictCount} 件あります</p>
           <p className="mt-1 text-xs font-bold text-rose-900">
-            3件が別々の工場で確定しています。電話などで工場を調整してください。
+            予約内の注文が別々の工場で確定しています。電話などで工場を調整してください。
           </p>
         </div>
       ) : null}

@@ -59,7 +59,7 @@ export function ReservationGroupStatusPanel({
     <section className={`rounded-2xl border-2 p-4 shadow-sm ${tone}`} role="status">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <p className="text-xs font-black uppercase tracking-wider">3日間予約</p>
+          <p className="text-xs font-black uppercase tracking-wider">複数日予約</p>
           <h3 className="mt-1 text-lg font-black">
             {status === 'conflict' ? '要調整' : label}
           </h3>
@@ -98,7 +98,7 @@ export function ReservationGroupStatusPanel({
       </ul>
       {status === 'conflict' ? (
         <p className="mt-3 text-sm font-black">
-          3件が別々の工場で確定しています。管理者へ連絡し、工場の調整を依頼してください。
+          複数日が別々の工場で確定しています。管理者へ連絡し、工場の調整を依頼してください。
         </p>
       ) : null}
     </section>

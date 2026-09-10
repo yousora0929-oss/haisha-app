@@ -2,14 +2,25 @@ import React, { useMemo, useState } from 'react';
 import { TIME_SLOTS, todayLocalISODate } from '../haishaConstants.js';
 import { buildDispatchOrderForDate, validateCartLineForm } from '../utils/dispatchBulkOrder.js';
 import { resolveInitialOrderStatus, sumOrderVolumesM3 } from '../utils/orderWorkflow.js';
-import { defaultReservationDayDates } from '../utils/reservationGroup.js';
+import {
+  defaultReservationDayDates,
+  nextReservationDate,
+  reservationDayCountError,
+  RESERVATION_GROUP_MAX_DAYS,
+  RESERVATION_GROUP_MIN_DAYS,
+} from '../utils/reservationGroup.js';
 import { ReservationGroupStatusPanel } from './ReservationGroupStatusPanel.jsx';
 
 const FIELD_CLASS =
   'min-h-[52px] w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-base font-medium text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300';
 
+function nextLocalId() {
+  return `reservation-day-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function emptyDay(date, timeSlot, quantityM3, mixText) {
   return {
+    localId: nextLocalId(),
     date: String(date || '').trim(),
     timeSlot: String(timeSlot || TIME_SLOTS[0]?.value || '480'),
     quantityM3: String(quantityM3 || '').trim(),
@@ -49,29 +60,59 @@ export function ReservationGroupOrderForm({
   const [localError, setLocalError] = useState('');
 
   const tokenOk = Boolean(String(urlToken || '').trim());
+  const canRemoveDay = days.length > RESERVATION_GROUP_MIN_DAYS;
+  const canAddDay = days.length < RESERVATION_GROUP_MAX_DAYS;
 
   const patchDay = (index, patch) => {
     setDays((prev) => prev.map((day, i) => (i === index ? { ...day, ...patch } : day)));
+  };
+
+  const addDay = () => {
+    if (!canAddDay) return;
+    setDays((prev) => {
+      const nextDate = nextReservationDate(
+        prev.map((day) => day.date),
+        today,
+      );
+      const last = prev[prev.length - 1];
+      return [
+        ...prev,
+        emptyDay(nextDate, last?.timeSlot, last?.quantityM3, last?.mixText),
+      ];
+    });
+    setLocalError('');
+  };
+
+  const removeDay = (index) => {
+    if (!canRemoveDay) return;
+    setDays((prev) => prev.filter((_, i) => i !== index));
+    setLocalError('');
   };
 
   const handleSubmit = async (e) => {
     e?.preventDefault?.();
     setLocalError('');
     if (!tokenOk) {
-      const message = '3日間予約には専用発注URL（url_token）が必要です。物件の専用URLから開くか、URLが設定された物件を選んでください。';
+      const message = '複数日予約には専用発注URL（url_token）が必要です。物件の専用URLから開くか、URLが設定された物件を選んでください。';
       setLocalError(message);
       window.alert(message);
+      return;
+    }
+    const countError = reservationDayCountError(days.length);
+    if (countError) {
+      setLocalError(countError);
+      window.alert(countError);
       return;
     }
     const dates = days.map((d) => String(d.date || '').trim());
     if (dates.some((d) => !d)) {
-      const message = '3日分の希望日を入力してください。';
+      const message = 'すべての希望日を入力してください。';
       setLocalError(message);
       window.alert(message);
       return;
     }
-    if (new Set(dates).size !== 3) {
-      const message = '3日分はそれぞれ異なる日付にしてください。';
+    if (new Set(dates).size !== dates.length) {
+      const message = '予約日はそれぞれ異なる日付にしてください。';
       setLocalError(message);
       window.alert(message);
       return;
@@ -114,7 +155,7 @@ export function ReservationGroupOrderForm({
     try {
       await onSubmit(payload, sameFactoryRequired);
     } catch (err) {
-      const message = err?.message || '3日間予約の送信に失敗しました';
+      const message = err?.message || '複数日予約の送信に失敗しました';
       setLocalError(message);
     }
   };
@@ -136,8 +177,8 @@ export function ReservationGroupOrderForm({
     <div className="mx-auto w-full max-w-4xl min-w-0 overflow-x-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6 lg:p-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-black uppercase tracking-wider text-indigo-700">3日間予約</p>
-          <h2 className="mt-1 text-2xl font-black text-slate-900">同じ現場の3日分をまとめて予約</h2>
+          <p className="text-xs font-black uppercase tracking-wider text-indigo-700">複数日予約</p>
+          <h2 className="mt-1 text-2xl font-black text-slate-900">同じ現場の複数日をまとめて予約</h2>
         </div>
         {onBack ? (
           <button
@@ -150,7 +191,8 @@ export function ReservationGroupOrderForm({
         ) : null}
       </div>
       <p className="mt-2 text-sm font-bold leading-relaxed text-slate-500">
-        通常の単発発注とは別の予約です。3件が同じ工場で確定すると「確定」、別工場になると「要調整」になります。
+        通常の単発発注とは別の予約です。{RESERVATION_GROUP_MIN_DAYS}〜{RESERVATION_GROUP_MAX_DAYS}
+        日まで追加できます。全日が同じ工場で確定すると「確定」、別工場になると「要調整」になります。
       </p>
 
       {guestLockedFields ? (
@@ -227,14 +269,14 @@ export function ReservationGroupOrderForm({
           <span className="text-sm font-bold text-slate-800">
             同一工場必須
             <span className="mt-1 block text-xs font-medium text-slate-500">
-              オンにすると、3件とも同じ工場での受注を前提にします。別工場で確定した場合は管理画面に「要調整」と出ます。
+              オンにすると、全日とも同じ工場での受注を前提にします。別工場で確定した場合は管理画面に「要調整」と出ます。
             </span>
           </span>
         </label>
 
         {days.map((day, index) => (
           <fieldset
-            key={`reservation-day-${index}`}
+            key={day.localId}
             className="rounded-2xl border-2 border-slate-200 bg-slate-50 p-4"
           >
             <legend className="px-1 text-sm font-black text-indigo-800">{index + 1}日目</legend>
@@ -286,8 +328,27 @@ export function ReservationGroupOrderForm({
                 />
               </label>
             </div>
+            <div className="mt-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => removeDay(index)}
+                disabled={!canRemoveDay}
+                className="min-h-[40px] rounded-xl border-2 border-slate-300 bg-white px-3 text-xs font-black text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                − 削除
+              </button>
+            </div>
           </fieldset>
         ))}
+
+        <button
+          type="button"
+          onClick={addDay}
+          disabled={!canAddDay}
+          className="min-h-[48px] rounded-xl border-2 border-dashed border-indigo-300 bg-white px-4 text-sm font-black text-indigo-800 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400 disabled:hover:bg-white"
+        >
+          ＋ 日を追加（{days.length}/{RESERVATION_GROUP_MAX_DAYS}日）
+        </button>
 
         {isGuestSiteOrder && factoryOptions.length ? (
           <p className="text-xs font-bold text-slate-500">
@@ -306,7 +367,7 @@ export function ReservationGroupOrderForm({
           disabled={submitting || !tokenOk}
           className="min-h-[52px] rounded-xl border-2 border-indigo-700 bg-indigo-600 text-base font-black text-white shadow hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {submitting ? '送信中…' : '3日分を予約する'}
+          {submitting ? '送信中…' : `${days.length}日分を予約する`}
         </button>
       </form>
 
