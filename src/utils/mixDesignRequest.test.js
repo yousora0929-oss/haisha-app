@@ -303,6 +303,7 @@ describe('mixDesignPrintPropsFromDb', () => {
     expect(props.items[0].quantityM3).toBe('12.5');
     expect(props.items[0].constructionLocation).toBe('1階スラブ');
     expect(props.items[0].pourDate).toBe('2026-09-15');
+    expect(props.request.memo).toBe('メモ');
     expect(mixCodeForItem(props.items[0])).toContain('18');
   });
 

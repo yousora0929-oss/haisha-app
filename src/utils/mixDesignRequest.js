@@ -1138,7 +1138,7 @@ const MIX_DESIGN_CHANGE_LABELS = {
   testSpecimenCount: '供試体数',
   testThirdParty: '第三者試験',
   quoteRequested: '見積依頼',
-  memo: '備考',
+  memo: '全体備考',
   items: '配合パターン',
   status: 'ステータス',
 };

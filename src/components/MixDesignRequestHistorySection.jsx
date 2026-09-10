@@ -29,6 +29,7 @@ function formatRequestedAt(value) {
 
 /**
  * 配合依頼タブ: 上部＝作成依頼、下部＝履歴検索・印刷・編集
+ * readOnly 時は検索・一覧・印刷のみ（Admin 閲覧用）。書き込み RPC は呼ばない。
  */
 export function MixDesignRequestHistorySection({
   factories = [],
@@ -41,6 +42,7 @@ export function MixDesignRequestHistorySection({
   allowedDeliveryAreas = [],
   deliveryPrefecture = '大分県',
   active = true,
+  readOnly = false,
 }) {
   const [keyword, setKeyword] = useState('');
   const [submittedKeyword, setSubmittedKeyword] = useState('');
@@ -141,6 +143,7 @@ export function MixDesignRequestHistorySection({
   };
 
   const openEdit = async (requestId) => {
+    if (readOnly) return;
     const id = String(requestId || '').trim();
     if (!id) return;
     setEditLoadingId(id);
@@ -177,6 +180,7 @@ export function MixDesignRequestHistorySection({
   }, []);
 
   const handleStatusChange = async (requestId, nextStatus) => {
+    if (readOnly) return;
     const id = String(requestId || '').trim();
     const next = String(nextStatus || '').trim();
     if (!id || !next) return;
@@ -214,6 +218,7 @@ export function MixDesignRequestHistorySection({
 
   return (
     <div className="flex flex-col gap-6">
+      {!readOnly ? (
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6 lg:p-8">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -362,14 +367,16 @@ export function MixDesignRequestHistorySection({
           </div>
         ) : null}
       </section>
+      ) : null}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6 lg:p-8">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-base font-black text-slate-900">配合計画書依頼履歴</h2>
             <p className="mt-2 text-xs leading-relaxed text-slate-500">
-              過去の配合計画書作成依頼を検索・確認・印刷・編集できます。編集時は変更履歴が残ります。
-              現場担当者名・連絡先でも検索できます。
+              {readOnly
+                ? '全業者・全物件の配合計画書作成依頼を検索・確認・印刷できます。閲覧専用です。'
+                : '過去の配合計画書作成依頼を検索・確認・印刷・編集できます。編集時は変更履歴が残ります。現場担当者名・連絡先でも検索できます。'}
             </p>
           </div>
         </div>
@@ -467,6 +474,7 @@ export function MixDesignRequestHistorySection({
                         </dl>
                       </div>
                       <div className="flex shrink-0 flex-col gap-2 sm:items-stretch">
+                        {!readOnly ? (
                         <button
                           type="button"
                           onClick={() => void openEdit(row.id)}
@@ -475,6 +483,7 @@ export function MixDesignRequestHistorySection({
                         >
                           {editLoadingId === String(row.id) ? '読込中…' : '編集'}
                         </button>
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => void openPrint(row.id)}
@@ -493,7 +502,7 @@ export function MixDesignRequestHistorySection({
         )}
       </section>
 
-      {editBundle ? (
+      {!readOnly && editBundle ? (
         <MixDesignRequestModal
           open
           mode="edit"
@@ -551,6 +560,7 @@ export function MixDesignRequestHistorySection({
               </button>
             </div>
             <div className="min-h-[50vh] flex-1 overflow-x-auto overflow-y-auto p-4">
+              {!readOnly ? (
               <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
                 <MixDesignStatusButtons
                   value={printBundle.status}
@@ -558,6 +568,11 @@ export function MixDesignRequestHistorySection({
                   onChange={(next) => void handleStatusChange(printBundle.requestId, next)}
                 />
               </div>
+              ) : (
+                <p className="mb-4 text-xs font-bold text-slate-500">
+                  ステータス: {mixDesignStatusLabel(printBundle.status)}（閲覧専用）
+                </p>
+              )}
               <div ref={printRootRef} className="mix-design-print-root">
                 <div className="mix-design-print-preview">
                   <MixDesignRequestPrint
@@ -567,11 +582,13 @@ export function MixDesignRequestHistorySection({
                   />
                 </div>
               </div>
+              {!readOnly ? (
               <MixDesignEmailActions
                 factoryLinks={printBundle.factoryLinks || []}
                 factories={factories}
                 header={printBundle.header}
               />
+              ) : null}
               {changeLogs.length ? (
                 <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <h4 className="text-sm font-black text-slate-900">変更履歴</h4>

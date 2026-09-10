@@ -274,20 +274,7 @@ export function MixDesignRequestPrint({
                   {mixCodeForItem(item) || '—'}
                 </td>
                 <td className="mix-design-print-item-memo" colSpan={2}>
-                  {index === 0 ? (
-                    editable ? (
-                      <textarea
-                        value={request?.memo || ''}
-                        onChange={(e) => patchRequest({ memo: e.target.value })}
-                        rows={2}
-                        className="mix-design-print-input mix-design-print-memo"
-                      />
-                    ) : (
-                      request?.memo || '—'
-                    )
-                  ) : (
-                    '—'
-                  )}
+                  —
                 </td>
               </tr>
               <tr className="mix-design-print-item-sub">
@@ -370,6 +357,23 @@ export function MixDesignRequestPrint({
           <col className="mix-design-print-col-value" />
         </colgroup>
         <tbody>
+          {editable || String(request?.memo || '').trim() ? (
+            <tr>
+              <th style={LABEL_CELL}>全体備考</th>
+              <td colSpan={3}>
+                {editable ? (
+                  <textarea
+                    value={request?.memo || ''}
+                    onChange={(e) => patchRequest({ memo: e.target.value })}
+                    rows={2}
+                    className="mix-design-print-input mix-design-print-memo"
+                  />
+                ) : (
+                  request?.memo
+                )}
+              </td>
+            </tr>
+          ) : null}
           <tr>
             <th style={LABEL_CELL}>提出方法</th>
             <td>
@@ -397,23 +401,6 @@ export function MixDesignRequestPrint({
               />
             </td>
           </tr>
-          {rows.length === 0 ? (
-            <tr>
-              <th style={LABEL_CELL}>備考</th>
-              <td colSpan={3}>
-                {editable ? (
-                  <textarea
-                    value={request?.memo || ''}
-                    onChange={(e) => patchRequest({ memo: e.target.value })}
-                    rows={2}
-                    className="mix-design-print-input mix-design-print-memo"
-                  />
-                ) : (
-                  request?.memo || '—'
-                )}
-              </td>
-            </tr>
-          ) : null}
           <tr>
             <th style={LABEL_CELL}>依頼先工場</th>
             <td colSpan={3}>{factoryLabel}</td>

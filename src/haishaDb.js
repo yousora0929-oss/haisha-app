@@ -37,6 +37,7 @@ import {
 import { mapMixDesignFactoryLinks } from './utils/mixDesignAccept.js';
 import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.js';
 import { resolveOrderParties } from './utils/orderPartyInfo.js';
+import { mapReservationOrderRow, parseSubmitReservationGroupResult } from './utils/reservationGroup.js';
 import { normalizeCompanyName } from './utils/csvImport.js';
 import {
   customerFactoryRejectionChatMessage,
@@ -4930,6 +4931,86 @@ export async function submitGuestOrders(urlToken, orders, { factories = [], proj
   if (error) throw error;
   const inserted = Array.isArray(data) ? data : [];
   return inserted.map((row) => (row && row.id ? { id: String(row.id) } : null)).filter(Boolean);
+}
+
+/**
+ * ゲスト専用URLからの3日間予約グループ登録。
+ * 既存の submitGuestOrders / submit_guest_orders は使わない。
+ */
+export async function submitGuestReservationGroup(
+  urlToken,
+  orders,
+  sameFactoryRequired = false,
+  { factories = [], projects = [] } = {},
+) {
+  const token = String(urlToken || '').trim();
+  if (!isValidSiteOrderUrlToken(token)) throw new Error('専用発注URLが無効です');
+  const list = Array.isArray(orders) ? orders.filter((o) => o && typeof o === 'object') : [];
+  if (list.length === 0) throw new Error('登録する注文がありません');
+
+  const prepared = list.map((order) => ensureOrderPreferredFactoryForInsert(order, { factories, projects }));
+
+  const { data, error } = await supabase.rpc('submit_guest_reservation_group', {
+    p_token: token,
+    p_orders: prepared,
+    p_same_factory_required: Boolean(sameFactoryRequired),
+  });
+  if (error) throw error;
+  const parsed = parseSubmitReservationGroupResult(data);
+  if (!parsed.groupId) throw new Error('予約グループの作成に失敗しました');
+  return parsed;
+}
+
+const RESERVATION_GROUP_ORDER_SELECT =
+  'id, reservation_group_id, factory_site_id, preferred_factory_id, accepted_at, status, customer_id, project_id, order_data, created_at, is_spot';
+
+function mapReservationGroupRow(row) {
+  if (!row || !row.id) return null;
+  return {
+    id: String(row.id),
+    customer_id: row.customer_id != null ? String(row.customer_id) : '',
+    project_id: row.project_id != null ? String(row.project_id) : '',
+    same_factory_required: row.same_factory_required === true,
+    status: String(row.status || 'pending').trim() || 'pending',
+    created_at: row.created_at || null,
+    updated_at: row.updated_at || null,
+  };
+}
+
+export async function fetchReservationGroups() {
+  const { data, error } = await supabase
+    .from('reservation_groups')
+    .select('id, customer_id, project_id, same_factory_required, status, created_at, updated_at')
+    .order('created_at', { ascending: false })
+    .limit(200);
+  if (error) throw error;
+  return (data || []).map(mapReservationGroupRow).filter(Boolean);
+}
+
+export async function fetchReservationGroupById(groupId) {
+  const id = String(groupId || '').trim();
+  if (!id) return null;
+  const { data, error } = await supabase
+    .from('reservation_groups')
+    .select('id, customer_id, project_id, same_factory_required, status, created_at, updated_at')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw error;
+  return mapReservationGroupRow(data);
+}
+
+export async function fetchReservationGroupOrders(groupIds, factoryNameById = {}) {
+  const ids = (Array.isArray(groupIds) ? groupIds : [groupIds])
+    .map((id) => String(id || '').trim())
+    .filter(Boolean);
+  if (!ids.length) return [];
+  const { data, error } = await supabase
+    .from('orders')
+    .select(RESERVATION_GROUP_ORDER_SELECT)
+    .in('reservation_group_id', ids)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data || []).map((row) => mapReservationOrderRow(row, factoryNameById)).filter((row) => row?.id);
 }
 
 /** 物件マスタ一覧 */

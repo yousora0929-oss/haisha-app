@@ -73,6 +73,8 @@ import {
   buildAdminOneSignalExternalId,
 } from './utils/notification.js';
 import { AdminEscalationSection } from './components/AdminEscalationSection.jsx';
+import { AdminReservationGroupsSection } from './components/AdminReservationGroupsSection.jsx';
+import { MixDesignRequestHistorySection } from './components/MixDesignRequestHistorySection.jsx';
 import { AdminCsvImportButton } from './components/AdminCsvImportButton.jsx';
 import { AdminCsvDownloadButton } from './components/AdminCsvDownloadButton.jsx';
 import { AdminFactoryNewsSection } from './components/AdminFactoryNewsSection.jsx';
@@ -4432,6 +4434,8 @@ function readAdminTabFromUrl() {
     'inquiries',
     'settings',
     'escalation',
+    'reservationGroups',
+    'mixDesignRequests',
   ]);
   try {
     const tab = new URLSearchParams(window.location.search).get('tab');
@@ -4617,6 +4621,8 @@ export function AdminApp() {
             {tabBtn('inquiries', '問い合わせ対応')}
             {tabBtn('settings', '休日・稼働時間')}
             {tabBtn('escalation', 'エスカレーション設定')}
+            {tabBtn('reservationGroups', '予約グループ')}
+            {tabBtn('mixDesignRequests', '配合計画書依頼')}
           </div>
         </div>
         {tab === 'monitor' ? (
@@ -4649,6 +4655,14 @@ export function AdminApp() {
         {tab === 'inquiries' ? <CustomerInquirySection /> : null}
         {tab === 'settings' ? <HolidaysAndSettingsSection /> : null}
         {tab === 'escalation' ? <AdminEscalationSection factories={factories} /> : null}
+        {tab === 'reservationGroups' ? <AdminReservationGroupsSection factories={factories} /> : null}
+        {tab === 'mixDesignRequests' ? (
+          <MixDesignRequestHistorySection
+            factories={factories}
+            active={tab === 'mixDesignRequests'}
+            readOnly
+          />
+        ) : null}
       </main>
     </div>
   );

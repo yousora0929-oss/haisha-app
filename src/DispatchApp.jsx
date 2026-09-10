@@ -52,6 +52,8 @@ import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { CompanyMemberContactList } from './components/CompanyMemberContactList.jsx';
 import { OrderFullEditModal, isPreAcceptOrderEditable, isAcceptedOrderChangeRequestable } from './components/OrderFullEditModal.jsx';
+import { ReservationGroupOrderForm } from './components/ReservationGroupOrderForm.jsx';
+import { ReservationGroupStatusPanel } from './components/ReservationGroupStatusPanel.jsx';
 import { AdminScheduleImportSection } from './components/AdminScheduleImportSection.jsx';
 import { customerSuggestTexts, organizationSuggestTexts, projectSuggestTexts, sortCustomersByUsageFrequency } from './utils/masterSuggest.js';
 import { dedupeCustomersByCompany } from './utils/dedupeCustomersByCompany.js';
@@ -124,6 +126,11 @@ import {
   parseSiteOrderTokenFromPath,
   resolveGuestOrderLockedFields,
 } from './utils/siteOrderUrl.js';
+import { isValidSiteOrderUrlToken } from './utils/urlValidation.js';
+import {
+  readWatchedReservationGroups,
+  rememberWatchedReservationGroup,
+} from './utils/reservationGroup.js';
 import {
   detectCustomerOrderNotifications,
   analyzeCustomerOrderRealtimePayload,
@@ -1628,9 +1635,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [adminNotice, setAdminNotice] = useState('');
       const [customerOrderTab, setCustomerOrderTab] = useState('active');
       const [newOrderMode, setNewOrderMode] = useState('');
+      const [watchedReservationGroup, setWatchedReservationGroup] = useState(null);
 
       useEffect(() => {
-        const blocking = newOrderMode === 'form' || cartItems.length > 0;
+        const blocking = newOrderMode === 'form' || newOrderMode === 'reservation' || cartItems.length > 0;
         setAutoReloadBlocked(blocking);
         return () => setAutoReloadBlocked(false);
       }, [newOrderMode, cartItems.length]);
@@ -1690,6 +1698,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [guestOrderToken] = useState(() => parseSiteOrderTokenFromPath());
       const isGuestSiteOrder = Boolean(guestOrderToken);
       const [guestSiteOrderCtx, setGuestSiteOrderCtx] = useState(null);
+
+      useEffect(() => {
+        const token = String(guestOrderToken || '').trim();
+        const watched = readWatchedReservationGroups();
+        const hit = token
+          ? watched.find((item) => item.token === token)
+          : watched[0];
+        if (hit?.groupId) setWatchedReservationGroup(hit);
+      }, [guestOrderToken]);
       const [guestSiteOrderLoading, setGuestSiteOrderLoading] = useState(isGuestSiteOrder);
       const [guestSiteOrderError, setGuestSiteOrderError] = useState('');
       const [guestSiteOrderErrorDetail, setGuestSiteOrderErrorDetail] = useState('');
@@ -3060,6 +3077,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         }
         return map;
       }, [customers, dashboardOrders, companyScopeOrders]);
+      const factoryNameById = useMemo(
+        () => Object.fromEntries((factories || []).filter((f) => f?.id).map((f) => [String(f.id), f.name])),
+        [factories],
+      );
 
       const handleOpenCustomerOrderEdit = useCallback((order) => {
         if (!isPreAcceptOrderEditable(order)) return;
@@ -3918,6 +3939,54 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         ],
       );
 
+      const reservationUrlToken = useMemo(() => {
+        if (isGuestSiteOrder && isValidSiteOrderUrlToken(guestOrderToken)) return String(guestOrderToken).trim();
+        const fromProject = String(selectedProject?.url_token || '').trim();
+        if (isValidSiteOrderUrlToken(fromProject)) return fromProject;
+        const fromCustomer = String(currentCustomer?.url_token || '').trim();
+        if (isValidSiteOrderUrlToken(fromCustomer)) return fromCustomer;
+        return '';
+      }, [isGuestSiteOrder, guestOrderToken, selectedProject, currentCustomer]);
+
+      const handleReservationGroupSubmit = useCallback(
+        async (orders, sameFactoryRequired) => {
+          if (isSubmittingOrder) return;
+          const token = reservationUrlToken;
+          if (!isValidSiteOrderUrlToken(token)) {
+            throw new Error('専用発注URLが無効です');
+          }
+          setIsSubmittingOrder(true);
+          setSubmitError('');
+          try {
+            const result = await db.submitGuestReservationGroup(token, orders, sameFactoryRequired, {
+              factories,
+              projects,
+            });
+            const watched = {
+              groupId: result.groupId,
+              orderIds: result.orderIds,
+              token,
+              submittedAt: new Date().toISOString(),
+            };
+            rememberWatchedReservationGroup(watched);
+            setWatchedReservationGroup(watched);
+            const message = '3日間予約を受け付けました。工場の回答状況はこの画面で確認できます。';
+            setSubmitNotice(message);
+            window.alert(message);
+            window.setTimeout(() => setSubmitNotice(null), 6000);
+          } catch (err) {
+            console.error('3日間予約の送信に失敗しました', err);
+            const message = formatSupabaseError(err, '3日間予約の送信に失敗しました');
+            setSubmitError(message);
+            window.alert(message);
+            throw err;
+          } finally {
+            setIsSubmittingOrder(false);
+          }
+        },
+        [isSubmittingOrder, reservationUrlToken, factories, projects],
+      );
+
       const factoriesForPreferredSelection = useMemo(
         () => (Array.isArray(factories) ? factories.filter((f) => f?.id) : []),
         [factories],
@@ -4486,7 +4555,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 <p className="text-xs font-black uppercase tracking-wider text-indigo-700">新規発注</p>
                 <h2 className="mt-1 text-2xl font-black text-slate-900">発注スタイルを選択</h2>
                 <p className="mt-2 text-sm font-bold leading-relaxed text-slate-500">現場に合わせて、最短の発注方法を選んでください。</p>
-                <div className="mt-6 flex flex-col gap-4 lg:grid lg:grid-cols-3 lg:gap-6">
+                <div className="mt-6 flex flex-col gap-4 lg:grid lg:grid-cols-2 lg:gap-6">
                   {[
                     {
                       title: '🏢 登録物件から発注',
@@ -4526,6 +4595,19 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         setNewOrderMode('');
                       },
                     },
+                    {
+                      title: '📅 3日間予約',
+                      body: '同じ現場の3日分をまとめて予約します。同一工場必須の指定もできます。',
+                      onClick: () => {
+                        setOrderKind('project');
+                        setDeliveryLat('');
+                        setDeliveryLng('');
+                        setDeliveryArea('');
+                        setSiteAddressDetail('');
+                        setIsLocationPending(false);
+                        setNewOrderMode('reservation');
+                      },
+                    },
                   ].map((card) => (
                     <button
                       key={card.title}
@@ -4539,6 +4621,36 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   ))}
                 </div>
               </section>
+              ) : null}
+              {customerOrderTab === 'new' && isGuestSiteOrder ? (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewOrderMode('form')}
+                    aria-pressed={newOrderMode !== 'reservation'}
+                    className={
+                      'min-h-[44px] rounded-xl border-2 px-4 text-sm font-black ' +
+                      (newOrderMode !== 'reservation'
+                        ? 'border-indigo-600 bg-indigo-600 text-white'
+                        : 'border-slate-200 bg-white text-slate-700')
+                    }
+                  >
+                    通常の発注
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewOrderMode('reservation')}
+                    aria-pressed={newOrderMode === 'reservation'}
+                    className={
+                      'min-h-[44px] rounded-xl border-2 px-4 text-sm font-black ' +
+                      (newOrderMode === 'reservation'
+                        ? 'border-indigo-600 bg-indigo-600 text-white'
+                        : 'border-slate-200 bg-white text-slate-700')
+                    }
+                  >
+                    3日間予約
+                  </button>
+                </div>
               ) : null}
 {customerOrderTab === 'new' && newOrderMode === 'form' ? (
               <div ref={orderFormRef} className="mx-auto w-full max-w-4xl min-w-0 overflow-x-hidden overflow-y-visible rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6 lg:max-w-4xl lg:p-8">
@@ -5546,6 +5658,43 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </div>
             </form>
               </div>
+              ) : null}
+
+              {customerOrderTab === 'new' && watchedReservationGroup?.groupId && newOrderMode !== 'reservation' ? (
+                <ReservationGroupStatusPanel
+                  groupId={watchedReservationGroup.groupId}
+                  factoryNameById={factoryNameById}
+                />
+              ) : null}
+
+              {customerOrderTab === 'new' && newOrderMode === 'reservation' ? (
+                <ReservationGroupOrderForm
+                  urlToken={reservationUrlToken}
+                  orderFormContext={orderFormContext}
+                  factories={factories}
+                  projects={filteredProjects}
+                  factoryNameById={factoryNameById}
+                  guestLockedFields={guestLockedFields}
+                  isGuestSiteOrder={isGuestSiteOrder}
+                  today={today}
+                  isPastPreferredDateTime={isPastPreferredDateTime}
+                  adminSettings={adminSettings}
+                  submitting={isSubmittingOrder}
+                  onSubmit={handleReservationGroupSubmit}
+                  watchedGroup={watchedReservationGroup}
+                  onBack={!isGuestSiteOrder ? () => setNewOrderMode('') : undefined}
+                  selectedProjectId={selectedProjectId}
+                  onSelectProject={(id) => {
+                    const nextId = String(id || '').trim();
+                    const hit = (filteredProjects || []).find((p) => String(p.id) === nextId) || null;
+                    setSelectedProjectId(nextId);
+                    applyProjectSelection(hit);
+                  }}
+                  sitePhone={sitePhone}
+                  onSitePhoneChange={setSitePhone}
+                  preferredFactoryId={preferredFactoryId}
+                  onPreferredFactoryChange={setPreferredFactoryId}
+                />
               ) : null}
 
               {customerOrderTab === 'active' ? (
