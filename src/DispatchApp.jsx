@@ -53,6 +53,7 @@ import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { CompanyMemberContactList } from './components/CompanyMemberContactList.jsx';
 import { OrderFullEditModal, isPreAcceptOrderEditable, isAcceptedOrderChangeRequestable } from './components/OrderFullEditModal.jsx';
 import { ReservationGroupStatusPanel } from './components/ReservationGroupStatusPanel.jsx';
+import { ReservationGroupStatusBadge } from './components/ReservationGroupMonitorBadge.jsx';
 import { AdminScheduleImportSection } from './components/AdminScheduleImportSection.jsx';
 import { customerSuggestTexts, organizationSuggestTexts, projectSuggestTexts, sortCustomersByUsageFrequency } from './utils/masterSuggest.js';
 import { dedupeCustomersByCompany } from './utils/dedupeCustomersByCompany.js';
@@ -127,8 +128,8 @@ import {
 } from './utils/siteOrderUrl.js';
 import { isValidSiteOrderUrlToken } from './utils/urlValidation.js';
 import {
-  readWatchedReservationGroups,
   rememberWatchedReservationGroup,
+  reservationGroupIdOf,
 } from './utils/reservationGroup.js';
 import {
   detectCustomerOrderNotifications,
@@ -1077,6 +1078,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </p>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   <OrderStatusBadges order={order} escalationCtx={escalationCtx} />
+                  <ReservationGroupStatusBadge order={order} />
                   <LocationPendingBadge order={order} />
                   <PhoneOrderBadge order={order} />
                   {accountLabel ? (
@@ -1634,7 +1636,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [adminNotice, setAdminNotice] = useState('');
       const [customerOrderTab, setCustomerOrderTab] = useState('active');
       const [newOrderMode, setNewOrderMode] = useState('');
-      const [watchedReservationGroup, setWatchedReservationGroup] = useState(null);
       const [sameFactoryRequired, setSameFactoryRequired] = useState(false);
 
       useEffect(() => {
@@ -1699,14 +1700,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const isGuestSiteOrder = Boolean(guestOrderToken);
       const [guestSiteOrderCtx, setGuestSiteOrderCtx] = useState(null);
 
-      useEffect(() => {
-        const token = String(guestOrderToken || '').trim();
-        const watched = readWatchedReservationGroups();
-        const hit = token
-          ? watched.find((item) => item.token === token)
-          : watched[0];
-        if (hit?.groupId) setWatchedReservationGroup(hit);
-      }, [guestOrderToken]);
       const [guestSiteOrderLoading, setGuestSiteOrderLoading] = useState(isGuestSiteOrder);
       const [guestSiteOrderError, setGuestSiteOrderError] = useState('');
       const [guestSiteOrderErrorDetail, setGuestSiteOrderErrorDetail] = useState('');
@@ -2508,7 +2501,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             const factoryNameById = Object.fromEntries(
               (Array.isArray(factories) ? factories : []).map((f) => [f.id, f.name]),
             );
-            let fetched = await db.fetchOrdersWithChat();
+            let fetched = await db.fetchOrdersWithChat({ includeReservationGroups: true });
             let newOrders = Array.isArray(fetched?.orders) ? fetched.orders : [];
             let newThreads = fetched?.chatThreads && typeof fetched.chatThreads === 'object' ? fetched.chatThreads : {};
             const idSet = new Set();
@@ -3151,6 +3144,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         () => (inProgressSourceOrders || []).filter((o) => o && isOrderInProgressView(o, today)),
         [inProgressSourceOrders, today],
       );
+      const inProgressReservationGroupIds = useMemo(() => {
+        const ids = [];
+        const seen = new Set();
+        for (const order of scopedInProgressOrders || []) {
+          const gid = reservationGroupIdOf(order);
+          if (!gid || seen.has(gid)) continue;
+          seen.add(gid);
+          ids.push(gid);
+        }
+        return ids;
+      }, [scopedInProgressOrders]);
       const filteredInProgressOrders = useMemo(
         () =>
           (scopedInProgressOrders || [])
@@ -4182,18 +4186,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               submittedAt: new Date().toISOString(),
             };
             rememberWatchedReservationGroup(watched);
-            setWatchedReservationGroup(watched);
             openMapEditorsForInserted(
               (result.orderIds || []).map((id) => ({ id })),
               isGuestSiteOrder ? guestOrderToken : '',
             );
-            if (!isGuestSiteOrder) {
-              await refreshDashboard();
-            }
+            await refreshDashboard();
             setCartItems([]);
             setSameFactoryRequired(false);
             resetOrderForm();
-            const message = `${count}件を同一工場必須の予約グループとして受け付けました。工場の回答状況はこの画面で確認できます。`;
+            setExpandedHistoryOrderId('');
+            setCustomerOrderTab('active');
+            const message = `${count}件を同一工場必須の予約グループとして受け付けました。進行中タブで工場の回答状況を確認できます。`;
             setSubmitNotice(message);
             window.alert(message);
             window.setTimeout(() => setSubmitNotice(null), 6000);
@@ -5617,13 +5620,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </div>
               ) : null}
 
-              {customerOrderTab === 'new' && watchedReservationGroup?.groupId ? (
-                <ReservationGroupStatusPanel
-                  groupId={watchedReservationGroup.groupId}
-                  factoryNameById={factoryNameById}
-                />
-              ) : null}
-
               {customerOrderTab === 'active' ? (
               <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-md dark:border-slate-700 dark:bg-slate-800 sm:p-5">
                 {adminNotice ? (
@@ -5639,6 +5635,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     </p>
                   </div>
                 </div>
+                  {inProgressReservationGroupIds.length > 0 ? (
+                    <div className="mt-4 grid gap-3">
+                      {inProgressReservationGroupIds.map((groupId) => (
+                        <ReservationGroupStatusPanel
+                          key={groupId}
+                          groupId={groupId}
+                          factoryNameById={factoryNameById}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
                   <div className="mt-4 grid grid-cols-1 gap-4">
                     {scopedInProgressOrders.length === 0 ? (
                       <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-600 dark:bg-slate-900/50 dark:text-gray-300">

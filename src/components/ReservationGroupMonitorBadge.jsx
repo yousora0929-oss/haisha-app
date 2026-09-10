@@ -4,6 +4,7 @@ import {
   reservationGroupMonitorBadgeClass,
   reservationGroupMonitorBadgeText,
   reservationGroupStatusOf,
+  reservationGroupStatusLabel,
 } from '../utils/reservationGroup.js';
 
 export function ReservationGroupMonitorBadge({
@@ -59,6 +60,23 @@ export function ReservationGroupMonitorBadge({
           </ul>
         </div>
       ) : null}
+    </span>
+  );
+}
+
+export function ReservationGroupStatusBadge({ order, className = '' }) {
+  const gid = reservationGroupIdOf(order);
+  if (!gid) return null;
+  const status = reservationGroupStatusOf(order) || 'pending';
+  return (
+    <span
+      className={
+        'inline-flex rounded-full border px-2 py-0.5 text-[11px] font-black ' +
+        reservationGroupMonitorBadgeClass(status) +
+        (className ? ` ${className}` : '')
+      }
+    >
+      {reservationGroupStatusLabel(status)}
     </span>
   );
 }
