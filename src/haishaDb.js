@@ -37,7 +37,12 @@ import {
 import { mapMixDesignFactoryLinks } from './utils/mixDesignAccept.js';
 import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.js';
 import { resolveOrderParties } from './utils/orderPartyInfo.js';
-import { mapReservationOrderRow, parseSubmitReservationGroupResult } from './utils/reservationGroup.js';
+import {
+  attachReservationGroupFromRow,
+  mapReservationOrderRow,
+  parseSubmitReservationGroupResult,
+  unwrapReservationGroupEmbed,
+} from './utils/reservationGroup.js';
 import { normalizeCompanyName } from './utils/csvImport.js';
 import {
   customerFactoryRejectionChatMessage,
@@ -849,19 +854,67 @@ export async function fetchSpotSiteNameSuggestions({ contractorRefCustomerId, li
     .filter((row) => row.site_name);
 }
 
-export async function fetchOrdersWithChat() {
-  const { data, error } = await supabase
-    .from('orders')
-    .select(ORDER_SELECT)
-    .order('created_at', { ascending: false })
-    .limit(500);
+export async function fetchOrdersWithChat(options = {}) {
+  const includeReservationGroups = Boolean(options?.includeReservationGroups);
+  const selectWithEmbed = includeReservationGroups
+    ? `${ORDER_SELECT}, reservation_group_id, reservation_groups(id, status, same_factory_required)`
+    : ORDER_SELECT;
+  const runSelect = (select) =>
+    supabase.from('orders').select(select).order('created_at', { ascending: false }).limit(500);
+
+  let { data, error } = await runSelect(selectWithEmbed);
+  if (includeReservationGroups && error) {
+    console.warn('[fetchOrdersWithChat] reservation_groups embed failed, retrying without embed', error);
+    ({ data, error } = await runSelect(`${ORDER_SELECT}, reservation_group_id`));
+  }
+  if (includeReservationGroups && error) {
+    console.warn('[fetchOrdersWithChat] reservation_group_id select failed, using ORDER_SELECT', error);
+    ({ data, error } = await runSelect(ORDER_SELECT));
+  }
   if (error) throw error;
   const orders = [];
   const chatThreads = {};
   for (const row of data || []) {
     const order = normalizeOrderRow(row);
-    if (order) orders.push(order);
+    if (order) {
+      if (includeReservationGroups) {
+        const attached = attachReservationGroupFromRow(row);
+        order.reservation_group_id = attached.reservation_group_id;
+        order.reservation_group = attached.reservation_group;
+      }
+      orders.push(order);
+    }
     chatThreads[row.id] = normalizeChatMessages(row.chat_messages);
+  }
+  if (includeReservationGroups) {
+    const missingIds = [
+      ...new Set(
+        orders
+          .filter((o) => o.reservation_group_id && !o.reservation_group)
+          .map((o) => o.reservation_group_id),
+      ),
+    ];
+    if (missingIds.length) {
+      const { data: groups, error: gErr } = await supabase
+        .from('reservation_groups')
+        .select('id, status, same_factory_required')
+        .in('id', missingIds);
+      if (gErr) {
+        console.warn('[fetchOrdersWithChat] reservation_groups fallback load failed', gErr);
+      } else {
+        const byId = new Map(
+          (groups || [])
+            .map((g) => unwrapReservationGroupEmbed(g))
+            .filter(Boolean)
+            .map((g) => [g.id, g]),
+        );
+        for (const o of orders) {
+          if (o.reservation_group_id && !o.reservation_group) {
+            o.reservation_group = byId.get(o.reservation_group_id) || null;
+          }
+        }
+      }
+    }
   }
   const customerIds = [
     ...new Set(

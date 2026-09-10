@@ -73,8 +73,15 @@ import {
   buildAdminOneSignalExternalId,
 } from './utils/notification.js';
 import { AdminEscalationSection } from './components/AdminEscalationSection.jsx';
-import { AdminReservationGroupsSection } from './components/AdminReservationGroupsSection.jsx';
+import { ReservationGroupMonitorBadge } from './components/ReservationGroupMonitorBadge.jsx';
 import { MixDesignRequestHistorySection } from './components/MixDesignRequestHistorySection.jsx';
+import {
+  mergeReservationGroupFields,
+  reservationGroupIdOf,
+  reservationGroupMonitorHighlightClass,
+  reservationGroupStatusOf,
+  siblingReservationFactoryLine,
+} from './utils/reservationGroup.js';
 import { AdminCsvImportButton } from './components/AdminCsvImportButton.jsx';
 import { AdminCsvDownloadButton } from './components/AdminCsvDownloadButton.jsx';
 import { AdminFactoryNewsSection } from './components/AdminFactoryNewsSection.jsx';
@@ -3283,6 +3290,8 @@ function AdminFollowupOrderCard({
   organizationsById,
   onOpenDetail,
   onOrderUpdated,
+  extraBadge = null,
+  className = '',
 }) {
   const [noteType, setNoteType] = useState('phone');
   const [noteContent, setNoteContent] = useState('');
@@ -3354,12 +3363,13 @@ function AdminFollowupOrderCard({
   };
 
   return (
-    <li className="rounded-xl border border-rose-200 bg-white p-4 shadow-sm">
+    <li className={'rounded-xl border border-rose-200 bg-white p-4 shadow-sm ' + className}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-black text-slate-900">
             {formatDateJp(orderDeliveryDate(order))} {formatOrderTime(order)} · {party.site}
           </p>
+          {extraBadge ? <div className="mt-1">{extraBadge}</div> : null}
           <p className="mt-1 text-xs font-bold text-slate-600">
             {party.contractor} · 担当 {party.orderedBy} · {party.phone}
           </p>
@@ -3516,6 +3526,9 @@ function OrdersMonitorSection({
   const [acceptDraft, setAcceptDraft] = useState(null);
   const [ordersSearchQuery, setOrdersSearchQuery] = useState('');
   const [organizations, setOrganizations] = useState([]);
+  const [hoveredGroupId, setHoveredGroupId] = useState('');
+  const [pinnedGroupId, setPinnedGroupId] = useState('');
+  const [focusReservationOrderId, setFocusReservationOrderId] = useState('');
 
   useEffect(() => {
     const editing = Boolean(detailOrder || associationApproveOrder || acceptDraft || savingEdit || savingAssociation || savingReassign);
@@ -3528,7 +3541,7 @@ function OrdersMonitorSection({
     try {
       const [{ orders: rows, chatThreads: threads }, projs, custs, orgs, hols, settings, escalationSteps, adminSettings, poolSize, smallVehicleInfo, monthlyVolumes] =
         await Promise.all([
-        db.fetchOrdersWithChat(),
+        db.fetchOrdersWithChat({ includeReservationGroups: true }),
         db.fetchProjects(),
         db.fetchCustomers(),
         db.fetchOrganizations().catch((e) => {
@@ -3711,14 +3724,104 @@ function OrdersMonitorSection({
     });
   }, [visibleOrders, ordersSearchQuery, resolveOrderPlacerLabel, partyInfo]);
 
+  const highlightedGroupId = pinnedGroupId || hoveredGroupId;
+  const reservationSiblingLinesByGroupId = useMemo(() => {
+    const map = {};
+    for (const o of visibleOrders) {
+      const gid = reservationGroupIdOf(o);
+      if (!gid) continue;
+      if (!map[gid]) map[gid] = [];
+      map[gid].push({
+        id: o.id,
+        dateLabel: `${formatDateJp(orderDeliveryDate(o))} ${formatOrderTime(o)}`.trim(),
+        factoryLine: siblingReservationFactoryLine(o, factoryNameById),
+      });
+    }
+    return map;
+  }, [visibleOrders, factoryNameById]);
+  const reservationConflictGroupCount = useMemo(() => {
+    const ids = new Set();
+    for (const o of visibleOrders) {
+      if (reservationGroupStatusOf(o) !== 'conflict') continue;
+      const gid = reservationGroupIdOf(o);
+      if (gid) ids.add(gid);
+    }
+    return ids.size;
+  }, [visibleOrders]);
+  const highlightedConflictSiblings = useMemo(() => {
+    if (!highlightedGroupId) return [];
+    const sample = visibleOrders.find((o) => reservationGroupIdOf(o) === highlightedGroupId);
+    if (reservationGroupStatusOf(sample) !== 'conflict') return [];
+    return reservationSiblingLinesByGroupId[highlightedGroupId] || [];
+  }, [highlightedGroupId, visibleOrders, reservationSiblingLinesByGroupId]);
+
+  const handleReservationBadgeHoverStart = (order) => {
+    const gid = reservationGroupIdOf(order);
+    if (!gid) return;
+    setHoveredGroupId(gid);
+    setFocusReservationOrderId(String(order.id));
+  };
+  const handleReservationBadgeHoverEnd = () => {
+    setHoveredGroupId('');
+    if (!pinnedGroupId) setFocusReservationOrderId('');
+  };
+  const handleReservationBadgeToggle = (order) => {
+    const gid = reservationGroupIdOf(order);
+    if (!gid) return;
+    const orderId = String(order.id);
+    if (pinnedGroupId === gid && focusReservationOrderId === orderId) {
+      setPinnedGroupId('');
+      setFocusReservationOrderId('');
+    } else {
+      setPinnedGroupId(gid);
+      setFocusReservationOrderId(orderId);
+    }
+  };
+  const renderReservationGroupBadge = (order) => {
+    const gid = reservationGroupIdOf(order);
+    if (!gid) return null;
+    return (
+      <ReservationGroupMonitorBadge
+        order={order}
+        siblings={reservationSiblingLinesByGroupId[gid] || []}
+        highlighted={gid === highlightedGroupId}
+        popoverOpen={String(order.id) === focusReservationOrderId}
+        onHoverStart={() => handleReservationBadgeHoverStart(order)}
+        onHoverEnd={handleReservationBadgeHoverEnd}
+        onToggle={() => handleReservationBadgeToggle(order)}
+      />
+    );
+  };
+  const reservationRowClass = (order, baseClass) => {
+    const gid = reservationGroupIdOf(order);
+    const status = reservationGroupStatusOf(order);
+    const highlighted = Boolean(gid && gid === highlightedGroupId);
+    const extra = reservationGroupMonitorHighlightClass({ status, highlighted });
+    const base =
+      status === 'conflict' || highlighted
+        ? String(baseClass || '').replace(/hover:bg-\S+/g, '').trim()
+        : baseClass;
+    return [base, extra].filter(Boolean).join(' ');
+  };
+
+  const applyOrderUpdate = useCallback((updated) => {
+    if (!updated?.id) return;
+    setOrders((prev) =>
+      (Array.isArray(prev) ? prev : []).map((o) =>
+        o?.id === updated.id ? mergeReservationGroupFields(updated, o) : o,
+      ),
+    );
+    setDetailOrder((prev) =>
+      prev?.id === updated.id ? mergeReservationGroupFields(updated, prev) : prev,
+    );
+  }, []);
+
   const handleSaveEdit = async (orderId, patch) => {
     setSavingEdit(true);
     setError('');
     try {
       const updated = await db.adminUpdateOrder(orderId, patch);
-      if (updated) {
-        setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === orderId ? updated : o)) : prev));
-      }
+      if (updated) applyOrderUpdate(updated);
       setDetailOrder(null);
     } catch (e) {
       console.error(e);
@@ -3734,7 +3837,7 @@ function OrdersMonitorSection({
     setError('');
     try {
       const updated = await db.adminDeleteOrder(order.id);
-      setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === order.id ? updated : o)) : prev));
+      applyOrderUpdate(updated);
     } catch (e) {
       console.error(e);
       setError('注文の削除に失敗しました。');
@@ -3745,12 +3848,6 @@ function OrdersMonitorSection({
     if (!order?.id) return;
     setAssociationApproveOrder(order);
   };
-
-  const applyOrderUpdate = useCallback((updated) => {
-    if (!updated?.id) return;
-    setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === updated.id ? updated : o)) : prev));
-    setDetailOrder((prev) => (prev?.id === updated.id ? updated : prev));
-  }, []);
 
   const handleReassignFactories = async (orderId, selection) => {
     if (!orderId) return;
@@ -3797,9 +3894,7 @@ function OrdersMonitorSection({
     setError('');
     try {
       const updated = await db.clearFactoryConsult(order.id);
-      if (updated) {
-        setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === order.id ? updated : o)) : prev));
-      }
+      if (updated) applyOrderUpdate(updated);
       await db.appendChatMessage(order.id, 'system', '【相談解除】管理者により相談中を解除しました。エスカレーションを再開します。');
     } catch (e) {
       console.error(e);
@@ -3820,7 +3915,7 @@ function OrdersMonitorSection({
         ...(status === 'accepted' ? { accepted_at: new Date().toISOString(), acceptedAt: new Date().toISOString() } : {}),
       };
       const updated = await db.adminUpdateOrder(order.id, patch);
-      if (updated) setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === order.id ? updated : o)) : prev));
+      if (updated) applyOrderUpdate(updated);
     } catch (e) {
       console.error(e);
       setError('ステータス変更に失敗しました。');
@@ -3881,7 +3976,7 @@ function OrdersMonitorSection({
         factorySiteName: factoryName,
       };
       const updated = await db.adminUpdateOrder(order.id, patch);
-      if (updated) setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === order.id ? updated : o)) : prev));
+      if (updated) applyOrderUpdate(updated);
       setAcceptDraft(null);
     } catch (e) {
       console.error(e);
@@ -3979,6 +4074,28 @@ function OrdersMonitorSection({
       {error ? <p className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-bold text-red-800" role="alert">{error}</p> : null}
       {loading ? <p className="mt-4 text-sm text-slate-500">読み込み中…</p> : null}
 
+      {!loading && reservationConflictGroupCount > 0 ? (
+        <div className="cl-alert-warning-panel mt-4 rounded-xl border-2 border-rose-500 bg-rose-50 p-4">
+          <p className="text-base font-black text-rose-950">予約グループの要調整が {reservationConflictGroupCount} 件あります</p>
+          <p className="mt-1 text-xs font-bold text-rose-900">
+            赤枠の注文は別工場で確定しています。バッジをホバーまたはクリックすると、同じ予約の他注文がハイライトされます。
+          </p>
+        </div>
+      ) : null}
+
+      {highlightedConflictSiblings.length > 0 ? (
+        <div className="mt-3 rounded-xl border-2 border-rose-300 bg-white px-3 py-2 shadow-sm">
+          <p className="text-xs font-black text-rose-950">予約グループ：要調整 — グループ内の工場</p>
+          <ul className="mt-1 space-y-0.5">
+            {highlightedConflictSiblings.map((sibling) => (
+              <li key={sibling.id} className="text-xs font-bold text-slate-700">
+                {sibling.dateLabel} · {sibling.factoryLine}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       {!loading && activeMonitorTab === 'orders' && pendingAssociationOrders.length > 0 ? (
         <div className="cl-alert-warning-panel mt-4 rounded-xl border-2 border-violet-300 bg-violet-50/60 p-4">
           <h3 className="text-base font-black text-violet-950">組合承認が必要なスポット注文（{pendingAssociationOrders.length}件）</h3>
@@ -3988,8 +4105,9 @@ function OrdersMonitorSection({
           <ul className="mt-3 space-y-2">
             {pendingAssociationOrders.map((o) => {
               const party = partyInfo(o);
+              const reservationBadge = renderReservationGroupBadge(o);
               return (
-                <li key={o.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2 dark:border-violet-700 dark:bg-slate-800">
+                <li key={o.id} className={reservationRowClass(o, 'flex flex-wrap items-center justify-between gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2 dark:border-violet-700 dark:bg-slate-800')}>
                   <div className="min-w-0">
                     <p className="text-sm font-black text-slate-900">
                       {formatDateJp(orderDeliveryDate(o))} {formatOrderTime(o)} · {party.site}
@@ -3997,6 +4115,7 @@ function OrdersMonitorSection({
                     <p className="text-xs font-bold text-slate-600">
                       {o.quantityM3 ?? o.quantityCube ?? '—'} m³ · {party.contractor}
                     </p>
+                    {reservationBadge ? <div className="mt-1">{reservationBadge}</div> : null}
                   </div>
                   <button
                     type="button"
@@ -4031,6 +4150,8 @@ function OrdersMonitorSection({
                 organizationsById={organizationById}
                 onOpenDetail={setDetailOrder}
                 onOrderUpdated={applyOrderUpdate}
+                extraBadge={renderReservationGroupBadge(o)}
+                className={reservationRowClass(o, '')}
               />
             ))}
           </ul>
@@ -4092,7 +4213,7 @@ function OrdersMonitorSection({
                   const placerLabel = resolveOrderPlacerLabel(o);
                   const isAcceptingThis = acceptDraft?.orderId === String(o.id);
                   return (
-                    <tr key={o.id} className="border-b border-slate-100 hover:bg-slate-50/80">
+                    <tr key={o.id} className={reservationRowClass(o, 'border-b border-slate-100 hover:bg-slate-50/80')}>
                       <td className="px-3 py-2.5">
                         <span className={'inline-flex rounded-full border px-2 py-0.5 text-xs font-black ' + kindBadgeClass(Boolean(o.is_spot))}>
                           {o.is_spot ? 'スポット' : '物件'}
@@ -4120,6 +4241,7 @@ function OrdersMonitorSection({
                           ) : null}
                           <LocationPendingBadge order={o} className="text-xs" />
                           <PhoneOrderBadge order={o} className="text-xs" />
+                          {renderReservationGroupBadge(o)}
                         </div>
                       </td>
                       <td className="px-3 py-2.5 font-bold text-slate-700">{fid ? factoryNameById[fid] || fid : '—'}</td>
@@ -4254,14 +4376,16 @@ function OrdersMonitorSection({
                 <ul className="mt-3 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white dark:divide-slate-600 dark:border-slate-600 dark:bg-slate-800">
                   {group.orders.map((o) => {
                     const party = partyInfo(o);
+                    const reservationBadge = renderReservationGroupBadge(o);
                     return (
-                      <li key={o.id} className="grid gap-2 px-3 py-3 sm:grid-cols-[12rem_5rem_repeat(4,minmax(0,1fr))] sm:items-center">
+                      <li key={o.id} className={reservationRowClass(o, 'grid gap-2 px-3 py-3 sm:grid-cols-[12rem_5rem_repeat(4,minmax(0,1fr))] sm:items-center')}>
                         <p className="font-mono text-sm font-black text-slate-900">{formatDateJp(orderDeliveryDate(o))} {formatOrderTime(o)}</p>
                         <span className={'w-fit rounded-full border px-2 py-0.5 text-xs font-black ' + kindBadgeClass(Boolean(o.is_spot))}>{o.is_spot ? 'スポット' : '物件'}</span>
                         <p className="min-w-0 break-words font-bold text-slate-800"><span className="text-xs text-slate-400">業者 </span>{party.contractor}</p>
                         <p className="min-w-0 break-words font-bold text-slate-800"><span className="text-xs text-slate-400">現場 </span>{party.site}</p>
                         <p className="min-w-0 break-words text-sm text-slate-700"><span className="text-xs text-slate-400">担当 </span>{party.orderedBy}</p>
                         <p className="min-w-0 break-words font-mono text-xs text-slate-700"><span className="font-sans text-xs text-slate-400">連絡先 </span>{party.phone}</p>
+                        {reservationBadge ? <div className="sm:col-span-6">{reservationBadge}</div> : null}
                       </li>
                     );
                   })}
@@ -4434,11 +4558,11 @@ function readAdminTabFromUrl() {
     'inquiries',
     'settings',
     'escalation',
-    'reservationGroups',
     'mixDesignRequests',
   ]);
   try {
     const tab = new URLSearchParams(window.location.search).get('tab');
+    if (tab === 'reservationGroups') return 'monitor';
     if (tab && allowed.has(tab)) return tab;
   } catch {
     /* ignore */
@@ -4621,7 +4745,6 @@ export function AdminApp() {
             {tabBtn('inquiries', '問い合わせ対応')}
             {tabBtn('settings', '休日・稼働時間')}
             {tabBtn('escalation', 'エスカレーション設定')}
-            {tabBtn('reservationGroups', '予約グループ')}
             {tabBtn('mixDesignRequests', '配合計画書依頼')}
           </div>
         </div>
@@ -4655,7 +4778,6 @@ export function AdminApp() {
         {tab === 'inquiries' ? <CustomerInquirySection /> : null}
         {tab === 'settings' ? <HolidaysAndSettingsSection /> : null}
         {tab === 'escalation' ? <AdminEscalationSection factories={factories} /> : null}
-        {tab === 'reservationGroups' ? <AdminReservationGroupsSection factories={factories} /> : null}
         {tab === 'mixDesignRequests' ? (
           <MixDesignRequestHistorySection
             factories={factories}

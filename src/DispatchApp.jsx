@@ -52,7 +52,6 @@ import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { CompanyMemberContactList } from './components/CompanyMemberContactList.jsx';
 import { OrderFullEditModal, isPreAcceptOrderEditable, isAcceptedOrderChangeRequestable } from './components/OrderFullEditModal.jsx';
-import { ReservationGroupOrderForm } from './components/ReservationGroupOrderForm.jsx';
 import { ReservationGroupStatusPanel } from './components/ReservationGroupStatusPanel.jsx';
 import { AdminScheduleImportSection } from './components/AdminScheduleImportSection.jsx';
 import { customerSuggestTexts, organizationSuggestTexts, projectSuggestTexts, sortCustomersByUsageFrequency } from './utils/masterSuggest.js';
@@ -1636,9 +1635,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [customerOrderTab, setCustomerOrderTab] = useState('active');
       const [newOrderMode, setNewOrderMode] = useState('');
       const [watchedReservationGroup, setWatchedReservationGroup] = useState(null);
+      const [sameFactoryRequired, setSameFactoryRequired] = useState(false);
 
       useEffect(() => {
-        const blocking = newOrderMode === 'form' || newOrderMode === 'reservation' || cartItems.length > 0;
+        const blocking = newOrderMode === 'form' || cartItems.length > 0;
         setAutoReloadBlocked(blocking);
         return () => setAutoReloadBlocked(false);
       }, [newOrderMode, cartItems.length]);
@@ -2472,8 +2472,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [selectedProject, selectedProjectId]);
       const selectCustomerTab = useCallback((tabId) => {
         setCustomerOrderTab(tabId);
-        if (tabId === 'new') setNewOrderMode('');
-      }, []);
+        if (tabId === 'new') setNewOrderMode(isGuestSiteOrder ? 'form' : '');
+      }, [isGuestSiteOrder]);
 
       const prevOrdersRef = useRef(null);
       const prevChatThreadsRef = useRef(null);
@@ -3948,45 +3948,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return '';
       }, [isGuestSiteOrder, guestOrderToken, selectedProject, currentCustomer]);
 
-      const handleReservationGroupSubmit = useCallback(
-        async (orders, sameFactoryRequired) => {
-          if (isSubmittingOrder) return;
-          const token = reservationUrlToken;
-          if (!isValidSiteOrderUrlToken(token)) {
-            throw new Error('専用発注URLが無効です');
-          }
-          setIsSubmittingOrder(true);
-          setSubmitError('');
-          try {
-            const result = await db.submitGuestReservationGroup(token, orders, sameFactoryRequired, {
-              factories,
-              projects,
-            });
-            const watched = {
-              groupId: result.groupId,
-              orderIds: result.orderIds,
-              token,
-              submittedAt: new Date().toISOString(),
-            };
-            rememberWatchedReservationGroup(watched);
-            setWatchedReservationGroup(watched);
-            const message = '複数日予約を受け付けました。工場の回答状況はこの画面で確認できます。';
-            setSubmitNotice(message);
-            window.alert(message);
-            window.setTimeout(() => setSubmitNotice(null), 6000);
-          } catch (err) {
-            console.error('複数日予約の送信に失敗しました', err);
-            const message = formatSupabaseError(err, '複数日予約の送信に失敗しました');
-            setSubmitError(message);
-            window.alert(message);
-            throw err;
-          } finally {
-            setIsSubmittingOrder(false);
-          }
-        },
-        [isSubmittingOrder, reservationUrlToken, factories, projects],
-      );
-
       const factoriesForPreferredSelection = useMemo(
         () => (Array.isArray(factories) ? factories.filter((f) => f?.id) : []),
         [factories],
@@ -4069,6 +4030,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const handleRemoveFromCart = useCallback((cartId) => {
         setCartItems((prev) => prev.filter((item) => item.cartId !== cartId));
       }, []);
+
+      useEffect(() => {
+        if (cartItems.length < 2 && sameFactoryRequired) setSameFactoryRequired(false);
+      }, [cartItems.length, sameFactoryRequired]);
 
       /** カート行の order から validateCartLineForm 用のコンテキストを組み立てる（一括確定時と同一ロジック） */
       const buildCartLineContext = useCallback(
@@ -4160,6 +4125,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             return;
           }
         }
+        if (sameFactoryRequired && cartItems.length >= 2 && !isValidSiteOrderUrlToken(reservationUrlToken)) {
+          const message =
+            '同一工場必須で送信するには専用発注URL（url_token）が必要です。物件の専用URLから開くか、URLが設定された物件を選んでください。';
+          setSubmitError(message);
+          window.alert(message);
+          return;
+        }
         setIsSubmittingOrder(true);
         setSubmitError('');
         try {
@@ -4176,49 +4148,73 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           }));
           const count = orders.length;
           const mapCreateCount = cartItems.filter((it) => it?.mapEditorFlowMode === 'create').length;
+          const submitAsReservationGroup = sameFactoryRequired && count >= 2;
+
+          const openMapEditorsForInserted = (insertedRows, guestToken) => {
+            if (mapCreateCount <= 0 || !Array.isArray(insertedRows) || !insertedRows.length) return;
+            try {
+              rememberMapEditorReturnUrl();
+            } catch {
+              /* ignore */
+            }
+            for (let i = 0; i < insertedRows.length; i++) {
+              const cartItem = cartItems[i];
+              if (cartItem?.mapEditorFlowMode !== 'create') continue;
+              const id = insertedRows[i]?.id;
+              const url = guestToken
+                ? buildMapEditorUrl(id, undefined, { guestToken })
+                : buildMapEditorUrl(id);
+              if (!url) continue;
+              window.open(url, '_blank', 'noopener,noreferrer');
+            }
+          };
+
+          if (submitAsReservationGroup) {
+            const token = reservationUrlToken;
+            const result = await db.submitGuestReservationGroup(token, orders, true, {
+              factories,
+              projects,
+            });
+            const watched = {
+              groupId: result.groupId,
+              orderIds: result.orderIds,
+              token,
+              submittedAt: new Date().toISOString(),
+            };
+            rememberWatchedReservationGroup(watched);
+            setWatchedReservationGroup(watched);
+            openMapEditorsForInserted(
+              (result.orderIds || []).map((id) => ({ id })),
+              isGuestSiteOrder ? guestOrderToken : '',
+            );
+            if (!isGuestSiteOrder) {
+              await refreshDashboard();
+            }
+            setCartItems([]);
+            setSameFactoryRequired(false);
+            resetOrderForm();
+            const message = `${count}件を同一工場必須の予約グループとして受け付けました。工場の回答状況はこの画面で確認できます。`;
+            setSubmitNotice(message);
+            window.alert(message);
+            window.setTimeout(() => setSubmitNotice(null), 6000);
+            return;
+          }
+
           if (isGuestSiteOrder && guestOrderToken) {
             const insertedGuestOrders = await db.submitGuestOrders(guestOrderToken, orders, {
               factories,
               projects,
             });
-            if (mapCreateCount > 0 && Array.isArray(insertedGuestOrders) && insertedGuestOrders.length) {
-              try {
-                rememberMapEditorReturnUrl();
-              } catch {
-                /* ignore */
-              }
-              for (let i = 0; i < insertedGuestOrders.length; i++) {
-                const cartItem = cartItems[i];
-                if (cartItem?.mapEditorFlowMode !== 'create') continue;
-                const id = insertedGuestOrders[i]?.id;
-                const url = buildMapEditorUrl(id, undefined, { guestToken: guestOrderToken });
-                if (!url) continue;
-                window.open(url, '_blank', 'noopener,noreferrer');
-              }
-            }
+            openMapEditorsForInserted(insertedGuestOrders, guestOrderToken);
           } else {
             const insertedOrders = await db.insertOrdersBulk(orders, { factories, projects });
-            if (mapCreateCount > 0 && Array.isArray(insertedOrders) && insertedOrders.length) {
-              // popup blocker を避けるため refresh より先に開く
-              try {
-                rememberMapEditorReturnUrl();
-              } catch {
-                /* ignore */
-              }
-              for (let i = 0; i < insertedOrders.length; i++) {
-                const cartItem = cartItems[i];
-                if (cartItem?.mapEditorFlowMode !== 'create') continue;
-                const id = insertedOrders[i]?.id;
-                const url = buildMapEditorUrl(id);
-                if (!url) continue;
-                window.open(url, '_blank', 'noopener,noreferrer');
-              }
-            }
+            openMapEditorsForInserted(insertedOrders, '');
             await refreshDashboard();
             setCustomerOrderTab(count > 1 ? 'calendar' : 'active');
             setExpandedHistoryOrderId('');
           }
           setCartItems([]);
+          setSameFactoryRequired(false);
           resetOrderForm();
           const hasMapPending = orders.some((o) => isLocationPendingOrder(o));
           const message =
@@ -4255,6 +4251,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         adminSettings,
         factories,
         projects,
+        sameFactoryRequired,
+        reservationUrlToken,
       ]);
 
       const btnBase =
@@ -4595,19 +4593,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         setNewOrderMode('');
                       },
                     },
-                    {
-                      title: '📅 複数日予約',
-                      body: '同じ現場の複数日をまとめて予約します。同一工場必須の指定もできます。',
-                      onClick: () => {
-                        setOrderKind('project');
-                        setDeliveryLat('');
-                        setDeliveryLng('');
-                        setDeliveryArea('');
-                        setSiteAddressDetail('');
-                        setIsLocationPending(false);
-                        setNewOrderMode('reservation');
-                      },
-                    },
                   ].map((card) => (
                     <button
                       key={card.title}
@@ -4621,36 +4606,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   ))}
                 </div>
               </section>
-              ) : null}
-              {customerOrderTab === 'new' && isGuestSiteOrder ? (
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setNewOrderMode('form')}
-                    aria-pressed={newOrderMode !== 'reservation'}
-                    className={
-                      'min-h-[44px] rounded-xl border-2 px-4 text-sm font-black ' +
-                      (newOrderMode !== 'reservation'
-                        ? 'border-indigo-600 bg-indigo-600 text-white'
-                        : 'border-slate-200 bg-white text-slate-700')
-                    }
-                  >
-                    通常の発注
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setNewOrderMode('reservation')}
-                    aria-pressed={newOrderMode === 'reservation'}
-                    className={
-                      'min-h-[44px] rounded-xl border-2 px-4 text-sm font-black ' +
-                      (newOrderMode === 'reservation'
-                        ? 'border-indigo-600 bg-indigo-600 text-white'
-                        : 'border-slate-200 bg-white text-slate-700')
-                    }
-                  >
-                    複数日予約
-                  </button>
-                </div>
               ) : null}
 {customerOrderTab === 'new' && newOrderMode === 'form' ? (
               <div ref={orderFormRef} className="mx-auto w-full max-w-4xl min-w-0 overflow-x-hidden overflow-y-visible rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6 lg:max-w-4xl lg:p-8">
@@ -5635,6 +5590,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   onConfirmBulk={() => void handleCartBulkConfirm()}
                   bulkLoading={isSubmittingOrder}
                   siteAddressLabel={isGuestSiteOrder ? '物件住所' : '現場住所'}
+                  sameFactoryRequired={sameFactoryRequired}
+                  onSameFactoryRequiredChange={setSameFactoryRequired}
                 />
 
                 {submitNotice ? (
@@ -5660,40 +5617,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </div>
               ) : null}
 
-              {customerOrderTab === 'new' && watchedReservationGroup?.groupId && newOrderMode !== 'reservation' ? (
+              {customerOrderTab === 'new' && watchedReservationGroup?.groupId ? (
                 <ReservationGroupStatusPanel
                   groupId={watchedReservationGroup.groupId}
                   factoryNameById={factoryNameById}
-                />
-              ) : null}
-
-              {customerOrderTab === 'new' && newOrderMode === 'reservation' ? (
-                <ReservationGroupOrderForm
-                  urlToken={reservationUrlToken}
-                  orderFormContext={orderFormContext}
-                  factories={factories}
-                  projects={filteredProjects}
-                  factoryNameById={factoryNameById}
-                  guestLockedFields={guestLockedFields}
-                  isGuestSiteOrder={isGuestSiteOrder}
-                  today={today}
-                  isPastPreferredDateTime={isPastPreferredDateTime}
-                  adminSettings={adminSettings}
-                  submitting={isSubmittingOrder}
-                  onSubmit={handleReservationGroupSubmit}
-                  watchedGroup={watchedReservationGroup}
-                  onBack={!isGuestSiteOrder ? () => setNewOrderMode('') : undefined}
-                  selectedProjectId={selectedProjectId}
-                  onSelectProject={(id) => {
-                    const nextId = String(id || '').trim();
-                    const hit = (filteredProjects || []).find((p) => String(p.id) === nextId) || null;
-                    setSelectedProjectId(nextId);
-                    applyProjectSelection(hit);
-                  }}
-                  sitePhone={sitePhone}
-                  onSitePhoneChange={setSitePhone}
-                  preferredFactoryId={preferredFactoryId}
-                  onPreferredFactoryChange={setPreferredFactoryId}
                 />
               ) : null}
 

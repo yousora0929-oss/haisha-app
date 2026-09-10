@@ -69,6 +69,8 @@ export function OrderCartPreview({
   onConfirmBulk,
   bulkLoading,
   siteAddressLabel = '現場住所',
+  sameFactoryRequired = false,
+  onSameFactoryRequiredChange,
 }) {
   const [editingId, setEditingId] = useState('');
   const [draft, setDraft] = useState(null);
@@ -81,6 +83,8 @@ export function OrderCartPreview({
     return String(a?.cartId || '').localeCompare(String(b?.cartId || ''));
   });
   if (list.length === 0) return null;
+
+  const canRequireSameFactory = list.length >= 2;
 
   const startEdit = (item) => {
     setEditingId(item.cartId);
@@ -288,6 +292,31 @@ export function OrderCartPreview({
           );
         })}
       </ul>
+
+      <label
+        className={
+          'mt-4 flex items-start gap-3 rounded-2xl border-2 px-4 py-3 ' +
+          (canRequireSameFactory
+            ? 'cursor-pointer border-indigo-200 bg-indigo-50'
+            : 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-70')
+        }
+      >
+        <input
+          type="checkbox"
+          checked={canRequireSameFactory && sameFactoryRequired}
+          disabled={!canRequireSameFactory || bulkLoading}
+          onChange={(e) => onSameFactoryRequiredChange?.(e.target.checked)}
+          className="mt-1 h-5 w-5 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:cursor-not-allowed"
+        />
+        <span className="text-sm font-bold text-slate-800">
+          同一工場必須
+          <span className="mt-1 block text-xs font-medium text-slate-500">
+            {canRequireSameFactory
+              ? 'オンにすると、カート内の全注文を1つの予約グループとして送り、同じ工場での受注を前提にします。別工場で確定した場合は「要調整」と出ます。'
+              : '2件以上カートに入れると指定できます。'}
+          </span>
+        </span>
+      </label>
 
       <button
         type="button"

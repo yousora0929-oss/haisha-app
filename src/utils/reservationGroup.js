@@ -56,6 +56,83 @@ export function reservationDayCountError(count) {
   return '';
 }
 
+export function unwrapReservationGroupEmbed(raw) {
+  if (!raw) return null;
+  const row = Array.isArray(raw) ? raw[0] : raw;
+  if (!row || typeof row !== 'object') return null;
+  const id = String(row.id || '').trim();
+  if (!id) return null;
+  return {
+    id,
+    status: String(row.status || 'pending').trim() || 'pending',
+    same_factory_required: row.same_factory_required === true,
+  };
+}
+
+export function attachReservationGroupFromRow(row) {
+  const fromCol = String(row?.reservation_group_id || '').trim();
+  const group = unwrapReservationGroupEmbed(row?.reservation_groups);
+  const reservation_group_id = fromCol || group?.id || '';
+  const reservation_group =
+    group && (!reservation_group_id || group.id === reservation_group_id) ? group : null;
+  return { reservation_group_id, reservation_group };
+}
+
+export function mergeReservationGroupFields(updated, previous) {
+  if (!updated) return updated;
+  const reservation_group_id = String(
+    updated.reservation_group_id || previous?.reservation_group_id || '',
+  ).trim();
+  return {
+    ...updated,
+    reservation_group_id,
+    reservation_group: updated.reservation_group || previous?.reservation_group || null,
+  };
+}
+
+export function reservationGroupIdOf(order) {
+  return String(order?.reservation_group_id || order?.reservation_group?.id || '').trim();
+}
+
+export function reservationGroupStatusOf(order) {
+  return String(order?.reservation_group?.status || '').trim();
+}
+
+export function reservationGroupMonitorBadgeText(status) {
+  const key = String(status || 'pending').trim() || 'pending';
+  return `予約グループ：${reservationGroupStatusLabel(key)}`;
+}
+
+export function reservationGroupMonitorBadgeClass(status) {
+  const key = String(status || 'pending').trim();
+  if (key === 'matched') return 'border-emerald-400 bg-emerald-50 text-emerald-900';
+  if (key === 'conflict') return 'border-rose-500 bg-rose-100 text-rose-950';
+  return 'border-slate-300 bg-slate-100 text-slate-700';
+}
+
+export function siblingReservationFactoryLine(order, factoryNameById = {}) {
+  const factoryId = String(order?.factory_site_id || '').trim();
+  const preferredId = String(order?.preferred_factory_id || '').trim();
+  const accepted =
+    Boolean(String(order?.accepted_at || order?.acceptedAt || '').trim()) ||
+    String(order?.status || '') === 'accepted';
+  if (accepted) {
+    return `確定工場: ${factoryNameById[factoryId] || factoryId || '—'}`;
+  }
+  return `未確定（第一希望: ${factoryNameById[preferredId] || preferredId || '指定なし'}）`;
+}
+
+export function reservationGroupMonitorHighlightClass({ status, highlighted } = {}) {
+  const parts = [];
+  if (status === 'conflict') {
+    parts.push('bg-rose-50 shadow-[inset_0_0_0_2px_#f43f5e]');
+  } else if (highlighted) {
+    parts.push('bg-indigo-50');
+  }
+  if (highlighted) parts.push('ring-2 ring-inset ring-indigo-400');
+  return parts.join(' ');
+}
+
 export function parseSubmitReservationGroupResult(data) {
   let raw = data;
   if (typeof raw === 'string') {
