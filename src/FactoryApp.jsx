@@ -4107,7 +4107,7 @@ function isUnreadForFactory(messages, readKey) {
       }, [rawOrders, activeFactoryId, applyVisibleOrders, escalationTick]);
 
       useEffect(() => {
-        const id = window.setInterval(() => setEscalationTick((t) => t + 1), 60000);
+        const id = window.setInterval(() => setEscalationTick((t) => t + 1), 5000);
         return () => window.clearInterval(id);
       }, []);
 
