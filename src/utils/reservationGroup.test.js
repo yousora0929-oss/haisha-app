@@ -3,13 +3,18 @@ import {
   addDaysIso,
   attachReservationGroupFromRow,
   defaultReservationDayDates,
+  isPendingReservationGroupAvailability,
+  isReservationGroupMatchedOrder,
   mergeReservationGroupFields,
   nextReservationDate,
+  parseRespondReservationGroupAvailabilityResult,
   parseSubmitReservationGroupResult,
   reservationDayCountError,
+  reservationGroupAvailabilityResultMessage,
   reservationGroupMonitorBadgeText,
   reservationGroupStatusLabel,
   siblingReservationFactoryLine,
+  splitFactoryInboxForReservationGroups,
   RESERVATION_GROUP_MAX_DAYS,
   RESERVATION_GROUP_MIN_DAYS,
 } from './reservationGroup.js';
@@ -107,5 +112,72 @@ describe('reservationGroup helpers', () => {
         { f2: '第二工場' },
       ),
     ).toBe('未確定（第一希望: 第二工場）');
+  });
+
+  it('treats pending same-factory groups as availability checks', () => {
+    expect(
+      isPendingReservationGroupAvailability({
+        id: 'o1',
+        status: 'pending',
+        reservation_group_id: 'g1',
+        reservation_group: { id: 'g1', status: 'pending', same_factory_required: true },
+      }),
+    ).toBe(true);
+    expect(
+      isPendingReservationGroupAvailability({
+        id: 'o1',
+        status: 'pending',
+        reservation_group_id: 'g1',
+        reservation_group: { id: 'g1', status: 'matched', same_factory_required: true },
+      }),
+    ).toBe(false);
+    expect(isReservationGroupMatchedOrder({
+      reservation_group: { id: 'g1', status: 'matched' },
+      factory_site_id: 'f1',
+      accepted_at: '2026-09-10T00:00:00Z',
+    })).toBe(true);
+  });
+
+  it('folds pending group days into one inbox card and hides declined factories', () => {
+    const orders = [
+      {
+        id: 'a',
+        preferredDate: '2026-09-11',
+        reservation_group_id: 'g1',
+        reservation_group: { id: 'g1', status: 'pending', same_factory_required: true },
+        status: 'pending',
+      },
+      {
+        id: 'b',
+        preferredDate: '2026-09-12',
+        reservation_group_id: 'g1',
+        reservation_group: { id: 'g1', status: 'pending', same_factory_required: true },
+        status: 'pending',
+      },
+      { id: 'c', status: 'pending' },
+    ];
+    const folded = splitFactoryInboxForReservationGroups(orders, orders, []);
+    expect(folded.groups).toHaveLength(1);
+    expect(folded.groups[0].dayCount).toBe(2);
+    expect(folded.singles.map((o) => o.id)).toEqual(['c']);
+    const declined = splitFactoryInboxForReservationGroups(orders, orders, ['g1']);
+    expect(declined.groups).toHaveLength(0);
+    expect(declined.singles.map((o) => o.id)).toEqual(['c']);
+  });
+
+  it('parses availability RPC won / already_filled', () => {
+    expect(parseRespondReservationGroupAvailabilityResult({ won: true })).toEqual({
+      won: true,
+      reason: '',
+      available: null,
+    });
+    expect(
+      parseRespondReservationGroupAvailabilityResult({ won: false, reason: 'already_filled' }),
+    ).toEqual({ won: false, reason: 'already_filled', available: null });
+    expect(reservationGroupAvailabilityResultMessage({ won: true }, true)).toBe('確定しました');
+    expect(
+      reservationGroupAvailabilityResultMessage({ won: false, reason: 'already_filled' }, true),
+    ).toBe('他の工場に決まりました');
+    expect(reservationGroupAvailabilityResultMessage({ won: false }, false)).toBe('回答を送信しました');
   });
 });

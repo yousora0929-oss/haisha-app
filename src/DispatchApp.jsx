@@ -255,11 +255,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
   );
 }
 
-    function getDefaultFactoryDisplayName(order) {
+    function getDefaultFactoryDisplayName(order, factoryNameById = {}) {
       const site = order && order.factorySiteName ? String(order.factorySiteName).trim() : '';
       if (site) return site;
       const label = order && order.acceptedFactoryLabel ? String(order.acceptedFactoryLabel).trim() : '';
       if (label) return label.replace(/^受注工場[：:]\s*/, '') || label;
+      const fid = String(order?.factory_site_id ?? order?.factorySiteId ?? '').trim();
+      if (fid && factoryNameById[fid]) return factoryNameById[fid];
+      if (fid) return fid;
       return '工場（未設定）';
     }
 
@@ -457,9 +460,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       return iso;
     }
 
-    function OrderStatusBadges({ order, escalationCtx = null }) {
+    function OrderStatusBadges({ order, escalationCtx = null, factoryNameById = {} }) {
       const st = resolveOrderDisplayStatus(order);
-      const displayName = getDefaultFactoryDisplayName(order);
+      const displayName = getDefaultFactoryDisplayName(order, factoryNameById);
       const needsChoice = needsPreferredCustomerChoice(order);
       const isFullReject = isFullCompanyRejectionForCustomer(order, escalationCtx || {});
       const dispatchLabel = needsChoice
@@ -976,6 +979,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       onAllowStatusReset,
       guestToken = '',
       escalationCtx = null,
+      factoryNameById = {},
       onEscalatePreferred,
       onReschedulePreferred,
       onCancelPreferred,
@@ -1077,7 +1081,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   {timeSummary}
                 </p>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <OrderStatusBadges order={order} escalationCtx={escalationCtx} />
+                  <OrderStatusBadges
+                    order={order}
+                    escalationCtx={escalationCtx}
+                    factoryNameById={factoryNameById}
+                  />
                   <ReservationGroupStatusBadge order={order} />
                   <LocationPendingBadge order={order} />
                   <PhoneOrderBadge order={order} />
@@ -5679,6 +5687,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                 onAllowStatusReset={isColleagueOrder ? null : handleAllowStatusReset}
                                 guestToken={isGuestSiteOrder ? guestOrderToken : ''}
                                 escalationCtx={customerEscalationCtx}
+                                factoryNameById={factoryNameById}
                                 choiceSubmitting={choiceSubmitting}
                                 onEscalatePreferred={(o) => void runCustomerChoice(o, 'escalate')}
                                 onReschedulePreferred={(o) => void runCustomerChoice(o, 'reschedule')}

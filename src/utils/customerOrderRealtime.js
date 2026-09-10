@@ -1,3 +1,5 @@
+import { reservationGroupIdOf, reservationGroupStatusOf } from './reservationGroup.js';
+
 const ACCEPTED_STATUSES = new Set(['accepted', 'confirmed']);
 const REJECTED_STATUSES = new Set(['rejected', 'cancelled']);
 
@@ -66,7 +68,15 @@ export function orderFactoryWasAccepted(prev, next) {
   if (!prev?.id || !next?.id) return false;
   const prevStatus = effectiveStatus(prev);
   const nextStatus = effectiveStatus(next);
-  return isPendingLike(prevStatus) && isAcceptedLike(nextStatus);
+  if (isPendingLike(prevStatus) && isAcceptedLike(nextStatus)) return true;
+  if (reservationGroupStatusOf(next) === 'matched' && reservationGroupStatusOf(prev) !== 'matched') {
+    return true;
+  }
+  if (reservationGroupIdOf(next) && !factorySiteId(prev) && factorySiteId(next)) return true;
+  const prevAcceptedAt = String(prev?.accepted_at ?? prev?.acceptedAt ?? '').trim();
+  const nextAcceptedAt = String(next?.accepted_at ?? next?.acceptedAt ?? '').trim();
+  if (reservationGroupIdOf(next) && !prevAcceptedAt && nextAcceptedAt) return true;
+  return false;
 }
 
 /** 全社対応不可: pending 系 → rejected / cancelled */

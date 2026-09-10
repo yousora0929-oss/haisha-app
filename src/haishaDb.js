@@ -39,7 +39,9 @@ import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.
 import { resolveOrderParties } from './utils/orderPartyInfo.js';
 import {
   attachReservationGroupFromRow,
+  isPendingReservationGroupAvailability,
   mapReservationOrderRow,
+  parseRespondReservationGroupAvailabilityResult,
   parseSubmitReservationGroupResult,
   unwrapReservationGroupEmbed,
 } from './utils/reservationGroup.js';
@@ -3663,6 +3665,7 @@ export async function persistScheduleAutoRejections({
     ) {
       return o;
     }
+    if (isPendingReservationGroupAvailability(o)) return o;
     if (o.factoryResponseStatus || o.scheduleAutoChecked) return o;
 
     const date = o.scheduleMatchDate || o.preferredDate;
@@ -5064,6 +5067,81 @@ export async function fetchReservationGroupOrders(groupIds, factoryNameById = {}
     .order('created_at', { ascending: true });
   if (error) throw error;
   return (data || []).map((row) => mapReservationOrderRow(row, factoryNameById)).filter((row) => row?.id);
+}
+
+function isMissingRpcSignatureError(error) {
+  const code = String(error?.code || '').trim();
+  const message = String(error?.message || error?.details || '').toLowerCase();
+  return code === 'PGRST202' || code === '42883' || /could not find the function|does not exist|no function matches/i.test(message);
+}
+
+function mapReservationGroupFactoryResponseRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const reservation_group_id = String(
+    row.reservation_group_id || row.group_id || row.groupId || '',
+  ).trim();
+  const factory_id = String(row.factory_id || row.factory_site_id || row.factoryId || '').trim();
+  if (!reservation_group_id) return null;
+  return {
+    reservation_group_id,
+    factory_id,
+    available: row.available === true,
+    created_at: row.created_at || row.responded_at || null,
+  };
+}
+
+export async function fetchReservationGroupFactoryResponses(factoryId) {
+  const fid = sanitizeRefId(factoryId);
+  if (!fid) return [];
+  const attempts = [
+    { select: 'reservation_group_id, factory_id, available, created_at', column: 'factory_id' },
+    { select: 'group_id, factory_id, available, created_at', column: 'factory_id' },
+    { select: 'reservation_group_id, factory_site_id, available, created_at', column: 'factory_site_id' },
+  ];
+  let lastError = null;
+  for (const attempt of attempts) {
+    const { data, error } = await supabase
+      .from('reservation_group_factory_responses')
+      .select(attempt.select)
+      .eq(attempt.column, fid);
+    if (!error) {
+      return (data || []).map(mapReservationGroupFactoryResponseRow).filter(Boolean);
+    }
+    lastError = error;
+    if (!isMissingRelationOrColumnError(error)) break;
+  }
+  if (lastError) {
+    console.warn('[fetchReservationGroupFactoryResponses] skipped', lastError);
+  }
+  return [];
+}
+
+/**
+ * 複数日予約（同一工場必須）の可否回答。DB の早い者勝ち RPC を呼ぶだけ。
+ * @returns {{ won: boolean, reason: string, available: boolean|null, raw: unknown }}
+ */
+export async function respondReservationGroupAvailability(groupId, factoryId, available) {
+  const gid = String(groupId || '').trim();
+  const fid = sanitizeRefId(factoryId);
+  if (!gid) throw new Error('group_id が必要です');
+  if (!fid) throw new Error('factory_id が必要です');
+  const flag = Boolean(available);
+  const payloads = [
+    { p_group_id: gid, p_factory_id: fid, p_available: flag },
+    { group_id: gid, factory_id: fid, available: flag },
+  ];
+  let data = null;
+  let error = null;
+  for (const args of payloads) {
+    ({ data, error } = await supabase.rpc('respond_reservation_group_availability', args));
+    if (!error) break;
+    if (!isMissingRpcSignatureError(error)) break;
+  }
+  if (error) {
+    console.error('respondReservationGroupAvailability failed', error);
+    throw error;
+  }
+  return { ...parseRespondReservationGroupAvailabilityResult(data), raw: data };
 }
 
 /** 物件マスタ一覧 */

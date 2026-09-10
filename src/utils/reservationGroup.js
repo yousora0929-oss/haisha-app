@@ -207,3 +207,181 @@ export function rememberWatchedReservationGroup(entry) {
     /* ignore */
   }
 }
+
+const FACTORY_RESPONSE_STORAGE_KEY = 'haisha_reservation_group_factory_responses_v1';
+
+export function reservationGroupSameFactoryRequired(order) {
+  if (order?.reservation_group?.same_factory_required === false) return false;
+  if (order?.same_factory_required === false) return false;
+  return true;
+}
+
+/** 工場アプリの専用可否確認対象（個別受注とは別ルート） */
+export function isPendingReservationGroupAvailability(order) {
+  const gid = reservationGroupIdOf(order);
+  if (!gid) return false;
+  const status = reservationGroupStatusOf(order) || 'pending';
+  if (status !== 'pending') return false;
+  if (String(order?.status || 'pending').trim() === 'customer_cancelled') return false;
+  if (String(order?.factory_site_id ?? order?.factorySiteId ?? '').trim()) return false;
+  if (String(order?.accepted_at ?? order?.acceptedAt ?? '').trim()) return false;
+  return reservationGroupSameFactoryRequired(order);
+}
+
+export function reservationGroupDayCount(orders) {
+  const dates = new Set();
+  for (const order of Array.isArray(orders) ? orders : []) {
+    const day = String(order?.preferredDate || order?.preferred_date || order?.scheduleMatchDate || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) dates.add(day);
+  }
+  if (dates.size) return dates.size;
+  return (Array.isArray(orders) ? orders : []).filter(Boolean).length;
+}
+
+function reservationGroupSortValue(order) {
+  const day = String(order?.preferredDate || order?.preferred_date || order?.scheduleMatchDate || '').slice(0, 10);
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(day) ? Date.parse(`${day}T00:00:00`) : 0;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function sortReservationGroupOrders(orders) {
+  return [...(Array.isArray(orders) ? orders : []).filter(Boolean)].sort(
+    (a, b) => reservationGroupSortValue(a) - reservationGroupSortValue(b),
+  );
+}
+
+export function declinedReservationGroupIdSet(ids) {
+  return new Set(
+    [...(ids instanceof Set ? ids : Array.isArray(ids) ? ids : [])]
+      .map((id) => String(id || '').trim())
+      .filter(Boolean),
+  );
+}
+
+/**
+ * エスカレーションで見えている注文のうち pending グループは1枚の可否確認にまとめ、
+ * 全日（raw 側の同一グループ）をカードに載せる。
+ */
+export function splitFactoryInboxForReservationGroups(visibleOrders, allOrders, declinedGroupIds) {
+  const declined = declinedReservationGroupIdSet(declinedGroupIds);
+  const visibleList = Array.isArray(visibleOrders) ? visibleOrders.filter(Boolean) : [];
+  const sourceList = Array.isArray(allOrders) && allOrders.length ? allOrders.filter(Boolean) : visibleList;
+  const visibleGroupIds = [];
+  const seen = new Set();
+  for (const order of visibleList) {
+    if (!isPendingReservationGroupAvailability(order)) continue;
+    const gid = reservationGroupIdOf(order);
+    if (!gid || declined.has(gid) || seen.has(gid)) continue;
+    seen.add(gid);
+    visibleGroupIds.push(gid);
+  }
+  const groups = visibleGroupIds.map((groupId) => {
+    const members = sortReservationGroupOrders(
+      sourceList.filter((order) => reservationGroupIdOf(order) === groupId),
+    );
+    return {
+      groupId,
+      orders: members,
+      dayCount: reservationGroupDayCount(members),
+    };
+  });
+  const groupedVisibleIds = new Set();
+  for (const group of groups) {
+    for (const order of group.orders) {
+      if (order?.id) groupedVisibleIds.add(String(order.id));
+    }
+  }
+  const singles = visibleList.filter((order) => {
+    const gid = reservationGroupIdOf(order);
+    if (gid && declined.has(gid) && isPendingReservationGroupAvailability(order)) return false;
+    return !order?.id || !groupedVisibleIds.has(String(order.id));
+  });
+  return { groups, singles };
+}
+
+export function parseRespondReservationGroupAvailabilityResult(data) {
+  let raw = data;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      raw = null;
+    }
+  }
+  if (Array.isArray(raw)) raw = raw[0] || null;
+  if (!raw || typeof raw !== 'object') {
+    return { won: false, reason: '', available: null };
+  }
+  const reason = String(raw.reason ?? raw.error ?? raw.code ?? '').trim();
+  const won = raw.won === true || raw.matched === true || raw.ok === true;
+  const available = typeof raw.available === 'boolean' ? raw.available : null;
+  return { won, reason, available };
+}
+
+export function reservationGroupAvailabilityResultMessage(result, available) {
+  if (!available) return '回答を送信しました';
+  if (result?.won) return '確定しました';
+  const reason = String(result?.reason || '').trim();
+  if (reason === 'already_filled' || reason === 'already_matched' || !result?.won) {
+    return '他の工場に決まりました';
+  }
+  return '回答を送信しました';
+}
+
+function readFactoryResponseStore() {
+  try {
+    const raw = window.localStorage.getItem(FACTORY_RESPONSE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function readLocalDeclinedReservationGroupIds(factoryId) {
+  const fid = String(factoryId || '').trim();
+  if (!fid) return new Set();
+  const byFactory = readFactoryResponseStore()[fid];
+  const declined = new Set();
+  if (!byFactory || typeof byFactory !== 'object') return declined;
+  for (const [groupId, row] of Object.entries(byFactory)) {
+    if (row && row.available === false && groupId) declined.add(String(groupId));
+  }
+  return declined;
+}
+
+export function rememberLocalReservationGroupFactoryResponse(factoryId, groupId, available) {
+  const fid = String(factoryId || '').trim();
+  const gid = String(groupId || '').trim();
+  if (!fid || !gid) return;
+  const store = readFactoryResponseStore();
+  const byFactory = store[fid] && typeof store[fid] === 'object' ? { ...store[fid] } : {};
+  byFactory[gid] = { available: Boolean(available), at: new Date().toISOString() };
+  try {
+    window.localStorage.setItem(
+      FACTORY_RESPONSE_STORAGE_KEY,
+      JSON.stringify({ ...store, [fid]: byFactory }),
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+export function mergeDeclinedReservationGroupIds(factoryId, rows) {
+  const declined = readLocalDeclinedReservationGroupIds(factoryId);
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const gid = String(row?.reservation_group_id || row?.group_id || row?.groupId || '').trim();
+    if (!gid) continue;
+    if (row?.available === false) declined.add(gid);
+  }
+  return declined;
+}
+
+export function isReservationGroupMatchedOrder(order) {
+  if (reservationGroupStatusOf(order) !== 'matched') return false;
+  return Boolean(
+    String(order?.factory_site_id ?? order?.factorySiteId ?? '').trim() ||
+      String(order?.accepted_at ?? order?.acceptedAt ?? '').trim(),
+  );
+}

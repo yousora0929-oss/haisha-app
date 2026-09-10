@@ -1,4 +1,5 @@
 import { parseSpotThresholdVolume } from './deliveryAreas.js';
+import { isReservationGroupMatchedOrder } from './reservationGroup.js';
 
 /** 現場地図が送付済みか（地図待ちバッジ解除の判定用） */
 export function hasSubmittedSiteMap(order) {
@@ -57,6 +58,7 @@ export function resolveOrderDisplayStatus(order) {
   if (status === 'deleted') return 'deleted';
   if (['completed', 'complete', 'done', 'delivered'].includes(status)) return status;
   if (status === 'accepted' || factoryResponse === 'accepted') return 'accepted';
+  if (isReservationGroupMatchedOrder(order)) return 'accepted';
   if (factoryResponse === 'rejected') return 'rejected';
   if (factoryResponse === 'pending') return 'pending';
   if (status === 'pending_association') return 'pending_association';

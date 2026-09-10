@@ -91,6 +91,7 @@ import { FactoryNewsPanel } from './components/FactoryNewsPanel.jsx';
 import { countUnreadNewsForFactory } from './utils/factoryNews.js';
 import { countPendingCharterResponses } from './utils/charterBadges.js';
 import { OrderAcceptModal } from './components/OrderAcceptModal.jsx';
+import { ReservationGroupAvailabilityCard } from './components/ReservationGroupAvailabilityCard.jsx';
 import { FactoryScheduleChangeProposalsPanel } from './components/FactoryScheduleChangeProposalsPanel.jsx';
 import {
   detectFactoryNotifyOrderIds,
@@ -116,6 +117,18 @@ import {
   shouldPlayChatSoundOnce,
 } from './utils/chatNotificationDedup.js';
 import { normalizeFactoryRefId } from './utils/escalationUtils.js';
+import {
+  isPendingReservationGroupAvailability,
+  mergeDeclinedReservationGroupIds,
+  readLocalDeclinedReservationGroupIds,
+  rememberLocalReservationGroupFactoryResponse,
+  reservationGroupAvailabilityResultMessage,
+  reservationGroupDayCount,
+  reservationGroupIdOf,
+  splitFactoryInboxForReservationGroups,
+} from './utils/reservationGroup.js';
+
+const FACTORY_ORDERS_FETCH_OPTIONS = { includeReservationGroups: true };
 
 const FACTORY_SPLIT_STORAGE_KEY = 'haisha_factory_split_left_pct_v1';
 const factoryHistoryHideOtherStorageKey = (factoryId) =>
@@ -1613,9 +1626,13 @@ function isUnreadForFactory(messages, readKey) {
       onSiteUrlCopied,
     }) {
       const isToast = variant === 'toast';
-      const canAcceptOrder = !isToast && typeof onAcceptOrder === 'function' && Boolean(order.id);
-      const canRejectOrder = !isToast && typeof onRejectOrder === 'function' && Boolean(order.id);
-      const canConsultOrder = !isToast && typeof onConsultOrder === 'function' && Boolean(order.id);
+      const isGroupAvailability = isPendingReservationGroupAvailability(order);
+      const canAcceptOrder =
+        !isToast && !isGroupAvailability && typeof onAcceptOrder === 'function' && Boolean(order.id);
+      const canRejectOrder =
+        !isToast && !isGroupAvailability && typeof onRejectOrder === 'function' && Boolean(order.id);
+      const canConsultOrder =
+        !isToast && !isGroupAvailability && typeof onConsultOrder === 'function' && Boolean(order.id);
       const canCustomerCancelOrder = !isToast && typeof onCustomerCancelOrder === 'function' && Boolean(order.id);
       const canHideOrder = !isToast && typeof onHideOrder === 'function' && Boolean(order.id);
       const canSetStatus = !isToast && typeof onResponseStatusChange === 'function' && Boolean(order.id);
@@ -2578,6 +2595,8 @@ function isUnreadForFactory(messages, readKey) {
 
     function DispatchInbox({
       orders,
+      availabilityGroups = [],
+      availabilitySubmittingGroupId = '',
       currentFactoryId,
       readOrderIds,
       factorySearchLabel,
@@ -2587,6 +2606,7 @@ function isUnreadForFactory(messages, readKey) {
       onAcceptOrder,
       onRejectOrder,
       onConsultOrder,
+      onRespondReservationGroup,
       onCustomerCancelOrder,
       onHideOrder,
       onResponseStatusChange,
@@ -2607,12 +2627,22 @@ function isUnreadForFactory(messages, readKey) {
         () => orders.filter((o) => orderMatchesFactorySearch(o, searchQuery, factorySearchLabel, customerById)),
         [orders, searchQuery, factorySearchLabel, customerById],
       );
+      const filteredGroups = useMemo(() => {
+        const q = String(searchQuery || '').trim();
+        const list = Array.isArray(availabilityGroups) ? availabilityGroups : [];
+        if (!q) return list;
+        return list.filter((group) =>
+          (group?.orders || []).some((o) =>
+            orderMatchesFactorySearch(o, searchQuery, factorySearchLabel, customerById),
+          ),
+        );
+      }, [availabilityGroups, searchQuery, factorySearchLabel, customerById]);
 
       useEffect(() => {
         if (focusedOrderId) setSearchQuery('');
       }, [focusedOrderId]);
 
-      if (!orders.length) {
+      if (!orders.length && !availabilityGroups.length) {
         return (
           <aside
             className="flex h-full min-h-0 flex-col rounded-lg border-2 border-dashed border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-800"
@@ -2638,14 +2668,29 @@ function isUnreadForFactory(messages, readKey) {
           </div>
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-2 pb-2 pt-2">
             <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden pr-0.5">
-            {filteredOrders.length === 0 ? (
+            {filteredGroups.length === 0 && filteredOrders.length === 0 ? (
               <li className="list-none">
                 <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-2 py-4 text-center text-xs font-bold text-slate-600 dark:border-slate-600 dark:bg-slate-900/50 dark:text-slate-300">
                   該当する依頼がありません
                 </p>
               </li>
             ) : (
-              filteredOrders.map((o, i) => {
+              <>
+              {filteredGroups.map((group) => (
+                <li key={`rg-${group.groupId}`} className="list-none">
+                  <ReservationGroupAvailabilityCard
+                    groupId={group.groupId}
+                    orders={group.orders}
+                    submitting={String(availabilitySubmittingGroupId) === String(group.groupId)}
+                    forceExpanded={Boolean(
+                      focusedOrderId &&
+                        (group.orders || []).some((o) => String(o?.id) === String(focusedOrderId)),
+                    )}
+                    onRespond={onRespondReservationGroup}
+                  />
+                </li>
+              ))}
+              {filteredOrders.map((o, i) => {
                 const isExiting = Boolean(o?.id && exitingOrderIds?.has?.(String(o.id)));
                 return (
                 <li key={o.id ?? `idx-${i}`} className="list-none">
@@ -2689,7 +2734,8 @@ function isUnreadForFactory(messages, readKey) {
                   </div>
                 </li>
                 );
-              })
+              })}
+              </>
             )}
           </ul>
           </div>
@@ -2706,6 +2752,8 @@ function isUnreadForFactory(messages, readKey) {
       organizationById,
     }) {
       if (!order) return null;
+      const isGroupAvailability = isPendingReservationGroupAvailability(order);
+      const dayCount = Number(order.reservationGroupDayCount) || 0;
       return (
         <div
           className="fixed bottom-4 left-4 right-4 z-[90] mx-auto max-w-md sm:left-auto sm:right-6 sm:mx-0 lg:bottom-8 lg:right-8 lg:max-w-lg"
@@ -2714,7 +2762,13 @@ function isUnreadForFactory(messages, readKey) {
           <div className="overflow-hidden rounded-2xl border-2 border-orange-600 bg-white shadow-2xl dark:bg-slate-800">
             <div className="flex items-start justify-between gap-2 bg-orange-600 px-4 py-2.5">
               <p className="text-sm font-black text-white sm:text-base">
-                {isReassignment ? '手配振替の注文を受信' : '新規注文を受信'}
+                {isGroupAvailability
+                  ? dayCount > 0
+                    ? `複数日予約の可否確認（${dayCount}日間）`
+                    : '複数日予約の可否確認'
+                  : isReassignment
+                    ? '手配振替の注文を受信'
+                    : '新規注文を受信'}
               </p>
               <button
                 type="button"
@@ -3652,12 +3706,36 @@ function isUnreadForFactory(messages, readKey) {
       const [toastIsReassignment, setToastIsReassignment] = useState(false);
       const [acceptModalOrder, setAcceptModalOrder] = useState(null);
       const [acceptSubmitting, setAcceptSubmitting] = useState(false);
+      const [availabilitySubmittingGroupId, setAvailabilitySubmittingGroupId] = useState('');
+      const [declinedReservationGroupIds, setDeclinedReservationGroupIds] = useState(() => new Set());
+      const declinedReservationGroupIdsRef = useRef(declinedReservationGroupIds);
       const [showPhoneOrderModal, setShowPhoneOrderModal] = useState(false);
 
       useEffect(() => {
-        setAutoReloadBlocked(Boolean(acceptModalOrder) || acceptSubmitting || showPhoneOrderModal);
+        declinedReservationGroupIdsRef.current = declinedReservationGroupIds;
+      }, [declinedReservationGroupIds]);
+
+      useEffect(() => {
+        if (!activeFactoryId) {
+          const empty = new Set();
+          declinedReservationGroupIdsRef.current = empty;
+          setDeclinedReservationGroupIds(empty);
+          return;
+        }
+        const local = readLocalDeclinedReservationGroupIds(activeFactoryId);
+        declinedReservationGroupIdsRef.current = local;
+        setDeclinedReservationGroupIds(local);
+      }, [activeFactoryId]);
+
+      useEffect(() => {
+        setAutoReloadBlocked(
+          Boolean(acceptModalOrder) ||
+            acceptSubmitting ||
+            showPhoneOrderModal ||
+            Boolean(availabilitySubmittingGroupId),
+        );
         return () => setAutoReloadBlocked(false);
-      }, [acceptModalOrder, acceptSubmitting, showPhoneOrderModal]);
+      }, [acceptModalOrder, acceptSubmitting, showPhoneOrderModal, availabilitySubmittingGroupId]);
       const [actionNotice, setActionNotice] = useState('');
       const [chatThreads, setChatThreads] = useState({});
       const chatThreadsRef = useRef(chatThreads);
@@ -3919,6 +3997,7 @@ function isUnreadForFactory(messages, readKey) {
             await registerOneSignalUser(buildFactoryOneSignalExternalId(fid), { role: 'factory', factory_id: String(fid) });
             setLoginPassword('');
             setHiddenOrderIds(new Set());
+            setDeclinedReservationGroupIds(readLocalDeclinedReservationGroupIds(fid));
             setToastOrder(null);
             setToastIsReassignment(false);
             setFactoryPanelSession(fid, loginPassword);
@@ -4014,7 +4093,12 @@ function isUnreadForFactory(messages, readKey) {
             factorySmallVehicleInfo,
             monthlyVolumeByFactory,
           );
-          return filterAndSortFactoryOrders(list, activeFactoryId, ctx).filter((o) => !hiddenOrderIds.has(String(o?.id || '')));
+          return filterAndSortFactoryOrders(list, activeFactoryId, ctx).filter((o) => {
+            if (hiddenOrderIds.has(String(o?.id || ''))) return false;
+            const gid = reservationGroupIdOf(o);
+            if (!gid || !isPendingReservationGroupAvailability(o)) return true;
+            return !declinedReservationGroupIdsRef.current.has(gid);
+          });
         },
         [activeFactoryId, factories, projects, customers, escalationSettings, holidays, hiddenOrderIds, escalationStepsByFactoryId, factorySmallVehicleInfo, monthlyVolumeByFactory],
       );
@@ -4074,6 +4158,10 @@ function isUnreadForFactory(messages, readKey) {
             if (!o?.id) return false;
             if (String(o.status || 'pending') !== 'pending') return false;
             if (isRejectedByFactory(o, activeFactoryId)) return false;
+            const gid = reservationGroupIdOf(o);
+            if (gid && declinedReservationGroupIdsRef.current.has(gid) && isPendingReservationGroupAvailability(o)) {
+              return false;
+            }
             return true;
           };
           const head =
@@ -4092,10 +4180,25 @@ function isUnreadForFactory(messages, readKey) {
               reassignNotifyOrderIds instanceof Set
                 ? reassignNotifyOrderIds.has(String(head.id))
                 : false;
+            let toast = head;
+            if (isPendingReservationGroupAvailability(head)) {
+              const gid = reservationGroupIdOf(head);
+              const siblings = (Array.isArray(list) ? list : visible).filter(
+                (o) => reservationGroupIdOf(o) === gid,
+              );
+              for (const sibling of siblings) {
+                if (sibling?.id) notifiedOrderIds.current.add(sibling.id);
+              }
+              toast = {
+                ...head,
+                reservationGroupDayCount: reservationGroupDayCount(siblings),
+              };
+            } else {
+              notifiedOrderIds.current.add(head.id);
+            }
             setToastIsReassignment(isReassign);
-            setToastOrder(head);
+            setToastOrder(toast);
             lastNotifiedHeadIdRef.current = head.id;
-            notifiedOrderIds.current.add(head.id);
           }
         },
         [activeFactoryId, applyVisibleOrders],
@@ -4120,7 +4223,7 @@ function isUnreadForFactory(messages, readKey) {
 
       const runScheduleAutoPipeline = useCallback(
         async (scheduleArg) => {
-          let { orders: list, chatThreads: th } = await db.fetchOrdersWithChat();
+          let { orders: list, chatThreads: th } = await db.fetchOrdersWithChat(FACTORY_ORDERS_FETCH_OPTIONS);
           const idArr = collectScheduleFactoryIds(list, activeFactoryId);
           const byF = idArr.length ? await db.fetchSchedulesForFactories(idArr) : {};
           if (activeFactoryId) {
@@ -4171,9 +4274,23 @@ function isUnreadForFactory(messages, readKey) {
       const syncFromStorage = useCallback(
         async (options, realtimePayload) => {
           const prevOrders = rawOrdersRef.current;
-          let { orders: list, chatThreads: th } = await db.fetchOrdersWithChat();
+          let { orders: list, chatThreads: th } = await db.fetchOrdersWithChat(FACTORY_ORDERS_FETCH_OPTIONS);
           list = enrichOrdersWithProjectFactory(list);
           setChatThreads(th);
+
+          if (activeFactoryId) {
+            try {
+              const rows = await db.fetchReservationGroupFactoryResponses(activeFactoryId);
+              const declined = mergeDeclinedReservationGroupIds(activeFactoryId, rows);
+              declinedReservationGroupIdsRef.current = declined;
+              setDeclinedReservationGroupIds(declined);
+            } catch (err) {
+              console.warn('[FactoryApp] reservation group responses fetch failed', err);
+              const local = readLocalDeclinedReservationGroupIds(activeFactoryId);
+              declinedReservationGroupIdsRef.current = local;
+              setDeclinedReservationGroupIds(local);
+            }
+          }
 
           const mergedReadKeys = { ...(readChatKeysRef.current || {}) };
           let readKeysChanged = false;
@@ -4224,6 +4341,15 @@ function isUnreadForFactory(messages, readKey) {
                 for (const id of analysis.reassignNotifyOrderIds) reassignNotifyOrderIds.add(id);
               } catch (realtimeErr) {
                 console.error('[FactoryApp] Realtime ペイロード解析に失敗（再フェッチ結果を優先）', realtimeErr);
+              }
+            }
+            const declined = declinedReservationGroupIdsRef.current;
+            const orderById = new Map((list || []).filter((o) => o?.id).map((o) => [String(o.id), o]));
+            for (const id of [...notifyOrderIds]) {
+              const order = orderById.get(String(id));
+              const gid = reservationGroupIdOf(order);
+              if (gid && declined.has(gid) && isPendingReservationGroupAvailability(order)) {
+                notifyOrderIds.delete(id);
               }
             }
           }
@@ -4448,6 +4574,11 @@ function isUnreadForFactory(messages, readKey) {
         return base;
       }, [factoryInProgressOrders, exitingOrderIds]);
 
+      const inboxModel = useMemo(
+        () => splitFactoryInboxForReservationGroups(inboxOrders, rawOrders, declinedReservationGroupIds),
+        [inboxOrders, rawOrders, declinedReservationGroupIds],
+      );
+
       const factoryHistoryOrders = useMemo(() => {
         // 履歴タブだけ rawOrders + 専用可視性を使う（新着/カレンダーの isOrderVisibleToFactory は変更しない）
         return sortOrdersForHistory(
@@ -4494,8 +4625,8 @@ function isUnreadForFactory(messages, readKey) {
       }, [filteredFactoryHistoryOrders, hideOtherFactoryAcceptedInHistory, activeFactoryId]);
 
       const newOrdersCount = useMemo(
-        () =>
-          (factoryInProgressOrders || []).filter((order) => {
+        () => {
+          const isUnreadPending = (order) => {
             if (!order?.id) return false;
             if (readOrderIds.has(String(order.id))) return false;
             if (isRejectedByFactory(order, activeFactoryId)) return false;
@@ -4506,8 +4637,14 @@ function isUnreadForFactory(messages, readKey) {
             if (normalizeFactoryResponse(order.factoryResponseStatus)) return false;
             const assignedFactoryId = getAssignedFactoryId(order);
             return !assignedFactoryId || isSameFactoryId(assignedFactoryId, activeFactoryId);
-          }).length,
-        [factoryInProgressOrders, activeFactoryId, readOrderIds],
+          };
+          const singles = (inboxModel.singles || []).filter(isUnreadPending).length;
+          const groups = (inboxModel.groups || []).filter((group) =>
+            (group.orders || []).some(isUnreadPending),
+          ).length;
+          return singles + groups;
+        },
+        [inboxModel, activeFactoryId, readOrderIds],
       );
 
       const unreadChatCount = useMemo(
@@ -4911,6 +5048,7 @@ function isUnreadForFactory(messages, readKey) {
       const handleAcceptOrder = useCallback(
         (order) => {
           if (!order?.id || !activeFactoryId) return;
+          if (isPendingReservationGroupAvailability(order)) return;
           setAcceptModalOrder(order);
         },
         [activeFactoryId],
@@ -4959,7 +5097,7 @@ function isUnreadForFactory(messages, readKey) {
         } catch (e) {
           console.error(e);
           window.alert("受注処理に失敗しました。通信状態を確認して再度お試しください。");
-        } finally {
+        }         finally {
           setAcceptSubmitting(false);
         }
       }, [
@@ -4972,9 +5110,39 @@ function isUnreadForFactory(messages, readKey) {
         appendOrderChatMessage,
       ]);
 
+      const handleRespondReservationGroup = useCallback(
+        async (groupId, available) => {
+          const gid = String(groupId || '').trim();
+          if (!gid || !activeFactoryId || availabilitySubmittingGroupId) return;
+          setAvailabilitySubmittingGroupId(gid);
+          try {
+            const result = await db.respondReservationGroupAvailability(gid, activeFactoryId, available);
+            rememberLocalReservationGroupFactoryResponse(activeFactoryId, gid, available);
+            if (!available) {
+              const next = new Set(declinedReservationGroupIdsRef.current);
+              next.add(gid);
+              declinedReservationGroupIdsRef.current = next;
+              setDeclinedReservationGroupIds(next);
+            }
+            const message = reservationGroupAvailabilityResultMessage(result, available);
+            setActionNotice(message);
+            window.setTimeout(() => setActionNotice(''), 4500);
+            setToastOrder((cur) => (reservationGroupIdOf(cur) === gid ? null : cur));
+            await syncFromStorage({ playSound: false });
+          } catch (e) {
+            console.error(e);
+            window.alert(e?.message || '可否の送信に失敗しました。通信状態を確認して再度お試しください。');
+          } finally {
+            setAvailabilitySubmittingGroupId('');
+          }
+        },
+        [activeFactoryId, availabilitySubmittingGroupId, syncFromStorage],
+      );
+
       const handleRejectOrder = useCallback(
         async (order) => {
           if (!order?.id || !activeFactoryId) return;
+          if (isPendingReservationGroupAvailability(order)) return;
           if (exitingOrderIds.has(String(order.id))) return;
           if (!window.confirm('この注文を見送りますか？')) return;
           markOrderRead(order.id);
@@ -5047,6 +5215,7 @@ function isUnreadForFactory(messages, readKey) {
       const handleConsultOrder = useCallback(
         async (order) => {
           if (!order?.id || !activeFactoryId) return;
+          if (isPendingReservationGroupAvailability(order)) return;
           if (!window.confirm('この注文を「相談中」にしますか？\n相談中は他工場に表示されず、あなたの工場のみが対応できます。')) {
             return;
           }
@@ -5679,7 +5848,9 @@ function isUnreadForFactory(messages, readKey) {
               {activeTab === 'orders' ? (
                 <div className="grid gap-2">
                   <DispatchInbox
-                    orders={inboxOrders}
+                    orders={inboxModel.singles}
+                    availabilityGroups={inboxModel.groups}
+                    availabilitySubmittingGroupId={availabilitySubmittingGroupId}
                     currentFactoryId={activeFactoryId}
                     readOrderIds={readOrderIds}
                     factorySearchLabel={activeFactoryName}
@@ -5689,6 +5860,7 @@ function isUnreadForFactory(messages, readKey) {
                     onAcceptOrder={handleAcceptOrder}
                     onRejectOrder={handleRejectOrder}
                     onConsultOrder={handleConsultOrder}
+                    onRespondReservationGroup={handleRespondReservationGroup}
                     onCustomerCancelOrder={handleCustomerCancelOrder}
                     onHideOrder={hideOrder}
                     onResponseStatusChange={handleResponseStatusChange}
