@@ -204,6 +204,12 @@ const MIX_DESIGN_HISTORY_TAB = ['mixDesignHistory', '配合依頼', '📑'];
 
 /** 進行中タブの物件グループ折りたたみ（true = 折りたたみ）。物件ID単位で保持。 */
 const INPROGRESS_GROUP_COLLAPSED_STORAGE_PREFIX = 'haisha_dispatch_inprogress_group_collapsed_v1';
+const DISPATCH_PUSH_HIGHLIGHT_MS = 3200;
+
+function dispatchOrderElementId(orderId) {
+  const id = String(orderId || '').trim();
+  return id ? `dispatch-order-${id}` : '';
+}
 
 function inProgressGroupCollapsedStorageKey(customerId) {
   const cid = String(customerId || '').trim() || 'anon';
@@ -989,6 +995,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       readOnly = false,
       accountLabel = '',
       customerById = {},
+      highlighted = false,
     }) {
       const addr = order.siteAddress?.trim() || '';
       const party = orderPartyInfo(order);
@@ -1052,10 +1059,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
       return (
         <article
+          id={dispatchOrderElementId(order?.id)}
+          data-dispatch-order-id={order?.id || undefined}
           className={
             'relative rounded-xl border bg-white shadow-sm transition dark:bg-slate-800 ' +
             (hasUnreadChat ? 'border-l-4 border-l-amber-500 dark:border-l-amber-500 ' : '') +
-            (isCustomerCancelled ? 'border-red-200 dark:border-red-800' : 'border-gray-100 dark:border-slate-700')
+            (isCustomerCancelled ? 'border-red-200 dark:border-red-800' : 'border-gray-100 dark:border-slate-700') +
+            (highlighted
+              ? ' ring-4 ring-amber-400 ring-offset-2 ring-offset-white dark:ring-amber-300 dark:ring-offset-slate-900'
+              : '')
           }
         >
           {showMapPlaceholder ? (
@@ -1666,6 +1678,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [companyScopeEnabled, setCompanyScopeEnabled] = useState(false);
       const [companyScopeOrders, setCompanyScopeOrders] = useState([]);
       const [collapsedInProgressGroups, setCollapsedInProgressGroups] = useState({});
+      const [highlightedOrderId, setHighlightedOrderId] = useState('');
+      const [pushFocusOrderId, setPushFocusOrderId] = useState('');
       const [historyStatusFilter, setHistoryStatusFilter] = useState('all');
       const [historyCustomerFilter, setHistoryCustomerFilter] = useState('all');
       const [factories, setFactories] = useState([]);
@@ -3034,6 +3048,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           if (!targetOrder) return;
           const inActive = isOrderInProgressView(targetOrder, today);
           setCustomerOrderTab(inActive ? 'active' : 'history');
+          if (inActive) {
+            setInProgressSearchQuery('');
+          } else {
+            setHistoryStatusFilter('all');
+            setHistoryCustomerFilter('all');
+          }
+          setPushFocusOrderId(redirectOrderId);
+          setHighlightedOrderId(redirectOrderId);
           if (payload.view === 'chat') {
             handleOpenChat(redirectOrderId);
           }
@@ -3197,6 +3219,46 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         },
         [currentCustomerId],
       );
+
+      useEffect(() => {
+        const orderId = String(pushFocusOrderId || '').trim();
+        if (!orderId) return undefined;
+
+        const groupEntry = (inProgressOrderEntries || []).find(
+          (entry) =>
+            entry?.type === 'group' &&
+            Array.isArray(entry.orders) &&
+            entry.orders.some((order) => String(order?.id || '') === orderId),
+        );
+        let waitMs = 80;
+        if (groupEntry) {
+          const groupStorageId = resolveInProgressGroupStorageId(groupEntry);
+          if (groupStorageId) {
+            setCollapsedInProgressGroups((prev) => {
+              if (!prev?.[groupStorageId]) return prev;
+              const next = { ...prev };
+              delete next[groupStorageId];
+              writeInProgressGroupCollapsedMap(currentCustomerId, next);
+              return next;
+            });
+            waitMs = 340;
+          }
+        }
+
+        const scrollTimer = window.setTimeout(() => {
+          const el = document.getElementById(dispatchOrderElementId(orderId));
+          el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+        }, waitMs);
+        const clearTimer = window.setTimeout(() => {
+          setHighlightedOrderId((cur) => (cur === orderId ? '' : cur));
+          setPushFocusOrderId((cur) => (cur === orderId ? '' : cur));
+        }, DISPATCH_PUSH_HIGHLIGHT_MS);
+
+        return () => {
+          window.clearTimeout(scrollTimer);
+          window.clearTimeout(clearTimer);
+        };
+      }, [pushFocusOrderId]);
       const activeOrders = useMemo(
         () => (dashboardOrders || []).filter((o) => o && isOrderInProgressView(o, today)),
         [dashboardOrders, today],
@@ -5700,6 +5762,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                     ? formatProjectAccountLabel(customerById[ownerId])
                                     : ''
                                 }
+                                highlighted={String(ord?.id || '') === String(highlightedOrderId || '')}
                               />
                               );
                             };
@@ -5806,7 +5869,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 <ul className="mt-5 grid grid-cols-1 gap-6">
                   {filteredHistoryRows.map((row) => (
                     <li key={row.id}>
-                      <article className="h-full overflow-hidden rounded-2xl border-2 border-slate-200 bg-slate-50 shadow-sm">
+                      <article
+                        id={dispatchOrderElementId(row.id)}
+                        data-dispatch-order-id={row.id || undefined}
+                        className={
+                          'h-full overflow-hidden rounded-2xl border-2 border-slate-200 bg-slate-50 shadow-sm transition ' +
+                          (String(row.id || '') === String(highlightedOrderId || '')
+                            ? 'ring-4 ring-amber-400 ring-offset-2 ring-offset-white dark:ring-amber-300 dark:ring-offset-slate-900'
+                            : '')
+                        }
+                      >
                         <div className="flex items-start justify-between gap-3 p-4">
                           <div className="min-w-0">
                             <span className={'inline-flex rounded-full border-2 px-3 py-1 text-xs font-black shadow-sm ' + row.statusMeta.className}>
