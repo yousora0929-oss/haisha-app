@@ -94,6 +94,21 @@ export function reservationGroupIdOf(order) {
   return String(order?.reservation_group_id || order?.reservation_group?.id || '').trim();
 }
 
+/** 複数日予約に属する注文。工場の個別受注フローには乗せない */
+export function isReservationGroupManagedOrder(order) {
+  return Boolean(reservationGroupIdOf(order));
+}
+
+/** まだ個別カードに出してはいけない未確定の予約グループ注文 */
+export function isOpenReservationGroupInboxOrder(order) {
+  if (!isReservationGroupManagedOrder(order)) return false;
+  if (String(order?.status || '').trim() === 'customer_cancelled') return false;
+  if (String(order?.accepted_at ?? order?.acceptedAt ?? '').trim()) return false;
+  if (String(order?.status || 'pending').trim() === 'accepted') return false;
+  if (reservationGroupStatusOf(order) === 'matched') return false;
+  return true;
+}
+
 export function reservationGroupStatusOf(order) {
   return String(order?.reservation_group?.status || '').trim();
 }
@@ -294,6 +309,7 @@ export function splitFactoryInboxForReservationGroups(visibleOrders, allOrders, 
   const singles = visibleList.filter((order) => {
     const gid = reservationGroupIdOf(order);
     if (gid && declined.has(gid) && isPendingReservationGroupAvailability(order)) return false;
+    if (isOpenReservationGroupInboxOrder(order)) return false;
     return !order?.id || !groupedVisibleIds.has(String(order.id));
   });
   return { groups, singles };

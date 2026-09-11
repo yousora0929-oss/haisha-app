@@ -39,7 +39,7 @@ import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.
 import { resolveOrderParties } from './utils/orderPartyInfo.js';
 import {
   attachReservationGroupFromRow,
-  isPendingReservationGroupAvailability,
+  isReservationGroupManagedOrder,
   mapReservationOrderRow,
   parseRespondReservationGroupAvailabilityResult,
   parseSubmitReservationGroupResult,
@@ -67,7 +67,7 @@ import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils
 import { generateInitialPassword } from './utils/initialPassword.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, trading_agent_customer_id, site_history_contractor_id, is_admin_modified, is_factory_modified, is_customer_modified, has_pending_change_request, pending_change_request_patch, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at';
+  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, trading_agent_customer_id, site_history_contractor_id, is_admin_modified, is_factory_modified, is_customer_modified, has_pending_change_request, pending_change_request_patch, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at, factory_map_received_at, factory_map_received_by';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -684,6 +684,38 @@ export function normalizeOrderRow(row) {
           ? String(od.phoneOrderRegisteredAt)
           : od.phone_order_registered_at != null
             ? String(od.phone_order_registered_at)
+            : '',
+    factory_map_received_at:
+      row.factory_map_received_at != null
+        ? String(row.factory_map_received_at)
+        : od.factory_map_received_at != null
+          ? String(od.factory_map_received_at)
+          : od.factoryMapReceivedAt != null
+            ? String(od.factoryMapReceivedAt)
+            : '',
+    factoryMapReceivedAt:
+      row.factory_map_received_at != null
+        ? String(row.factory_map_received_at)
+        : od.factoryMapReceivedAt != null
+          ? String(od.factoryMapReceivedAt)
+          : od.factory_map_received_at != null
+            ? String(od.factory_map_received_at)
+            : '',
+    factory_map_received_by:
+      row.factory_map_received_by != null
+        ? String(row.factory_map_received_by).trim()
+        : od.factory_map_received_by != null
+          ? String(od.factory_map_received_by).trim()
+          : od.factoryMapReceivedBy != null
+            ? String(od.factoryMapReceivedBy).trim()
+            : '',
+    factoryMapReceivedBy:
+      row.factory_map_received_by != null
+        ? String(row.factory_map_received_by).trim()
+        : od.factoryMapReceivedBy != null
+          ? String(od.factoryMapReceivedBy).trim()
+          : od.factory_map_received_by != null
+            ? String(od.factory_map_received_by).trim()
             : '',
   };
 }
@@ -3373,6 +3405,24 @@ export async function startFactoryConsult(order, factorySiteId, factorySiteName)
   return normalizeOrderRow(updated);
 }
 
+/** 工場: アプリ外で受け取った現場地図を「受領済み」として記録する */
+export async function markOrderMapReceivedByFactory(orderId, factoryId, factoryName) {
+  const id = String(orderId || '').trim();
+  if (!id) throw new Error('orderId が必要です');
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('orders')
+    .update({
+      factory_map_received_at: now,
+      factory_map_received_by: String(factoryName || factoryId || '').trim() || null,
+    })
+    .eq('id', id)
+    .select(ORDER_SELECT)
+    .single();
+  if (error) throw error;
+  return normalizeOrderRow(data);
+}
+
 /** 工場「相談」を強制解除（マスター/管理者用）。エスカレーション再開。 */
 export async function clearFactoryConsult(orderId) {
   const id = String(orderId || '').trim();
@@ -3665,7 +3715,7 @@ export async function persistScheduleAutoRejections({
     ) {
       return o;
     }
-    if (isPendingReservationGroupAvailability(o)) return o;
+    if (isReservationGroupManagedOrder(o)) return o;
     if (o.factoryResponseStatus || o.scheduleAutoChecked) return o;
 
     const date = o.scheduleMatchDate || o.preferredDate;

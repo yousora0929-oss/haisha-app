@@ -4,6 +4,7 @@ import { isReservationGroupMatchedOrder } from './reservationGroup.js';
 /** 現場地図が送付済みか（地図待ちバッジ解除の判定用） */
 export function hasSubmittedSiteMap(order) {
   if (!order || typeof order !== 'object') return false;
+  if (order.factory_map_received_at || order.factoryMapReceivedAt) return true;
   const url = String(
     order.override_map_image_url ?? order.overrideMapImageUrl ?? order.map_image_url ?? order.mapImageUrl ?? '',
   ).trim();

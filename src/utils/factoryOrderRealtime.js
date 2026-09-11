@@ -1,6 +1,7 @@
 import { associationAssignedFactoryIds } from './associationFactoryAssignment.js';
 import { filterOrdersForFactory, isOrderVisibleToFactory } from './escalationUtils.js';
 import { isChatOnlyOrdersUpdate, isOrderMessagesTablePayload } from './realtimePayloadRouting.js';
+import { isReservationGroupManagedOrder } from './reservationGroup.js';
 
 function orderStatus(order) {
   return String(order?.status || 'pending').trim();
@@ -15,6 +16,7 @@ function isRejectedByFactory(order, factoryId) {
 
 function isPendingForFactoryNotify(order, factoryId) {
   if (!order?.id) return false;
+  if (isReservationGroupManagedOrder(order)) return false;
   if (orderStatus(order) !== 'pending') return false;
   if (isRejectedByFactory(order, factoryId)) return false;
   return true;

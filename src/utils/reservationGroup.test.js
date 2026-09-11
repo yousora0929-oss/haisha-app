@@ -3,7 +3,9 @@ import {
   addDaysIso,
   attachReservationGroupFromRow,
   defaultReservationDayDates,
+  isOpenReservationGroupInboxOrder,
   isPendingReservationGroupAvailability,
+  isReservationGroupManagedOrder,
   isReservationGroupMatchedOrder,
   mergeReservationGroupFields,
   nextReservationDate,
@@ -166,6 +168,57 @@ describe('reservationGroup helpers', () => {
     const declined = splitFactoryInboxForReservationGroups(orders, orders, ['g1']);
     expect(declined.groups).toHaveLength(0);
     expect(declined.singles.map((o) => o.id)).toEqual(['c']);
+  });
+
+  it('keeps reservation_group_id orders out of the individual accept inbox until confirmed', () => {
+    expect(isReservationGroupManagedOrder({ id: 'solo', status: 'pending' })).toBe(false);
+    expect(
+      isReservationGroupManagedOrder({
+        id: 'g-day',
+        reservation_group_id: 'g1',
+        status: 'pending',
+      }),
+    ).toBe(true);
+    expect(
+      isOpenReservationGroupInboxOrder({
+        id: 'a',
+        reservation_group_id: 'g1',
+        reservation_group: { id: 'g1', status: 'pending', same_factory_required: true },
+        status: 'pending',
+      }),
+    ).toBe(true);
+
+    const pendingDays = [
+      {
+        id: 'a',
+        preferredDate: '2026-09-11',
+        reservation_group_id: 'g1',
+        reservation_group: { id: 'g1', status: 'pending', same_factory_required: true },
+        status: 'pending',
+      },
+      {
+        id: 'b',
+        preferredDate: '2026-09-12',
+        reservation_group_id: 'g1',
+        reservation_group: { id: 'g1', status: 'pending', same_factory_required: true },
+        status: 'pending',
+      },
+    ];
+    const pendingInbox = splitFactoryInboxForReservationGroups(pendingDays, pendingDays, []);
+    expect(pendingInbox.singles).toEqual([]);
+    expect(pendingInbox.groups).toHaveLength(1);
+
+    const confirmedAt = '2026-09-11T01:02:03.456Z';
+    const confirmedDays = pendingDays.map((order) => ({
+      ...order,
+      accepted_at: confirmedAt,
+      factory_site_id: 'f1',
+      reservation_group: { id: 'g1', status: 'pending', same_factory_required: true },
+    }));
+    expect(isOpenReservationGroupInboxOrder(confirmedDays[0])).toBe(false);
+    const confirmedInbox = splitFactoryInboxForReservationGroups(confirmedDays, confirmedDays, []);
+    expect(confirmedInbox.groups).toHaveLength(0);
+    expect(confirmedInbox.singles.map((o) => o.id)).toEqual(['a', 'b']);
   });
 
   it('parses availability RPC won / already_filled', () => {
