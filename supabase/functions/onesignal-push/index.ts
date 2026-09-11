@@ -1,4 +1,4 @@
-/** onesignal-push v38 — new_order_batch: body.orders + 割当物件ルーティング */
+/** onesignal-push v63 — new_order_batch: body.orders + 割当物件ルーティング */
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
@@ -11,7 +11,7 @@ import {
   rankFactoryIdsForOrder,
 } from '../_shared/escalationVisibility.ts';
 
-const FUNCTION_VERSION = 38;
+const FUNCTION_VERSION = 63;
 const PUSH_NOTIFY_COOLDOWN_MS = 60_000;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 /** プレフィックス導入前の端末向けに無印 ID へも送る期間（ISO8601） */
