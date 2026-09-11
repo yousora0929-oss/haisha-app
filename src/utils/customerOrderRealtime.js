@@ -106,13 +106,14 @@ function buildPrevMap(prevOrders) {
 
 /**
  * 再フェッチ前後からカスタマー向け通知イベントを検出
- * @returns {{ factoryAccepted: boolean, factoryRejected: boolean, factoryReassigned: boolean, acceptedSiteLabels: string[], rejectedSiteLabels: string[] }}
+ * @returns {{ factoryAccepted: boolean, factoryRejected: boolean, factoryReassigned: boolean, acceptedOrderIds: string[], acceptedSiteLabels: string[], rejectedSiteLabels: string[] }}
  */
 export function detectCustomerOrderNotifications(prevOrders, nextOrders, isRelevantOrder) {
   const result = {
     factoryAccepted: false,
     factoryRejected: false,
     factoryReassigned: false,
+    acceptedOrderIds: [],
     acceptedSiteLabels: [],
     rejectedSiteLabels: [],
   };
@@ -125,6 +126,8 @@ export function detectCustomerOrderNotifications(prevOrders, nextOrders, isRelev
     if (!prev) continue;
     if (orderFactoryWasAccepted(prev, next)) {
       result.factoryAccepted = true;
+      const orderId = String(next.id || '').trim();
+      if (orderId) result.acceptedOrderIds.push(orderId);
       const site = orderSiteLabel(next);
       if (site) result.acceptedSiteLabels.push(site);
     } else if (orderFactoryWasRejected(prev, next)) {
@@ -148,6 +151,7 @@ export function analyzeCustomerOrderRealtimePayload(payload, isRelevantOrder, no
     factoryAccepted: false,
     factoryRejected: false,
     factoryReassigned: false,
+    acceptedOrderIds: [],
     acceptedSiteLabels: [],
     rejectedSiteLabels: [],
     refetch: true,
@@ -169,6 +173,8 @@ export function analyzeCustomerOrderRealtimePayload(payload, isRelevantOrder, no
 
   if (orderFactoryWasAccepted(oldRow, newRow)) {
     result.factoryAccepted = true;
+    const orderId = String(newRow.id || '').trim();
+    if (orderId) result.acceptedOrderIds.push(orderId);
     const site = orderSiteLabel(newRow);
     if (site) result.acceptedSiteLabels.push(site);
   } else if (orderFactoryWasRejected(oldRow, newRow)) {

@@ -531,6 +531,26 @@ html.dark .leaflet-control-attribution {
   color: var(--cl-text-muted) !important;
 }
 
+@keyframes cl-factory-name-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.28;
+  }
+}
+
+.cl-factory-name-blink {
+  animation: cl-factory-name-blink 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cl-factory-name-blink {
+    animation: none;
+  }
+}
+
 /* 地図エディタ: ズームボタンを右下（モバイルは下部アクションバー上） */
 .map-editor-app .leaflet-bottom.leaflet-right {
   bottom: calc(4.25rem + env(safe-area-inset-bottom, 0px));

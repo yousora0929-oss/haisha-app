@@ -1,6 +1,13 @@
 /** 工場・管理者からのチャット着信をカスタマー向けに検出 */
 
+/** 工場受注の自動投稿。チャット新着・通知音の対象にしない */
+export function isFactoryAcceptedSystemMessage(message) {
+  if (String(message?.from || '').trim() !== 'system') return false;
+  return String(message?.body ?? message?.text ?? '').trim().startsWith('【受注】');
+}
+
 export function isIncomingChatForCustomer(message) {
+  if (isFactoryAcceptedSystemMessage(message)) return false;
   const from = String(message?.from || '').trim();
   return from === 'factory' || from === 'admin' || from === 'system';
 }

@@ -138,6 +138,7 @@ import {
 import {
   detectCustomerChatNotifications,
   analyzeCustomerChatRealtimePayload,
+  isFactoryAcceptedSystemMessage,
 } from './utils/customerChatRealtime.js';
 import {
   customerChatDisplayName,
@@ -205,6 +206,7 @@ const MIX_DESIGN_HISTORY_TAB = ['mixDesignHistory', '配合依頼', '📑'];
 /** 進行中タブの物件グループ折りたたみ（true = 折りたたみ）。物件ID単位で保持。 */
 const INPROGRESS_GROUP_COLLAPSED_STORAGE_PREFIX = 'haisha_dispatch_inprogress_group_collapsed_v1';
 const DISPATCH_PUSH_HIGHLIGHT_MS = 3200;
+const DISPATCH_FACTORY_NAME_BLINK_MS = 25000;
 
 function dispatchOrderElementId(orderId) {
   const id = String(orderId || '').trim();
@@ -329,6 +331,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
     function isUnreadForDispatch(messages, readKey) {
       const latest = latestChatMessage(messages);
       if (!latest) return false;
+      if (isFactoryAcceptedSystemMessage(latest)) return false;
       const from = String(latest.from || '');
       if (from !== 'factory' && from !== 'admin' && from !== 'system') return false;
       return chatMessageReadKey(latest) !== readKey;
@@ -466,7 +469,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       return iso;
     }
 
-    function OrderStatusBadges({ order, escalationCtx = null, factoryNameById = {} }) {
+    function OrderStatusBadges({ order, escalationCtx = null, factoryNameById = {}, blinkFactoryName = false }) {
       const st = resolveOrderDisplayStatus(order);
       const displayName = getDefaultFactoryDisplayName(order, factoryNameById);
       const needsChoice = needsPreferredCustomerChoice(order);
@@ -489,7 +492,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             <span className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-black text-white shadow-sm">
               工場受注
             </span>
-            <span className="rounded-full bg-slate-700 px-3 py-1 text-xs font-bold text-white">{displayName}</span>
+            <span
+              className={
+                'rounded-full bg-slate-700 px-3 py-1 text-xs font-bold text-white' +
+                (blinkFactoryName ? ' cl-factory-name-blink' : '')
+              }
+            >
+              {displayName}
+            </span>
           </div>
         );
       }
@@ -996,6 +1006,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       accountLabel = '',
       customerById = {},
       highlighted = false,
+      blinkFactoryName = false,
     }) {
       const addr = order.siteAddress?.trim() || '';
       const party = orderPartyInfo(order);
@@ -1097,6 +1108,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     order={order}
                     escalationCtx={escalationCtx}
                     factoryNameById={factoryNameById}
+                    blinkFactoryName={blinkFactoryName}
                   />
                   <ReservationGroupStatusBadge order={order} />
                   <LocationPendingBadge order={order} />
@@ -1680,6 +1692,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [collapsedInProgressGroups, setCollapsedInProgressGroups] = useState({});
       const [highlightedOrderId, setHighlightedOrderId] = useState('');
       const [pushFocusOrderId, setPushFocusOrderId] = useState('');
+      const [blinkFactoryOrderIds, setBlinkFactoryOrderIds] = useState(() => new Set());
       const [historyStatusFilter, setHistoryStatusFilter] = useState('all');
       const [historyCustomerFilter, setHistoryCustomerFilter] = useState('all');
       const [factories, setFactories] = useState([]);
@@ -2492,6 +2505,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
       const prevOrdersRef = useRef(null);
       const prevChatThreadsRef = useRef(null);
+      const blinkFactoryTimersRef = useRef(new Map());
       const readChatKeysRef = useRef(readChatKeys);
       readChatKeysRef.current = readChatKeys;
       const activeChatOrderIdRef = useRef(activeChatOrderId);
@@ -2515,6 +2529,44 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           dashboardNoticeTimerRef.current = null;
         }, 6000);
       }, []);
+
+      const registerBlinkFactoryOrderIds = useCallback((ids) => {
+        const list = [
+          ...new Set(
+            (Array.isArray(ids) ? ids : []).map((id) => String(id || '').trim()).filter(Boolean),
+          ),
+        ];
+        if (!list.length) return;
+        setBlinkFactoryOrderIds((prev) => {
+          const next = new Set(prev);
+          for (const id of list) next.add(id);
+          return next;
+        });
+        for (const id of list) {
+          const prevTimer = blinkFactoryTimersRef.current.get(id);
+          if (prevTimer) window.clearTimeout(prevTimer);
+          const timer = window.setTimeout(() => {
+            blinkFactoryTimersRef.current.delete(id);
+            setBlinkFactoryOrderIds((prev) => {
+              if (!prev.has(id)) return prev;
+              const next = new Set(prev);
+              next.delete(id);
+              return next;
+            });
+          }, DISPATCH_FACTORY_NAME_BLINK_MS);
+          blinkFactoryTimersRef.current.set(id, timer);
+        }
+      }, []);
+
+      useEffect(
+        () => () => {
+          for (const timer of blinkFactoryTimersRef.current.values()) {
+            window.clearTimeout(timer);
+          }
+          blinkFactoryTimersRef.current.clear();
+        },
+        [],
+      );
 
       const refreshDashboard = useCallback(
         async (options, realtimePayload) => {
@@ -2581,6 +2633,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 const detected = detectCustomerOrderNotifications(prevOrders, displayOrders, isRelevantDashboardOrder);
                 if (!Array.isArray(detected.acceptedSiteLabels)) detected.acceptedSiteLabels = [];
                 if (!Array.isArray(detected.rejectedSiteLabels)) detected.rejectedSiteLabels = [];
+                if (!Array.isArray(detected.acceptedOrderIds)) detected.acceptedOrderIds = [];
                 if (realtimePayload) {
                   const fromPayload = analyzeCustomerOrderRealtimePayload(
                     realtimePayload,
@@ -2596,6 +2649,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   if (Array.isArray(fromPayload.rejectedSiteLabels)) {
                     detected.rejectedSiteLabels.push(...fromPayload.rejectedSiteLabels.filter(Boolean));
                   }
+                  if (Array.isArray(fromPayload.acceptedOrderIds)) {
+                    detected.acceptedOrderIds.push(...fromPayload.acceptedOrderIds.filter(Boolean));
+                  }
                 }
                 if (detected.factoryAccepted) {
                   const sites = Array.isArray(detected.acceptedSiteLabels)
@@ -2607,6 +2663,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       : '注文が工場に受注されました';
                   showDashboardNotice(siteMsg, { playSound: false });
                   playOrderConfirmedSound();
+                  registerBlinkFactoryOrderIds(detected.acceptedOrderIds);
                 } else if (detected.factoryRejected) {
                   const sites = Array.isArray(detected.rejectedSiteLabels)
                     ? detected.rejectedSiteLabels.filter(Boolean)
@@ -2683,7 +2740,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             window.alert(formatSupabaseError(loadErr, '注文一覧の更新に失敗しました'));
           }
         },
-        [factories, preferredFactoryId, currentCustomerId, isGuestSiteOrder, isRelevantDashboardOrder, showDashboardNotice],
+        [factories, preferredFactoryId, currentCustomerId, isGuestSiteOrder, isRelevantDashboardOrder, showDashboardNotice, registerBlinkFactoryOrderIds],
       );
 
       useEffect(() => {
@@ -5750,6 +5807,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                     : ''
                                 }
                                 highlighted={String(ord?.id || '') === String(highlightedOrderId || '')}
+                                blinkFactoryName={blinkFactoryOrderIds.has(String(ord.id))}
                               />
                               );
                             };
