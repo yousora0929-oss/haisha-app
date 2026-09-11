@@ -45,6 +45,7 @@ export const MIX_DESIGN_GRID_COLS = [
   'waterCementRatio',
   'unitWaterContent',
   'correctionValue',
+  'memo',
 ];
 
 export function createEmptyMixDesignItem() {
@@ -67,6 +68,7 @@ export function createEmptyMixDesignItem() {
     constructionLocation: '',
     waterCementRatio: '',
     unitWaterContent: '',
+    memo: '',
   };
 }
 
@@ -800,6 +802,7 @@ export function buildMixDesignItemInsertRows(draft) {
       construction_location: String(item.constructionLocation || '').trim() || null,
       water_cement_ratio: clampNonNegativeNumber(item.waterCementRatio),
       unit_water_content: clampNonNegativeNumber(item.unitWaterContent),
+      memo: String(item.memo || '').trim() || null,
     };
   });
 }
@@ -896,6 +899,7 @@ export function mixDesignItemFromDbRow(row, index = 0) {
       row?.unit_water_content != null && row.unit_water_content !== ''
         ? String(row.unit_water_content)
         : '',
+    memo: String(row?.memo || ''),
   };
 }
 
@@ -1108,6 +1112,7 @@ export function buildMixDesignRequestSnapshot(draft, requestedBy = '') {
       constructionLocation: String(item?.constructionLocation || '').trim(),
       waterCementRatio: String(item?.waterCementRatio ?? '').trim(),
       unitWaterContent: String(item?.unitWaterContent ?? '').trim(),
+      memo: String(item?.memo || '').trim(),
     })),
   };
 }
@@ -1167,14 +1172,28 @@ export function buildMixDesignChangeEntries(beforeSnapshot, afterSnapshot) {
       new: afterHeader[key] ?? null,
     });
   }
-  const beforeItems = JSON.stringify(beforeSnapshot?.items || []);
-  const afterItems = JSON.stringify(afterSnapshot?.items || []);
-  if (beforeItems !== afterItems) {
+  const beforeItems = Array.isArray(beforeSnapshot?.items) ? beforeSnapshot.items : [];
+  const afterItems = Array.isArray(afterSnapshot?.items) ? afterSnapshot.items : [];
+  const itemCount = Math.max(beforeItems.length, afterItems.length);
+  for (let i = 0; i < itemCount; i += 1) {
+    const oldMemo = stringifyChangeValue(beforeItems[i]?.memo);
+    const newMemo = stringifyChangeValue(afterItems[i]?.memo);
+    if (oldMemo === newMemo) continue;
+    changes.push({
+      field: `items.${i}.memo`,
+      label: `配合${i + 1}の備考`,
+      old: beforeItems[i]?.memo ?? '',
+      new: afterItems[i]?.memo ?? '',
+    });
+  }
+  const beforeItemsJson = JSON.stringify(beforeItems);
+  const afterItemsJson = JSON.stringify(afterItems);
+  if (beforeItemsJson !== afterItemsJson) {
     changes.push({
       field: 'items',
       label: MIX_DESIGN_CHANGE_LABELS.items,
-      old: beforeSnapshot?.items || [],
-      new: afterSnapshot?.items || [],
+      old: beforeItems,
+      new: afterItems,
     });
   }
   return changes;
@@ -1189,6 +1208,9 @@ export function formatMixDesignChangeLine(entry) {
     const oldCount = Array.isArray(entry.old) ? entry.old.length : 0;
     const newCount = Array.isArray(entry.new) ? entry.new.length : 0;
     return `${label}: ${oldCount}件 → ${newCount}件`;
+  }
+  if (String(entry?.field || '').endsWith('.memo')) {
+    return `${label}: ${stringifyChangeValue(entry?.old) || '（空）'} → ${stringifyChangeValue(entry?.new) || '（空）'}`;
   }
   if (entry?.field === 'requestedToFactoryIds') {
     const oldIds = Array.isArray(entry.old) ? entry.old.join('、') : stringifyChangeValue(entry?.old);

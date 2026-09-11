@@ -274,7 +274,17 @@ export function MixDesignRequestPrint({
                   {mixCodeForItem(item) || '—'}
                 </td>
                 <td className="mix-design-print-item-memo" colSpan={2}>
-                  —
+                  {editable ? (
+                    <PrintField
+                      editable
+                      value={item.memo || ''}
+                      display={item.memo || '—'}
+                      onChange={(v) => onItemChange?.(index, { memo: v })}
+                      placeholder="—"
+                    />
+                  ) : (
+                    String(item.memo || '').trim() || '—'
+                  )}
                 </td>
               </tr>
               <tr className="mix-design-print-item-sub">

@@ -84,6 +84,7 @@ describe('buildMixDesignItemInsertRows', () => {
           constructionLocation: '基礎',
           waterCementRatio: 50,
           unitWaterContent: 175,
+          memo: '基礎注意',
         },
       ],
     });
@@ -97,6 +98,7 @@ describe('buildMixDesignItemInsertRows', () => {
       cement_type: 'N',
       ae_admixture: true,
     });
+    expect(rows[0].memo).toBe('基礎注意');
   });
 
   it('clamps negative numeric fields to 0', () => {
@@ -281,6 +283,7 @@ describe('mixDesignPrintPropsFromDb', () => {
           construction_location: '1階スラブ',
           water_cement_ratio: 55,
           unit_water_content: 175,
+          memo: 'スラブ注意',
         },
       ],
       {
@@ -303,6 +306,7 @@ describe('mixDesignPrintPropsFromDb', () => {
     expect(props.items[0].quantityM3).toBe('12.5');
     expect(props.items[0].constructionLocation).toBe('1階スラブ');
     expect(props.items[0].pourDate).toBe('2026-09-15');
+    expect(props.items[0].memo).toBe('スラブ注意');
     expect(props.request.memo).toBe('メモ');
     expect(mixCodeForItem(props.items[0])).toContain('18');
   });
@@ -534,6 +538,7 @@ describe('duplicateMixDesignItem', () => {
       pourDay: '1',
       waterCementRatio: '50',
       unitWaterContent: '175',
+      memo: '基礎注意',
       aeAdmixture: true,
       correctionIsAuto: true,
       correctionValue: '6',
@@ -542,6 +547,7 @@ describe('duplicateMixDesignItem', () => {
     expect(copy.localId).not.toBe(source.localId);
     expect(copy.baseStrength).toBe('30');
     expect(copy.constructionLocation).toBe('基礎');
+    expect(copy.memo).toBe('基礎注意');
     expect(copy.aeAdmixture).toBe(true);
     expect(copy.correctionValue).toBe('6');
   });
@@ -589,6 +595,24 @@ describe('buildMixDesignChangeEntries', () => {
     const changes = buildMixDesignChangeEntries(before, after);
     expect(changes.some((c) => c.field === 'contractorName')).toBe(true);
     expect(changes.some((c) => c.field === 'items')).toBe(true);
+  });
+
+  it('records per-item memo diffs separately from request-level memo', async () => {
+    const { buildMixDesignChangeEntries, buildMixDesignRequestSnapshot, formatMixDesignChangeLine } =
+      await import('./mixDesignRequest.js');
+    const before = buildMixDesignRequestSnapshot({
+      memo: '全体メモ',
+      items: [{ baseStrength: '24', slump: '18', aggregateSize: '20', cementType: 'N', memo: '' }],
+    });
+    const after = buildMixDesignRequestSnapshot({
+      memo: '全体メモ',
+      items: [{ baseStrength: '24', slump: '18', aggregateSize: '20', cementType: 'N', memo: 'スラブ注意' }],
+    });
+    const changes = buildMixDesignChangeEntries(before, after);
+    expect(changes.some((c) => c.field === 'memo')).toBe(false);
+    const itemMemo = changes.find((c) => c.field === 'items.0.memo');
+    expect(itemMemo).toMatchObject({ label: '配合1の備考', new: 'スラブ注意' });
+    expect(formatMixDesignChangeLine(itemMemo)).toBe('配合1の備考: （空） → スラブ注意');
   });
 });
 

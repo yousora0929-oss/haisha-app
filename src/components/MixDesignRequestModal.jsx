@@ -263,6 +263,17 @@ function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, onDuplic
             className={FIELD + (item.correctionIsAuto ? ' bg-slate-100 text-slate-500' : '')}
           />
         </label>
+        <label className="col-span-2 flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-4">
+          備考
+          <input
+            data-mix-nav={nav(11)}
+            type="text"
+            value={item.memo || ''}
+            onChange={(e) => onChange({ memo: e.target.value })}
+            className={FIELD}
+            placeholder="この配合パターンへの連絡事項（依頼全体の備考とは別）"
+          />
+        </label>
         <label className="flex items-center gap-2 text-xs font-bold text-slate-700 sm:col-span-2">
           <input
             type="checkbox"
@@ -1086,7 +1097,7 @@ export function MixDesignRequestModal({
                 onChange={(e) => setDraft((prev) => ({ ...prev, memo: e.target.value }))}
                 rows={2}
                 className={FIELD}
-                placeholder="依頼全体への連絡事項（配合パターンごとの施工箇所とは別）"
+                placeholder="依頼全体への連絡事項（配合パターンごとの備考・施工箇所とは別）"
               />
             </label>
           </div>
