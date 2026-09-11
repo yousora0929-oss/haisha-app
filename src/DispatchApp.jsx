@@ -4316,7 +4316,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             const message = `${count}件を同一工場必須の予約グループとして受け付けました。進行中タブで工場の回答状況を確認できます。`;
             setSubmitNotice(message);
             window.alert(message);
-            window.setTimeout(() => setSubmitNotice(null), 6000);
+            setSubmitNotice(null);
             return;
           }
 
@@ -4348,7 +4348,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             : '';
           setSubmitNotice(message + mapHint);
           window.alert(message + mapHint);
-          window.setTimeout(() => setSubmitNotice(null), 6000);
+          setSubmitNotice(null);
         } catch (err) {
           console.error('カート一括登録に失敗しました', err);
           const message = formatSupabaseError(err, '一括登録に失敗しました');
@@ -5715,12 +5715,20 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 />
 
                 {submitNotice ? (
-                  <p
-                    className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900"
+                  <div
+                    className="flex items-start justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900"
                     role="status"
                   >
-                    {submitNotice}
-                  </p>
+                    <p className="whitespace-pre-line">{submitNotice}</p>
+                    <button
+                      type="button"
+                      onClick={() => setSubmitNotice(null)}
+                      aria-label="通知を閉じる"
+                      className="shrink-0 rounded-lg px-2 py-1 text-emerald-700 hover:bg-emerald-100"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 ) : null}
 
                 {adminNotice ? (
