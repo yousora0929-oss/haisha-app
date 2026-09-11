@@ -328,6 +328,44 @@ export function reservationGroupAvailabilityResultMessage(result, available) {
   return '回答を送信しました';
 }
 
+/** 「可」確定後に工場の可否確認カードへ出す案内（受注ボタンを促さない） */
+export const RESERVATION_GROUP_CONFIRMED_GUIDANCE =
+  'この内容で確定しました。通常の注文一覧に新しいカードとして届きますので、内容をご確認ください';
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const text = String(value ?? '').trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+/** 可否確認カード用。order_data 由来の正規化済みフィールドを先頭注文から拾う */
+export function reservationGroupAvailabilitySummary(orders) {
+  const order = (Array.isArray(orders) ? orders : []).find(Boolean) || {};
+  const vehicleType = String(order.vehicleType || '').trim();
+  return {
+    contractorName: firstNonEmpty(order.contractorName),
+    traderName: firstNonEmpty(order.trading_company_name, order.projectTradingCompanyName),
+    orderedBy: firstNonEmpty(order.orderedBy),
+    vehicleLabel: firstNonEmpty(
+      order.vehicleLabel,
+      vehicleType === 'small' ? '小型車' : vehicleType === 'large' ? '大型車' : '',
+    ),
+    siteName: firstNonEmpty(order.siteName, order.projectName),
+    siteAddress: firstNonEmpty(order.siteAddress),
+  };
+}
+
+export function mergeConfirmedAvailabilityGroups(pendingGroups, confirmedGroups) {
+  const pending = Array.isArray(pendingGroups) ? pendingGroups.filter((g) => g?.groupId) : [];
+  const seen = new Set(pending.map((g) => String(g.groupId)));
+  const extras = (Array.isArray(confirmedGroups) ? confirmedGroups : []).filter(
+    (g) => g?.groupId && !seen.has(String(g.groupId)),
+  );
+  return extras.length ? [...pending, ...extras] : pending;
+}
+
 function readFactoryResponseStore() {
   try {
     const raw = window.localStorage.getItem(FACTORY_RESPONSE_STORAGE_KEY);

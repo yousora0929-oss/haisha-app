@@ -26,6 +26,23 @@ function defaultGetSite(order) {
   return String(orderPartyInfo(order, { preferSiteContact: true })?.site || '').trim();
 }
 
+function reservationGroupIdOfOrder(order) {
+  return String(order?.reservation_group_id || order?.reservation_group?.id || '').trim();
+}
+
+/** 進行中グループに載せる複数日予約 ID（重複なし・出現順） */
+export function reservationGroupIdsFromOrders(orders) {
+  const ids = [];
+  const seen = new Set();
+  for (const order of Array.isArray(orders) ? orders : []) {
+    const gid = reservationGroupIdOfOrder(order);
+    if (!gid || seen.has(gid)) continue;
+    seen.add(gid);
+    ids.push(gid);
+  }
+  return ids;
+}
+
 /**
  * 割当物件（main_factory_id が設定された物件）に紐づく注文を現場名でグルーピングする。
  * スポット注文・現場名なし等はグループ化せず個別エントリのまま。
@@ -33,7 +50,7 @@ function defaultGetSite(order) {
  *
  * @param {object[]} orders
  * @param {Record<string, object>} projectById
- * @param {{ sortValue?: (order: object) => number, getSite?: (order: object) => string }} [options]
+ * @param {{ sortValue?: (order: object) => number, getSite?: (order: object) => string, includeReservationGroups?: boolean }} [options]
  * @returns {Array<
  *   | { type: 'group', key: string, site: string, orders: object[], sortMinutes: number }
  *   | { type: 'single', key: string, order: object, sortMinutes: number }
@@ -42,9 +59,19 @@ function defaultGetSite(order) {
 export function groupOrdersBySiteForAssignedProjects(orders, projectById = {}, options = {}) {
   const sortValue = typeof options.sortValue === 'function' ? options.sortValue : resolveOrderTimeMinutes;
   const getSite = typeof options.getSite === 'function' ? options.getSite : defaultGetSite;
+  const includeReservationGroups = options.includeReservationGroups === true;
 
-  const groupsBySite = new Map();
+  const groupsByKey = new Map();
   const entries = [];
+  const pushGroup = (key, site, order) => {
+    let entry = groupsByKey.get(key);
+    if (!entry) {
+      entry = { type: 'group', key, site, orders: [] };
+      groupsByKey.set(key, entry);
+      entries.push(entry);
+    }
+    entry.orders.push(order);
+  };
   for (const order of Array.isArray(orders) ? orders : []) {
     if (!order) continue;
     const projectId = String(order?.project_id ?? order?.projectId ?? '').trim();
@@ -54,14 +81,13 @@ export function groupOrdersBySiteForAssignedProjects(orders, projectById = {}, o
       project?.main_factory_id ?? order?.main_factory_id ?? order?.mainFactoryId ?? '',
     ).trim();
     const site = getSite(order);
-    if (!isSpot && projectId && assignedFactoryId && site) {
-      let entry = groupsBySite.get(site);
-      if (!entry) {
-        entry = { type: 'group', key: `site:${site}`, site, orders: [] };
-        groupsBySite.set(site, entry);
-        entries.push(entry);
-      }
-      entry.orders.push(order);
+    const reservationGroupId = reservationGroupIdOfOrder(order);
+    const canAssignedGroup = !isSpot && Boolean(projectId) && Boolean(assignedFactoryId) && Boolean(site);
+    const canReservationSiteGroup = includeReservationGroups && Boolean(reservationGroupId) && Boolean(site);
+    if (canAssignedGroup || canReservationSiteGroup) {
+      pushGroup(`site:${site}`, site, order);
+    } else if (includeReservationGroups && reservationGroupId) {
+      pushGroup(`reservation:${reservationGroupId}`, site || '複数日予約', order);
     } else {
       entries.push({ type: 'single', key: `order:${order?.id}`, order });
     }

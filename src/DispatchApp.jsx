@@ -109,6 +109,7 @@ import {
   resolveInProgressGroupStorageId,
   resolveNearestUpcomingOrder,
   formatOrderDateTimeSummary,
+  reservationGroupIdsFromOrders,
 } from './utils/orderGrouping.js';
 import {
   formatProjectSiteContactsLabel,
@@ -129,7 +130,6 @@ import {
 import { isValidSiteOrderUrlToken } from './utils/urlValidation.js';
 import {
   rememberWatchedReservationGroup,
-  reservationGroupIdOf,
 } from './utils/reservationGroup.js';
 import {
   detectCustomerOrderNotifications,
@@ -3174,17 +3174,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         () => (inProgressSourceOrders || []).filter((o) => o && isOrderInProgressView(o, today)),
         [inProgressSourceOrders, today],
       );
-      const inProgressReservationGroupIds = useMemo(() => {
-        const ids = [];
-        const seen = new Set();
-        for (const order of scopedInProgressOrders || []) {
-          const gid = reservationGroupIdOf(order);
-          if (!gid || seen.has(gid)) continue;
-          seen.add(gid);
-          ids.push(gid);
-        }
-        return ids;
-      }, [scopedInProgressOrders]);
       const filteredInProgressOrders = useMemo(
         () =>
           (scopedInProgressOrders || [])
@@ -3197,6 +3186,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         () =>
           groupOrdersBySiteForAssignedProjects(filteredInProgressOrders, projectById, {
             sortValue: resolveOrderDateTimeSortValue,
+            includeReservationGroups: true,
           }),
         [filteredInProgressOrders, projectById],
       );
@@ -5705,17 +5695,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     </p>
                   </div>
                 </div>
-                  {inProgressReservationGroupIds.length > 0 ? (
-                    <div className="mt-4 grid gap-3">
-                      {inProgressReservationGroupIds.map((groupId) => (
-                        <ReservationGroupStatusPanel
-                          key={groupId}
-                          groupId={groupId}
-                          factoryNameById={factoryNameById}
-                        />
-                      ))}
-                    </div>
-                  ) : null}
                   <div className="mt-4 grid grid-cols-1 gap-4">
                     {scopedInProgressOrders.length === 0 ? (
                       <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-600 dark:bg-slate-900/50 dark:text-gray-300">
@@ -5730,6 +5709,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         ) : (
                           <div className="grid grid-cols-1 gap-6">
                           {inProgressOrderEntries.map((entry) => {
+                            const renderReservationPanels = (orders) =>
+                              reservationGroupIdsFromOrders(orders).map((groupId) => (
+                                <ReservationGroupStatusPanel
+                                  key={`rg-${groupId}`}
+                                  groupId={groupId}
+                                  factoryNameById={factoryNameById}
+                                />
+                              ));
                             const renderCard = (ord) => {
                               // 会社全体表示で見えている同僚の注文は閲覧のみ（操作ボタンを出さない）
                               const ownerId = String(ord?.customer_id ?? ord?.customerId ?? '').trim();
@@ -5819,6 +5806,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                   >
                                     <div className="min-h-0 overflow-hidden">
                                       <div className="mt-2 grid grid-cols-1 gap-4">
+                                        {renderReservationPanels(entry.orders)}
                                         {entry.orders.map((ord) => renderCard(ord))}
                                       </div>
                                     </div>
@@ -5826,7 +5814,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                 </section>
                               );
                             }
-                            return <React.Fragment key={entry.key}>{renderCard(entry.order)}</React.Fragment>;
+                            return (
+                              <React.Fragment key={entry.key}>
+                                {renderReservationPanels([entry.order])}
+                                {renderCard(entry.order)}
+                              </React.Fragment>
+                            );
                           })}
                           </div>
                         )}

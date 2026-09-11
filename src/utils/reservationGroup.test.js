@@ -9,6 +9,9 @@ import {
   nextReservationDate,
   parseRespondReservationGroupAvailabilityResult,
   parseSubmitReservationGroupResult,
+  mergeConfirmedAvailabilityGroups,
+  reservationGroupAvailabilitySummary,
+  RESERVATION_GROUP_CONFIRMED_GUIDANCE,
   reservationDayCountError,
   reservationGroupAvailabilityResultMessage,
   reservationGroupMonitorBadgeText,
@@ -179,5 +182,39 @@ describe('reservationGroup helpers', () => {
       reservationGroupAvailabilityResultMessage({ won: false, reason: 'already_filled' }, true),
     ).toBe('他の工場に決まりました');
     expect(reservationGroupAvailabilityResultMessage({ won: false }, false)).toBe('回答を送信しました');
+  });
+
+  it('summarizes order_data fields for the availability card', () => {
+    const summary = reservationGroupAvailabilitySummary([
+      {
+        contractorName: '㈲ＭＳＡ',
+        trading_company_name: '大陽機材',
+        projectTradingCompanyName: '大陽機材',
+        orderedBy: '山田',
+        vehicleLabel: '大型車',
+        siteName: 'A現場',
+        siteAddress: '東京都1-1',
+      },
+    ]);
+    expect(summary).toEqual({
+      contractorName: '㈲ＭＳＡ',
+      traderName: '大陽機材',
+      orderedBy: '山田',
+      vehicleLabel: '大型車',
+      siteName: 'A現場',
+      siteAddress: '東京都1-1',
+    });
+    expect(RESERVATION_GROUP_CONFIRMED_GUIDANCE).toContain('通常の注文一覧に新しいカードとして届きます');
+    expect(RESERVATION_GROUP_CONFIRMED_GUIDANCE).not.toContain('受注ボタン');
+  });
+
+  it('keeps confirmed availability groups after pending ones leave', () => {
+    const pending = [{ groupId: 'g1', orders: [{ id: 'a' }] }];
+    const confirmed = [
+      { groupId: 'g1', orders: [{ id: 'a' }] },
+      { groupId: 'g2', orders: [{ id: 'b' }] },
+    ];
+    expect(mergeConfirmedAvailabilityGroups([], confirmed).map((g) => g.groupId)).toEqual(['g1', 'g2']);
+    expect(mergeConfirmedAvailabilityGroups(pending, confirmed).map((g) => g.groupId)).toEqual(['g1', 'g2']);
   });
 });

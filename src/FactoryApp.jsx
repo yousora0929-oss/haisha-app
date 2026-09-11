@@ -124,6 +124,7 @@ import {
   readLocalDeclinedReservationGroupIds,
   rememberLocalReservationGroupFactoryResponse,
   reservationGroupAvailabilityResultMessage,
+  mergeConfirmedAvailabilityGroups,
   reservationGroupDayCount,
   reservationGroupIdOf,
   splitFactoryInboxForReservationGroups,
@@ -2661,7 +2662,8 @@ function isUnreadForFactory(messages, readKey) {
         () => splitFactoryInboxOrdersByKind(filteredOrders),
         [filteredOrders],
       );
-      const filteredGroups = useMemo(() => {
+      const [confirmedAvailabilityGroups, setConfirmedAvailabilityGroups] = useState([]);
+      const filteredPendingGroups = useMemo(() => {
         const q = String(searchQuery || '').trim();
         const list = Array.isArray(availabilityGroups) ? availabilityGroups : [];
         if (!q) return list;
@@ -2671,6 +2673,14 @@ function isUnreadForFactory(messages, readKey) {
           ),
         );
       }, [availabilityGroups, searchQuery, factorySearchLabel, customerById]);
+      const filteredGroups = useMemo(
+        () => mergeConfirmedAvailabilityGroups(filteredPendingGroups, confirmedAvailabilityGroups),
+        [filteredPendingGroups, confirmedAvailabilityGroups],
+      );
+      const confirmedGroupIdSet = useMemo(
+        () => new Set(confirmedAvailabilityGroups.map((g) => String(g.groupId))),
+        [confirmedAvailabilityGroups],
+      );
 
       useEffect(() => {
         if (focusedOrderId) setSearchQuery('');
@@ -2724,7 +2734,7 @@ function isUnreadForFactory(messages, readKey) {
         );
       };
 
-      if (!orders.length && !availabilityGroups.length) {
+      if (!orders.length && !filteredGroups.length) {
         return (
           <aside
             className="flex h-full min-h-0 flex-col rounded-lg border-2 border-dashed border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-800"
@@ -2764,11 +2774,28 @@ function isUnreadForFactory(messages, readKey) {
                     groupId={group.groupId}
                     orders={group.orders}
                     submitting={String(availabilitySubmittingGroupId) === String(group.groupId)}
+                    confirmed={confirmedGroupIdSet.has(String(group.groupId))}
                     forceExpanded={Boolean(
                       focusedOrderId &&
                         (group.orders || []).some((o) => String(o?.id) === String(focusedOrderId)),
                     )}
-                    onRespond={onRespondReservationGroup}
+                    onRespond={async (gid, available) => {
+                      const snapshot = filteredGroups.find((g) => String(g.groupId) === String(gid));
+                      if (available && snapshot) {
+                        setConfirmedAvailabilityGroups((prev) =>
+                          mergeConfirmedAvailabilityGroups(
+                            prev.filter((g) => String(g.groupId) !== String(gid)),
+                            [snapshot],
+                          ),
+                        );
+                      }
+                      const result = await onRespondReservationGroup?.(gid, available);
+                      if (available && !result?.won) {
+                        setConfirmedAvailabilityGroups((prev) =>
+                          prev.filter((g) => String(g.groupId) !== String(gid)),
+                        );
+                      }
+                    }}
                   />
                 </li>
               ))}
@@ -5193,7 +5220,7 @@ function isUnreadForFactory(messages, readKey) {
       const handleRespondReservationGroup = useCallback(
         async (groupId, available) => {
           const gid = String(groupId || '').trim();
-          if (!gid || !activeFactoryId || availabilitySubmittingGroupId) return;
+          if (!gid || !activeFactoryId || availabilitySubmittingGroupId) return null;
           setAvailabilitySubmittingGroupId(gid);
           try {
             const result = await db.respondReservationGroupAvailability(gid, activeFactoryId, available);
@@ -5209,9 +5236,11 @@ function isUnreadForFactory(messages, readKey) {
             window.setTimeout(() => setActionNotice(''), 4500);
             setToastOrder((cur) => (reservationGroupIdOf(cur) === gid ? null : cur));
             await syncFromStorage({ playSound: false });
+            return result;
           } catch (e) {
             console.error(e);
             window.alert(e?.message || '可否の送信に失敗しました。通信状態を確認して再度お試しください。');
+            return null;
           } finally {
             setAvailabilitySubmittingGroupId('');
           }
