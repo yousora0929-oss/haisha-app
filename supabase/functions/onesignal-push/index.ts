@@ -1,4 +1,4 @@
-/** onesignal-push v32 — チャーター応答確定・見送り通知対応 */
+/** onesignal-push v38 — new_order_batch: body.orders + 割当物件ルーティング */
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
@@ -11,7 +11,7 @@ import {
   rankFactoryIdsForOrder,
 } from '../_shared/escalationVisibility.ts';
 
-const FUNCTION_VERSION = 36;
+const FUNCTION_VERSION = 38;
 const PUSH_NOTIFY_COOLDOWN_MS = 60_000;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 /** プレフィックス導入前の端末向けに無印 ID へも送る期間（ISO8601） */
@@ -87,8 +87,20 @@ async function fetchEscalationScoringConfig(supabaseClient: SupabaseClient): Pro
   return { monthlyVolumeByFactory, distanceWeight, nearPoolSize, factorySmallVehicleInfo };
 }
 
+type NewOrderBatchItem = {
+  order_id?: string | null;
+  factory_site_id?: string | null;
+  preferred_factory_id?: string | null;
+  main_factory_id?: string | null;
+  target_factory_id?: string | null;
+  is_assigned_project?: boolean;
+  contractor_name?: string | null;
+  site_name?: string | null;
+};
+
 type PushEvent =
   | 'new_order'
+  | 'new_order_batch'
   | 'customer_accepted'
   | 'customer_rejected'
   | 'order_accepted'
@@ -123,6 +135,7 @@ type SlimPayload = {
   status?: string | null;
   target_factory_id?: string | null;
   sales_admin_id?: string | null;
+  orders?: NewOrderBatchItem[] | null;
 };
 
 type OrderRow = {
@@ -213,6 +226,15 @@ function pickString(...values: unknown[]): string {
     if (text) return text;
   }
   return '';
+}
+
+function pickTrue(value: unknown): boolean {
+  if (value === true) return true;
+  if (typeof value === 'string') {
+    const t = value.trim().toLowerCase();
+    return t === 'true' || t === '1';
+  }
+  return false;
 }
 
 function orderData(row: OrderRow | null | undefined): Record<string, unknown> {
@@ -1131,6 +1153,35 @@ function readFromQueryParams(req: Request): SlimPayload | null {
 }
 
 async function readWebhookPayload(req: Request): Promise<{ incoming: IncomingPayload | null; reason?: string }> {
+  const url = new URL(req.url);
+  const queryEvent = pickString(url.searchParams.get('event'));
+
+  // new_order_batch: event は URL クエリ、orders は body JSON
+  if (queryEvent === 'new_order_batch') {
+    const contentLengthHeader = req.headers.get('content-length');
+    const rawText = await req.text();
+    const bodyLen = rawText.length;
+    const parsed = rawText ? tryParseJson(rawText) : null;
+    const parsedObject = asObject(parsed);
+    const orders = Array.isArray(parsedObject.orders) ? parsedObject.orders : [];
+    console.log('[onesignal-push] new_order_batch query+body', {
+      bodyLen,
+      contentLength: contentLengthHeader,
+      orderCount: orders.length,
+      preview: rawText.slice(0, 240),
+    });
+    return {
+      incoming: {
+        format: 'slim',
+        data: {
+          ...parsedObject,
+          event: 'new_order_batch',
+          orders,
+        } as SlimPayload,
+      },
+    };
+  }
+
   const fromQuery = readFromQueryParams(req);
   if (fromQuery) {
     console.log('[onesignal-push] query params', { event: fromQuery.event, orderId: fromQuery.order_id });
@@ -1325,13 +1376,13 @@ function inferTargetAppFromPushData(data: Record<string, unknown>): string {
   if (explicit === 'customer' || explicit === 'factory') return explicit;
   const type = pickString(data.type);
   if (type === 'order_status' || type === 'order_accepted' || type === 'order_rejected') return 'customer';
-  if (type === 'new_order' || type === 'customer_map_shared') return 'factory';
+  if (type === 'new_order' || type === 'new_order_batch' || type === 'customer_map_shared') return 'factory';
   return '';
 }
 
 function buildPushLaunchUrl(data: Record<string, unknown>): string {
   const base = pickString(Deno.env.get('APP_BASE_URL'), Deno.env.get('VITE_PUBLIC_APP_ORIGIN')).replace(/\/$/, '');
-  const orderId = pickString(data.orderId);
+  const orderId = pickString(data.orderId, asArray(data.orderIds)[0]);
   const targetApp = inferTargetAppFromPushData(data);
   if (!base || !orderId || !targetApp) return '';
   const path = targetApp === 'customer' ? CUSTOMER_APP_PATH : FACTORY_APP_PATH;
@@ -1520,6 +1571,181 @@ async function sendToFactoryAudience(
 
   if (customerId) {
     console.log('[onesignal-push] factory audience excludes customer', { customerId });
+  }
+  return sent;
+}
+
+function factoryIdFromPushExternalId(externalId: string): string {
+  const id = pickString(externalId);
+  if (id.startsWith('factory_')) return id.slice('factory_'.length);
+  return id;
+}
+
+function parseNewOrderBatchItems(raw: unknown): NewOrderBatchItem[] {
+  const list = asArray(raw);
+  return list
+    .map((entry) => {
+      const o = asObject(entry);
+      const orderId = pickString(o.order_id, o.orderId, o.id);
+      const targetFactoryId = pickString(o.target_factory_id, o.targetFactoryId);
+      if (!orderId && !pickString(o.factory_site_id, o.preferred_factory_id, o.main_factory_id, targetFactoryId)) {
+        return null;
+      }
+      return {
+        order_id: orderId || null,
+        factory_site_id: pickString(o.factory_site_id, o.factorySiteId) || null,
+        preferred_factory_id: pickString(o.preferred_factory_id, o.preferredFactoryId) || null,
+        main_factory_id: pickString(o.main_factory_id, o.mainFactoryId) || null,
+        target_factory_id: targetFactoryId || '',
+        is_assigned_project: pickTrue(o.is_assigned_project ?? o.isAssignedProject),
+        contractor_name: pickString(o.contractor_name, o.contractorName) || null,
+        site_name: pickString(o.site_name, o.siteName) || null,
+      } satisfies NewOrderBatchItem;
+    })
+    .filter((item): item is NewOrderBatchItem => Boolean(item));
+}
+
+function isAssignedProjectBatchItem(item: NewOrderBatchItem): boolean {
+  return item.is_assigned_project === true && Boolean(pickString(item.target_factory_id));
+}
+
+function batchItemToRowAndPayload(item: NewOrderBatchItem): { row: OrderRow; payload: SlimPayload } {
+  const orderId = pickString(item.order_id);
+  const factorySiteId = pickString(item.factory_site_id) || null;
+  const preferredId = pickString(item.preferred_factory_id) || null;
+  const mainId = pickString(item.main_factory_id) || null;
+  const targetFactoryId = pickString(item.target_factory_id) || null;
+  const contractorName = pickString(item.contractor_name) || null;
+  return {
+    row: {
+      id: orderId || undefined,
+      factory_site_id: factorySiteId,
+      preferred_factory_id: preferredId,
+      order_data: {
+        factory_site_id: factorySiteId,
+        factorySiteId,
+        preferred_factory_id: preferredId,
+        preferredFactoryId: preferredId,
+        main_factory_id: mainId,
+        mainFactoryId: mainId,
+        target_factory_id: targetFactoryId,
+        targetFactoryId,
+        contractorName,
+        siteName: pickString(item.site_name),
+      },
+    },
+    payload: {
+      event: 'new_order',
+      order_id: orderId || undefined,
+      factory_site_id: factorySiteId,
+      preferred_factory_id: preferredId,
+      target_factory_id: targetFactoryId,
+      contractor_name: contractorName,
+    },
+  };
+}
+
+/**
+ * new_order 向け sendToFactoryAudience と同じ工場解決（送信はしない）。
+ * ランキング候補が無い場合の role ブロードキャストはバッチ集約できないため空配列にする。
+ */
+async function resolveNewOrderFactoryExternalIds(
+  row: OrderRow | null | undefined,
+  payload: SlimPayload | null | undefined,
+  orderId: string,
+): Promise<string[]> {
+  const customerId = resolveOrderCustomerId(row, payload);
+  const factoryIds = withoutExternalIds(resolveFactoryPushTargetIds(row, payload), customerId);
+  if (factoryIds.length) return factoryIds;
+
+  let orderRow = row ?? null;
+  if (!orderRow && orderId) orderRow = await fetchOrderRow(orderId);
+  const pid = pickString(
+    orderRow?.project_id,
+    orderData(orderRow).project_id,
+    orderData(orderRow).projectId,
+  );
+  const supabaseClient = getSupabaseClient();
+  const [scoring, ctx] = await Promise.all([
+    fetchEscalationScoringConfig(supabaseClient),
+    fetchEscalationPushContext(pid || undefined),
+  ]);
+  if (!ctx) return [];
+  ctx.monthlyVolumeByFactory = scoring.monthlyVolumeByFactory;
+  ctx.distanceWeight = scoring.distanceWeight;
+  ctx.nearPoolSize = scoring.nearPoolSize;
+  ctx.factorySmallVehicleInfo = scoring.factorySmallVehicleInfo;
+  const initialIds = orderRow ? computeInitialVisibleFactoryIds(orderRow, ctx) : [];
+  return withoutExternalIds(
+    initialIds.map((fid) => onesignalFactoryExternalId(fid)),
+    customerId,
+    onesignalCustomerExternalId(customerId),
+  );
+}
+
+async function sendNewOrderBatchNotifications(payload: SlimPayload | null | undefined): Promise<string[]> {
+  const items = parseNewOrderBatchItems(payload?.orders);
+  if (!items.length) {
+    console.log('[onesignal-push] new_order_batch skip: no orders');
+    return [];
+  }
+
+  const grouped = new Map<string, NewOrderBatchItem[]>();
+  for (const item of items) {
+    const parsed = batchItemToRowAndPayload(item);
+    const orderId = pickString(item.order_id, parsed.row.id);
+    let ids: string[] = [];
+    if (isAssignedProjectBatchItem(item)) {
+      ids = [onesignalFactoryExternalId(pickString(item.target_factory_id))];
+    } else {
+      let row = parsed.row;
+      if (!pickString(row.factory_site_id, row.preferred_factory_id) && orderId) {
+        const fetched = await fetchOrderRow(orderId);
+        if (fetched) row = fetched;
+      }
+      ids = await resolveNewOrderFactoryExternalIds(row, parsed.payload, orderId);
+    }
+    if (!ids.length) {
+      console.log('[onesignal-push] new_order_batch skip order: no factory targets', { orderId });
+      continue;
+    }
+    for (const externalId of ids) {
+      const list = grouped.get(externalId) || [];
+      list.push(item);
+      grouped.set(externalId, list);
+    }
+  }
+
+  const sent: string[] = [];
+  for (const [externalId, groupItems] of grouped) {
+    const count = groupItems.length;
+    const contractorName = pickString(groupItems[0]?.contractor_name, '新規注文');
+    const orderIds = groupItems.map((item) => pickString(item.order_id)).filter(Boolean);
+    const allAssigned = groupItems.every(isAssignedProjectBatchItem);
+    const assignedTitle = '【新規注文】割当物件の配車依頼';
+    const message = count === 1
+      ? `新規注文が入りました：${contractorName}`
+      : `新規注文が ${count} 件届いています（PDF一括取込）`;
+    const data: Record<string, unknown> = count === 1
+      ? { type: 'new_order', orderId: orderIds[0], targetApp: 'factory' }
+      : { type: 'new_order_batch', orderIds, targetApp: 'factory' };
+    const factoryId = factoryIdFromPushExternalId(externalId);
+    const ok = await sendToExternalIds(
+      [externalId],
+      message,
+      data,
+      count === 1
+        ? { orderId: orderIds[0], type: 'new_order', ...(allAssigned ? { title: assignedTitle } : {}) }
+        : { type: 'new_order_batch', ...(allAssigned ? { title: assignedTitle } : {}) },
+    );
+    console.log('[onesignal-push] new_order_batch notify', {
+      factoryId,
+      count,
+      allAssigned,
+      orderIds,
+      ok,
+    });
+    if (ok) sent.push(`factory:new_order_batch:${factoryId}`);
   }
   return sent;
 }
@@ -2280,6 +2506,9 @@ async function processSlimPayload(payload: SlimPayload): Promise<string[]> {
     case 'new_order':
       sent.push(...await sendNewOrderNotifications(null, payload, orderId));
       break;
+    case 'new_order_batch':
+      sent.push(...await sendNewOrderBatchNotifications(payload));
+      break;
     case 'customer_accepted': {
       sent.push(...await sendOrderAcceptedNotifications(null, payload, orderId));
       break;
@@ -2595,6 +2824,7 @@ Deno.serve(async (req) => {
   if (
     incoming.format !== 'charter_request' &&
     incoming.format !== 'charter_response' &&
+    eventLabel !== 'new_order_batch' &&
     orderId &&
     await shouldSkipRecentPush(orderId, cooldownType)
   ) {
