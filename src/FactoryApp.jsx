@@ -92,6 +92,7 @@ import { countUnreadNewsForFactory } from './utils/factoryNews.js';
 import { countPendingCharterResponses } from './utils/charterBadges.js';
 import { OrderAcceptModal } from './components/OrderAcceptModal.jsx';
 import { ReservationGroupAvailabilityCard } from './components/ReservationGroupAvailabilityCard.jsx';
+import { FactoryOrderVisibilityMini } from './components/FactoryOrderVisibilityMini.jsx';
 import { FactoryScheduleChangeProposalsPanel } from './components/FactoryScheduleChangeProposalsPanel.jsx';
 import {
   detectFactoryNotifyOrderIds,
@@ -127,6 +128,7 @@ import {
   reservationGroupIdOf,
   splitFactoryInboxForReservationGroups,
 } from './utils/reservationGroup.js';
+import { splitFactoryInboxOrdersByKind } from './utils/factoryInboxKind.js';
 
 const FACTORY_ORDERS_FETCH_OPTIONS = { includeReservationGroups: true };
 
@@ -1624,6 +1626,8 @@ function isUnreadForFactory(messages, readKey) {
       customerById,
       organizationById,
       onSiteUrlCopied,
+      escalationCtx = null,
+      factoryNameById = {},
     }) {
       const isToast = variant === 'toast';
       const isGroupAvailability = isPendingReservationGroupAvailability(order);
@@ -2129,6 +2133,15 @@ function isUnreadForFactory(messages, readKey) {
             {renderPrimarySummary({ borderless: true })}
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {isSpotOrder ? (
+              <span className="inline-flex rounded-full border border-amber-400 bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-950 dark:border-amber-500 dark:bg-amber-950/50 dark:text-amber-100">
+                スポット
+              </span>
+            ) : (
+              <span className="inline-flex rounded-full border border-indigo-400 bg-indigo-100 px-2 py-0.5 text-[10px] font-black text-indigo-950 dark:border-indigo-500 dark:bg-indigo-950/50 dark:text-indigo-100">
+                割当物件
+              </span>
+            )}
             {!isAccepted && !isCustomerCancelled && !isRejectedByMe ? (
               <FactoryStatusMini status={order.factoryResponseStatus} />
             ) : null}
@@ -2158,6 +2171,13 @@ function isUnreadForFactory(messages, readKey) {
             <LocationPendingBadge order={order} />
             <PhoneOrderBadge order={order} />
           </div>
+          {!isSpotOrder ? (
+            <FactoryOrderVisibilityMini
+              order={order}
+              escalationCtx={escalationCtx}
+              factoryNameById={factoryNameById}
+            />
+          ) : null}
         </div>
         );
       };
@@ -2401,7 +2421,14 @@ function isUnreadForFactory(messages, readKey) {
               ? 'rounded-2xl border-2 border-slate-300 bg-slate-100 opacity-80 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:opacity-90 overflow-hidden'
               : cardFrame.trimEnd() + ' overflow-hidden';
 
+      const kindAccentWrapClass =
+        (isSpotOrder
+          ? 'border-l-2 border-l-amber-500 dark:border-l-amber-400 '
+          : 'border-l-2 border-l-indigo-500 dark:border-l-indigo-400 ') +
+        (collapsedRejected ? 'rounded-xl' : 'rounded-2xl');
+
       return (
+        <div className={kindAccentWrapClass}>
         <article ref={articleRef} className={outerArticleClass} onClick={markRead}>
           <div
             className={
@@ -2589,6 +2616,7 @@ function isUnreadForFactory(messages, readKey) {
             />
           ) : null}
         </article>
+        </div>
       );
     }
 
@@ -2621,11 +2649,17 @@ function isUnreadForFactory(messages, readKey) {
       organizationById,
       onSiteUrlCopied,
       exitingOrderIds,
+      escalationCtx = null,
+      factoryNameById = {},
     }) {
       const [searchQuery, setSearchQuery] = useState('');
       const filteredOrders = useMemo(
         () => orders.filter((o) => orderMatchesFactorySearch(o, searchQuery, factorySearchLabel, customerById)),
         [orders, searchQuery, factorySearchLabel, customerById],
+      );
+      const { assigned: assignedInboxOrders, spot: spotInboxOrders } = useMemo(
+        () => splitFactoryInboxOrdersByKind(filteredOrders),
+        [filteredOrders],
       );
       const filteredGroups = useMemo(() => {
         const q = String(searchQuery || '').trim();
@@ -2641,6 +2675,54 @@ function isUnreadForFactory(messages, readKey) {
       useEffect(() => {
         if (focusedOrderId) setSearchQuery('');
       }, [focusedOrderId]);
+
+      const renderInboxOrderCard = (o, i) => {
+        const isExiting = Boolean(o?.id && exitingOrderIds?.has?.(String(o.id)));
+        return (
+          <li key={o.id ?? `idx-${i}`} className="list-none">
+            <div
+              className="grid transition-[grid-template-rows,opacity,transform] duration-300 ease-in motion-reduce:transition-none"
+              style={{
+                gridTemplateRows: isExiting ? '0fr' : '1fr',
+                opacity: isExiting ? 0 : 1,
+                transform: isExiting ? 'translateX(24px) scale(0.98)' : 'none',
+              }}
+              aria-hidden={isExiting ? true : undefined}
+            >
+              <div className="min-h-0 overflow-hidden">
+                <OrderRequestCard
+                  order={o}
+                  idx={i}
+                  currentFactoryId={currentFactoryId}
+                  isRead={Boolean(o?.id && readOrderIds?.has(o.id))}
+                  onMarkRead={onMarkRead}
+                  onOrderFullPatch={onOrderFullPatch}
+                  onAcceptChangeRequest={onAcceptChangeRequest}
+                  onAcceptOrder={onAcceptOrder}
+                  onRejectOrder={onRejectOrder}
+                  onConsultOrder={onConsultOrder}
+                  onCustomerCancelOrder={onCustomerCancelOrder}
+                  onHideOrder={onHideOrder}
+                  onResponseStatusChange={onResponseStatusChange}
+                  onRequestUnlock={onRequestUnlock}
+                  chatMessages={chatThreads[o.id]}
+                  hasUnreadChat={isUnreadForFactory(chatThreads[o.id], readChatKeys?.[o.id])}
+                  onMarkChatRead={onMarkChatRead}
+                  onFactoryChatSent={onFactoryChatSent}
+                  factoryName={factorySearchLabel}
+                  forceExpanded={Boolean(focusedOrderId && String(o.id) === String(focusedOrderId))}
+                  projectById={projectById}
+                  customerById={customerById}
+                  organizationById={organizationById}
+                  onSiteUrlCopied={onSiteUrlCopied}
+                  escalationCtx={escalationCtx}
+                  factoryNameById={factoryNameById}
+                />
+              </div>
+            </div>
+          </li>
+        );
+      };
 
       if (!orders.length && !availabilityGroups.length) {
         return (
@@ -2690,51 +2772,22 @@ function isUnreadForFactory(messages, readKey) {
                   />
                 </li>
               ))}
-              {filteredOrders.map((o, i) => {
-                const isExiting = Boolean(o?.id && exitingOrderIds?.has?.(String(o.id)));
-                return (
-                <li key={o.id ?? `idx-${i}`} className="list-none">
-                  <div
-                    className="grid transition-[grid-template-rows,opacity,transform] duration-300 ease-in motion-reduce:transition-none"
-                    style={{
-                      gridTemplateRows: isExiting ? '0fr' : '1fr',
-                      opacity: isExiting ? 0 : 1,
-                      transform: isExiting ? 'translateX(24px) scale(0.98)' : 'none',
-                    }}
-                    aria-hidden={isExiting ? true : undefined}
-                  >
-                    <div className="min-h-0 overflow-hidden">
-                      <OrderRequestCard
-                        order={o}
-                        idx={i}
-                        currentFactoryId={currentFactoryId}
-                        isRead={Boolean(o?.id && readOrderIds?.has(o.id))}
-                        onMarkRead={onMarkRead}
-                        onOrderFullPatch={onOrderFullPatch}
-                        onAcceptChangeRequest={onAcceptChangeRequest}
-                        onAcceptOrder={onAcceptOrder}
-                        onRejectOrder={onRejectOrder}
-                        onConsultOrder={onConsultOrder}
-                        onCustomerCancelOrder={onCustomerCancelOrder}
-                        onHideOrder={onHideOrder}
-                        onResponseStatusChange={onResponseStatusChange}
-                        onRequestUnlock={onRequestUnlock}
-                        chatMessages={chatThreads[o.id]}
-                        hasUnreadChat={isUnreadForFactory(chatThreads[o.id], readChatKeys?.[o.id])}
-                        onMarkChatRead={onMarkChatRead}
-                        onFactoryChatSent={onFactoryChatSent}
-                        factoryName={factorySearchLabel}
-                        forceExpanded={Boolean(focusedOrderId && String(o.id) === String(focusedOrderId))}
-                        projectById={projectById}
-                        customerById={customerById}
-                        organizationById={organizationById}
-                        onSiteUrlCopied={onSiteUrlCopied}
-                      />
-                    </div>
-                  </div>
+              {assignedInboxOrders.length > 0 ? (
+                <li className="list-none">
+                  <h3 className="px-0.5 pt-0.5 text-xs font-black tracking-tight text-indigo-800 dark:text-indigo-200">
+                    割当物件の注文（{assignedInboxOrders.length}件）
+                  </h3>
                 </li>
-                );
-              })}
+              ) : null}
+              {assignedInboxOrders.map((o, i) => renderInboxOrderCard(o, i))}
+              {spotInboxOrders.length > 0 ? (
+                <li className="list-none">
+                  <h3 className="px-0.5 pt-0.5 text-xs font-black tracking-tight text-amber-800 dark:text-amber-200">
+                    スポット注文（{spotInboxOrders.length}件）
+                  </h3>
+                </li>
+              ) : null}
+              {spotInboxOrders.map((o, i) => renderInboxOrderCard(o, assignedInboxOrders.length + i))}
               </>
             )}
           </ul>
@@ -3831,6 +3884,33 @@ function isUnreadForFactory(messages, readKey) {
         () => Object.fromEntries((factories || []).map((f) => [f.id, f.name])),
         [factories],
       );
+      const inboxEscalationCtx = useMemo(() => {
+        if (!activeFactoryId) return null;
+        return buildEscalationContext(
+          rawOrders,
+          factories,
+          projects,
+          escalationSettings,
+          holidays,
+          new Date(),
+          escalationStepsByFactoryId,
+          customers,
+          factorySmallVehicleInfo,
+          monthlyVolumeByFactory,
+        );
+      }, [
+        rawOrders,
+        factories,
+        projects,
+        customers,
+        escalationSettings,
+        holidays,
+        escalationStepsByFactoryId,
+        factorySmallVehicleInfo,
+        monthlyVolumeByFactory,
+        activeFactoryId,
+        escalationTick,
+      ]);
       const projectById = useMemo(
         () => Object.fromEntries((projects || []).filter((p) => p?.id).map((p) => [String(p.id), p])),
         [projects],
@@ -5875,6 +5955,8 @@ function isUnreadForFactory(messages, readKey) {
                     organizationById={organizationById}
                     onSiteUrlCopied={handleSiteUrlCopied}
                     exitingOrderIds={exitingOrderIds}
+                    escalationCtx={inboxEscalationCtx}
+                    factoryNameById={factoryNameById}
                   />
                 </div>
               ) : null}
