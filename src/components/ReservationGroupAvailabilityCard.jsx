@@ -44,6 +44,7 @@ export function ReservationGroupAvailabilityCard({
   forceExpanded = false,
   confirmed = false,
   onRespond,
+  onHide,
 }) {
   const list = Array.isArray(orders) ? orders.filter(Boolean) : [];
   const dayCount = reservationGroupDayCount(list);
@@ -64,13 +65,26 @@ export function ReservationGroupAvailabilityCard({
       ref={articleRef}
       className="overflow-hidden rounded-2xl border-2 border-violet-400 bg-white shadow-xl dark:border-violet-600 dark:bg-slate-800"
     >
-      <div className="border-b border-violet-200 bg-violet-50 px-3 py-3 dark:border-violet-700 dark:bg-violet-950/50 sm:px-3.5">
-        <p className="text-sm font-black uppercase tracking-wider text-violet-800 dark:text-violet-200">
-          複数日予約 · 可否確認
-        </p>
-        <h3 className="mt-1 text-lg font-black text-slate-900 dark:text-slate-100 sm:text-xl">
-          この{dayCount}日間、全部対応できますか？
-        </h3>
+      <div className="flex items-start justify-between gap-2 border-b border-violet-200 bg-violet-50 px-3 py-3 dark:border-violet-700 dark:bg-violet-950/50 sm:px-3.5">
+        <div className="min-w-0">
+          <p className="text-sm font-black uppercase tracking-wider text-violet-800 dark:text-violet-200">
+            複数日予約 · 可否確認
+          </p>
+          <h3 className="mt-1 text-lg font-black text-slate-900 dark:text-slate-100 sm:text-xl">
+            この{dayCount}日間、全部対応できますか？
+          </h3>
+        </div>
+        {typeof onHide === 'function' && groupId ? (
+          <button
+            type="button"
+            className="shrink-0 rounded-lg border border-slate-300 bg-white px-1.5 py-1 text-[10px] font-black leading-tight text-slate-600 shadow-sm hover:border-slate-500 hover:text-slate-900 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-200"
+            aria-label="この可否確認を非表示にする"
+            title="非表示にする"
+            onClick={() => onHide(groupId)}
+          >
+            非表示
+          </button>
+        ) : null}
       </div>
       <div className="px-3 py-3 sm:px-3.5">
         <dl className="grid grid-cols-2 gap-x-3 gap-y-3">

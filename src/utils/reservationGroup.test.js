@@ -18,6 +18,7 @@ import {
   reservationGroupAvailabilityResultMessage,
   reservationGroupMonitorBadgeText,
   reservationGroupStatusLabel,
+  shouldShowCustomerReservationGroupStatusBanner,
   siblingReservationFactoryLine,
   splitFactoryInboxForReservationGroups,
   RESERVATION_GROUP_MAX_DAYS,
@@ -29,6 +30,9 @@ describe('reservationGroup helpers', () => {
     expect(reservationGroupStatusLabel('pending')).toBe('回答待ち');
     expect(reservationGroupStatusLabel('matched')).toBe('確定');
     expect(reservationGroupStatusLabel('conflict')).toBe('要調整');
+    expect(shouldShowCustomerReservationGroupStatusBanner('pending')).toBe(true);
+    expect(shouldShowCustomerReservationGroupStatusBanner('conflict')).toBe(true);
+    expect(shouldShowCustomerReservationGroupStatusBanner('matched')).toBe(false);
   });
 
   it('parses submit_guest_reservation_group json', () => {

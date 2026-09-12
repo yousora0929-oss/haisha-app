@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import * as db from '../haishaDb.js';
-import { reservationGroupStatusLabel } from '../utils/reservationGroup.js';
+import { reservationGroupStatusLabel, shouldShowCustomerReservationGroupStatusBanner } from '../utils/reservationGroup.js';
 
 const STATUS_CLASS = {
   pending: 'border-amber-300 bg-amber-50 text-amber-950',
@@ -54,6 +54,8 @@ export function ReservationGroupStatusPanel({
   const status = group?.status || 'pending';
   const label = reservationGroupStatusLabel(status);
   const tone = STATUS_CLASS[status] || STATUS_CLASS.pending;
+
+  if (group && !shouldShowCustomerReservationGroupStatusBanner(status)) return null;
 
   return (
     <section className={`rounded-2xl border-2 p-4 shadow-sm ${tone}`} role="status">

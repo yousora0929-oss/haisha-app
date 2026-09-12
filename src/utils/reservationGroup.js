@@ -16,6 +16,11 @@ export function reservationGroupStatusLabel(status) {
   return RESERVATION_GROUP_STATUS_LABELS[key] || key || '—';
 }
 
+/** カスタマー進行状況カード。matched は各注文の受注済み表示と重複するため出さない */
+export function shouldShowCustomerReservationGroupStatusBanner(status) {
+  return String(status || '').trim() !== 'matched';
+}
+
 export function addDaysIso(isoDate, days) {
   const raw = String(isoDate || '').trim();
   const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);

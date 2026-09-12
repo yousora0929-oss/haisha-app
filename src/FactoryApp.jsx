@@ -2681,6 +2681,8 @@ function isUnreadForFactory(messages, readKey) {
       onRespondReservationGroup,
       onCustomerCancelOrder,
       onHideOrder,
+      hiddenReservationGroupIds,
+      onHideReservationGroup,
       onResponseStatusChange,
       onRequestUnlock,
       chatThreads,
@@ -2716,10 +2718,11 @@ function isUnreadForFactory(messages, readKey) {
           ),
         );
       }, [availabilityGroups, searchQuery, factorySearchLabel, customerById]);
-      const filteredGroups = useMemo(
-        () => mergeConfirmedAvailabilityGroups(filteredPendingGroups, confirmedAvailabilityGroups),
-        [filteredPendingGroups, confirmedAvailabilityGroups],
-      );
+      const filteredGroups = useMemo(() => {
+        const merged = mergeConfirmedAvailabilityGroups(filteredPendingGroups, confirmedAvailabilityGroups);
+        if (!hiddenReservationGroupIds || hiddenReservationGroupIds.size === 0) return merged;
+        return merged.filter((group) => !hiddenReservationGroupIds.has(String(group?.groupId || '')));
+      }, [filteredPendingGroups, confirmedAvailabilityGroups, hiddenReservationGroupIds]);
       const confirmedGroupIdSet = useMemo(
         () => new Set(confirmedAvailabilityGroups.map((g) => String(g.groupId))),
         [confirmedAvailabilityGroups],
@@ -2839,6 +2842,12 @@ function isUnreadForFactory(messages, readKey) {
                           prev.filter((g) => String(g.groupId) !== String(gid)),
                         );
                       }
+                    }}
+                    onHide={(gid) => {
+                      setConfirmedAvailabilityGroups((prev) =>
+                        prev.filter((g) => String(g.groupId) !== String(gid)),
+                      );
+                      onHideReservationGroup?.(gid);
                     }}
                   />
                 </li>
@@ -3791,6 +3800,7 @@ function isUnreadForFactory(messages, readKey) {
       const [orders, setOrders] = useState([]);
       const [readOrderIds, setReadOrderIds] = useState(() => new Set());
       const [hiddenOrderIds, setHiddenOrderIds] = useState(() => new Set());
+      const [hiddenReservationGroupIds, setHiddenReservationGroupIds] = useState(() => new Set());
       const [exitingOrderIds, setExitingOrderIds] = useState(() => new Set());
       const exitingOrderSnapshotsRef = useRef(new Map());
       const [projects, setProjects] = useState([]);
@@ -4080,6 +4090,18 @@ function isUnreadForFactory(messages, readKey) {
         });
       }, []);
 
+      const hideReservationGroup = useCallback((groupId) => {
+        const gid = String(groupId || '').trim();
+        if (!gid) return;
+        setHiddenReservationGroupIds((prev) => {
+          if (prev.has(gid)) return prev;
+          const next = new Set(prev);
+          next.add(gid);
+          return next;
+        });
+        setToastOrder((cur) => (reservationGroupIdOf(cur) === gid ? null : cur));
+      }, []);
+
       const beginCardExit = useCallback((orderId, after, snapshot) => {
         const id = String(orderId || '').trim();
         if (!id) {
@@ -4121,6 +4143,7 @@ function isUnreadForFactory(messages, readKey) {
 
       const showAllHiddenOrders = useCallback(() => {
         setHiddenOrderIds(new Set());
+        setHiddenReservationGroupIds(new Set());
       }, []);
 
       const handleFactoryLogin = useCallback(
@@ -4148,6 +4171,7 @@ function isUnreadForFactory(messages, readKey) {
             await registerOneSignalUser(buildFactoryOneSignalExternalId(fid), { role: 'factory', factory_id: String(fid) });
             setLoginPassword('');
             setHiddenOrderIds(new Set());
+            setHiddenReservationGroupIds(new Set());
             setDeclinedReservationGroupIds(readLocalDeclinedReservationGroupIds(fid));
             setToastOrder(null);
             setToastIsReassignment(false);
@@ -4729,10 +4753,15 @@ function isUnreadForFactory(messages, readKey) {
         return base;
       }, [factoryInProgressOrders, exitingOrderIds]);
 
-      const inboxModel = useMemo(
-        () => splitFactoryInboxForReservationGroups(inboxOrders, rawOrders, declinedReservationGroupIds),
-        [inboxOrders, rawOrders, declinedReservationGroupIds],
-      );
+      const inboxModel = useMemo(() => {
+        const split = splitFactoryInboxForReservationGroups(inboxOrders, rawOrders, declinedReservationGroupIds);
+        return {
+          ...split,
+          groups: (split.groups || []).filter(
+            (group) => !hiddenReservationGroupIds.has(String(group?.groupId || '')),
+          ),
+        };
+      }, [inboxOrders, rawOrders, declinedReservationGroupIds, hiddenReservationGroupIds]);
 
       const factoryHistoryOrders = useMemo(() => {
         // 履歴タブだけ rawOrders + 専用可視性を使う（新着/カレンダーの isOrderVisibleToFactory は変更しない）
@@ -5870,17 +5899,19 @@ function isUnreadForFactory(messages, readKey) {
                 </button>
                 <button
                   type="button"
-                  disabled={hiddenOrderIds.size === 0}
+                  disabled={hiddenOrderIds.size === 0 && hiddenReservationGroupIds.size === 0}
                   onClick={showAllHiddenOrders}
                   className={
                     'min-h-[36px] rounded-lg border-2 px-2 py-1 text-[11px] font-black shadow-sm sm:text-xs ' +
-                    (hiddenOrderIds.size === 0
+                    (hiddenOrderIds.size === 0 && hiddenReservationGroupIds.size === 0
                       ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
                       : 'border-indigo-500 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 active:scale-95 active:bg-indigo-200')
                   }
                 >
                   非表示にした注文を一括再表示
-                  {hiddenOrderIds.size > 0 ? `（${hiddenOrderIds.size}件）` : ''}
+                  {hiddenOrderIds.size + hiddenReservationGroupIds.size > 0
+                    ? `（${hiddenOrderIds.size + hiddenReservationGroupIds.size}件）`
+                    : ''}
                 </button>
               </div>
             ) : null}
@@ -6060,6 +6091,8 @@ function isUnreadForFactory(messages, readKey) {
                     onRespondReservationGroup={handleRespondReservationGroup}
                     onCustomerCancelOrder={handleCustomerCancelOrder}
                     onHideOrder={hideOrder}
+                    hiddenReservationGroupIds={hiddenReservationGroupIds}
+                    onHideReservationGroup={hideReservationGroup}
                     onResponseStatusChange={handleResponseStatusChange}
                     onRequestUnlock={handleFactoryUnlockRequest}
                     chatThreads={chatThreads}
