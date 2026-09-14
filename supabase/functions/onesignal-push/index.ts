@@ -1,4 +1,4 @@
-/** onesignal-push v63 — new_order_batch: body.orders + 割当物件ルーティング */
+/** onesignal-push v64 — change_proposal_rejected / customer_cancel_requested */
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
@@ -11,7 +11,7 @@ import {
   rankFactoryIdsForOrder,
 } from '../_shared/escalationVisibility.ts';
 
-const FUNCTION_VERSION = 63;
+const FUNCTION_VERSION = 64;
 const PUSH_NOTIFY_COOLDOWN_MS = 60_000;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 /** プレフィックス導入前の端末向けに無印 ID へも送る期間（ISO8601） */
@@ -116,7 +116,9 @@ type PushEvent =
   | 'association_approved'
   | 'order_assigned_main'
   | 'order_assigned_sub_next'
-  | 'order_awaiting_admin';
+  | 'order_awaiting_admin'
+  | 'change_proposal_rejected'
+  | 'customer_cancel_requested';
 
 type SlimPayload = {
   event?: PushEvent | string;
@@ -136,6 +138,8 @@ type SlimPayload = {
   target_factory_id?: string | null;
   sales_admin_id?: string | null;
   orders?: NewOrderBatchItem[] | null;
+  proposal_id?: string | null;
+  proposed_changes?: unknown;
 };
 
 type OrderRow = {
@@ -1182,6 +1186,43 @@ async function readWebhookPayload(req: Request): Promise<{ incoming: IncomingPay
     };
   }
 
+  // change_proposal_rejected / customer_cancel_requested:
+  // event は URL クエリ、詳細は body JSON（new_order_batch と同じ読み方）
+  if (queryEvent === 'change_proposal_rejected' || queryEvent === 'customer_cancel_requested') {
+    const contentLengthHeader = req.headers.get('content-length');
+    const rawText = await req.text();
+    const bodyLen = rawText.length;
+    const parsed = rawText ? tryParseJson(rawText) : null;
+    const parsedObject = asObject(parsed);
+    console.log('[onesignal-push] query+body', {
+      event: queryEvent,
+      bodyLen,
+      contentLength: contentLengthHeader,
+      keys: Object.keys(parsedObject),
+      order_id: pickString(parsedObject.order_id),
+      proposal_id: pickString(parsedObject.proposal_id),
+      customer_id: pickString(parsedObject.customer_id),
+      contractor_customer_id: pickString(parsedObject.contractor_customer_id),
+      agent_organization_id: pickString(parsedObject.agent_organization_id),
+      factory_site_id: pickString(parsedObject.factory_site_id),
+      phone: pickString(parsedObject.phone),
+      contractor_name: pickString(parsedObject.contractor_name),
+      proposed_changes_count: Array.isArray(parsedObject.proposed_changes)
+        ? parsedObject.proposed_changes.length
+        : 0,
+      preview: rawText.slice(0, 240),
+    });
+    return {
+      incoming: {
+        format: 'slim',
+        data: {
+          ...parsedObject,
+          event: queryEvent,
+        } as SlimPayload,
+      },
+    };
+  }
+
   const fromQuery = readFromQueryParams(req);
   if (fromQuery) {
     console.log('[onesignal-push] query params', { event: fromQuery.event, orderId: fromQuery.order_id });
@@ -2047,6 +2088,92 @@ async function sendAssignedMainNotifications(
   return ok ? ['factory:order_assigned_main'] : [];
 }
 
+function formatProposedChangesForPush(changes: unknown): string {
+  const list = Array.isArray(changes) ? changes : [];
+  const parts: string[] = [];
+  for (const raw of list) {
+    const change = asObject(raw);
+    const field = pickString(change.field);
+    if (!field) continue;
+    const next = change.new == null || String(change.new).trim() === '' ? '' : String(change.new).trim();
+    if (field === 'quantity_m3') {
+      parts.push(next ? `数量${next}m³への変更` : '数量の変更');
+    } else if (field === 'delivery_date' || field === 'preferred_date') {
+      parts.push(next ? `希望日${next}への変更` : '希望日の変更');
+    } else if (field === 'delivery_time') {
+      parts.push(next ? `希望時刻${next}への変更` : '希望時刻の変更');
+    } else if (field === 'vehicle_type') {
+      parts.push(next ? `車種${next}への変更` : '車種の変更');
+    } else if (field === 'mix_design') {
+      parts.push(next ? `配合${next}への変更` : '配合の変更');
+    } else if (field === 'has_test') {
+      const label = next === 'true' || next === '有' ? '有' : next === 'false' || next === '無' ? '無' : next;
+      parts.push(label ? `試験${label}への変更` : '試験の変更');
+    } else if (field === 'notes') {
+      parts.push(next ? `備考への変更` : '備考の変更');
+    } else {
+      parts.push(next ? `${field}${next}への変更` : `${field}の変更`);
+    }
+  }
+  return parts.join('、') || '内容変更';
+}
+
+async function sendChangeProposalRejectedNotifications(payload: SlimPayload): Promise<string[]> {
+  const orderId = pickString(payload.order_id);
+  const proposalId = pickString(payload.proposal_id);
+  const summary = formatProposedChangesForPush(payload.proposed_changes);
+  console.log('[onesignal-push] change_proposal_rejected values', {
+    order_id: orderId,
+    proposal_id: proposalId,
+    customer_id: pickString(payload.customer_id),
+    contractor_customer_id: pickString(payload.contractor_customer_id),
+    agent_organization_id: pickString(payload.agent_organization_id),
+    factory_site_id: pickString(payload.factory_site_id),
+    phone: pickString(payload.phone),
+    contractor_name: pickString(payload.contractor_name),
+    proposed_changes: payload.proposed_changes,
+    summary,
+  });
+  if (!orderId) {
+    console.log('[onesignal-push] change_proposal_rejected skip: no order_id');
+    return [];
+  }
+  const message = `変更のご依頼（${summary}）を工場が承れませんでした。次の対応をお選びください`;
+  const data = {
+    type: 'change_proposal_rejected',
+    orderId,
+    proposalId,
+    targetApp: 'customer',
+  };
+  const sent: string[] = [];
+  if (await sendToCustomerAudience(null, payload, message, data, { orderId })) {
+    sent.push('customer:change_proposal_rejected');
+  }
+  return sent;
+}
+
+async function sendCustomerCancelRequestedNotifications(payload: SlimPayload): Promise<string[]> {
+  const orderId = pickString(payload.order_id);
+  const factoryId = pickString(payload.factory_site_id);
+  const contractorName = pickString(payload.contractor_name, '顧客');
+  console.log('[onesignal-push] customer_cancel_requested values', {
+    order_id: orderId,
+    factory_site_id: factoryId,
+    contractor_name: contractorName,
+  });
+  if (!orderId || !factoryId) {
+    console.log('[onesignal-push] customer_cancel_requested skip: missing ids', { orderId, factoryId });
+    return [];
+  }
+  const message = `顧客都合キャンセル依頼：${contractorName}`;
+  const data = { type: 'customer_cancel_requested', orderId, targetApp: 'factory' };
+  const ok = await sendToSpecificFactory(factoryId, message, data, {
+    orderId,
+    title: '【緊急】顧客都合キャンセル依頼',
+  });
+  return ok ? ['factory:customer_cancel_requested'] : [];
+}
+
 async function sendAssignedSubNextNotifications(
   row: OrderRow | null | undefined,
   payload: SlimPayload | null | undefined,
@@ -2582,6 +2709,14 @@ async function processSlimPayload(payload: SlimPayload): Promise<string[]> {
     case 'order_awaiting_admin': {
       const row = orderId ? await fetchOrderRow(orderId) : null;
       sent.push(...await sendOrderAwaitingAdminNotifications(row, payload, orderId));
+      break;
+    }
+    case 'change_proposal_rejected': {
+      sent.push(...await sendChangeProposalRejectedNotifications(payload));
+      break;
+    }
+    case 'customer_cancel_requested': {
+      sent.push(...await sendCustomerCancelRequestedNotifications(payload));
       break;
     }
     default:
