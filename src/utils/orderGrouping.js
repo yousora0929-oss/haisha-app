@@ -104,6 +104,134 @@ export function groupOrdersBySiteForAssignedProjects(orders, projectById = {}, o
   return entries;
 }
 
+function cloneInboxEntries(entries) {
+  return (Array.isArray(entries) ? entries : []).map((entry) => {
+    if (entry?.type === 'group') {
+      return {
+        ...entry,
+        orders: [...(entry.orders || [])],
+        availabilityGroups: [...(entry.availabilityGroups || [])],
+      };
+    }
+    return entry;
+  });
+}
+
+function siteOfAvailabilityGroup(group, getSite) {
+  for (const order of Array.isArray(group?.orders) ? group.orders : []) {
+    const site = String(getSite(order) || '').trim();
+    if (site) return site;
+  }
+  return '';
+}
+
+/**
+ * 工場新着の可否確認カードを、同じ現場名のグループへ収める。
+ * 該当グループがなければ現場グループを作る。現場名なしは leftover に残す。
+ */
+export function attachAvailabilityGroupsToSiteEntries(entries, availabilityGroups, options = {}) {
+  const getSite = typeof options.getSite === 'function' ? options.getSite : defaultGetSite;
+  const next = cloneInboxEntries(entries);
+  const leftoverAvailabilityGroups = [];
+
+  for (const group of Array.isArray(availabilityGroups) ? availabilityGroups : []) {
+    if (!group) continue;
+    const site = siteOfAvailabilityGroup(group, getSite);
+    if (!site) {
+      leftoverAvailabilityGroups.push(group);
+      continue;
+    }
+    let match = next.find((entry) => entry?.type === 'group' && entry.site === site);
+    if (!match) {
+      match = {
+        type: 'group',
+        key: `site:${site}`,
+        site,
+        orders: [],
+        sortMinutes: resolveOrderDateTimeSortValue(group.orders?.[0]),
+        availabilityGroups: [],
+      };
+      next.push(match);
+    }
+    if (!Array.isArray(match.availabilityGroups)) match.availabilityGroups = [];
+    match.availabilityGroups.push(group);
+  }
+
+  const groups = next.filter((entry) => entry?.type === 'group');
+  const folded = [];
+  for (const entry of next) {
+    if (entry?.type === 'group') {
+      folded.push(entry);
+      continue;
+    }
+    const site = String(getSite(entry?.order) || '').trim();
+    const match = site ? groups.find((group) => group.site === site) : null;
+    if (match) {
+      match.orders.push(entry.order);
+    } else {
+      folded.push(entry);
+    }
+  }
+  return { entries: folded, leftoverAvailabilityGroups };
+}
+
+export function compareSiteLabels(a, b, dir = 'asc') {
+  const sa = String(a || '').trim();
+  const sb = String(b || '').trim();
+  if (sa && !sb) return -1;
+  if (!sa && sb) return 1;
+  const cmp = sa.localeCompare(sb, 'ja');
+  return dir === 'desc' ? -cmp : cmp;
+}
+
+export function compareOrdersForFactoryInbox(a, b, sortKey = 'deliveryDate', sortDir = 'asc') {
+  if (sortKey === 'siteName') {
+    const cmp = compareSiteLabels(defaultGetSite(a), defaultGetSite(b), sortDir);
+    if (cmp !== 0) return cmp;
+  }
+  const va = resolveOrderDateTimeSortValue(a);
+  const vb = resolveOrderDateTimeSortValue(b);
+  const cmp = va - vb;
+  if (cmp !== 0) return sortDir === 'desc' ? -cmp : cmp;
+  return 0;
+}
+
+function representativeOrderForInboxEntry(entry) {
+  if (!entry) return null;
+  if (entry.type === 'group') {
+    return entry.orders?.[0] || entry.availabilityGroups?.[0]?.orders?.[0] || null;
+  }
+  return entry.order || null;
+}
+
+/** 工場新着の現場グループ／単票を、日付順または現場名順に並べ替える */
+export function sortFactoryInboxEntries(entries, sortKey = 'deliveryDate', sortDir = 'asc') {
+  const list = cloneInboxEntries(entries).map((entry) => {
+    if (entry?.type !== 'group') return entry;
+    return {
+      ...entry,
+      orders: [...(entry.orders || [])].sort((a, b) =>
+        compareOrdersForFactoryInbox(a, b, sortKey, sortDir),
+      ),
+    };
+  });
+  list.sort((a, b) => {
+    if (sortKey === 'siteName') {
+      const sa = a?.type === 'group' ? a.site : defaultGetSite(a?.order);
+      const sb = b?.type === 'group' ? b.site : defaultGetSite(b?.order);
+      const cmp = compareSiteLabels(sa, sb, sortDir);
+      if (cmp !== 0) return cmp;
+    }
+    return compareOrdersForFactoryInbox(
+      representativeOrderForInboxEntry(a) || {},
+      representativeOrderForInboxEntry(b) || {},
+      'deliveryDate',
+      sortDir,
+    );
+  });
+  return list;
+}
+
 /** 進行中グループの開閉状態を localStorage に保存するときの安定キー（物件ID優先） */
 export function resolveInProgressGroupStorageId(entry) {
   if (!entry || entry.type !== 'group') return '';

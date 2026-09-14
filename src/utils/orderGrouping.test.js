@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  attachAvailabilityGroupsToSiteEntries,
+  compareOrdersForFactoryInbox,
   formatOrderDateTimeSummary,
   groupOrdersBySiteForAssignedProjects,
   reservationGroupIdsFromOrders,
   resolveInProgressGroupStorageId,
   resolveNearestUpcomingOrder,
+  sortFactoryInboxEntries,
 } from './orderGrouping.js';
 
 describe('orderGrouping in-progress collapse helpers', () => {
@@ -133,5 +136,75 @@ describe('groupOrdersBySiteForAssignedProjects reservation groups', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0].key).toBe('site:南現場');
     expect(entries[0].orders).toHaveLength(2);
+  });
+});
+
+describe('factory inbox site grouping + sort', () => {
+  it('nests availability cards into the matching site group', () => {
+    const projectById = { 'proj-1': { main_factory_id: 'fac-1' } };
+    const grouped = groupOrdersBySiteForAssignedProjects(
+      [
+        {
+          id: 'regular',
+          project_id: 'proj-1',
+          siteName: '北現場',
+          preferredDate: '2026-09-20',
+          timeSlotMinutes: 600,
+        },
+      ],
+      projectById,
+      { includeReservationGroups: true },
+    );
+    const { entries, leftoverAvailabilityGroups } = attachAvailabilityGroupsToSiteEntries(grouped, [
+      {
+        groupId: 'g-1',
+        orders: [
+          {
+            id: 'rg-1',
+            reservation_group_id: 'g-1',
+            siteName: '北現場',
+            preferredDate: '2026-09-12',
+            timeSlotMinutes: 480,
+          },
+        ],
+      },
+    ]);
+    expect(leftoverAvailabilityGroups).toEqual([]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].site).toBe('北現場');
+    expect(entries[0].availabilityGroups.map((g) => g.groupId)).toEqual(['g-1']);
+    expect(entries[0].orders.map((o) => o.id)).toEqual(['regular']);
+  });
+
+  it('creates a site group for availability-only reservations', () => {
+    const { entries, leftoverAvailabilityGroups } = attachAvailabilityGroupsToSiteEntries(
+      [{ type: 'single', key: 'order:spot', order: { id: 'spot', siteName: '別現場' } }],
+      [
+        {
+          groupId: 'g-2',
+          orders: [{ id: 'rg-2', reservation_group_id: 'g-2', siteName: '南現場' }],
+        },
+      ],
+    );
+    expect(leftoverAvailabilityGroups).toEqual([]);
+    const siteGroup = entries.find((e) => e.type === 'group' && e.site === '南現場');
+    expect(siteGroup?.availabilityGroups?.[0]?.groupId).toBe('g-2');
+    expect(siteGroup?.orders).toEqual([]);
+  });
+
+  it('sorts by delivery datetime then site name', () => {
+    const a = { id: 'a', siteName: 'い現場', preferredDate: '2026-10-01', timeSlotMinutes: 600 };
+    const b = { id: 'b', siteName: 'あ現場', preferredDate: '2026-09-01', timeSlotMinutes: 480 };
+    expect(compareOrdersForFactoryInbox(a, b, 'deliveryDate', 'asc')).toBeGreaterThan(0);
+    expect(compareOrdersForFactoryInbox(a, b, 'siteName', 'asc')).toBeGreaterThan(0);
+    const sorted = sortFactoryInboxEntries(
+      [
+        { type: 'single', key: 'a', order: a },
+        { type: 'single', key: 'b', order: b },
+      ],
+      'siteName',
+      'asc',
+    );
+    expect(sorted.map((e) => e.order.id)).toEqual(['b', 'a']);
   });
 });

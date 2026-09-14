@@ -128,13 +128,48 @@ import {
   reservationGroupIdOf,
   splitFactoryInboxForReservationGroups,
 } from './utils/reservationGroup.js';
-import { splitFactoryInboxOrdersByKind } from './utils/factoryInboxKind.js';
+import {
+  attachAvailabilityGroupsToSiteEntries,
+  formatOrderDateTimeSummary,
+  groupOrdersBySiteForAssignedProjects,
+  resolveInProgressGroupStorageId,
+  resolveNearestUpcomingOrder,
+  resolveOrderDateTimeSortValue,
+  sortFactoryInboxEntries,
+} from './utils/orderGrouping.js';
 
 const FACTORY_ORDERS_FETCH_OPTIONS = { includeReservationGroups: true };
 
 const FACTORY_SPLIT_STORAGE_KEY = 'haisha_factory_split_left_pct_v1';
+const FACTORY_INBOX_GROUP_COLLAPSED_PREFIX = 'haisha_factory_inbox_group_collapsed_v1';
 const factoryHistoryHideOtherStorageKey = (factoryId) =>
   `haisha_factory_history_hide_other_${String(factoryId || '').trim()}`;
+
+function factoryInboxGroupCollapsedStorageKey(factoryId) {
+  return `${FACTORY_INBOX_GROUP_COLLAPSED_PREFIX}_${String(factoryId || '').trim() || 'anon'}`;
+}
+
+function readFactoryInboxGroupCollapsedMap(factoryId) {
+  try {
+    const raw = window.localStorage.getItem(factoryInboxGroupCollapsedStorageKey(factoryId));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeFactoryInboxGroupCollapsedMap(factoryId, map) {
+  try {
+    window.localStorage.setItem(
+      factoryInboxGroupCollapsedStorageKey(factoryId),
+      JSON.stringify(map && typeof map === 'object' ? map : {}),
+    );
+  } catch {
+    /* ignore */
+  }
+}
 
 /** 依頼一覧 1 行目：希望日 | 希望時刻 | 荷卸し | 車種 | 数量 | 試験（最小幅を確保し、狭いときは横スクロール） */
 const ORDER_GRID_TOP =
@@ -2670,13 +2705,12 @@ function isUnreadForFactory(messages, readKey) {
       factoryNameById = {},
     }) {
       const [searchQuery, setSearchQuery] = useState('');
+      const [inboxSortKey, setInboxSortKey] = useState('deliveryDate');
+      const [inboxSortDir, setInboxSortDir] = useState('asc');
+      const [collapsedInboxGroups, setCollapsedInboxGroups] = useState({});
       const filteredOrders = useMemo(
         () => orders.filter((o) => orderMatchesFactorySearch(o, searchQuery, factorySearchLabel, customerById)),
         [orders, searchQuery, factorySearchLabel, customerById],
-      );
-      const { assigned: assignedInboxOrders, spot: spotInboxOrders } = useMemo(
-        () => splitFactoryInboxOrdersByKind(filteredOrders),
-        [filteredOrders],
       );
       const [confirmedAvailabilityGroups, setConfirmedAvailabilityGroups] = useState([]);
       const filteredPendingGroups = useMemo(() => {
@@ -2698,10 +2732,101 @@ function isUnreadForFactory(messages, readKey) {
         () => new Set(confirmedAvailabilityGroups.map((g) => String(g.groupId))),
         [confirmedAvailabilityGroups],
       );
+      const { inboxEntries, leftoverAvailabilityGroups } = useMemo(() => {
+        const grouped = groupOrdersBySiteForAssignedProjects(filteredOrders, projectById || {}, {
+          sortValue: resolveOrderDateTimeSortValue,
+          includeReservationGroups: true,
+        });
+        const attached = attachAvailabilityGroupsToSiteEntries(grouped, filteredGroups);
+        return {
+          inboxEntries: sortFactoryInboxEntries(attached.entries, inboxSortKey, inboxSortDir),
+          leftoverAvailabilityGroups: attached.leftoverAvailabilityGroups,
+        };
+      }, [filteredOrders, filteredGroups, projectById, inboxSortKey, inboxSortDir]);
+
+      useEffect(() => {
+        setCollapsedInboxGroups(readFactoryInboxGroupCollapsedMap(currentFactoryId));
+      }, [currentFactoryId]);
+
+      const toggleInboxGroupCollapsed = useCallback(
+        (groupStorageId) => {
+          const id = String(groupStorageId || '').trim();
+          if (!id) return;
+          setCollapsedInboxGroups((prev) => {
+            const next = { ...(prev && typeof prev === 'object' ? prev : {}) };
+            if (next[id]) delete next[id];
+            else next[id] = true;
+            writeFactoryInboxGroupCollapsedMap(currentFactoryId, next);
+            return next;
+          });
+        },
+        [currentFactoryId],
+      );
 
       useEffect(() => {
         if (focusedOrderId) setSearchQuery('');
       }, [focusedOrderId]);
+
+      useEffect(() => {
+        const orderId = String(focusedOrderId || '').trim();
+        if (!orderId) return;
+        const groupEntry = (inboxEntries || []).find(
+          (entry) =>
+            entry?.type === 'group' &&
+            ((Array.isArray(entry.orders) &&
+              entry.orders.some((order) => String(order?.id || '') === orderId)) ||
+              (Array.isArray(entry.availabilityGroups) &&
+                entry.availabilityGroups.some((group) =>
+                  (group?.orders || []).some((order) => String(order?.id || '') === orderId),
+                ))),
+        );
+        if (!groupEntry) return;
+        const groupStorageId = resolveInProgressGroupStorageId(groupEntry);
+        if (!groupStorageId) return;
+        setCollapsedInboxGroups((prev) => {
+          if (!prev?.[groupStorageId]) return prev;
+          const next = { ...prev };
+          delete next[groupStorageId];
+          writeFactoryInboxGroupCollapsedMap(currentFactoryId, next);
+          return next;
+        });
+      }, [focusedOrderId, inboxEntries, currentFactoryId]);
+
+      const renderAvailabilityCard = (group) => (
+        <ReservationGroupAvailabilityCard
+          groupId={group.groupId}
+          orders={group.orders}
+          submitting={String(availabilitySubmittingGroupId) === String(group.groupId)}
+          confirmed={confirmedGroupIdSet.has(String(group.groupId))}
+          forceExpanded={Boolean(
+            focusedOrderId &&
+              (group.orders || []).some((o) => String(o?.id) === String(focusedOrderId)),
+          )}
+          onRespond={async (gid, available) => {
+            const snapshot = filteredGroups.find((g) => String(g.groupId) === String(gid));
+            if (available && snapshot) {
+              setConfirmedAvailabilityGroups((prev) =>
+                mergeConfirmedAvailabilityGroups(
+                  prev.filter((g) => String(g.groupId) !== String(gid)),
+                  [snapshot],
+                ),
+              );
+            }
+            const result = await onRespondReservationGroup?.(gid, available);
+            if (available && !result?.won) {
+              setConfirmedAvailabilityGroups((prev) =>
+                prev.filter((g) => String(g.groupId) !== String(gid)),
+              );
+            }
+          }}
+          onHide={(gid) => {
+            setConfirmedAvailabilityGroups((prev) =>
+              prev.filter((g) => String(g.groupId) !== String(gid)),
+            );
+            onHideReservationGroup?.(gid);
+          }}
+        />
+      );
 
       const renderInboxOrderCard = (o, i) => {
         const isExiting = Boolean(o?.id && exitingOrderIds?.has?.(String(o.id)));
@@ -2752,6 +2877,90 @@ function isUnreadForFactory(messages, readKey) {
         );
       };
 
+      const renderInboxEntry = (entry, index) => {
+        if (entry?.type === 'group') {
+          const groupStorageId = resolveInProgressGroupStorageId(entry);
+          const collapsed = Boolean(groupStorageId && collapsedInboxGroups?.[groupStorageId]);
+          const nextOrder = resolveNearestUpcomingOrder(entry.orders);
+          const nextLabel = nextOrder ? formatOrderDateTimeSummary(nextOrder) : '';
+          const availabilityList = Array.isArray(entry.availabilityGroups) ? entry.availabilityGroups : [];
+          const orderCount = Array.isArray(entry.orders) ? entry.orders.length : 0;
+          const badgeLabel =
+            orderCount > 0
+              ? `${orderCount}便`
+              : availabilityList.length > 0
+                ? `可否確認${availabilityList.length}件`
+                : '';
+          return (
+            <li key={entry.key || `group-${index}`} className="list-none">
+              <section
+                className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-2 dark:border-indigo-800 dark:bg-indigo-950/20 sm:p-3"
+                aria-label={`現場「${entry.site}」の注文`}
+              >
+                <button
+                  type="button"
+                  className="flex w-full flex-col gap-1 rounded-xl px-1 py-1 text-left transition hover:bg-indigo-100/60 sm:flex-row sm:items-center sm:gap-2 dark:hover:bg-indigo-900/30"
+                  onClick={() => toggleInboxGroupCollapsed(groupStorageId)}
+                  aria-expanded={!collapsed}
+                >
+                  <div className="flex min-w-0 w-full items-center gap-2 sm:flex-1">
+                    <span
+                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center text-sm font-black text-indigo-700 dark:text-indigo-300"
+                      aria-hidden="true"
+                    >
+                      {collapsed ? '▶' : '▼'}
+                    </span>
+                    <p
+                      className="min-w-0 flex-1 truncate text-sm font-black text-slate-900 dark:text-slate-100"
+                      title={entry.site}
+                    >
+                      {entry.site}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2 pl-8 sm:ml-auto sm:pl-0">
+                    {collapsed && nextLabel ? (
+                      <span
+                        className="whitespace-nowrap rounded-lg bg-white/80 px-2 py-0.5 text-xs font-black tabular-nums text-indigo-800 dark:bg-slate-900/60 dark:text-indigo-200"
+                        title={`次回：${nextLabel}`}
+                      >
+                        次回：{nextLabel}
+                      </span>
+                    ) : null}
+                    {badgeLabel ? (
+                      <span className="whitespace-nowrap rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-black text-white">
+                        {badgeLabel}
+                      </span>
+                    ) : null}
+                  </div>
+                </button>
+                <div
+                  className="grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none"
+                  style={{ gridTemplateRows: collapsed ? '0fr' : '1fr' }}
+                >
+                  <div className="min-h-0 overflow-hidden">
+                    <ul className="mt-2 flex flex-col gap-2">
+                      {availabilityList.map((group) => (
+                        <li key={`rg-${group.groupId}`} className="list-none">
+                          {renderAvailabilityCard(group)}
+                        </li>
+                      ))}
+                      {(entry.orders || []).map((order, i) => renderInboxOrderCard(order, i))}
+                    </ul>
+                  </div>
+                </div>
+              </section>
+            </li>
+          );
+        }
+        return renderInboxOrderCard(entry.order, index);
+      };
+
+      const sortBtnBase =
+        'min-h-[36px] flex-1 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-[11px] font-black transition active:scale-[0.99] sm:flex-none sm:px-3 sm:text-xs';
+      const sortBtnActive = 'bg-indigo-700 text-white shadow-sm';
+      const sortBtnIdle =
+        'bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700';
+
       if (!orders.length && !filteredGroups.length) {
         return (
           <aside
@@ -2775,10 +2984,58 @@ function isUnreadForFactory(messages, readKey) {
           </div>
           <div className="shrink-0 border-b border-slate-200 bg-slate-50/95 px-2 py-2 dark:border-slate-600 dark:bg-slate-900/60">
             <OrderListSearchInput id="factory-inbox-search" value={searchQuery} onChange={setSearchQuery} />
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+              <div
+                className="inline-flex w-full items-stretch gap-1 rounded-xl border-2 border-slate-200 bg-slate-50 p-1 dark:border-slate-600 dark:bg-slate-900/40 sm:w-auto"
+                role="group"
+                aria-label="並び順"
+              >
+                {[
+                  ['deliveryDate', '日付順'],
+                  ['siteName', '現場名順'],
+                ].map(([key, label]) => {
+                  const active = inboxSortKey === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => setInboxSortKey(key)}
+                      className={sortBtnBase + ' ' + (active ? sortBtnActive : sortBtnIdle)}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div
+                className="inline-flex w-full items-stretch gap-1 rounded-xl border-2 border-slate-200 bg-slate-50 p-1 dark:border-slate-600 dark:bg-slate-900/40 sm:w-auto"
+                role="group"
+                aria-label="昇順または降順"
+              >
+                {[
+                  ['asc', '昇順'],
+                  ['desc', '降順'],
+                ].map(([dir, label]) => {
+                  const active = inboxSortDir === dir;
+                  return (
+                    <button
+                      key={dir}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => setInboxSortDir(dir)}
+                      className={sortBtnBase + ' ' + (active ? sortBtnActive : sortBtnIdle)}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-2 pb-2 pt-2">
             <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden pr-0.5">
-            {filteredGroups.length === 0 && filteredOrders.length === 0 ? (
+            {leftoverAvailabilityGroups.length === 0 && inboxEntries.length === 0 ? (
               <li className="list-none">
                 <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-2 py-4 text-center text-xs font-bold text-slate-600 dark:border-slate-600 dark:bg-slate-900/50 dark:text-slate-300">
                   該当する依頼がありません
@@ -2786,59 +3043,12 @@ function isUnreadForFactory(messages, readKey) {
               </li>
             ) : (
               <>
-              {filteredGroups.map((group) => (
+              {leftoverAvailabilityGroups.map((group) => (
                 <li key={`rg-${group.groupId}`} className="list-none">
-                  <ReservationGroupAvailabilityCard
-                    groupId={group.groupId}
-                    orders={group.orders}
-                    submitting={String(availabilitySubmittingGroupId) === String(group.groupId)}
-                    confirmed={confirmedGroupIdSet.has(String(group.groupId))}
-                    forceExpanded={Boolean(
-                      focusedOrderId &&
-                        (group.orders || []).some((o) => String(o?.id) === String(focusedOrderId)),
-                    )}
-                    onRespond={async (gid, available) => {
-                      const snapshot = filteredGroups.find((g) => String(g.groupId) === String(gid));
-                      if (available && snapshot) {
-                        setConfirmedAvailabilityGroups((prev) =>
-                          mergeConfirmedAvailabilityGroups(
-                            prev.filter((g) => String(g.groupId) !== String(gid)),
-                            [snapshot],
-                          ),
-                        );
-                      }
-                      const result = await onRespondReservationGroup?.(gid, available);
-                      if (available && !result?.won) {
-                        setConfirmedAvailabilityGroups((prev) =>
-                          prev.filter((g) => String(g.groupId) !== String(gid)),
-                        );
-                      }
-                    }}
-                    onHide={(gid) => {
-                      setConfirmedAvailabilityGroups((prev) =>
-                        prev.filter((g) => String(g.groupId) !== String(gid)),
-                      );
-                      onHideReservationGroup?.(gid);
-                    }}
-                  />
+                  {renderAvailabilityCard(group)}
                 </li>
               ))}
-              {assignedInboxOrders.length > 0 ? (
-                <li className="list-none">
-                  <h3 className="px-0.5 pt-0.5 text-xs font-black tracking-tight text-indigo-800 dark:text-indigo-200">
-                    割当物件の注文（{assignedInboxOrders.length}件）
-                  </h3>
-                </li>
-              ) : null}
-              {assignedInboxOrders.map((o, i) => renderInboxOrderCard(o, i))}
-              {spotInboxOrders.length > 0 ? (
-                <li className="list-none">
-                  <h3 className="px-0.5 pt-0.5 text-xs font-black tracking-tight text-amber-800 dark:text-amber-200">
-                    スポット注文（{spotInboxOrders.length}件）
-                  </h3>
-                </li>
-              ) : null}
-              {spotInboxOrders.map((o, i) => renderInboxOrderCard(o, assignedInboxOrders.length + i))}
+              {inboxEntries.map((entry, index) => renderInboxEntry(entry, index))}
               </>
             )}
           </ul>

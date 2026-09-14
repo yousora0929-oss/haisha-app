@@ -59,10 +59,18 @@ export function FactoryOrderVisibilityMini({ order, escalationCtx, factoryNameBy
 
   if (!order || !scope) return null;
 
+  const assignedName =
+    scope.chips?.find((chip) => chip.role === 'assigned')?.name ||
+    String(scope.visibleFactoryNames?.[0] || '').trim();
+  const summaryText =
+    scope.kind === 'accepted_assigned'
+      ? assignedName || String(scope.summary || '').replace(/\s*に受注確定$/, '')
+      : scope.summary;
+
   return (
     <div className="mt-1.5 min-w-0" aria-label="公開範囲">
       <p className="truncate text-[11px] font-bold leading-tight text-slate-600 dark:text-slate-300">
-        {scope.summary}
+        {summaryText}
       </p>
       {scope.chips.length > 0 ? (
         <div className="mt-1 flex flex-wrap gap-1">
@@ -73,7 +81,9 @@ export function FactoryOrderVisibilityMini({ order, escalationCtx, factoryNameBy
               title={chip.id}
             >
               <span className="truncate">{chip.name}</span>
-              <span className="ml-1 shrink-0 opacity-80">{chipRoleLabel(chip.role)}</span>
+              {chip.role === 'assigned' ? null : (
+                <span className="ml-1 shrink-0 opacity-80">{chipRoleLabel(chip.role)}</span>
+              )}
             </span>
           ))}
         </div>

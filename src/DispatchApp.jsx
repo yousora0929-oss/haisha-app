@@ -213,6 +213,26 @@ function dispatchOrderElementId(orderId) {
   return id ? `dispatch-order-${id}` : '';
 }
 
+function inProgressOrderCreatedAtMs(order) {
+  const t = Date.parse(String(order?.createdAt ?? order?.created_at ?? ''));
+  return Number.isFinite(t) ? t : 0;
+}
+
+/** 打設日が近い順。日付なしは末尾。同日は登録日が新しい順。 */
+function compareInProgressOrdersByDeliveryDate(a, b) {
+  const da = getOrderDeliveryDateISO(a);
+  const db = getOrderDeliveryDateISO(b);
+  if (da && db && da !== db) return da < db ? -1 : 1;
+  if (da && !db) return -1;
+  if (!da && db) return 1;
+  return inProgressOrderCreatedAtMs(b) - inProgressOrderCreatedAtMs(a);
+}
+
+/** 登録日が新しい順（dashboardOrders と同じ） */
+function compareInProgressOrdersByCreatedAtDesc(a, b) {
+  return inProgressOrderCreatedAtMs(b) - inProgressOrderCreatedAtMs(a);
+}
+
 function inProgressGroupCollapsedStorageKey(customerId) {
   const cid = String(customerId || '').trim() || 'anon';
   return `${INPROGRESS_GROUP_COLLAPSED_STORAGE_PREFIX}_${cid}`;
@@ -1686,6 +1706,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return initialOrderDateTime.slot;
       });
       const [inProgressSearchQuery, setInProgressSearchQuery] = useState('');
+      const [inProgressSortMode, setInProgressSortMode] = useState('deliveryDate');
       // 業者ログインの表示範囲。false = 自分の担当分のみ（従来動作）、true = 会社全体
       const [companyScopeEnabled, setCompanyScopeEnabled] = useState(false);
       const [companyScopeOrders, setCompanyScopeOrders] = useState([]);
@@ -3231,13 +3252,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         () => (inProgressSourceOrders || []).filter((o) => o && isOrderInProgressView(o, today)),
         [inProgressSourceOrders, today],
       );
-      const filteredInProgressOrders = useMemo(
-        () =>
-          (scopedInProgressOrders || [])
-            .filter((o) => orderMatchesMasterSearch(o, inProgressSearchQuery))
-            .slice(0, companyScopeActive ? 45 : 15),
-        [scopedInProgressOrders, inProgressSearchQuery, companyScopeActive],
-      );
+      const filteredInProgressOrders = useMemo(() => {
+        const filtered = (scopedInProgressOrders || []).filter((o) =>
+          orderMatchesMasterSearch(o, inProgressSearchQuery),
+        );
+        const compare =
+          inProgressSortMode === 'createdAt'
+            ? compareInProgressOrdersByCreatedAtDesc
+            : compareInProgressOrdersByDeliveryDate;
+        return [...filtered].sort(compare).slice(0, companyScopeActive ? 45 : 15);
+      }, [scopedInProgressOrders, inProgressSearchQuery, inProgressSortMode, companyScopeActive]);
       // 進行中一覧も割当物件は現場名でグルーピング（検索フィルタ適用後の一覧をグループ化する）
       const inProgressOrderEntries = useMemo(
         () =>
@@ -4640,12 +4664,42 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       />
                     ) : null}
                     {!isGuestSiteOrder && customerOrderTab === 'active' ? (
-                      <div className="w-full md:w-auto max-w-md">
-                        <OrderListSearchInput
-                          id="master-in-progress-search"
-                          value={inProgressSearchQuery}
-                          onChange={setInProgressSearchQuery}
-                        />
+                      <div className="flex w-full max-w-2xl flex-col gap-2 sm:flex-row sm:items-center md:justify-end">
+                        <div className="min-w-0 w-full sm:max-w-md">
+                          <OrderListSearchInput
+                            id="master-in-progress-search"
+                            value={inProgressSearchQuery}
+                            onChange={setInProgressSearchQuery}
+                          />
+                        </div>
+                        <div
+                          className="inline-flex w-full shrink-0 items-stretch gap-1 rounded-xl border-2 border-slate-200 bg-slate-50 p-1 dark:border-slate-600 dark:bg-slate-900/40 sm:w-auto"
+                          role="group"
+                          aria-label="進行中リストの並び順"
+                        >
+                          {[
+                            ['deliveryDate', '打設日が近い順'],
+                            ['createdAt', '登録日が新しい順'],
+                          ].map(([mode, label]) => {
+                            const active = inProgressSortMode === mode;
+                            return (
+                              <button
+                                key={mode}
+                                type="button"
+                                aria-pressed={active}
+                                onClick={() => setInProgressSortMode(mode)}
+                                className={
+                                  'min-h-[40px] flex-1 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-[11px] font-black transition active:scale-[0.99] sm:flex-none sm:px-3 sm:text-xs ' +
+                                  (active
+                                    ? 'bg-indigo-700 text-white shadow-sm'
+                                    : 'bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700')
+                                }
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                     ) : null}
                   </div>
