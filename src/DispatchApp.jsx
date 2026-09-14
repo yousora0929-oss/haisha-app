@@ -1321,8 +1321,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       choiceSubmitting = false,
       onEditOrder = null,
       onRequestChange = null,
-      onProposeOrderChange = null,
-      hasPendingChangeProposal = false,
       readOnly = false,
       accountLabel = '',
       customerById = {},
@@ -1353,11 +1351,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         !canEditPending &&
         isAcceptedOrderChangeRequestable(order) &&
         typeof onRequestChange === 'function';
-      const canProposeOrderChange =
-        !readOnly &&
-        !canEditPending &&
-        isAcceptedOrderChangeRequestable(order) &&
-        typeof onProposeOrderChange === 'function';
       const showMapPlaceholder = useMemo(
         () => shouldShowMapPendingPlaceholder(order, project),
         [order, project],
@@ -1510,7 +1503,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 ) : null}
               </div>
 
-              <div className="flex w-full min-w-0 items-stretch gap-2 sm:w-auto sm:items-center">
+              <div className="flex w-full min-w-0 items-stretch justify-end gap-2 sm:w-auto sm:items-center">
                 {canEditPending ? (
                   <button
                     type="button"
@@ -1540,24 +1533,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     title="工場へ変更依頼を送る"
                   >
                     変更依頼
-                  </button>
-                ) : null}
-                {canProposeOrderChange ? (
-                  <button
-                    type="button"
-                    disabled={hasPendingChangeProposal}
-                    onClick={(e) => {
-                      e?.stopPropagation?.();
-                      if (hasPendingChangeProposal) return;
-                      onProposeOrderChange(order);
-                    }}
-                    className={
-                      actionBtnBase +
-                      ' border-2 border-slate-500 bg-white text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-400 dark:bg-slate-800 dark:text-slate-100'
-                    }
-                    title={hasPendingChangeProposal ? '工場の回答待ちです' : '数量・日時などの変更を工場へ打診する'}
-                  >
-                    {hasPendingChangeProposal ? '変更打診中' : '変更を申し出る'}
                   </button>
                 ) : null}
                 {mapUrl ? (
@@ -6466,8 +6441,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                 onCancelPreferred={(o) => void runCustomerChoice(o, 'cancel')}
                                 onEditOrder={isColleagueOrder ? null : handleOpenCustomerOrderEdit}
                                 onRequestChange={isColleagueOrder ? null : handleOpenCustomerChangeRequest}
-                                onProposeOrderChange={isColleagueOrder ? null : handleOpenOrderChangePropose}
-                                hasPendingChangeProposal={pendingChangeProposalOrderIds.has(String(ord.id))}
                                 readOnly={isColleagueOrder}
                                 accountLabel={
                                   companyScopeActive
