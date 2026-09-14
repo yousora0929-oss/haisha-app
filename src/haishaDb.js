@@ -38,6 +38,11 @@ import { mapMixDesignFactoryLinks } from './utils/mixDesignAccept.js';
 import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.js';
 import { resolveOrderParties } from './utils/orderPartyInfo.js';
 import {
+  formatChangeRequestResolveChatBody,
+  pickAcceptedChangeRequestPatch,
+  splitChangeRequestDecisions,
+} from './utils/changeRequestItems.js';
+import {
   attachReservationGroupFromRow,
   isReservationGroupManagedOrder,
   mapReservationOrderRow,
@@ -2146,11 +2151,11 @@ export async function clearOrderPendingChangeRequest(orderId) {
 }
 
 /**
- * 工場が変更依頼を承諾し、構造化パッチを注文へ反映する
+ * 工場が変更依頼を項目ごとに承諾／対応不可し、承諾分だけ注文へ反映する
  * @param {string} orderId
- * @param {{ factoryName?: string }} [opts]
+ * @param {{ factoryName?: string, acceptedKeys?: string[] }} [opts]
  */
-export async function acceptOrderChangeRequest(orderId, opts = {}) {
+export async function resolveOrderChangeRequest(orderId, opts = {}) {
   const id = String(orderId || '').trim();
   if (!id) throw new Error('orderId が必要です');
 
@@ -2169,31 +2174,58 @@ export async function acceptOrderChangeRequest(orderId, opts = {}) {
     throw new Error('反映する内容がありません');
   }
 
-  const applyPatch = { ...structured, is_factory_modified: true, is_customer_modified: false };
-  if (Object.prototype.hasOwnProperty.call(structured, 'quantityM3')) {
-    applyPatch.confirmedQuantityM3 = structured.quantityM3;
-  }
-  if (Object.prototype.hasOwnProperty.call(structured, 'mixText')) {
-    applyPatch.confirmedMixText = structured.mixText;
-  }
-  // updateOrderDetails 側で is_factory_modified によりフラグ/パッチもクリアされるが明示する
-  applyPatch.has_pending_change_request = false;
-  applyPatch.pending_change_request_patch = null;
+  const acceptedKeys = Array.isArray(opts.acceptedKeys)
+    ? opts.acceptedKeys.map((key) => String(key))
+    : [];
+  const applyPatch = pickAcceptedChangeRequestPatch(structured, acceptedKeys);
+  const { accepted, declined } = splitChangeRequestDecisions(structured, acceptedKeys);
 
-  const updated = await updateOrderDetails(id, applyPatch);
-  const factoryLabel = String(opts.factoryName || '').trim();
+  let updated;
+  if (Object.keys(applyPatch).length > 0) {
+    updated = await updateOrderDetails(id, {
+      ...applyPatch,
+      is_factory_modified: true,
+      is_customer_modified: false,
+      has_pending_change_request: false,
+      pending_change_request_patch: null,
+    });
+  } else {
+    updated = await clearOrderPendingChangeRequest(id);
+  }
+
   try {
     await appendChatMessage(
       id,
       'factory',
-      factoryLabel
-        ? `${factoryLabel}が変更依頼を承諾し、内容を反映しました。`
-        : '工場が変更依頼を承諾し、内容を反映しました。',
+      formatChangeRequestResolveChatBody({
+        factoryName: opts.factoryName,
+        acceptedItems: accepted,
+        declinedItems: declined,
+      }),
     );
   } catch (chatErr) {
-    console.warn('[haisha] 変更依頼承諾チャット投稿失敗', chatErr);
+    console.warn('[haisha] 変更依頼回答チャット投稿失敗', chatErr);
   }
   return updated;
+}
+
+/**
+ * 工場が変更依頼を承諾し、構造化パッチを注文へ反映する
+ * @param {string} orderId
+ * @param {{ factoryName?: string }} [opts]
+ */
+export async function acceptOrderChangeRequest(orderId, opts = {}) {
+  const latest = await fetchOrderById(orderId);
+  const structured =
+    latest?.pending_change_request_patch &&
+    typeof latest.pending_change_request_patch === 'object' &&
+    !Array.isArray(latest.pending_change_request_patch)
+      ? latest.pending_change_request_patch
+      : {};
+  return resolveOrderChangeRequest(orderId, {
+    ...opts,
+    acceptedKeys: Object.keys(structured),
+  });
 }
 
 /** pending_change_request_patch が承諾可能か */
