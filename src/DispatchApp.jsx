@@ -393,6 +393,120 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       return db.appendChatMessage(orderId, from, body);
     }
 
+    const ANSWERED_CHANGE_PROPOSALS_KEY = 'haisha-answered-order-change-proposals';
+
+    function readAnsweredChangeProposalIds() {
+      try {
+        const raw = JSON.parse(window.localStorage.getItem(ANSWERED_CHANGE_PROPOSALS_KEY) || '[]');
+        return new Set((Array.isArray(raw) ? raw : []).map((id) => String(id || '').trim()).filter(Boolean));
+      } catch {
+        return new Set();
+      }
+    }
+
+    function persistAnsweredChangeProposalId(proposalId) {
+      const id = String(proposalId || '').trim();
+      const next = readAnsweredChangeProposalIds();
+      if (id) next.add(id);
+      try {
+        window.localStorage.setItem(ANSWERED_CHANGE_PROPOSALS_KEY, JSON.stringify([...next]));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    }
+
+    function currentOrderQuantityM3(order) {
+      const raw = order?.confirmedQuantityM3 ?? order?.quantityM3 ?? order?.quantityCube;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : null;
+    }
+
+    function currentOrderDeliveryDate(order) {
+      return String(order?.preferredDate || order?.scheduleMatchDate || order?.delivery_date || '').slice(0, 10);
+    }
+
+    function currentOrderDeliveryTime(order) {
+      return String(order?.timePointLabel || order?.timeSlotLabel || '').trim();
+    }
+
+    function valuesEqualLoose(a, b) {
+      if (a == null && b == null) return true;
+      const na = Number(a);
+      const nb = Number(b);
+      if (Number.isFinite(na) && Number.isFinite(nb)) return Math.abs(na - nb) < 0.001;
+      return String(a ?? '').trim() === String(b ?? '').trim();
+    }
+
+    function pickActionableRejectedProposal(orderId, proposals, answeredIds, order) {
+      const oid = String(orderId || '').trim();
+      if (!oid) return null;
+      const list = (Array.isArray(proposals) ? proposals : [])
+        .filter((p) => String(p?.order_id || '') === oid)
+        .slice()
+        .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+      const latest = list[0];
+      if (!latest || String(latest.status || '') !== 'rejected') return null;
+      if (latest.schedule_import_row_id) return null;
+      if (answeredIds?.has?.(String(latest.id))) return null;
+      const cancelChangeId = String(order?.customer_cancel_requested_change_id || '').trim();
+      if (order?.customer_cancel_requested && cancelChangeId && cancelChangeId === String(latest.id)) {
+        return null;
+      }
+      return latest;
+    }
+
+    function buildProposedChangesFromForm(order, form, { requireDate = false } = {}) {
+      const changes = [];
+      const currentQty = currentOrderQuantityM3(order);
+      const currentDate = currentOrderDeliveryDate(order);
+      const currentTime = currentOrderDeliveryTime(order);
+      const nextQtyRaw = String(form?.quantityM3 ?? '').trim();
+      const nextDate = String(form?.preferredDate ?? '').trim();
+      const nextTime = String(form?.deliveryTime ?? '').trim();
+      if (requireDate && !nextDate) {
+        throw new Error('希望日を入力してください');
+      }
+      if (nextQtyRaw) {
+        const nextQty = Number(nextQtyRaw);
+        if (!Number.isFinite(nextQty) || nextQty <= 0) {
+          throw new Error('数量（m³）が不正です');
+        }
+        if (!valuesEqualLoose(currentQty, nextQty)) {
+          changes.push({ field: 'quantity_m3', old: currentQty, new: nextQty });
+        }
+      }
+      if (nextDate && nextDate !== currentDate) {
+        changes.push({ field: 'delivery_date', old: currentDate || null, new: nextDate });
+      }
+      if (nextTime && nextTime !== currentTime) {
+        changes.push({ field: 'delivery_time', old: currentTime || null, new: nextTime });
+      }
+      if (!changes.length) {
+        throw new Error('変更する項目を入力してください');
+      }
+      return changes;
+    }
+
+    function seedFormFromRejectedProposal(order, proposal) {
+      const changes = Array.isArray(proposal?.proposed_changes) ? proposal.proposed_changes : [];
+      const qtyChange = changes.find((c) => String(c?.field || '') === 'quantity_m3');
+      const timeChange = changes.find((c) => String(c?.field || '') === 'delivery_time');
+      return {
+        quantityM3:
+          qtyChange?.new != null && String(qtyChange.new).trim() !== ''
+            ? String(qtyChange.new)
+            : currentOrderQuantityM3(order) != null
+              ? String(currentOrderQuantityM3(order))
+              : '',
+        preferredDate: '',
+        deliveryTime:
+          timeChange?.new != null && String(timeChange.new).trim() !== ''
+            ? String(timeChange.new)
+            : currentOrderDeliveryTime(order),
+      };
+    }
+
     const MIX_SHORTCUTS = ['18-8-20BB', '18-12-20BB', '18-15-20N', '21-15-20N'];
 
     const MASTER_TRADER_SUGGESTIONS = ['梅田建材', '大分商事', '九州生コン販売', '共栄商事'];
@@ -629,6 +743,177 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
     }
 
+    function CustomerChangeProposalChoicePanel({
+      proposal,
+      submitting = false,
+      onRescheduleDate,
+      onChangeFactory,
+      onKeepOriginal,
+    }) {
+      if (!proposal?.id) return null;
+      const summary = db.formatOrderChangeProposalSummary(proposal.proposed_changes);
+      return (
+        <div className="mx-2 my-3 space-y-3 rounded-2xl border-2 border-slate-400 bg-white p-4 shadow-sm dark:border-slate-500 dark:bg-slate-800">
+          <p className="text-sm font-black text-slate-900 dark:text-slate-100">
+            工場がこの変更依頼に対応できないと回答しました。次の対応を選んでください。
+          </p>
+          <p className="text-xs font-bold text-slate-600 dark:text-slate-300">打診内容：{summary}</p>
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => onRescheduleDate?.(proposal)}
+              className="w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-black text-white hover:bg-indigo-700 disabled:opacity-60"
+            >
+              日を改める
+            </button>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => onChangeFactory?.(proposal)}
+              className="w-full rounded-xl bg-amber-600 px-4 py-3 text-sm font-black text-white hover:bg-amber-700 disabled:opacity-60"
+            >
+              工場を変える
+            </button>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => onKeepOriginal?.(proposal)}
+              className="w-full rounded-xl border-2 border-slate-300 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-500 dark:bg-slate-900 dark:text-slate-100"
+            >
+              変更せず出荷
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function CustomerOrderChangeProposeModal({
+      order,
+      open,
+      requireDate = false,
+      initialForm = null,
+      submitting = false,
+      onClose,
+      onSubmit,
+    }) {
+      const [quantityM3, setQuantityM3] = useState('');
+      const [preferredDate, setPreferredDate] = useState('');
+      const [deliveryTime, setDeliveryTime] = useState('');
+      const [error, setError] = useState('');
+
+      useEffect(() => {
+        if (!open) return;
+        setQuantityM3(String(initialForm?.quantityM3 ?? ''));
+        setPreferredDate(String(initialForm?.preferredDate ?? ''));
+        setDeliveryTime(String(initialForm?.deliveryTime ?? ''));
+        setError('');
+      }, [open, order?.id, initialForm?.quantityM3, initialForm?.preferredDate, initialForm?.deliveryTime]);
+
+      if (!open || !order) return null;
+      const currentQty = currentOrderQuantityM3(order);
+      const currentDate = currentOrderDeliveryDate(order);
+      const currentTime = currentOrderDeliveryTime(order);
+
+      const submit = async () => {
+        setError('');
+        try {
+          const changes = buildProposedChangesFromForm(
+            order,
+            { quantityM3, preferredDate, deliveryTime },
+            { requireDate },
+          );
+          await onSubmit?.(changes);
+        } catch (err) {
+          setError(err?.message ? String(err.message) : '送信に失敗しました');
+        }
+      };
+
+      return (
+        <div className="fixed inset-0 z-[540] flex items-end justify-center bg-slate-900/50 p-3 sm:items-center">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="order-change-propose-title"
+            className="w-full max-w-md rounded-2xl border-2 border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-600 dark:bg-slate-900"
+          >
+            <h2 id="order-change-propose-title" className="text-base font-black text-slate-900 dark:text-slate-100">
+              変更を申し出る
+            </h2>
+            <p className="mt-1 text-xs font-bold text-slate-500 dark:text-slate-300">
+              変更したい項目だけ入力してください。空欄の項目は現状のまま工場へ打診しません。
+            </p>
+            <dl className="mt-3 grid gap-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">
+              <div>現在の数量：{currentQty != null ? `${currentQty} m³` : '—'}</div>
+              <div>現在の希望日：{currentDate || '—'}</div>
+              <div>現在の希望時刻：{currentTime || '—'}</div>
+            </dl>
+            <div className="mt-4 grid gap-3">
+              <label className="grid gap-1 text-xs font-black text-slate-700 dark:text-slate-200">
+                数量（m³）
+                <input
+                  type="number"
+                  min="0.1"
+                  step="0.1"
+                  value={quantityM3}
+                  onChange={(e) => setQuantityM3(e.target.value)}
+                  placeholder="変更しない場合は空欄"
+                  className="min-h-[44px] rounded-xl border border-slate-300 px-3 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-300 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-black text-slate-700 dark:text-slate-200">
+                希望日{requireDate ? '（必須）' : ''}
+                <input
+                  type="date"
+                  value={preferredDate}
+                  onChange={(e) => setPreferredDate(e.target.value)}
+                  className="min-h-[44px] rounded-xl border border-slate-300 px-3 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-300 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-black text-slate-700 dark:text-slate-200">
+                希望時刻
+                <select
+                  value={deliveryTime}
+                  onChange={(e) => setDeliveryTime(e.target.value)}
+                  className="min-h-[44px] rounded-xl border border-slate-300 px-3 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-300 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                >
+                  <option value="">変更しない</option>
+                  {TIME_SLOTS.map((slot) => (
+                    <option key={slot.value} value={slot.label}>
+                      {slot.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {error ? (
+              <p className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-black text-red-800">
+                {error}
+              </p>
+            ) : null}
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={onClose}
+                className="min-h-[48px] rounded-xl border-2 border-slate-300 bg-white px-3 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100"
+              >
+                閉じる
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => void submit()}
+                className="min-h-[48px] rounded-xl bg-indigo-600 px-3 text-sm font-black text-white hover:bg-indigo-700 disabled:opacity-60"
+              >
+                {submitting ? '送信中…' : '工場へ打診する'}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     function ConfirmedDetailsBlock({ order }) {
       const qty = order.confirmedQuantityM3 ?? order.quantityM3 ?? order.quantityCube;
       const mix = order.confirmedMixText ?? order.mixText;
@@ -717,6 +1002,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       onPreferredFactoryChoice,
       escalationCtx = null,
       orderCustomer = null,
+      rejectedChangeProposal = null,
+      onChangeProposalChoice = null,
+      changeProposalChoiceSubmitting = false,
     }) {
       const [draft, setDraft] = useState('');
       const [choiceSubmitting, setChoiceSubmitting] = useState(false);
@@ -739,7 +1027,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         const el = messagesListRef.current;
         if (!el) return;
         el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-      }, [list.length, messages, showChoice]);
+      }, [list.length, messages, showChoice, rejectedChangeProposal?.id]);
       useEffect(() => {
         clearAppBadge();
       }, [orderId]);
@@ -849,6 +1137,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   onEscalate={() => void handlePreferredFactoryChoice('escalate')}
                   onReschedule={() => void handlePreferredFactoryChoice('reschedule')}
                   onCancel={() => void handlePreferredFactoryChoice('cancel')}
+                />
+              </li>
+            ) : null}
+            {rejectedChangeProposal?.id ? (
+              <li>
+                <CustomerChangeProposalChoicePanel
+                  proposal={rejectedChangeProposal}
+                  submitting={changeProposalChoiceSubmitting}
+                  onRescheduleDate={() => void onChangeProposalChoice?.('reschedule_date', rejectedChangeProposal)}
+                  onChangeFactory={() => void onChangeProposalChoice?.('change_factory', rejectedChangeProposal)}
+                  onKeepOriginal={() => void onChangeProposalChoice?.('keep_original', rejectedChangeProposal)}
                 />
               </li>
             ) : null}
@@ -1022,6 +1321,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       choiceSubmitting = false,
       onEditOrder = null,
       onRequestChange = null,
+      onProposeOrderChange = null,
+      hasPendingChangeProposal = false,
       readOnly = false,
       accountLabel = '',
       customerById = {},
@@ -1052,6 +1353,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         !canEditPending &&
         isAcceptedOrderChangeRequestable(order) &&
         typeof onRequestChange === 'function';
+      const canProposeOrderChange =
+        !readOnly &&
+        !canEditPending &&
+        isAcceptedOrderChangeRequestable(order) &&
+        typeof onProposeOrderChange === 'function';
       const showMapPlaceholder = useMemo(
         () => shouldShowMapPendingPlaceholder(order, project),
         [order, project],
@@ -1236,6 +1542,24 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     変更依頼
                   </button>
                 ) : null}
+                {canProposeOrderChange ? (
+                  <button
+                    type="button"
+                    disabled={hasPendingChangeProposal}
+                    onClick={(e) => {
+                      e?.stopPropagation?.();
+                      if (hasPendingChangeProposal) return;
+                      onProposeOrderChange(order);
+                    }}
+                    className={
+                      actionBtnBase +
+                      ' border-2 border-slate-500 bg-white text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-400 dark:bg-slate-800 dark:text-slate-100'
+                    }
+                    title={hasPendingChangeProposal ? '工場の回答待ちです' : '数量・日時などの変更を工場へ打診する'}
+                  >
+                    {hasPendingChangeProposal ? '変更打診中' : '変更を申し出る'}
+                  </button>
+                ) : null}
                 {mapUrl ? (
                   <button
                     type="button"
@@ -1385,6 +1709,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       customerById = {},
       onEditOrder = null,
       onRequestChange = null,
+      onProposeOrderChange = null,
+      pendingChangeProposalOrderIds = null,
     }) {
       const [expandedStatusOrderId, setExpandedStatusOrderId] = useState('');
       const lastTapRef = useRef({ orderId: null, at: 0 });
@@ -1505,6 +1831,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       !canEditPending &&
                       isAcceptedOrderChangeRequestable(order) &&
                       typeof onRequestChange === 'function';
+                    const canProposeOrderChange =
+                      !canEditPending &&
+                      isAcceptedOrderChangeRequestable(order) &&
+                      typeof onProposeOrderChange === 'function';
+                    const hasPendingChangeProposal = Boolean(
+                      pendingChangeProposalOrderIds?.has?.(String(order?.id || '')),
+                    );
                     return (
                       <div
                         onDoubleClick={() => toggleStatusCard(order.id)}
@@ -1535,6 +1868,20 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                               className="rounded-lg border-2 border-amber-500 bg-amber-50 px-2.5 py-1 text-[11px] font-black text-amber-950 hover:bg-amber-100"
                             >
                               変更依頼
+                            </button>
+                          ) : null}
+                          {canProposeOrderChange ? (
+                            <button
+                              type="button"
+                              disabled={hasPendingChangeProposal}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (hasPendingChangeProposal) return;
+                                onProposeOrderChange(order);
+                              }}
+                              className="rounded-lg border-2 border-slate-500 bg-white px-2.5 py-1 text-[11px] font-black text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {hasPendingChangeProposal ? '変更打診中' : '変更を申し出る'}
                             </button>
                           ) : null}
                         </div>
@@ -1681,6 +2028,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [customerEditOrder, setCustomerEditOrder] = useState(null);
       const [customerEditMode, setCustomerEditMode] = useState('edit');
       const [changeRequestNotice, setChangeRequestNotice] = useState('');
+      const [orderChangeProposals, setOrderChangeProposals] = useState([]);
+      const [answeredChangeProposalIds, setAnsweredChangeProposalIds] = useState(
+        () => readAnsweredChangeProposalIds(),
+      );
+      const [changeProposeOrder, setChangeProposeOrder] = useState(null);
+      const [changeProposeRequireDate, setChangeProposeRequireDate] = useState(false);
+      const [changeProposeInitialForm, setChangeProposeInitialForm] = useState(null);
+      const [changeProposeSubmitting, setChangeProposeSubmitting] = useState(false);
+      const [changeProposalChoiceSubmitting, setChangeProposalChoiceSubmitting] = useState(false);
       const [chatThreads, setChatThreads] = useState({});
       const [readChatKeys, setReadChatKeys] = useState({});
       const [unreadChatsByOrder, setUnreadChatsByOrder] = useState({});
@@ -2534,6 +2890,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const refreshDashboardRef = useRef(() => Promise.resolve());
       const isRelevantDashboardOrderRef = useRef(() => true);
       const dashboardNoticeTimerRef = useRef(null);
+      const notifiedRejectedProposalIdsRef = useRef(new Set());
 
       const showDashboardNotice = useCallback((message, { playSound = false } = {}) => {
         if (!message) return;
@@ -2756,6 +3113,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             );
             setDashboardOrders(Array.isArray(displayOrders) ? displayOrders : []);
             setChatThreads(newThreads);
+            try {
+              const proposalOrderIds = (Array.isArray(displayOrders) ? displayOrders : [])
+                .map((o) => o?.id)
+                .filter(Boolean);
+              const rows = await db.fetchOrderChangeProposalsForOrders(proposalOrderIds);
+              setOrderChangeProposals(Array.isArray(rows) ? rows : []);
+            } catch (proposalErr) {
+              console.warn('[DispatchApp] order_change_proposals 取得に失敗', proposalErr);
+            }
           } catch (loadErr) {
             logDispatchError('[DispatchApp] ダッシュボード注文の取得・更新に失敗', loadErr);
             window.alert(formatSupabaseError(loadErr, '注文一覧の更新に失敗しました'));
@@ -3489,6 +3855,35 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   },
                 });
               })
+              .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'order_change_proposals' },
+                (payload) => {
+                  const row = payload?.new && typeof payload.new === 'object' ? payload.new : null;
+                  if (row?.id) {
+                    const mapped = {
+                      id: String(row.id),
+                      order_id: row.order_id != null ? String(row.order_id) : '',
+                      factory_id: row.factory_id != null ? String(row.factory_id) : '',
+                      schedule_import_row_id:
+                        row.schedule_import_row_id != null ? String(row.schedule_import_row_id) : null,
+                      proposed_changes: Array.isArray(row.proposed_changes) ? row.proposed_changes : [],
+                      status: row.status != null ? String(row.status) : '',
+                      created_at: row.created_at != null ? String(row.created_at) : '',
+                      responded_at: row.responded_at != null ? String(row.responded_at) : '',
+                      responded_by: row.responded_by != null ? String(row.responded_by) : '',
+                    };
+                    setOrderChangeProposals((prev) => {
+                      const next = (Array.isArray(prev) ? prev : []).filter(
+                        (p) => String(p?.id) !== mapped.id,
+                      );
+                      next.unshift(mapped);
+                      return next;
+                    });
+                  }
+                  realtimeSync.scheduleOrder(payload);
+                },
+              )
               .subscribe();
           } catch (realtimeErr) {
             logDispatchError('[DispatchApp] orders realtime 購読の開始に失敗', realtimeErr);
@@ -3769,6 +4164,215 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         },
         [applyProjectSelection, currentCustomer, orderPlacerName, projects, today],
       );
+
+      const pendingChangeProposalOrderIds = useMemo(() => {
+        const ids = new Set();
+        for (const proposal of Array.isArray(orderChangeProposals) ? orderChangeProposals : []) {
+          if (
+            String(proposal?.status || '') === 'pending_factory_response' &&
+            proposal?.order_id &&
+            !proposal.schedule_import_row_id
+          ) {
+            ids.add(String(proposal.order_id));
+          }
+        }
+        return ids;
+      }, [orderChangeProposals]);
+
+      const handleOpenOrderChangePropose = useCallback(
+        (order, options = {}) => {
+          if (!order?.id) return;
+          if (!isAcceptedOrderChangeRequestable(order)) return;
+          const pending = pendingChangeProposalOrderIds.has(String(order.id));
+          if (pending && !options.fromRejectedProposal) {
+            window.alert('工場の回答待ちです。対応が来るまでお待ちください。');
+            return;
+          }
+          setChangeProposeOrder(order);
+          setChangeProposeRequireDate(Boolean(options.requireDate));
+          setChangeProposeInitialForm(
+            options.initialForm && typeof options.initialForm === 'object'
+              ? options.initialForm
+              : { quantityM3: '', preferredDate: '', deliveryTime: '' },
+          );
+        },
+        [pendingChangeProposalOrderIds],
+      );
+
+      const handleSubmitOrderChangePropose = useCallback(
+        async (changes) => {
+          if (!changeProposeOrder?.id) return;
+          setChangeProposeSubmitting(true);
+          try {
+            const proposal = await db.requestOrderChange(changeProposeOrder.id, changes);
+            if (proposal?.id) {
+              setOrderChangeProposals((prev) => {
+                const next = (Array.isArray(prev) ? prev : []).filter(
+                  (p) => String(p?.id) !== String(proposal.id),
+                );
+                next.unshift(proposal);
+                return next;
+              });
+            }
+            setChangeProposeOrder(null);
+            setChangeProposeInitialForm(null);
+            setChangeProposeRequireDate(false);
+            setChangeRequestNotice('変更内容を工場へ打診しました');
+            window.setTimeout(() => setChangeRequestNotice(''), 4000);
+            await refreshDashboard({ skipChatSound: true });
+          } catch (err) {
+            throw err;
+          } finally {
+            setChangeProposeSubmitting(false);
+          }
+        },
+        [changeProposeOrder, refreshDashboard],
+      );
+
+      const markChangeProposalAnswered = useCallback((proposalId) => {
+        const next = persistAnsweredChangeProposalId(proposalId);
+        setAnsweredChangeProposalIds(next);
+      }, []);
+
+      const handleChangeProposalChoice = useCallback(
+        async (choice, proposal) => {
+          if (!proposal?.id || changeProposalChoiceSubmitting) return;
+          const orderId = String(proposal.order_id || '').trim();
+          const order =
+            (Array.isArray(dashboardOrders) ? dashboardOrders : []).find(
+              (o) => String(o?.id || '') === orderId,
+            ) || activeChatOrder;
+
+          if (choice === 'reschedule_date') {
+            markChangeProposalAnswered(proposal.id);
+            if (order) {
+              handleOpenOrderChangePropose(order, {
+                fromRejectedProposal: true,
+                requireDate: true,
+                initialForm: seedFormFromRejectedProposal(order, proposal),
+              });
+            }
+            return;
+          }
+
+          if (choice === 'change_factory') {
+            if (
+              !window.confirm(
+                '元の注文はキャンセル依頼として工場に送られます。よろしいですか？',
+              )
+            ) {
+              return;
+            }
+            setChangeProposalChoiceSubmitting(true);
+            try {
+              await db.requestCustomerCancelForFactoryChange(orderId, proposal.id);
+              markChangeProposalAnswered(proposal.id);
+              setDashboardOrders((prev) =>
+                (Array.isArray(prev) ? prev : []).map((o) =>
+                  String(o?.id || '') === orderId
+                    ? {
+                        ...o,
+                        customer_cancel_requested: true,
+                        customer_cancel_requested_at: new Date().toISOString(),
+                        customer_cancel_requested_change_id: proposal.id,
+                      }
+                    : o,
+                ),
+              );
+              activeChatOrderIdRef.current = '';
+              setActiveChatOrderId('');
+              if (order) {
+                applyHistoryOrderToNewForm(order);
+                setPreferredFactoryId('');
+                setSubmitNotice(
+                  '元の注文はキャンセル依頼として工場に送りました。現場情報を引き継いだ新規発注フォームです。希望の工場を選んで発注してください。',
+                );
+              }
+              await refreshDashboard({ skipChatSound: true });
+            } catch (err) {
+              console.error('change_factory failed', err);
+              window.alert(formatSupabaseError(err, '処理に失敗しました'));
+            } finally {
+              setChangeProposalChoiceSubmitting(false);
+            }
+            return;
+          }
+
+          if (choice === 'keep_original') {
+            setChangeProposalChoiceSubmitting(true);
+            try {
+              await db.withdrawOrderChangeProposal(proposal.id);
+              markChangeProposalAnswered(proposal.id);
+              setOrderChangeProposals((prev) =>
+                (Array.isArray(prev) ? prev : []).map((p) =>
+                  String(p?.id) === String(proposal.id) ? { ...p, status: 'withdrawn' } : p,
+                ),
+              );
+              await appendOrderChatMessage(
+                orderId,
+                'system',
+                '【変更依頼】変更せず、元の内容で出荷します',
+              );
+              await refreshDashboard({ skipChatSound: true });
+            } catch (err) {
+              console.error('keep_original failed', err);
+              window.alert(formatSupabaseError(err, '処理に失敗しました'));
+            } finally {
+              setChangeProposalChoiceSubmitting(false);
+            }
+          }
+        },
+        [
+          activeChatOrder,
+          applyHistoryOrderToNewForm,
+          changeProposalChoiceSubmitting,
+          dashboardOrders,
+          handleOpenOrderChangePropose,
+          markChangeProposalAnswered,
+          refreshDashboard,
+        ],
+      );
+
+      useEffect(() => {
+        const marker = db.ORDER_CHANGE_PROPOSAL_REJECTED_CHAT_MARKER;
+        const answered = answeredChangeProposalIds;
+        for (const proposal of Array.isArray(orderChangeProposals) ? orderChangeProposals : []) {
+          if (String(proposal?.status || '') !== 'rejected' || !proposal?.id || !proposal?.order_id) continue;
+          if (proposal.schedule_import_row_id) continue;
+          const pid = String(proposal.id);
+          if (answered.has(pid)) continue;
+          if (notifiedRejectedProposalIdsRef.current.has(pid)) continue;
+          const msgs = prevChatThreadsRef.current?.[proposal.order_id] || [];
+          const already = (Array.isArray(msgs) ? msgs : []).some(
+            (m) => isSystemChatSender(m?.from) && String(m?.body || '').includes(marker),
+          );
+          notifiedRejectedProposalIdsRef.current.add(pid);
+          if (already) continue;
+          void (async () => {
+            try {
+              const next = await appendOrderChatMessage(
+                proposal.order_id,
+                'system',
+                `${marker}。対応方法を選んでください。`,
+              );
+              if (next) {
+                setChatThreads((prev) => ({ ...prev, [proposal.order_id]: next }));
+                prevChatThreadsRef.current = {
+                  ...(prevChatThreadsRef.current || {}),
+                  [proposal.order_id]: next,
+                };
+              }
+              showDashboardNotice(
+                '工場が変更依頼に対応できないと回答しました。チャットから対応を選んでください。',
+                { playSound: true },
+              );
+            } catch (err) {
+              notifiedRejectedProposalIdsRef.current.delete(pid);
+              console.warn('[DispatchApp] 変更依頼拒否チャットの追加に失敗', err);
+            }
+          })();
+        }
+      }, [answeredChangeProposalIds, orderChangeProposals, showDashboardNotice]);
 
       const handlePreferredFactoryChoice = useCallback(
         async (order, choice) => {
@@ -5862,6 +6466,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                 onCancelPreferred={(o) => void runCustomerChoice(o, 'cancel')}
                                 onEditOrder={isColleagueOrder ? null : handleOpenCustomerOrderEdit}
                                 onRequestChange={isColleagueOrder ? null : handleOpenCustomerChangeRequest}
+                                onProposeOrderChange={isColleagueOrder ? null : handleOpenOrderChangePropose}
+                                hasPendingChangeProposal={pendingChangeProposalOrderIds.has(String(ord.id))}
                                 readOnly={isColleagueOrder}
                                 accountLabel={
                                   companyScopeActive
@@ -6121,6 +6727,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 customerById={customerById}
                 onEditOrder={handleOpenCustomerOrderEdit}
                 onRequestChange={handleOpenCustomerChangeRequest}
+                onProposeOrderChange={handleOpenOrderChangePropose}
+                pendingChangeProposalOrderIds={pendingChangeProposalOrderIds}
                 onMonthChange={(nextMonth) => {
                   const next = nextMonth instanceof Date && !Number.isNaN(nextMonth.getTime()) ? nextMonth : new Date();
                   const normalized = new Date(next.getFullYear(), next.getMonth(), 1);
@@ -6178,6 +6786,21 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               customerById={customerById}
               organizations={agentOrganizations}
               onSave={handleCustomerOrderFullSave}
+            />
+
+            <CustomerOrderChangeProposeModal
+              order={changeProposeOrder}
+              open={Boolean(changeProposeOrder)}
+              requireDate={changeProposeRequireDate}
+              initialForm={changeProposeInitialForm}
+              submitting={changeProposeSubmitting}
+              onClose={() => {
+                if (changeProposeSubmitting) return;
+                setChangeProposeOrder(null);
+                setChangeProposeInitialForm(null);
+                setChangeProposeRequireDate(false);
+              }}
+              onSubmit={handleSubmitOrderChangePropose}
             />
 
             {changeRequestNotice ? (
@@ -6249,6 +6872,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               onPreferredFactoryChoice={handlePreferredFactoryChoice}
               escalationCtx={customerEscalationCtx}
               orderCustomer={currentCustomer}
+              rejectedChangeProposal={pickActionableRejectedProposal(
+                activeChatOrder.id,
+                orderChangeProposals,
+                answeredChangeProposalIds,
+                activeChatOrder,
+              )}
+              onChangeProposalChoice={handleChangeProposalChoice}
+              changeProposalChoiceSubmitting={changeProposalChoiceSubmitting}
             />
           ) : null}
         </div>

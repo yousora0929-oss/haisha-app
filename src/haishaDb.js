@@ -72,7 +72,7 @@ import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils
 import { generateInitialPassword } from './utils/initialPassword.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, trading_agent_customer_id, site_history_contractor_id, is_admin_modified, is_factory_modified, is_customer_modified, has_pending_change_request, pending_change_request_patch, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at, factory_map_received_at, factory_map_received_by';
+  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, trading_agent_customer_id, site_history_contractor_id, is_admin_modified, is_factory_modified, is_customer_modified, has_pending_change_request, pending_change_request_patch, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at, factory_map_received_at, factory_map_received_by, customer_cancel_requested, customer_cancel_requested_at, customer_cancel_requested_change_id';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -426,6 +426,17 @@ export function normalizeOrderRow(row) {
     is_factory_modified: row.is_factory_modified === true,
     is_customer_modified: row.is_customer_modified === true,
     has_pending_change_request: row.has_pending_change_request === true,
+    customer_cancel_requested:
+      row.customer_cancel_requested === true || od.customer_cancel_requested === true,
+    customer_cancel_requested_at:
+      row.customer_cancel_requested_at != null
+        ? String(row.customer_cancel_requested_at)
+        : od.customer_cancel_requested_at != null
+          ? String(od.customer_cancel_requested_at)
+          : '',
+    customer_cancel_requested_change_id: sanitizeRefId(
+      row.customer_cancel_requested_change_id ?? od.customer_cancel_requested_change_id,
+    ),
     pending_change_request_patch:
       row.pending_change_request_patch &&
       typeof row.pending_change_request_patch === 'object' &&
@@ -2608,6 +2619,498 @@ export async function subscribeOrderChangeProposalsRealtime(factoryId, onEvent) 
     .subscribe((status, err) => {
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
         console.error('[subscribeOrderChangeProposalsRealtime] channel error', status, err);
+      }
+    });
+  return () => {
+    try {
+      void supabase?.removeChannel?.(channel);
+    } catch {
+      /* ignore */
+    }
+  };
+}
+
+export const ORDER_CHANGE_PROPOSAL_REJECTED_CHAT_MARKER =
+  '【変更依頼】工場がこの変更に対応できないと回答しました';
+
+export function formatOrderChangeProposalLine(change) {
+  const field = String(change?.field || '').trim();
+  if (!field) return '';
+  const oldVal = change?.old == null || change.old === '' ? '—' : String(change.old);
+  const newVal = change?.new == null || change.new === '' ? '—' : String(change.new);
+  if (field === 'quantity_m3') return `数量 ${oldVal}m³ → ${newVal}m³`;
+  if (field === 'delivery_date' || field === 'preferred_date') return `希望日 ${oldVal} → ${newVal}`;
+  if (field === 'delivery_time') return `希望時刻 ${oldVal} → ${newVal}`;
+  if (field === 'vehicle_type') return `車種 ${oldVal} → ${newVal}`;
+  if (field === 'mix_design') return `配合 ${oldVal} → ${newVal}`;
+  if (field === 'has_test') return `試験 ${oldVal} → ${newVal}`;
+  if (field === 'notes') return `備考 ${oldVal} → ${newVal}`;
+  return `${field} ${oldVal} → ${newVal}`;
+}
+
+export function formatOrderChangeProposalLines(changes) {
+  return (Array.isArray(changes) ? changes : []).map(formatOrderChangeProposalLine).filter(Boolean);
+}
+
+export function formatOrderChangeProposalSummary(changes) {
+  const parts = formatOrderChangeProposalLines(changes);
+  return parts.join('、') || '内容';
+}
+
+export function proposedChangesToOrderPatch(changes) {
+  const patch = {};
+  for (const change of Array.isArray(changes) ? changes : []) {
+    const field = String(change?.field || '').trim();
+    const next = change?.new;
+    if (field === 'quantity_m3') {
+      const n = Number(next);
+      if (Number.isFinite(n) && n > 0) {
+        patch.quantityM3 = n;
+        patch.confirmedQuantityM3 = n;
+      }
+    } else if (field === 'delivery_date' || field === 'preferred_date') {
+      const d = String(next ?? '').trim().slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+        patch.preferredDate = d;
+        patch.scheduleMatchDate = d;
+      }
+    } else if (field === 'delivery_time') {
+      const slot = scheduleDeliveryTimeToSlot(next);
+      patch.timeSlot = slot.timeSlot;
+      patch.timeSlotMinutes = slot.timeSlotMinutes;
+      patch.timeSlotLabel = slot.timeSlotLabel;
+      patch.timePointLabel = slot.timePointLabel;
+      patch.scheduleMatchMinutes = slot.timeSlotMinutes;
+    } else if (field === 'vehicle_type') {
+      const v = normalizeScheduleVehicleType(next);
+      patch.vehicleType = v;
+      patch.vehicleLabel = v === 'small' ? '小型' : '大型';
+    } else if (field === 'mix_design') {
+      const mix = String(next ?? '');
+      patch.mixText = mix;
+      patch.confirmedMixText = mix;
+    } else if (field === 'has_test') {
+      const raw = next;
+      const bool =
+        raw === true ||
+        raw === false
+          ? raw
+          : ['true', 't', '1', '有', 'yes'].includes(String(raw ?? '').trim().toLowerCase())
+            ? true
+            : ['false', 'f', '0', '無', 'no'].includes(String(raw ?? '').trim().toLowerCase())
+              ? false
+              : null;
+      if (bool !== null) {
+        patch.has_test = bool;
+        patch.hasTest = bool;
+      }
+    } else if (field === 'notes') {
+      patch.scheduleImportNotes = String(next ?? '');
+    }
+  }
+  return patch;
+}
+
+function isOrderChangeAcceptDecision(decision) {
+  const raw = String(decision || '').trim().toLowerCase();
+  return raw === 'accept' || raw === 'accepted' || raw === '対応可能';
+}
+
+function isOrderChangeRejectDecision(decision) {
+  const raw = String(decision || '').trim().toLowerCase();
+  return raw === 'reject' || raw === 'rejected' || raw === '対応不可';
+}
+
+async function setOrderChangeProposalStatus(proposalId, status, factoryId) {
+  const id = String(proposalId || '').trim();
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('order_change_proposals')
+    .update({
+      status,
+      responded_at: now,
+      responded_by: sanitizeRefId(factoryId) || 'factory',
+    })
+    .eq('id', id)
+    .select('id, status')
+    .maybeSingle();
+  if (!error && data?.id) return;
+  if (status === 'rejected') {
+    await rejectOrderChangeProposal(id);
+    return;
+  }
+  if (status === 'accepted') {
+    await applyOrderChangeProposal(id);
+    return;
+  }
+  throw error || new Error('変更提案の状態更新に失敗しました');
+}
+
+/**
+ * 工場が変更提案に回答する。
+ * accept: proposed_changes を orders へ反映し status=accepted。
+ * reject: proposal.status=rejected のみ（注文は変更しない）。
+ */
+export async function respondOrderChangeProposal(proposalId, decision, factoryId) {
+  const id = String(proposalId || '').trim();
+  const fid = sanitizeRefId(factoryId);
+  const accepted = isOrderChangeAcceptDecision(decision);
+  const rejected = isOrderChangeRejectDecision(decision);
+  if (!id) throw new Error('proposalId が必要です');
+  if (!accepted && !rejected) throw new Error('decision が不正です');
+
+  const { data: rpcData, error: rpcErr } = await supabase.rpc('respond_order_change_proposal', {
+    p_proposal_id: id,
+    p_decision: accepted ? 'accepted' : 'rejected',
+    p_factory_id: fid,
+  });
+  if (!rpcErr) {
+    const orderId =
+      rpcData?.order_id != null
+        ? String(rpcData.order_id)
+        : rpcData?.proposal?.order_id != null
+          ? String(rpcData.proposal.order_id)
+          : '';
+    const rpcAlreadyChatted =
+      rpcData &&
+      typeof rpcData === 'object' &&
+      (rpcData.chat_appended === true || Array.isArray(rpcData.chat_messages));
+    if (orderId && !rpcAlreadyChatted) {
+      const summary = formatOrderChangeProposalSummary(
+        rpcData?.proposed_changes || rpcData?.proposal?.proposed_changes,
+      );
+      await appendChatMessage(
+        orderId,
+        'system',
+        accepted
+          ? `【変更依頼】工場が対応可能と回答し、注文内容を更新しました（${summary}）`
+          : `${ORDER_CHANGE_PROPOSAL_REJECTED_CHAT_MARKER}。`,
+      );
+    }
+    return rpcData;
+  }
+  if (!isMissingRpcSignatureError(rpcErr)) {
+    console.error('respondOrderChangeProposal rpc failed', rpcErr);
+    throw rpcErr;
+  }
+
+  const { data: row, error: selErr } = await supabase
+    .from('order_change_proposals')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+  if (selErr) {
+    console.error('respondOrderChangeProposal select failed', selErr);
+    throw selErr;
+  }
+  if (!row) throw new Error('変更提案が見つかりません');
+  if (String(row.status || '') !== 'pending_factory_response') {
+    throw new Error('この変更提案はすでに回答済みです');
+  }
+  if (fid && String(row.factory_id || '').trim() && String(row.factory_id) !== fid) {
+    throw new Error('工場IDが一致しません');
+  }
+
+  const orderId = String(row.order_id || '').trim();
+  if (!orderId) throw new Error('order_id がありません');
+  const changes = Array.isArray(row.proposed_changes) ? row.proposed_changes : [];
+  const summary = formatOrderChangeProposalSummary(changes);
+
+  if (accepted) {
+    const patch = proposedChangesToOrderPatch(changes);
+    if (Object.keys(patch).length > 0) {
+      await updateOrderDetails(orderId, { ...patch, is_factory_modified: true });
+    }
+    try {
+      await setOrderChangeProposalStatus(id, 'accepted', fid);
+    } catch (statusErr) {
+      console.error('respondOrderChangeProposal accept status failed', statusErr);
+      throw statusErr;
+    }
+    await appendChatMessage(
+      orderId,
+      'system',
+      `【変更依頼】工場が対応可能と回答し、注文内容を更新しました（${summary}）`,
+    );
+  } else {
+    await setOrderChangeProposalStatus(id, 'rejected', fid);
+    await appendChatMessage(orderId, 'system', `${ORDER_CHANGE_PROPOSAL_REJECTED_CHAT_MARKER}。`);
+  }
+  return mapOrderChangeProposalRow({ ...row, status: accepted ? 'accepted' : 'rejected' });
+}
+
+/**
+ * 工場が顧客都合キャンセル依頼を確認して初めてキャンセルする。
+ * markOrderCustomerCancelled と同じ status 更新のあと、依頼フラグを下ろす。
+ */
+export async function confirmCustomerCancelRequest(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id) throw new Error('orderId が必要です');
+
+  const { data: rpcData, error: rpcErr } = await supabase.rpc('confirm_customer_cancel_request', {
+    p_order_id: id,
+  });
+  if (!rpcErr) {
+    return rpcData ? normalizeOrderRow(rpcData) || rpcData : rpcData;
+  }
+  if (!isMissingRpcSignatureError(rpcErr)) {
+    console.error('confirmCustomerCancelRequest rpc failed', rpcErr);
+    throw rpcErr;
+  }
+
+  const cancelled = await markOrderCustomerCancelled(id);
+  const { error } = await supabase
+    .from('orders')
+    .update({
+      customer_cancel_requested: false,
+      customer_cancel_requested_at: null,
+      customer_cancel_requested_change_id: null,
+    })
+    .eq('id', id);
+  if (error) {
+    console.warn('confirmCustomerCancelRequest flag clear failed', error);
+  }
+  return {
+    ...(cancelled && typeof cancelled === 'object' ? cancelled : {}),
+    customer_cancel_requested: false,
+    customer_cancel_requested_at: '',
+    customer_cancel_requested_change_id: null,
+  };
+}
+
+function coerceOrderChangeProposalResult(data) {
+  if (!data) return null;
+  if (Array.isArray(data)) return mapOrderChangeProposalRow(data[0]);
+  if (data.proposal && typeof data.proposal === 'object') {
+    return mapOrderChangeProposalRow(data.proposal);
+  }
+  if (data.id != null) return mapOrderChangeProposalRow(data);
+  return null;
+}
+
+function normalizeProposedChanges(proposedChanges) {
+  return (Array.isArray(proposedChanges) ? proposedChanges : [])
+    .map((change) => {
+      if (!change || typeof change !== 'object') return null;
+      const field = String(change.field || '').trim();
+      if (!field) return null;
+      return {
+        field,
+        old: change.old ?? null,
+        new: change.new ?? null,
+      };
+    })
+    .filter(Boolean);
+}
+
+/** 顧客向け：自注文の変更提案一覧 */
+export async function fetchOrderChangeProposalsForOrders(orderIds) {
+  const ids = [
+    ...new Set((Array.isArray(orderIds) ? orderIds : []).map((id) => String(id || '').trim()).filter(Boolean)),
+  ];
+  if (!ids.length) return [];
+
+  const { data: rpcData, error: rpcErr } = await supabase.rpc('list_order_change_proposals_for_customer', {
+    p_order_ids: ids,
+  });
+  if (!rpcErr) {
+    const rows = Array.isArray(rpcData) ? rpcData : rpcData?.proposals || [];
+    return rows.map(mapOrderChangeProposalRow).filter(Boolean);
+  }
+  if (!isMissingRpcSignatureError(rpcErr)) {
+    console.warn('fetchOrderChangeProposalsForOrders rpc failed', rpcErr);
+  }
+
+  const { data, error } = await supabase
+    .from('order_change_proposals')
+    .select('*')
+    .in('order_id', ids)
+    .order('created_at', { ascending: false });
+  if (error) {
+    console.warn('fetchOrderChangeProposalsForOrders failed', error);
+    return [];
+  }
+  return (data || []).map(mapOrderChangeProposalRow).filter(Boolean);
+}
+
+/**
+ * 顧客が数量・日時などの変更を工場へ打診する。
+ * order_change_proposals へ 1 件 INSERT し、system チャットを追加する。
+ */
+export async function requestOrderChange(orderId, proposedChanges) {
+  const id = String(orderId || '').trim();
+  const changes = normalizeProposedChanges(proposedChanges);
+  if (!id) throw new Error('orderId が必要です');
+  if (!changes.length) throw new Error('変更内容がありません');
+
+  let proposal = null;
+  const { data: rpcData, error: rpcErr } = await supabase.rpc('request_order_change', {
+    p_order_id: id,
+    p_proposed_changes: changes,
+  });
+  if (!rpcErr) {
+    proposal = coerceOrderChangeProposalResult(rpcData);
+  } else if (!isMissingRpcSignatureError(rpcErr)) {
+    console.error('requestOrderChange rpc failed', rpcErr);
+    throw rpcErr;
+  } else {
+    const order = await fetchOrderById(id);
+    const factoryId = sanitizeRefId(
+      order?.factory_site_id || order?.factorySiteId || order?.preferred_factory_id || order?.preferredFactoryId,
+    );
+    if (!factoryId) {
+      throw new Error('手配先工場が未定のため、変更を申し出できません');
+    }
+    const { data, error } = await supabase
+      .from('order_change_proposals')
+      .insert({
+        order_id: id,
+        factory_id: factoryId,
+        proposed_changes: changes,
+        status: 'pending_factory_response',
+      })
+      .select('*')
+      .maybeSingle();
+    if (error) {
+      console.error('requestOrderChange insert failed', error);
+      throw error;
+    }
+    proposal = mapOrderChangeProposalRow(data);
+  }
+
+  const summary = formatOrderChangeProposalSummary(changes);
+  const chatBody = `【変更依頼】${summary}への変更を打診しました`;
+  const rpcAlreadyChatted =
+    rpcData &&
+    typeof rpcData === 'object' &&
+    (rpcData.chat_appended === true || Array.isArray(rpcData.chat_messages));
+  if (!rpcAlreadyChatted) {
+    await appendChatMessage(id, 'system', chatBody);
+  }
+  return proposal;
+}
+
+/**
+ * 工場拒否後に「変更せず出荷」を選んだとき。
+ * 提案を withdrawn にするだけで、元注文は変更しない。
+ */
+export async function withdrawOrderChangeProposal(proposalId) {
+  const id = String(proposalId || '').trim();
+  if (!id) throw new Error('proposalId が必要です');
+
+  const { data: rpcData, error: rpcErr } = await supabase.rpc('withdraw_order_change_proposal', {
+    p_proposal_id: id,
+  });
+  if (!rpcErr) {
+    return coerceOrderChangeProposalResult(rpcData) || rpcData;
+  }
+  if (!isMissingRpcSignatureError(rpcErr)) {
+    console.error('withdrawOrderChangeProposal rpc failed', rpcErr);
+    throw rpcErr;
+  }
+
+  const { data, error } = await supabase
+    .from('order_change_proposals')
+    .update({
+      status: 'withdrawn',
+      responded_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .select('*')
+    .maybeSingle();
+  if (error) {
+    console.error('withdrawOrderChangeProposal update failed', error);
+    throw error;
+  }
+  return mapOrderChangeProposalRow(data);
+}
+
+/**
+ * 工場拒否後に「工場を変える」を選んだとき。
+ * customer_cancel_requested フラグだけ立て、status は変更しない
+ * （markOrderCustomerCancelled とは別関数。customer_cancelled にはしない）。
+ */
+export async function requestCustomerCancelForFactoryChange(orderId, proposalId) {
+  const oid = String(orderId || '').trim();
+  const pid = String(proposalId || '').trim();
+  if (!oid) throw new Error('orderId が必要です');
+  if (!pid) throw new Error('proposalId が必要です');
+
+  const { data: rpcData, error: rpcErr } = await supabase.rpc(
+    'request_customer_cancel_for_factory_change',
+    {
+      p_order_id: oid,
+      p_proposal_id: pid,
+    },
+  );
+  if (!rpcErr) {
+    const rpcAlreadyChatted =
+      rpcData &&
+      typeof rpcData === 'object' &&
+      (rpcData.chat_appended === true || Array.isArray(rpcData.chat_messages));
+    if (!rpcAlreadyChatted) {
+      await appendChatMessage(
+        oid,
+        'system',
+        '【工場変更】元の注文はキャンセル依頼として工場に送りました。別工場へ新規発注してください。',
+      );
+    }
+    return rpcData;
+  }
+  if (!isMissingRpcSignatureError(rpcErr)) {
+    console.error('requestCustomerCancelForFactoryChange rpc failed', rpcErr);
+    throw rpcErr;
+  }
+
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('orders')
+    .update({
+      customer_cancel_requested: true,
+      customer_cancel_requested_at: now,
+      customer_cancel_requested_change_id: pid,
+    })
+    .eq('id', oid)
+    .select('id, status, customer_cancel_requested, customer_cancel_requested_at, customer_cancel_requested_change_id')
+    .maybeSingle();
+  if (error) {
+    console.error('requestCustomerCancelForFactoryChange update failed', error);
+    throw error;
+  }
+  await appendChatMessage(
+    oid,
+    'system',
+    '【工場変更】元の注文はキャンセル依頼として工場に送りました。別工場へ新規発注してください。',
+  );
+  return data;
+}
+
+/** 顧客向け：order_change_proposals の Realtime 購読（工場フィルタなし） */
+export async function subscribeCustomerOrderChangeProposalsRealtime(onEvent) {
+  const route = createIsolatedRealtimeHandler(onEvent);
+  try {
+    await ensurePanelRealtimeAuth?.();
+  } catch (e) {
+    console.warn('[subscribeCustomerOrderChangeProposalsRealtime] panel auth skipped', e);
+  }
+  if (!supabase?.channel) {
+    return () => {};
+  }
+  const channelName = `haisha-customer-order-change-proposals-${Date.now()}`;
+  const channel = supabase
+    .channel(channelName)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'order_change_proposals',
+      },
+      (payload) => route(payload, 'order_change_proposals'),
+    )
+    .subscribe((status, err) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.error('[subscribeCustomerOrderChangeProposalsRealtime] channel error', status, err);
       }
     });
   return () => {

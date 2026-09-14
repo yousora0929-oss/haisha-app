@@ -1651,6 +1651,107 @@ function isUnreadForFactory(messages, readKey) {
       );
     }
 
+    function isCustomerCancelRequested(order) {
+      return order?.customer_cancel_requested === true;
+    }
+
+    function CustomerCancelRequestBanner({ onConfirm, compact = false }) {
+      return (
+        <div
+          className={
+            (compact ? 'px-2 py-2 ' : 'px-3 py-3 ') +
+            'rounded-xl border-2 border-red-500 bg-red-50 text-red-950 dark:border-red-400 dark:bg-red-950/50 dark:text-red-50'
+          }
+          role="status"
+        >
+          <p className={(compact ? 'text-xs ' : 'text-sm sm:text-base ') + 'font-black leading-snug'}>
+            顧客都合キャンセル依頼中 ― 確認してキャンセルするまで、この枠は予定として保持されます
+          </p>
+          {typeof onConfirm === 'function' ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e?.stopPropagation?.();
+                onConfirm();
+              }}
+              className={
+                (compact ? 'mt-2 min-h-[40px] text-xs ' : 'mt-3 min-h-[46px] text-sm sm:text-base ') +
+                'w-full rounded-xl border-2 border-red-800 bg-red-700 px-3 font-black text-white shadow-sm transition hover:bg-red-800 active:scale-[0.99]'
+              }
+            >
+              確認してキャンセル
+            </button>
+          ) : null}
+        </div>
+      );
+    }
+
+    function FactoryChangeProposalSection({ proposal, onRespond, compact = false }) {
+      const [busy, setBusy] = useState('');
+      if (!proposal?.id || String(proposal.status || '') !== 'pending_factory_response') return null;
+      const lines = db.formatOrderChangeProposalLines(proposal.proposed_changes);
+      const respond = async (decision) => {
+        if (busy || typeof onRespond !== 'function') return;
+        setBusy(decision);
+        try {
+          await onRespond(proposal, decision);
+        } finally {
+          setBusy('');
+        }
+      };
+      return (
+        <div
+          className={
+            (compact ? 'px-2 py-2 ' : 'px-3 py-3 ') +
+            'rounded-xl border-2 border-orange-400 bg-orange-50 text-orange-950 dark:border-orange-500/70 dark:bg-orange-950/40 dark:text-orange-100'
+          }
+        >
+          <p className={(compact ? 'text-xs ' : 'text-sm sm:text-base ') + 'font-black'}>変更依頼</p>
+          <ul className={(compact ? 'mt-1 text-[11px] ' : 'mt-2 text-sm ') + 'space-y-0.5 font-bold'}>
+            {lines.length ? (
+              lines.map((line, idx) => (
+                <li key={`${idx}-${line}`}>{line}</li>
+              ))
+            ) : (
+              <li>変更詳細なし</li>
+            )}
+          </ul>
+          {typeof onRespond === 'function' ? (
+            <div className={(compact ? 'mt-2 ' : 'mt-3 ') + 'grid grid-cols-2 gap-2'}>
+              <button
+                type="button"
+                disabled={Boolean(busy)}
+                onClick={(e) => {
+                  e?.stopPropagation?.();
+                  void respond('accept');
+                }}
+                className={
+                  (compact ? 'min-h-[40px] text-xs ' : 'min-h-[46px] text-sm ') +
+                  'rounded-xl border-2 border-emerald-700 bg-emerald-600 px-2 font-black text-white shadow-sm hover:bg-emerald-700 disabled:cursor-wait disabled:opacity-60'
+                }
+              >
+                {busy === 'accept' ? '処理中…' : '対応可能'}
+              </button>
+              <button
+                type="button"
+                disabled={Boolean(busy)}
+                onClick={(e) => {
+                  e?.stopPropagation?.();
+                  void respond('reject');
+                }}
+                className={
+                  (compact ? 'min-h-[40px] text-xs ' : 'min-h-[46px] text-sm ') +
+                  'rounded-xl border-2 border-slate-400 bg-white px-2 font-black text-slate-800 shadow-sm hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100'
+                }
+              >
+                {busy === 'reject' ? '処理中…' : '対応不可'}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+
     function OrderRequestCard({
       order,
       idx,
@@ -1668,6 +1769,9 @@ function isUnreadForFactory(messages, readKey) {
       onRequestUnlock,
       onOrderFullPatch,
       onResolveChangeRequest,
+      pendingChangeProposal = null,
+      onRespondChangeProposal = null,
+      onConfirmCustomerCancelRequest = null,
       chatMessages,
       hasUnreadChat,
       onMarkChatRead,
@@ -2597,6 +2701,25 @@ function isUnreadForFactory(messages, readKey) {
               <div className={pad + ' flex flex-col gap-2'}>{renderDetail()}</div>
             </div>
           </div>
+          {pendingChangeProposal?.id && String(pendingChangeProposal.status || '') === 'pending_factory_response' ? (
+            <div className="border-t border-orange-200 bg-orange-50/80 px-3 py-2 dark:border-orange-700 dark:bg-orange-950/30">
+              <FactoryChangeProposalSection
+                proposal={pendingChangeProposal}
+                onRespond={onRespondChangeProposal}
+              />
+            </div>
+          ) : null}
+          {isCustomerCancelRequested(order) ? (
+            <div className="border-t border-red-200 bg-red-50/90 px-3 py-2 dark:border-red-800 dark:bg-red-950/40">
+              <CustomerCancelRequestBanner
+                onConfirm={
+                  typeof onConfirmCustomerCancelRequest === 'function'
+                    ? () => onConfirmCustomerCancelRequest(order)
+                    : null
+                }
+              />
+            </div>
+          ) : null}
           {isActionable && (canAcceptOrder || canRejectOrder || canConsultOrder) ? (
             <div className="border-t border-slate-100 bg-slate-50 px-3 py-2 dark:border-slate-600 dark:bg-slate-900/50">
               {isConsultingByMe ? (
@@ -2679,6 +2802,9 @@ function isUnreadForFactory(messages, readKey) {
       factorySearchLabel,
       onOrderFullPatch,
       onResolveChangeRequest,
+      pendingChangeProposalByOrderId = null,
+      onRespondChangeProposal,
+      onConfirmCustomerCancelRequest,
       onMarkRead,
       onAcceptOrder,
       onRejectOrder,
@@ -2850,6 +2976,9 @@ function isUnreadForFactory(messages, readKey) {
                   onMarkRead={onMarkRead}
                   onOrderFullPatch={onOrderFullPatch}
                   onResolveChangeRequest={onResolveChangeRequest}
+                  pendingChangeProposal={pendingChangeProposalByOrderId?.[o.id] || null}
+                  onRespondChangeProposal={onRespondChangeProposal}
+                  onConfirmCustomerCancelRequest={onConfirmCustomerCancelRequest}
                   onAcceptOrder={onAcceptOrder}
                   onRejectOrder={onRejectOrder}
                   onConsultOrder={onConsultOrder}
@@ -3064,6 +3193,9 @@ function isUnreadForFactory(messages, readKey) {
       projectById,
       customerById,
       organizationById,
+      pendingChangeProposal = null,
+      onRespondChangeProposal = null,
+      onConfirmCustomerCancelRequest = null,
     }) {
       if (!order) return null;
       const isGroupAvailability = isPendingReservationGroupAvailability(order);
@@ -3099,6 +3231,9 @@ function isUnreadForFactory(messages, readKey) {
               projectById={projectById}
               customerById={customerById}
               organizationById={organizationById}
+              pendingChangeProposal={pendingChangeProposal}
+              onRespondChangeProposal={onRespondChangeProposal}
+              onConfirmCustomerCancelRequest={onConfirmCustomerCancelRequest}
             />
           </div>
         </div>
@@ -3743,6 +3878,9 @@ function isUnreadForFactory(messages, readKey) {
       currentMonth,
       onMonthChange,
       onOpenOrder,
+      pendingChangeProposalByOrderId = null,
+      onRespondChangeProposal = null,
+      onConfirmCustomerCancelRequest = null,
     }) {
       const lastTapRef = useRef({ orderId: null, at: 0 });
       const isAcceptedCalendarOrder = (order) => {
@@ -3891,6 +4029,7 @@ function isUnreadForFactory(messages, readKey) {
                         const party = orderPartyInfo(order, { preferSiteContact: true });
                         return (
                           <span key={order.id} className={'block truncate rounded-md px-1 py-0.5 text-[9px] font-black leading-tight ' + getOrderKindClass(order)}>
+                            {isCustomerCancelRequested(order) ? 'キャンセル依頼 ' : ''}
                             {party.site || '現場未設定'}: {factoryOrderQuantity(order)}㎡
                             {isLocationPendingOrder(order) ? ' ⚠️' : ''}
                           </span>
@@ -3916,6 +4055,7 @@ function isUnreadForFactory(messages, readKey) {
               <ol className="mt-1.5 min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain pr-0.5">
                 {selectedOrders.map((order) => {
                   const party = orderPartyInfo(order, { preferSiteContact: true });
+                  const pendingProposal = pendingChangeProposalByOrderId?.[order.id] || null;
                   return (
                     <li
                       key={order.id}
@@ -3930,6 +4070,27 @@ function isUnreadForFactory(messages, readKey) {
                         <LocationPendingBadge order={order} />
                         <PhoneOrderBadge order={order} />
                       </div>
+                      {pendingProposal ? (
+                        <div className="mt-2" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+                          <FactoryChangeProposalSection
+                            proposal={pendingProposal}
+                            onRespond={onRespondChangeProposal}
+                            compact
+                          />
+                        </div>
+                      ) : null}
+                      {isCustomerCancelRequested(order) ? (
+                        <div className="mt-2" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+                          <CustomerCancelRequestBanner
+                            compact
+                            onConfirm={
+                              typeof onConfirmCustomerCancelRequest === 'function'
+                                ? () => onConfirmCustomerCancelRequest(order)
+                                : null
+                            }
+                          />
+                        </div>
+                      ) : null}
                       <p className="mt-1.5 text-[10px] font-black text-indigo-600">ダブルタップで注文詳細へ</p>
                     </li>
                   );
@@ -4064,6 +4225,7 @@ function isUnreadForFactory(messages, readKey) {
       const [hideOtherFactoryAcceptedInHistory, setHideOtherFactoryAcceptedInHistory] = useState(false);
       const [factoryNewsUnread, setFactoryNewsUnread] = useState(0);
       const [scheduleChangePendingCount, setScheduleChangePendingCount] = useState(0);
+      const [pendingChangeProposals, setPendingChangeProposals] = useState([]);
       const [charterPendingCount, setCharterPendingCount] = useState(0);
       const [focusedOrderId, setFocusedOrderId] = useState('');
 
@@ -4648,6 +4810,14 @@ function isUnreadForFactory(messages, readKey) {
               declinedReservationGroupIdsRef.current = local;
               setDeclinedReservationGroupIds(local);
             }
+            try {
+              const proposalRows = await db.fetchPendingOrderChangeProposals(activeFactoryId);
+              const plist = Array.isArray(proposalRows) ? proposalRows : [];
+              setPendingChangeProposals(plist);
+              setScheduleChangePendingCount(plist.length);
+            } catch (proposalErr) {
+              console.warn('[FactoryApp] order_change_proposals fetch failed', proposalErr);
+            }
           }
 
           const mergedReadKeys = { ...(readChatKeysRef.current || {}) };
@@ -4922,6 +5092,19 @@ function isUnreadForFactory(messages, readKey) {
         [orders, todaySchedule, activeFactoryId],
       );
 
+      const pendingChangeProposalByOrderId = useMemo(() => {
+        const map = {};
+        const list = Array.isArray(pendingChangeProposals) ? [...pendingChangeProposals] : [];
+        list.sort((a, b) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')));
+        for (const proposal of list) {
+          const oid = String(proposal?.order_id || '').trim();
+          if (!oid || map[oid]) continue;
+          if (String(proposal?.status || '') !== 'pending_factory_response') continue;
+          map[oid] = proposal;
+        }
+        return map;
+      }, [pendingChangeProposals]);
+
       // 退場アニメ中は Realtime sync でリストから落ちてもスナップショットで描画を維持する
       const inboxOrders = useMemo(() => {
         const base = Array.isArray(factoryInProgressOrders) ? [...factoryInProgressOrders] : [];
@@ -5056,11 +5239,14 @@ function isUnreadForFactory(messages, readKey) {
       const refreshScheduleChangePendingCount = useCallback(async () => {
         if (!activeFactoryId) {
           setScheduleChangePendingCount(0);
+          setPendingChangeProposals([]);
           return;
         }
         try {
           const rows = await db.fetchPendingOrderChangeProposals(activeFactoryId);
-          setScheduleChangePendingCount(Array.isArray(rows) ? rows.length : 0);
+          const list = Array.isArray(rows) ? rows : [];
+          setPendingChangeProposals(list);
+          setScheduleChangePendingCount(list.length);
         } catch (e) {
           console.error('[FactoryApp] schedule change pending count failed', e);
         }
@@ -5082,6 +5268,40 @@ function isUnreadForFactory(messages, readKey) {
           void refreshScheduleChangePendingCount();
         }
       }, [activeTab, refreshFactoryNewsUnread, refreshScheduleChangePendingCount]);
+
+      useEffect(() => {
+        if (!activeFactoryId || typeof db.subscribeOrderChangeProposalsRealtime !== 'function') {
+          return undefined;
+        }
+        let unsub = () => {};
+        let cancelled = false;
+        void (async () => {
+          try {
+            const off = await db.subscribeOrderChangeProposalsRealtime(activeFactoryId, () => {
+              void refreshScheduleChangePendingCount();
+            });
+            if (cancelled) {
+              try {
+                off?.();
+              } catch {
+                /* ignore */
+              }
+              return;
+            }
+            unsub = typeof off === 'function' ? off : () => {};
+          } catch (e) {
+            console.warn('[FactoryApp] order_change_proposals realtime failed', e);
+          }
+        })();
+        return () => {
+          cancelled = true;
+          try {
+            unsub();
+          } catch {
+            /* ignore */
+          }
+        };
+      }, [activeFactoryId, refreshScheduleChangePendingCount]);
 
       useEffect(() => {
         let cancelled = false;
@@ -5682,6 +5902,70 @@ function isUnreadForFactory(messages, readKey) {
         [activeFactoryId, markOrderRead, syncFromStorage],
       );
 
+      const handleRespondOrderChangeProposal = useCallback(
+        async (proposal, decision) => {
+          if (!proposal?.id || !activeFactoryId) return;
+          const accepted = decision === 'accept' || decision === 'accepted';
+          const label = accepted ? '対応可能' : '対応不可';
+          if (!window.confirm(`この変更依頼を「${label}」として回答しますか？`)) return;
+          try {
+            await db.respondOrderChangeProposal(proposal.id, accepted ? 'accept' : 'reject', activeFactoryId);
+            setPendingChangeProposals((prev) =>
+              (Array.isArray(prev) ? prev : []).filter((p) => String(p?.id) !== String(proposal.id)),
+            );
+            setScheduleChangePendingCount((n) => Math.max(0, Number(n || 0) - 1));
+            setActionNotice(accepted ? '変更依頼に対応可能と回答しました' : '変更依頼を対応不可と回答しました');
+            window.setTimeout(() => setActionNotice(''), 4000);
+            await syncFromStorage({ playSound: false });
+            void refreshScheduleChangePendingCount();
+          } catch (e) {
+            console.error(e);
+            window.alert('変更依頼の回答に失敗しました。通信状態を確認して再度お試しください。');
+          }
+        },
+        [activeFactoryId, refreshScheduleChangePendingCount, syncFromStorage],
+      );
+
+      const handleConfirmCustomerCancelRequest = useCallback(
+        async (order) => {
+          if (!order?.id) return;
+          if (
+            !window.confirm(
+              '顧客都合キャンセル依頼を確認し、この注文をキャンセルしますか？\nキャンセル後は履歴へ移動し、カレンダーの枠が空きます。',
+            )
+          ) {
+            return;
+          }
+          try {
+            const cancelled = await db.confirmCustomerCancelRequest(order.id);
+            const applyCancelled = (o) =>
+              o?.id === order.id
+                ? {
+                    ...o,
+                    ...(cancelled && typeof cancelled === 'object' ? cancelled : {}),
+                    status: 'customer_cancelled',
+                    customer_cancel_requested: false,
+                  }
+                : o;
+            setRawOrders((prev) => (Array.isArray(prev) ? prev.map(applyCancelled) : prev));
+            setOrders((prev) => (Array.isArray(prev) ? prev.map(applyCancelled) : prev));
+            setToastOrder((cur) => (cur?.id === order.id ? null : cur));
+            setActionNotice('お客様都合キャンセルにしました');
+            window.setTimeout(() => setActionNotice(''), 4500);
+            await appendOrderChatMessage(
+              order.id,
+              'system',
+              '【キャンセル】工場により、お客様都合キャンセルとして処理されました。',
+            );
+            await syncFromStorage({ playSound: false });
+          } catch (e) {
+            console.error(e);
+            window.alert('キャンセル処理に失敗しました。通信状態を確認して再度お試しください。');
+          }
+        },
+        [syncFromStorage, appendOrderChatMessage],
+      );
+
       const handleResponseStatusChange = useCallback(
         (orderId, status) => {
           if (!orderId) return;
@@ -6257,6 +6541,9 @@ function isUnreadForFactory(messages, readKey) {
                     factorySearchLabel={activeFactoryName}
                     onOrderFullPatch={handleOrderFullPatch}
                     onResolveChangeRequest={handleResolveChangeRequest}
+                    pendingChangeProposalByOrderId={pendingChangeProposalByOrderId}
+                    onRespondChangeProposal={handleRespondOrderChangeProposal}
+                    onConfirmCustomerCancelRequest={handleConfirmCustomerCancelRequest}
                     onMarkRead={markOrderRead}
                     onAcceptOrder={handleAcceptOrder}
                     onRejectOrder={handleRejectOrder}
@@ -6348,6 +6635,9 @@ function isUnreadForFactory(messages, readKey) {
                       currentMonth={currentMonth}
                       onMonthChange={handleCalendarMonthChange}
                       onOpenOrder={handleOpenOrderFromCalendar}
+                      pendingChangeProposalByOrderId={pendingChangeProposalByOrderId}
+                      onRespondChangeProposal={handleRespondOrderChangeProposal}
+                      onConfirmCustomerCancelRequest={handleConfirmCustomerCancelRequest}
                     />
                   ) : null}
 
@@ -6572,6 +6862,9 @@ function isUnreadForFactory(messages, readKey) {
             projectById={projectById}
             customerById={customerById}
             organizationById={organizationById}
+            pendingChangeProposal={toastOrder?.id ? pendingChangeProposalByOrderId[toastOrder.id] || null : null}
+            onRespondChangeProposal={handleRespondOrderChangeProposal}
+            onConfirmCustomerCancelRequest={handleConfirmCustomerCancelRequest}
           />
           <OrderAcceptModal
             order={acceptModalOrder}
