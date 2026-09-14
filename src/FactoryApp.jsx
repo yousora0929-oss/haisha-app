@@ -4791,123 +4791,150 @@ function isUnreadForFactory(messages, readKey) {
         });
       }, [projects]);
 
+      const syncFetchGateRef = useRef({ inFlight: null, pending: false, latestArgs: null });
+      const realtimeControlsRef = useRef({
+        reconnect: () => {},
+        getStatus: () => 'IDLE',
+      });
+
       const syncFromStorage = useCallback(
         async (options, realtimePayload) => {
-          const prevOrders = rawOrdersRef.current;
-          let { orders: list, chatThreads: th } = await db.fetchOrdersWithChat(FACTORY_ORDERS_FETCH_OPTIONS);
-          list = enrichOrdersWithProjectFactory(list);
-          setChatThreads(th);
-
-          if (activeFactoryId) {
+          const gate = syncFetchGateRef.current;
+          gate.latestArgs = { options, realtimePayload };
+          gate.pending = true;
+          if (gate.inFlight) {
+            return gate.inFlight;
+          }
+          gate.inFlight = (async () => {
             try {
-              const rows = await db.fetchReservationGroupFactoryResponses(activeFactoryId);
-              const declined = mergeDeclinedReservationGroupIds(activeFactoryId, rows);
-              declinedReservationGroupIdsRef.current = declined;
-              setDeclinedReservationGroupIds(declined);
-            } catch (err) {
-              console.warn('[FactoryApp] reservation group responses fetch failed', err);
-              const local = readLocalDeclinedReservationGroupIds(activeFactoryId);
-              declinedReservationGroupIdsRef.current = local;
-              setDeclinedReservationGroupIds(local);
-            }
-            try {
-              const proposalRows = await db.fetchPendingOrderChangeProposals(activeFactoryId);
-              const plist = Array.isArray(proposalRows) ? proposalRows : [];
-              setPendingChangeProposals(plist);
-              setScheduleChangePendingCount(plist.length);
-            } catch (proposalErr) {
-              console.warn('[FactoryApp] order_change_proposals fetch failed', proposalErr);
-            }
-          }
+              while (gate.pending) {
+                gate.pending = false;
+                const args = gate.latestArgs;
+                gate.latestArgs = null;
+                const runOptions = args?.options;
+                const runRealtimePayload = args?.realtimePayload;
 
-          const mergedReadKeys = { ...(readChatKeysRef.current || {}) };
-          let readKeysChanged = false;
-          for (const order of list || []) {
-            if (!order?.id) continue;
-            const persisted = String(order.factory_chat_read_key ?? order.factoryChatReadKey ?? '').trim();
-            if (persisted && !mergedReadKeys[order.id]) {
-              mergedReadKeys[order.id] = persisted;
-              readKeysChanged = true;
-            }
-          }
-          if (readKeysChanged) {
-            readChatKeysRef.current = mergedReadKeys;
-            setReadChatKeys(mergedReadKeys);
-          }
+                const prevOrders = rawOrdersRef.current;
+                let { orders: list, chatThreads: th } = await db.fetchOrdersWithChat(FACTORY_ORDERS_FETCH_OPTIONS);
+                list = enrichOrdersWithProjectFactory(list);
+                setChatThreads(th);
 
-          const notifyOrderIds = new Set();
-          const reassignNotifyOrderIds = new Set();
-          if (activeFactoryId) {
-            const ctx = buildEscalationContext(
-              list,
-              factories,
-              projects,
-              escalationSettings,
-              holidays,
-              new Date(),
-              escalationStepsByFactoryId,
-              customers,
-              factorySmallVehicleInfo,
-              monthlyVolumeByFactory,
-            );
-            const detected = detectFactoryNotifyOrderIds(prevOrders, list, activeFactoryId, ctx);
-            for (const id of detected.notifyOrderIds) notifyOrderIds.add(id);
-            for (const id of detected.reassignNotifyOrderIds) reassignNotifyOrderIds.add(id);
-            if (realtimePayload) {
-              try {
-                const normalizedPayload = { ...realtimePayload };
-                if (realtimePayload.new && typeof realtimePayload.new === 'object') {
-                  const normalizedNew = db.normalizeOrderRow(realtimePayload.new);
-                  if (normalizedNew) normalizedPayload.new = normalizedNew;
+                if (activeFactoryId) {
+                  try {
+                    const rows = await db.fetchReservationGroupFactoryResponses(activeFactoryId);
+                    const declined = mergeDeclinedReservationGroupIds(activeFactoryId, rows);
+                    declinedReservationGroupIdsRef.current = declined;
+                    setDeclinedReservationGroupIds(declined);
+                  } catch (err) {
+                    console.warn('[FactoryApp] reservation group responses fetch failed', err);
+                    const local = readLocalDeclinedReservationGroupIds(activeFactoryId);
+                    declinedReservationGroupIdsRef.current = local;
+                    setDeclinedReservationGroupIds(local);
+                  }
+                  try {
+                    const proposalRows = await db.fetchPendingOrderChangeProposals(activeFactoryId);
+                    const plist = Array.isArray(proposalRows) ? proposalRows : [];
+                    setPendingChangeProposals(plist);
+                    setScheduleChangePendingCount(plist.length);
+                  } catch (proposalErr) {
+                    console.warn('[FactoryApp] order_change_proposals fetch failed', proposalErr);
+                  }
                 }
-                if (realtimePayload.old && typeof realtimePayload.old === 'object') {
-                  const normalizedOld = db.normalizeOrderRow(realtimePayload.old);
-                  if (normalizedOld) normalizedPayload.old = normalizedOld;
-                }
-                const analysis = analyzeFactoryOrderRealtimePayload(normalizedPayload, activeFactoryId, ctx);
-                for (const id of analysis.notifyOrderIds) notifyOrderIds.add(id);
-                for (const id of analysis.reassignNotifyOrderIds) reassignNotifyOrderIds.add(id);
-              } catch (realtimeErr) {
-                console.error('[FactoryApp] Realtime ペイロード解析に失敗（再フェッチ結果を優先）', realtimeErr);
-              }
-            }
-            const declined = declinedReservationGroupIdsRef.current;
-            const orderById = new Map((list || []).filter((o) => o?.id).map((o) => [String(o.id), o]));
-            for (const id of [...notifyOrderIds]) {
-              const order = orderById.get(String(id));
-              if (!order) continue;
-              const gid = reservationGroupIdOf(order);
-              if (!gid) continue;
-              if (!isPendingReservationGroupAvailability(order) || declined.has(gid)) {
-                notifyOrderIds.delete(id);
-              }
-            }
-          }
 
-          const incomingOptions = {
-            ...options,
-            playSound: Boolean(options?.playSound) && masterDataReady,
-            ...(notifyOrderIds.size > 0 ? { notifyOrderIds } : {}),
-            ...(reassignNotifyOrderIds.size > 0 ? { reassignNotifyOrderIds } : {}),
-          };
-          applyIncomingOrders(list, incomingOptions);
-          const idArr = collectScheduleFactoryIds(list, activeFactoryId);
-          const byF = idArr.length ? await db.fetchSchedulesForFactories(idArr) : {};
-          const r = await db.persistScheduleAutoRejections({
-            schedulesByFactoryId: byF,
-            orders: list,
-            chatThreads: th,
-            factoryNameById,
-            defaultFactorySiteName: activeFactoryName || FACTORY_SITE_NAME,
-            defaultFactorySiteId: activeFactoryId || FACTORY_SITE_ID,
-          });
-          if (r.changed) {
-            setChatThreads(r.chatThreads);
-            applyIncomingOrders(r.orders, {
-              playSound: false,
-              muteExisting: Boolean(options?.muteExisting),
-            });
-          }
+                const mergedReadKeys = { ...(readChatKeysRef.current || {}) };
+                let readKeysChanged = false;
+                for (const order of list || []) {
+                  if (!order?.id) continue;
+                  const persisted = String(order.factory_chat_read_key ?? order.factoryChatReadKey ?? '').trim();
+                  if (persisted && !mergedReadKeys[order.id]) {
+                    mergedReadKeys[order.id] = persisted;
+                    readKeysChanged = true;
+                  }
+                }
+                if (readKeysChanged) {
+                  readChatKeysRef.current = mergedReadKeys;
+                  setReadChatKeys(mergedReadKeys);
+                }
+
+                const notifyOrderIds = new Set();
+                const reassignNotifyOrderIds = new Set();
+                if (activeFactoryId) {
+                  const ctx = buildEscalationContext(
+                    list,
+                    factories,
+                    projects,
+                    escalationSettings,
+                    holidays,
+                    new Date(),
+                    escalationStepsByFactoryId,
+                    customers,
+                    factorySmallVehicleInfo,
+                    monthlyVolumeByFactory,
+                  );
+                  const detected = detectFactoryNotifyOrderIds(prevOrders, list, activeFactoryId, ctx);
+                  for (const id of detected.notifyOrderIds) notifyOrderIds.add(id);
+                  for (const id of detected.reassignNotifyOrderIds) reassignNotifyOrderIds.add(id);
+                  if (runRealtimePayload) {
+                    try {
+                      const normalizedPayload = { ...runRealtimePayload };
+                      if (runRealtimePayload.new && typeof runRealtimePayload.new === 'object') {
+                        const normalizedNew = db.normalizeOrderRow(runRealtimePayload.new);
+                        if (normalizedNew) normalizedPayload.new = normalizedNew;
+                      }
+                      if (runRealtimePayload.old && typeof runRealtimePayload.old === 'object') {
+                        const normalizedOld = db.normalizeOrderRow(runRealtimePayload.old);
+                        if (normalizedOld) normalizedPayload.old = normalizedOld;
+                      }
+                      const analysis = analyzeFactoryOrderRealtimePayload(normalizedPayload, activeFactoryId, ctx);
+                      for (const id of analysis.notifyOrderIds) notifyOrderIds.add(id);
+                      for (const id of analysis.reassignNotifyOrderIds) reassignNotifyOrderIds.add(id);
+                    } catch (realtimeErr) {
+                      console.error('[FactoryApp] Realtime ペイロード解析に失敗（再フェッチ結果を優先）', realtimeErr);
+                    }
+                  }
+                  const declined = declinedReservationGroupIdsRef.current;
+                  const orderById = new Map((list || []).filter((o) => o?.id).map((o) => [String(o.id), o]));
+                  for (const id of [...notifyOrderIds]) {
+                    const order = orderById.get(String(id));
+                    if (!order) continue;
+                    const gid = reservationGroupIdOf(order);
+                    if (!gid) continue;
+                    if (!isPendingReservationGroupAvailability(order) || declined.has(gid)) {
+                      notifyOrderIds.delete(id);
+                    }
+                  }
+                }
+
+                const incomingOptions = {
+                  ...runOptions,
+                  playSound: Boolean(runOptions?.playSound) && masterDataReady,
+                  ...(notifyOrderIds.size > 0 ? { notifyOrderIds } : {}),
+                  ...(reassignNotifyOrderIds.size > 0 ? { reassignNotifyOrderIds } : {}),
+                };
+                applyIncomingOrders(list, incomingOptions);
+                const idArr = collectScheduleFactoryIds(list, activeFactoryId);
+                const byF = idArr.length ? await db.fetchSchedulesForFactories(idArr) : {};
+                const r = await db.persistScheduleAutoRejections({
+                  schedulesByFactoryId: byF,
+                  orders: list,
+                  chatThreads: th,
+                  factoryNameById,
+                  defaultFactorySiteName: activeFactoryName || FACTORY_SITE_NAME,
+                  defaultFactorySiteId: activeFactoryId || FACTORY_SITE_ID,
+                });
+                if (r.changed) {
+                  setChatThreads(r.chatThreads);
+                  applyIncomingOrders(r.orders, {
+                    playSound: false,
+                    muteExisting: Boolean(runOptions?.muteExisting),
+                  });
+                }
+              }
+            } finally {
+              gate.inFlight = null;
+            }
+          })();
+          return gate.inFlight;
         },
         [activeFactoryId, activeFactoryName, applyIncomingOrders, factoryNameById, factories, projects, customers, escalationSettings, holidays, enrichOrdersWithProjectFactory, escalationStepsByFactoryId, masterDataReady, factorySmallVehicleInfo, monthlyVolumeByFactory],
       );
@@ -4933,14 +4960,26 @@ function isUnreadForFactory(messages, readKey) {
         if (!activeFactoryId) return undefined;
         const pollId = window.setInterval(() => {
           void syncFromStorageRef.current({ playSound: true });
-        }, 30000);
+        }, 15000);
         const onFocus = () => {
           void syncFromStorageRef.current({ playSound: true });
         };
+        const onVisibilityChange = () => {
+          if (document.hidden) return;
+          const status = realtimeControlsRef.current.getStatus?.() || 'IDLE';
+          console.log('[FactoryApp] visibilitychange → visible', { realtimeStatus: status });
+          if (status !== 'SUBSCRIBED') {
+            console.warn('[FactoryApp] realtime not SUBSCRIBED on foreground — reconnecting', { status });
+            realtimeControlsRef.current.reconnect?.();
+          }
+          void syncFromStorageRef.current({ playSound: true });
+        };
         window.addEventListener('focus', onFocus);
+        document.addEventListener('visibilitychange', onVisibilityChange);
         return () => {
           window.clearInterval(pollId);
           window.removeEventListener('focus', onFocus);
+          document.removeEventListener('visibilitychange', onVisibilityChange);
         };
       }, [activeFactoryId]);
 
@@ -5462,6 +5501,13 @@ function isUnreadForFactory(messages, readKey) {
           },
         });
         let unsubRealtime = () => {};
+        unsubRealtime.reconnect = () => {};
+        unsubRealtime.getStatus = () => 'IDLE';
+        let isFirstSubscribed = true;
+        realtimeControlsRef.current = {
+          reconnect: () => unsubRealtime.reconnect?.(),
+          getStatus: () => (typeof unsubRealtime.getStatus === 'function' ? unsubRealtime.getStatus() : 'IDLE'),
+        };
         void (async () => {
           try {
             const factoryPassword = String(readAuthValue(FACTORY_PANEL_PASSWORD_KEY) || '').trim();
@@ -5483,8 +5529,25 @@ function isUnreadForFactory(messages, readKey) {
                   },
                 });
               },
-              { skipAuth: true },
+              {
+                skipAuth: true,
+                onStatusChange: (status) => {
+                  if (cancel) return;
+                  if (status !== 'SUBSCRIBED') return;
+                  if (isFirstSubscribed) {
+                    isFirstSubscribed = false;
+                    console.log('[FactoryApp] realtime SUBSCRIBED (initial)');
+                    return;
+                  }
+                  console.log('[FactoryApp] realtime SUBSCRIBED after reconnect — syncing orders');
+                  void syncFromStorageRef.current({ playSound: true });
+                },
+              },
             );
+            realtimeControlsRef.current = {
+              reconnect: () => unsubRealtime.reconnect?.(),
+              getStatus: () => (typeof unsubRealtime.getStatus === 'function' ? unsubRealtime.getStatus() : 'IDLE'),
+            };
           } catch (e) {
             console.error('[FactoryApp] realtime subscribe failed', e);
           }
@@ -5492,6 +5555,10 @@ function isUnreadForFactory(messages, readKey) {
         return () => {
           cancel = true;
           realtimeSync.dispose();
+          realtimeControlsRef.current = {
+            reconnect: () => {},
+            getStatus: () => 'CLOSED',
+          };
           try {
             unsubRealtime();
           } catch {

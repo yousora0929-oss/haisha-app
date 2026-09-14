@@ -4346,9 +4346,14 @@ function createIsolatedRealtimeHandler(onEvent) {
   };
 }
 
-/** 工場・カスタマー画面向け: orders / schedules のみ（軽量購読） */
+/** 工場・カスタマー画面向け: orders / schedules のみ（軽量購読）
+ * 切断時は指数バックオフで自動再購読する。
+ * 戻り値は unsubscribe 関数。追加で `.reconnect()` / `.getStatus()` を持つ。
+ * options.onStatusChange(status, err?) で状態変化を通知（SUBSCRIBED 時に呼び出し元が再フェッチ可能）。
+ */
 export async function subscribeOrdersRealtime(onEvent, options = {}) {
   const route = createIsolatedRealtimeHandler(onEvent);
+  const onStatusChange = typeof options?.onStatusChange === 'function' ? options.onStatusChange : null;
   const skipAuth = Boolean(options?.skipAuth);
   if (!skipAuth) {
     try {
@@ -4358,25 +4363,117 @@ export async function subscribeOrdersRealtime(onEvent, options = {}) {
     }
   }
   if (!supabase?.channel) {
-    return () => {};
+    const noop = () => {};
+    noop.reconnect = () => {};
+    noop.getStatus = () => 'CLOSED';
+    return noop;
   }
-  const channelName = `haisha-orders-rt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const channel = supabase
-    .channel(channelName)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => route(payload, 'orders'))
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, (payload) => route(payload, 'schedules'))
-    .subscribe((status, err) => {
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        console.error('[subscribeOrdersRealtime] channel error', status, err);
-      }
-    });
-  return () => {
+
+  const MIN_BACKOFF_MS = 2000;
+  const MAX_BACKOFF_MS = 30000;
+  let disposed = false;
+  let channel = null;
+  let channelGeneration = 0;
+  let reconnectTimer = null;
+  let reconnectQueued = false;
+  let backoffMs = MIN_BACKOFF_MS;
+  let currentStatus = 'IDLE';
+
+  const clearReconnectTimer = () => {
+    if (reconnectTimer != null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    reconnectQueued = false;
+  };
+
+  const notifyStatus = (status, err) => {
+    currentStatus = status;
+    if (!onStatusChange) return;
     try {
-      void supabase?.removeChannel?.(channel);
+      onStatusChange(status, err);
+    } catch (e) {
+      console.error('[subscribeOrdersRealtime] onStatusChange error', e);
+    }
+  };
+
+  const removeCurrentChannel = () => {
+    if (!channel) return;
+    const ch = channel;
+    channel = null;
+    try {
+      void supabase?.removeChannel?.(ch);
     } catch {
       /* ignore */
     }
   };
+
+  const scheduleReconnect = (reason) => {
+    if (disposed || reconnectQueued) return;
+    reconnectQueued = true;
+    if (reconnectTimer != null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    const delay = backoffMs;
+    console.warn('[subscribeOrdersRealtime] scheduling reconnect', { reason, delayMs: delay });
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      reconnectQueued = false;
+      if (disposed) return;
+      backoffMs = Math.min(Math.max(backoffMs * 2, MIN_BACKOFF_MS), MAX_BACKOFF_MS);
+      startChannel();
+    }, delay);
+  };
+
+  const startChannel = () => {
+    if (disposed || !supabase?.channel) return;
+    removeCurrentChannel();
+    const gen = ++channelGeneration;
+    const channelName = `haisha-orders-rt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    console.log('[subscribeOrdersRealtime] starting channel', { channelName, gen, backoffMs });
+    channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => route(payload, 'orders'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, (payload) => route(payload, 'schedules'))
+      .subscribe((status, err) => {
+        if (disposed || gen !== channelGeneration) return;
+        notifyStatus(status, err);
+        if (status === 'SUBSCRIBED') {
+          console.log('[subscribeOrdersRealtime] SUBSCRIBED', { channelName, gen });
+          backoffMs = MIN_BACKOFF_MS;
+          clearReconnectTimer();
+          return;
+        }
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          console.error('[subscribeOrdersRealtime] channel disconnected', status, err);
+          if (gen === channelGeneration) {
+            channelGeneration += 1;
+            removeCurrentChannel();
+            scheduleReconnect(status);
+          }
+        }
+      });
+  };
+
+  startChannel();
+
+  const unsubscribe = () => {
+    disposed = true;
+    clearReconnectTimer();
+    channelGeneration += 1;
+    removeCurrentChannel();
+    currentStatus = 'CLOSED';
+  };
+  unsubscribe.reconnect = () => {
+    if (disposed) return;
+    console.log('[subscribeOrdersRealtime] manual reconnect requested', { status: currentStatus });
+    clearReconnectTimer();
+    backoffMs = MIN_BACKOFF_MS;
+    startChannel();
+  };
+  unsubscribe.getStatus = () => currentStatus;
+  return unsubscribe;
 }
 
 export async function subscribeHaishaRealtime(onEvent) {
