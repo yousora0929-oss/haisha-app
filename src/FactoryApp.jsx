@@ -1157,6 +1157,39 @@ function isUnreadForFactory(messages, readKey) {
   return chatMessageReadKey(latest) !== readKey;
 }
 
+/** 工場注文タブのカードへ scrollIntoView するための DOM id */
+function factoryOrderElementId(orderId) {
+  const id = String(orderId || '').trim();
+  return id ? `factory-order-${id}` : '';
+}
+
+function factoryReservationGroupElementId(groupId) {
+  const id = String(groupId || '').trim();
+  return id ? `factory-reservation-group-${id}` : '';
+}
+
+/**
+ * 注文タブバッジ「新着」と同じ未読未受注判定（newOrdersCount と共有）。
+ */
+function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
+  if (!order?.id) return false;
+  if (readOrderIds?.has?.(String(order.id))) return false;
+  if (isRejectedByFactory(order, activeFactoryId)) return false;
+  if (isReservationGroupManagedOrder(order) && !isPendingReservationGroupAvailability(order)) {
+    return false;
+  }
+  const orderStatus = String(order.status || '').trim();
+  if (['accepted', 'rejected', 'customer_cancelled', 'cancelled', 'completed', 'deleted'].includes(orderStatus)) {
+    return false;
+  }
+  const factoryResponse = String(order.factoryResponseStatus || '').trim();
+  if (factoryResponse === 'accepted' || factoryResponse === 'rejected' || factoryResponse === 'pending') {
+    return false;
+  }
+  const assignedFactoryId = getAssignedFactoryId(order);
+  return !assignedFactoryId || isSameFactoryId(assignedFactoryId, activeFactoryId);
+}
+
     async function appendOrderChatMessage(orderId, from, body) {
       return db.appendChatMessage(orderId, from, body);
     }
@@ -2582,7 +2615,12 @@ function isUnreadForFactory(messages, readKey) {
 
       return (
         <div className={kindAccentWrapClass}>
-        <article ref={articleRef} className={outerArticleClass} onClick={markRead}>
+        <article
+          ref={articleRef}
+          id={factoryOrderElementId(order?.id)}
+          className={outerArticleClass}
+          onClick={markRead}
+        >
           <div
             className={
               'flex w-full min-w-0 items-stretch ' +
@@ -5213,24 +5251,13 @@ function isUnreadForFactory(messages, readKey) {
 
       const newOrdersCount = useMemo(
         () => {
-          const isUnreadPending = (order) => {
-            if (!order?.id) return false;
-            if (readOrderIds.has(String(order.id))) return false;
-            if (isRejectedByFactory(order, activeFactoryId)) return false;
-            if (isReservationGroupManagedOrder(order) && !isPendingReservationGroupAvailability(order)) {
-              return false;
-            }
-            const orderStatus = String(order.status || '').trim();
-            if (['accepted', 'rejected', 'customer_cancelled', 'cancelled', 'completed', 'deleted'].includes(orderStatus)) {
-              return false;
-            }
-            if (normalizeFactoryResponse(order.factoryResponseStatus)) return false;
-            const assignedFactoryId = getAssignedFactoryId(order);
-            return !assignedFactoryId || isSameFactoryId(assignedFactoryId, activeFactoryId);
-          };
-          const singles = (inboxModel.singles || []).filter(isUnreadPending).length;
+          const singles = (inboxModel.singles || []).filter((order) =>
+            isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds),
+          ).length;
           const groups = (inboxModel.groups || []).filter((group) =>
-            (group.orders || []).some(isUnreadPending),
+            (group.orders || []).some((order) =>
+              isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds),
+            ),
           ).length;
           return singles + groups;
         },
@@ -5243,6 +5270,92 @@ function isUnreadForFactory(messages, readKey) {
             order?.id && isUnreadForFactory(chatThreads[order.id], readChatKeys?.[order.id]),
           ).length,
         [factoryInProgressOrders, chatThreads, readChatKeys],
+      );
+
+      /** 注文タブ再タップ時の巡回対象: 新着未受注 → チャット未読（表示順） */
+      const ordersTabCycleTargets = useMemo(() => {
+        const targets = [];
+        const seenKeys = new Set();
+
+        for (const order of inboxModel.singles || []) {
+          if (!isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds)) continue;
+          const orderId = String(order.id);
+          const key = `order:${orderId}`;
+          if (seenKeys.has(key)) continue;
+          seenKeys.add(key);
+          targets.push({ type: 'order', id: orderId, focusOrderId: orderId });
+        }
+
+        for (const group of inboxModel.groups || []) {
+          const groupId = String(group?.groupId || '').trim();
+          if (!groupId) continue;
+          const unreadInGroup = (group.orders || []).filter((order) =>
+            isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds),
+          );
+          if (!unreadInGroup.length) continue;
+          const key = `group:${groupId}`;
+          if (seenKeys.has(key)) continue;
+          seenKeys.add(key);
+          for (const order of unreadInGroup) {
+            const oid = String(order?.id || '').trim();
+            if (oid) seenKeys.add(`order:${oid}`);
+          }
+          const focusOrderId = String(unreadInGroup[0]?.id || '').trim();
+          targets.push({ type: 'group', id: groupId, focusOrderId });
+        }
+
+        for (const order of factoryInProgressOrders || []) {
+          if (!order?.id) continue;
+          const orderId = String(order.id);
+          const key = `order:${orderId}`;
+          if (seenKeys.has(key)) continue;
+          if (!isUnreadForFactory(chatThreads[order.id], readChatKeys?.[order.id])) continue;
+          seenKeys.add(key);
+          targets.push({ type: 'order', id: orderId, focusOrderId: orderId });
+        }
+
+        return targets;
+      }, [inboxModel, activeFactoryId, readOrderIds, factoryInProgressOrders, chatThreads, readChatKeys]);
+
+      const ordersTabCycleIndexRef = useRef(0);
+      const ordersTabCycleKeyRef = useRef('');
+      useEffect(() => {
+        const key = ordersTabCycleTargets
+          .map((t) => `${t.type}:${t.id}`)
+          .join('|');
+        if (key !== ordersTabCycleKeyRef.current) {
+          ordersTabCycleKeyRef.current = key;
+          ordersTabCycleIndexRef.current = 0;
+        }
+      }, [ordersTabCycleTargets]);
+
+      const selectFactoryTab = useCallback(
+        (tabId) => {
+          const id = String(tabId || '').trim();
+          if (!id) return;
+
+          if (id === 'orders' && activeTab === 'orders') {
+            const targets = ordersTabCycleTargets;
+            if (!targets.length) return;
+            const idx = ((ordersTabCycleIndexRef.current % targets.length) + targets.length) % targets.length;
+            const target = targets[idx];
+            ordersTabCycleIndexRef.current = (idx + 1) % targets.length;
+            const focusId = String(target?.focusOrderId || target?.id || '').trim();
+            if (focusId) setFocusedOrderId(focusId);
+            window.setTimeout(() => {
+              const elId =
+                target?.type === 'group'
+                  ? factoryReservationGroupElementId(target.id)
+                  : factoryOrderElementId(target?.id);
+              const el = elId ? document.getElementById(elId) : null;
+              el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+            }, 120);
+            return;
+          }
+
+          setActiveTab(id);
+        },
+        [activeTab, ordersTabCycleTargets],
       );
 
       useEffect(() => {
@@ -6375,7 +6488,7 @@ function isUnreadForFactory(messages, readKey) {
                     <button
                       key={id}
                       type="button"
-                      onClick={() => setActiveTab(id)}
+                      onClick={() => selectFactoryTab(id)}
                       className={
                         'relative min-h-[32px] min-w-0 overflow-visible rounded-lg px-1.5 py-1 text-[10px] font-black leading-tight transition sm:min-h-[36px] sm:px-2.5 sm:text-[11px] lg:text-xs ' +
                         (active

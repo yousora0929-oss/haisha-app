@@ -63,6 +63,7 @@ export function ReservationGroupAvailabilityCard({
   return (
     <article
       ref={articleRef}
+      id={groupId ? `factory-reservation-group-${String(groupId).trim()}` : undefined}
       className="overflow-hidden rounded-2xl border-2 border-violet-400 bg-white shadow-xl dark:border-violet-600 dark:bg-slate-800"
     >
       <div className="flex items-start justify-between gap-2 border-b border-violet-200 bg-violet-50 px-3 py-3 dark:border-violet-700 dark:bg-violet-950/50 sm:px-3.5">
