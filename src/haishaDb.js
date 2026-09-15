@@ -5212,6 +5212,7 @@ function mapCustomerRow(row) {
     organization_id: row.organization_id != null ? String(row.organization_id) : null,
     can_import_schedule: Boolean(row.can_import_schedule),
     can_request_mix_design: Boolean(row.can_request_mix_design),
+    is_representative: Boolean(row.is_representative),
     is_credit_eligible: Boolean(row.is_credit_eligible),
     credit_source: row.credit_source != null ? String(row.credit_source) : '',
     created_at: row.created_at,

@@ -202,6 +202,7 @@ const CUSTOMER_ORDER_TABS = [
 
 const SCHEDULE_IMPORT_TAB = ['scheduleImport', '取込', '📄'];
 const MIX_DESIGN_HISTORY_TAB = ['mixDesignHistory', '配合依頼', '📑'];
+const REPRESENTATIVE_TAB = ['representativeOverview', '担当者一覧', '🏢'];
 
 /** 進行中タブの物件グループ折りたたみ（true = 折りたたみ）。物件ID単位で保持。 */
 const INPROGRESS_GROUP_COLLAPSED_STORAGE_PREFIX = 'haisha_dispatch_inprogress_group_collapsed_v1';
@@ -2077,6 +2078,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [linkedContractorIds, setLinkedContractorIds] = useState([]);
       const [contractorUsageCounts, setContractorUsageCounts] = useState({});
       const [tradingAgentUsageCounts, setTradingAgentUsageCounts] = useState({});
+      const [representativeOverviewLinks, setRepresentativeOverviewLinks] = useState([]);
       const [spotSiteNameSuggestions, setSpotSiteNameSuggestions] = useState([]);
       const [projectSearchText, setProjectSearchText] = useState('');
       const [deliveryLat, setDeliveryLat] = useState('');
@@ -2274,8 +2276,94 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         if (canRequestMixDesign && !isGuestSiteOrder) {
           tabs = [...tabs, MIX_DESIGN_HISTORY_TAB];
         }
+        if (currentCustomer?.is_representative && !isGuestSiteOrder) {
+          tabs = [...tabs, REPRESENTATIVE_TAB];
+        }
         return tabs;
-      }, [isGuestSiteOrder, currentCustomerRole, canImportSchedule, canRequestMixDesign]);
+      }, [
+        isGuestSiteOrder,
+        currentCustomerRole,
+        canImportSchedule,
+        canRequestMixDesign,
+        currentCustomer?.is_representative,
+      ]);
+
+      const representativeOrgAgents = useMemo(() => {
+        if (!currentCustomer?.is_representative) return [];
+        const orgId = String(currentCustomer?.organization_id || '').trim();
+        if (!orgId) return [];
+        return (customers || []).filter(
+          (c) =>
+            (c.role ?? 'contractor') === 'agent' &&
+            !c.is_representative &&
+            String(c.organization_id || '').trim() === orgId,
+        );
+      }, [customers, currentCustomer?.is_representative, currentCustomer?.organization_id]);
+
+      const representativeOrgAgentIdsKey = useMemo(
+        () => representativeOrgAgents.map((a) => a.id).join('|'),
+        [representativeOrgAgents],
+      );
+
+      useEffect(() => {
+        let cancelled = false;
+        if (customerOrderTab !== 'representativeOverview' || !currentCustomer?.is_representative) {
+          return undefined;
+        }
+        const agentIds = representativeOrgAgentIdsKey
+          ? representativeOrgAgentIdsKey.split('|').filter(Boolean)
+          : [];
+        if (!agentIds.length) {
+          setRepresentativeOverviewLinks([]);
+          return undefined;
+        }
+        void (async () => {
+          try {
+            const links = await db.fetchAgentContractorLinksByAgentIds(agentIds);
+            if (!cancelled) setRepresentativeOverviewLinks(Array.isArray(links) ? links : []);
+          } catch (err) {
+            console.warn('[DispatchApp] representative overview links fetch failed', err);
+            if (!cancelled) setRepresentativeOverviewLinks([]);
+          }
+        })();
+        return () => {
+          cancelled = true;
+        };
+      }, [customerOrderTab, currentCustomer?.is_representative, representativeOrgAgentIdsKey]);
+
+      const representativeOverviewRows = useMemo(() => {
+        const contractorById = new Map(
+          (customers || [])
+            .filter((c) => c?.id)
+            .map((c) => [String(c.id), c]),
+        );
+        const projectsByContractor = new Map();
+        for (const project of projects || []) {
+          const cid = String(project?.customer_id || '').trim();
+          if (!cid) continue;
+          if (!projectsByContractor.has(cid)) projectsByContractor.set(cid, []);
+          projectsByContractor.get(cid).push(project);
+        }
+        return representativeOrgAgents.map((agent) => {
+          const agentId = String(agent.id || '').trim();
+          const linkedContractorIdsForAgent = [
+            ...new Set(
+              (representativeOverviewLinks || [])
+                .filter((l) => String(l.agent_customer_id || '').trim() === agentId)
+                .map((l) => String(l.contractor_customer_id || '').trim())
+                .filter(Boolean),
+            ),
+          ];
+          const contractors = linkedContractorIdsForAgent
+            .map((id) => contractorById.get(id))
+            .filter(Boolean)
+            .map((contractor) => ({
+              contractor,
+              projects: projectsByContractor.get(String(contractor.id)) || [],
+            }));
+          return { agent, contractors };
+        });
+      }, [representativeOrgAgents, representativeOverviewLinks, customers, projects]);
 
       // 現場名サジェスト / 現場担当者サジェスト共通の実質業者ID
       const effectiveContractorCustomerId = useMemo(
@@ -2444,8 +2532,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
       const tradingAgentItems = useMemo(() => {
         const agents = (customers || []).filter((c) => (c.role ?? 'contractor') === 'agent');
-        return sortCustomersByUsageFrequency(agents, tradingAgentUsageCounts);
-      }, [customers, tradingAgentUsageCounts]);
+        const projectOrgId = String(selectedProject?.trading_company_organization_id || '').trim();
+        const scoped = projectOrgId
+          ? agents.filter((c) => String(c.organization_id || '').trim() === projectOrgId)
+          : agents;
+        // 絞り込んだ結果0件なら、取りこぼし防止のため全件表示にフォールバック
+        const finalList = scoped.length > 0 ? scoped : agents;
+        return sortCustomersByUsageFrequency(finalList, tradingAgentUsageCounts);
+      }, [customers, tradingAgentUsageCounts, selectedProject]);
 
       const tradingAgentFilterHint = useMemo(() => {
         if (!contractorLinkAgentId || linkedContractorIds.length === 0) return '';
@@ -4583,6 +4677,21 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         ],
       );
 
+      const resolvedTradingAgentCustomerId = useMemo(() => {
+        if (currentCustomerRole !== 'cooperative') return null;
+        const explicit = String(tradingAgentCustomerId || '').trim();
+        if (explicit) return explicit;
+        const projectOrgId = String(selectedProject?.trading_company_organization_id || '').trim();
+        if (!projectOrgId) return null;
+        const rep = (customers || []).find(
+          (c) =>
+            (c.role ?? 'contractor') === 'agent' &&
+            c.is_representative === true &&
+            String(c.organization_id || '').trim() === projectOrgId,
+        );
+        return rep ? String(rep.id) : null;
+      }, [currentCustomerRole, tradingAgentCustomerId, selectedProject, customers]);
+
       const orderFormContext = useMemo(
         () => ({
           isGuestSiteOrder,
@@ -4592,7 +4701,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           currentCustomerRole,
           contractorCustomerId: isAgentOrCooperative ? contractorCustomerId : currentCustomerId,
           agentOrganizationId: isAgentOrCooperative ? (currentCustomer?.organization_id ?? null) : null,
-          tradingAgentCustomerId: currentCustomerRole === 'cooperative' ? tradingAgentCustomerId : null,
+          tradingAgentCustomerId: resolvedTradingAgentCustomerId,
           tradingAgentSearchText: currentCustomerRole === 'cooperative' ? tradingAgentSearchText : '',
           currentCustomer,
           selectedProject,
@@ -4630,7 +4739,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           currentCustomerId,
           currentCustomerRole,
           contractorCustomerId,
-          tradingAgentCustomerId,
+          resolvedTradingAgentCustomerId,
           tradingAgentSearchText,
           currentCustomer,
           selectedProject,
@@ -5445,7 +5554,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     {currentCustomerRole === 'agent' ? '商社' : '組合'}として発注しています。
                     発注先の業者を選択してください。
                     {currentCustomerRole === 'cooperative'
-                      ? '必要に応じて経由商社の担当者を選択できます。'
+                      ? '必要に応じて経由商社の担当者を選択できます。未選択の場合は商社の代表窓口へ通知されます。'
                       : ''}
                     {orderKind === 'spot'
                       ? ' スポット注文では未選択でも送信できます（現場名候補は選択した業者の履歴を使います）。'
@@ -5458,7 +5567,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         htmlFor="trading-agent-customer-select"
                         name="trading_agent_customer"
                         value={tradingAgentSearchText}
-                        placeholder="商社担当者名を入力して候補から選択"
+                        placeholder="担当者が不明な場合は代表窓口へ通知されます"
                         items={tradingAgentItems}
                         getItemKey={(c) => String(c.id)}
                         getItemLabel={formatTradingAgentLabel}
@@ -6719,6 +6828,73 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 <div className="mt-4">
                   <CompanyMemberContactList customerId={currentCustomerId} />
                 </div>
+              </section>
+            ) : null}
+            {customerOrderTab === 'representativeOverview' && currentCustomer?.is_representative ? (
+              <section className="rounded-2xl border-2 border-slate-200 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-slate-900 sm:p-6">
+                <h2 className="text-lg font-black text-slate-900 dark:text-white">担当者一覧（統合窓口）</h2>
+                <p className="mt-1 text-xs font-medium text-slate-500">
+                  自組織の担当者・取引業者・物件を横断して確認できます。発注は「新規発注」タブから行えます。
+                </p>
+                {representativeOverviewRows.length === 0 ? (
+                  <p className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm font-bold text-slate-500">
+                    表示できる担当者がありません。
+                  </p>
+                ) : (
+                  <ul className="mt-4 grid gap-3">
+                    {representativeOverviewRows.map(({ agent, contractors }) => {
+                      const agentLabel =
+                        [agent.manager_name, agent.company_name || agent.name]
+                          .map((v) => String(v || '').trim())
+                          .filter(Boolean)
+                          .join(' · ') || '担当者';
+                      return (
+                        <li
+                          key={agent.id}
+                          className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 dark:border-slate-600 dark:bg-slate-800/60"
+                        >
+                          <p className="text-sm font-black text-slate-900 dark:text-slate-100">{agentLabel}</p>
+                          {contractors.length === 0 ? (
+                            <p className="mt-2 text-xs font-bold text-slate-500">取引業者の登録はありません</p>
+                          ) : (
+                            <ul className="mt-2 grid gap-2">
+                              {contractors.map(({ contractor, projects: contractorProjects }) => (
+                                <li
+                                  key={`${agent.id}-${contractor.id}`}
+                                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900"
+                                >
+                                  <p className="text-xs font-black text-indigo-700 dark:text-indigo-300">
+                                    取引業者: {contractor.company_name || contractor.name || '—'}
+                                  </p>
+                                  {contractorProjects.length === 0 ? (
+                                    <p className="mt-1 text-[11px] font-bold text-slate-500">紐づく物件はありません</p>
+                                  ) : (
+                                    <ul className="mt-1 space-y-0.5">
+                                      {contractorProjects.map((project) => (
+                                        <li
+                                          key={project.id}
+                                          className="text-[11px] font-bold text-slate-700 dark:text-slate-300"
+                                        >
+                                          · {project.name || project.site_name || '物件名未設定'}
+                                          {project.site_address ? (
+                                            <span className="font-medium text-slate-500">
+                                              {' '}
+                                              / {project.site_address}
+                                            </span>
+                                          ) : null}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </section>
             ) : null}
             {customerOrderTab === 'scheduleImport' && canImportSchedule ? (
