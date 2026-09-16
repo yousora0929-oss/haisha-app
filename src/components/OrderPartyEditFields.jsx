@@ -29,6 +29,9 @@ export function OrderPartyEditFields({
   onChange,
   inputClassName = '',
   labelClassName = '',
+  showContractor = true,
+  showTrader = true,
+  showTradingAgent = true,
 }) {
   const customersById = useMemo(
     () => Object.fromEntries((customers || []).filter((c) => c?.id).map((c) => [String(c.id), c])),
@@ -86,6 +89,7 @@ export function OrderPartyEditFields({
 
   return (
     <div className="grid gap-3 sm:col-span-2">
+      {showContractor ? (
       <MasterSuggestInput
         label="業者（元請）"
         name="order-party-contractor"
@@ -109,6 +113,8 @@ export function OrderPartyEditFields({
         inputClassName={inputClassName}
         labelClassName={labelClassName}
       />
+      ) : null}
+      {showTrader ? (
       <MasterSuggestInput
         label="商社（請求先組織）"
         name="order-party-agent-org"
@@ -132,6 +138,8 @@ export function OrderPartyEditFields({
         inputClassName={inputClassName}
         labelClassName={labelClassName}
       />
+      ) : null}
+      {showTradingAgent ? (
       <MasterSuggestInput
         label="商社担当者（任意）"
         name="order-party-trading-agent"
@@ -157,6 +165,7 @@ export function OrderPartyEditFields({
         inputClassName={inputClassName}
         labelClassName={labelClassName}
       />
+      ) : null}
     </div>
   );
 }

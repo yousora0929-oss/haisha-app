@@ -17,9 +17,68 @@ import {
   orderTradingAgentCustomerId,
   resolveOrderParties,
 } from '../utils/orderPartyInfo.js';
+import {
+  changeRequestFormFieldsForKeys,
+  changeRequestPatchesEqual,
+  filterPatchToChangeRequestKeys,
+} from '../utils/changeRequestItems.js';
 
 function vehicleTypeLabel(value) {
   return String(value || '') === 'small' ? '小型' : '大型';
+}
+
+/** initialPatch（original_patch）の値を editData に上書きする */
+function applyInitialPatchToEditData(base, patch) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return base;
+  const next = { ...base };
+  if (Object.prototype.hasOwnProperty.call(patch, 'preferredDate') && patch.preferredDate) {
+    next.preferredDate = String(patch.preferredDate);
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'timeSlot') || Object.prototype.hasOwnProperty.call(patch, 'timeSlotMinutes')) {
+    const ts = String(patch.timeSlot ?? patch.timeSlotMinutes ?? '').trim();
+    if (ts && TIME_SLOTS.some((s) => s.value === ts)) next.timeSlot = ts;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'vehicleType')) {
+    next.vehicleType = patch.vehicleType === 'small' ? 'small' : 'large';
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'quantityM3') || Object.prototype.hasOwnProperty.call(patch, 'confirmedQuantityM3')) {
+    const q = patch.quantityM3 ?? patch.confirmedQuantityM3;
+    next.quantityM3 = q != null && String(q).trim() !== '' ? String(q).trim() : '';
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'unloadDuration') ||
+    Object.prototype.hasOwnProperty.call(patch, 'unloadDurationMinutes')
+  ) {
+    next.unloadDuration = String(patch.unloadDurationMinutes || patch.unloadDuration || '30');
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'mixText') || Object.prototype.hasOwnProperty.call(patch, 'confirmedMixText')) {
+    next.mixText = String(patch.mixText ?? patch.confirmedMixText ?? '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'siteName')) {
+    next.siteName = sanitizeSiteNameValue(patch.siteName);
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'siteAddress')) {
+    next.siteAddress = patch.siteAddress != null ? String(patch.siteAddress) : '';
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'sitePhone')) {
+    next.sitePhone = patch.sitePhone != null ? String(patch.sitePhone) : '';
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'has_test')) {
+    next.hasTest = Boolean(patch.has_test);
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'contractor_customer_id')) {
+    next.contractorCustomerId =
+      patch.contractor_customer_id != null ? String(patch.contractor_customer_id).trim() : '';
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'agent_organization_id')) {
+    next.agentOrganizationId =
+      patch.agent_organization_id != null ? String(patch.agent_organization_id).trim() : '';
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'trading_agent_customer_id')) {
+    next.tradingAgentCustomerId =
+      patch.trading_agent_customer_id != null ? String(patch.trading_agent_customer_id).trim() : '';
+  }
+  return next;
 }
 
 /** 商社組織IDを比較用に正規化（未選択は空文字） */
@@ -319,6 +378,9 @@ function resolveSiteUrlToken(order, projectById, customerById) {
  * 確定前〜受注後の注文内容編集モーダル（顧客 / 工場 / 管理者で共通）
  * @param {'customer'|'factory'|'admin'} editorRole
  * @param {'edit'|'request'} mode - customer の確定後変更依頼は mode="request"
+ * @param {string} [requestNotice] - 依頼モードの案内文（未指定時は既定文言）
+ * @param {string[]} [requestFocusKeys] - 編集対象に絞るパッチキー（客確認待ちの再依頼用）
+ * @param {object} [initialPatch] - フォーム初期値に載せるパッチ（original_patch 等）
  */
 export function OrderFullEditModal({
   order,
@@ -331,15 +393,30 @@ export function OrderFullEditModal({
   onSiteUrlCopied,
   editorRole = 'factory',
   mode = 'edit',
+  requestNotice = '',
+  requestFocusKeys = null,
+  initialPatch = null,
 }) {
   const isCustomer = editorRole === 'customer';
   const isRequestMode = isCustomer && mode === 'request';
+  const focusKeyList = Array.isArray(requestFocusKeys)
+    ? requestFocusKeys.map((key) => String(key)).filter(Boolean)
+    : [];
+  const isFocusedRequest = isRequestMode && focusKeyList.length > 0;
+  const focusedFormFields = useMemo(
+    () => (isFocusedRequest ? changeRequestFormFieldsForKeys(focusKeyList) : null),
+    [isFocusedRequest, focusKeyList.join('|')],
+  );
+  const showField = (name) => !focusedFormFields || focusedFormFields.has(name);
   const showSiteUrlActions = !isCustomer;
   const titleId = isCustomer
     ? isRequestMode
       ? 'customer-order-request-title'
       : 'customer-order-edit-title'
     : 'factory-order-edit-title';
+  const requestBannerText = String(requestNotice || '').trim()
+    ? String(requestNotice).trim()
+    : '受注済みの注文です。ここで入力した内容は直接反映されず、工場・管理者への「変更依頼」としてチャットに送信されます。';
 
   const [editData, setEditData] = useState({
     preferredDate: '',
@@ -414,7 +491,7 @@ export function OrderFullEditModal({
     const ok = TIME_SLOTS.some((s) => s.value === ts);
     const q = order.confirmedQuantityM3 ?? order.quantityM3 ?? order.quantityCube;
     const mixInitial = String(order.confirmedMixText ?? order.mixText ?? '').trim();
-    setEditData({
+    let next = {
       preferredDate:
         order.preferredDate && typeof order.preferredDate === 'string' ? order.preferredDate : '',
       timeSlot: ok ? ts : String(TIME_SLOTS[0]?.value ?? '480'),
@@ -432,12 +509,20 @@ export function OrderFullEditModal({
       sitePhone: order.sitePhone != null ? String(order.sitePhone) : '',
       mixText: mixInitial,
       hasTest: Boolean(order.has_test),
-    });
+    };
+    if (initialPatch && typeof initialPatch === 'object' && !Array.isArray(initialPatch)) {
+      const seedPatch =
+        focusKeyList.length > 0
+          ? filterPatchToChangeRequestKeys(initialPatch, focusKeyList)
+          : initialPatch;
+      next = applyInitialPatchToEditData(next, seedPatch);
+    }
+    setEditData(next);
     setSaveError('');
     setRequestStep('edit');
     setConfirmDiffRows([]);
     setConfirmPayload(null);
-  }, [order?.id, open, projectById, customerById]);
+  }, [order?.id, open, projectById, customerById, focusKeyList.join('|'), initialPatch]);
 
   if (!open || !order) return null;
 
@@ -535,13 +620,51 @@ export function OrderFullEditModal({
     // 依頼モード・入力画面: 送信せず確認画面へ
     if (isRequestMode && requestStep === 'edit') {
       const patch = buildFormPatch();
-      const structuredPatch = buildChangeRequestPatch(order, patch);
-      const diffRows = buildChangeRequestDiffRows(order, patch);
+      let structuredPatch = buildChangeRequestPatch(order, patch);
+      if (isFocusedRequest) {
+        structuredPatch = filterPatchToChangeRequestKeys(structuredPatch, focusKeyList);
+        const previousDeclined = filterPatchToChangeRequestKeys(initialPatch || {}, focusKeyList);
+        if (
+          Object.keys(structuredPatch).length > 0 &&
+          changeRequestPatchesEqual(structuredPatch, previousDeclined)
+        ) {
+          setSaveError('前回と同じ内容です。値を変更してから送信してください。');
+          return;
+        }
+      }
+      const diffRows = buildChangeRequestDiffRows(order, patch).filter((row) => {
+        if (!isFocusedRequest) return true;
+        // フォーカス外の差分行は確認画面に出さない
+        const labelToFields = {
+          希望日: ['preferredDate'],
+          希望時刻: ['timeSlot'],
+          車種: ['vehicleType'],
+          数量: ['quantityM3'],
+          荷卸し時間: ['unloadDuration'],
+          配合: ['mixText'],
+          現場名: ['siteName'],
+          現場住所: ['siteAddress'],
+          電話番号: ['sitePhone'],
+          業者名: ['contractorCustomerId'],
+          試験体: ['hasTest'],
+          商社: ['agentOrganizationId'],
+          商社担当者: ['tradingAgentCustomerId'],
+        };
+        const fields = labelToFields[row.label];
+        if (!fields) return Object.keys(structuredPatch).length > 0;
+        return fields.some((f) => showField(f));
+      });
       if (diffRows.length === 0 || Object.keys(structuredPatch).length === 0) {
-        setSaveError('変更点がありません。項目を変更してから確認してください。');
+        setSaveError(
+          isFocusedRequest
+            ? '前回と同じ内容です。値を変更してから送信してください。'
+            : '変更点がありません。項目を変更してから確認してください。',
+        );
         return;
       }
-      const message = buildChangeRequestChatMessage(order, patch);
+      const message = `【変更依頼】${diffRows
+        .map((r) => `${r.label}: ${r.before} → ${r.after}`)
+        .join('、')}`;
       setConfirmDiffRows(diffRows);
       setConfirmPayload({ patch, structuredPatch, message });
       setRequestStep('confirm');
@@ -665,14 +788,21 @@ export function OrderFullEditModal({
               <>
             {isRequestMode ? (
               <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">
-                受注済みの注文です。ここで入力した内容は直接反映されず、工場・管理者への「変更依頼」としてチャットに送信されます。
+                {requestBannerText}
               </p>
             ) : isCustomer ? (
               <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">
                 工場が受注する前の注文です。変更内容は工場側に通知されます。
               </p>
             ) : null}
+            {showField('preferredDate') ||
+            showField('timeSlot') ||
+            showField('unloadDuration') ||
+            showField('vehicleType') ||
+            showField('quantityM3') ||
+            showField('hasTest') ? (
             <section className="min-w-0 space-y-4 overflow-hidden rounded-xl border-2 border-indigo-300 bg-indigo-50 p-3 shadow-inner dark:bg-indigo-950/40">
+              {showField('preferredDate') ? (
               <div className="min-w-0">
                 <label className={fieldLabel} htmlFor="foe-date">
                   日付（納入日）
@@ -684,9 +814,11 @@ export function OrderFullEditModal({
                   value={editData.preferredDate}
                   onChange={handleInputChange}
                   className={fieldDateInput}
-                  required
+                  required={showField('preferredDate')}
                 />
               </div>
+              ) : null}
+              {showField('timeSlot') ? (
               <div>
                 <label className={fieldLabel} htmlFor="foe-slot">
                   時間（出荷時間）
@@ -705,6 +837,8 @@ export function OrderFullEditModal({
                   ))}
                 </select>
               </div>
+              ) : null}
+              {showField('unloadDuration') ? (
               <div>
                 <label className={fieldLabel} htmlFor="foe-unload-duration">
                   1台あたりの荷卸し（車返却）予定時間
@@ -723,6 +857,8 @@ export function OrderFullEditModal({
                   <option value="95_plus">95分以上（要相談）</option>
                 </select>
               </div>
+              ) : null}
+              {showField('vehicleType') ? (
               <div>
                 <span className={fieldLabel}>車両（車種）</span>
                 <div className="mt-2 flex gap-3">
@@ -752,6 +888,8 @@ export function OrderFullEditModal({
                   </button>
                 </div>
               </div>
+              ) : null}
+              {showField('quantityM3') ? (
               <div>
                 <label className={fieldLabel} htmlFor="foe-qty">
                   数量（m³）
@@ -766,6 +904,8 @@ export function OrderFullEditModal({
                   className={fieldInput}
                 />
               </div>
+              ) : null}
+              {showField('hasTest') ? (
               <div className="rounded-lg border-2 border-indigo-200 bg-white px-3 py-3">
                 <label className="flex cursor-pointer items-start gap-3" htmlFor="foe-has-test">
                   <input
@@ -784,11 +924,18 @@ export function OrderFullEditModal({
                   </span>
                 </label>
               </div>
+              ) : null}
             </section>
+            ) : null}
 
+            {showField('contractorCustomerId') ||
+            showField('agentOrganizationId') ||
+            showField('tradingAgentCustomerId') ||
+            showField('siteName') ||
+            showField('siteAddress') ? (
             <section className="mt-4 space-y-4 rounded-xl border border-slate-200 bg-white p-3">
               <p className="text-xs font-black uppercase tracking-wider text-slate-500">物件基本情報</p>
-              {projectPartyDisplay ? (
+              {!isFocusedRequest && projectPartyDisplay ? (
                 <dl className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
                   <div>
                     <dt className="font-bold text-slate-500">業者（元請）</dt>
@@ -810,6 +957,9 @@ export function OrderFullEditModal({
                   </div>
                 </dl>
               ) : null}
+              {showField('contractorCustomerId') ||
+              showField('agentOrganizationId') ||
+              showField('tradingAgentCustomerId') ? (
               <OrderPartyEditFields
                 order={order}
                 customers={customers}
@@ -817,6 +967,9 @@ export function OrderFullEditModal({
                 contractorCustomerId={editData.contractorCustomerId}
                 agentOrganizationId={editData.agentOrganizationId}
                 tradingAgentCustomerId={editData.tradingAgentCustomerId}
+                showContractor={showField('contractorCustomerId')}
+                showTrader={showField('agentOrganizationId')}
+                showTradingAgent={showField('tradingAgentCustomerId')}
                 onChange={(next) => {
                   setEditData((prev) => ({
                     ...prev,
@@ -828,6 +981,8 @@ export function OrderFullEditModal({
                 inputClassName={fieldInput}
                 labelClassName={fieldLabel}
               />
+              ) : null}
+              {showField('siteName') ? (
               <div>
                 <label className={fieldLabel} htmlFor="foe-site">
                   現場名
@@ -860,6 +1015,8 @@ export function OrderFullEditModal({
                   </div>
                 ) : null}
               </div>
+              ) : null}
+              {showField('siteAddress') ? (
               <div>
                 <label className={fieldLabel} htmlFor="foe-addr">
                   現場住所
@@ -873,10 +1030,14 @@ export function OrderFullEditModal({
                   className={fieldInput}
                 />
               </div>
+              ) : null}
             </section>
+            ) : null}
 
+            {showField('sitePhone') || showField('mixText') ? (
             <section className="mt-4 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
               <p className="text-xs font-black uppercase tracking-wider text-slate-500">補足情報</p>
+              {showField('sitePhone') ? (
               <div>
                 <label className={fieldLabel} htmlFor="foe-phone">
                   電話番号
@@ -890,6 +1051,8 @@ export function OrderFullEditModal({
                   className={fieldInput}
                 />
               </div>
+              ) : null}
+              {showField('mixText') ? (
               <div>
                 <label className={fieldLabel} htmlFor="foe-mix">
                   配合
@@ -903,7 +1066,9 @@ export function OrderFullEditModal({
                   className={fieldInput}
                 />
               </div>
+              ) : null}
             </section>
+            ) : null}
               </>
             )}
           </div>

@@ -182,3 +182,74 @@ export function formatChangeRequestResolveChatBody({
 export function isAwaitingCustomerChangeDecision(order) {
   return String(order?.change_request_customer_decision_status || '').trim() === 'awaiting_customer';
 }
+
+/** 客確認待ち→再依頼モーダルの案内文（「却下」は使わない） */
+export const CUSTOMER_CHANGE_REQUEST_REREQUEST_NOTICE =
+  'ご希望の条件ではご対応できません。お手数ですが再度変更をお願いします。';
+
+/** CHANGE_REQUEST_ITEM_DEFS の id → OrderFullEditModal の editData フィールド名 */
+export const CHANGE_REQUEST_FORM_FIELD_BY_ITEM_ID = {
+  preferredDate: 'preferredDate',
+  time: 'timeSlot',
+  vehicle: 'vehicleType',
+  quantity: 'quantityM3',
+  unload: 'unloadDuration',
+  mix: 'mixText',
+  siteName: 'siteName',
+  siteAddress: 'siteAddress',
+  sitePhone: 'sitePhone',
+  contractor: 'contractorCustomerId',
+  has_test: 'hasTest',
+  trader: 'agentOrganizationId',
+  tradingAgent: 'tradingAgentCustomerId',
+};
+
+/** パッチキー群に対応するフォームフィールド名の Set */
+export function changeRequestFormFieldsForKeys(patchKeys) {
+  const keySet = new Set((Array.isArray(patchKeys) ? patchKeys : []).map((key) => String(key)));
+  const fields = new Set();
+  for (const def of CHANGE_REQUEST_ITEM_DEFS) {
+    if (!def.keys.some((key) => keySet.has(key))) continue;
+    const field = CHANGE_REQUEST_FORM_FIELD_BY_ITEM_ID[def.id];
+    if (field) fields.add(field);
+  }
+  return fields;
+}
+
+/** フォーカス対象キーを、同じ項目に属する関連キーまで広げる */
+export function expandChangeRequestKeys(patchKeys) {
+  const keySet = new Set((Array.isArray(patchKeys) ? patchKeys : []).map((key) => String(key)));
+  const out = new Set(keySet);
+  for (const def of CHANGE_REQUEST_ITEM_DEFS) {
+    if (!def.keys.some((key) => keySet.has(key))) continue;
+    def.keys.forEach((key) => out.add(key));
+  }
+  return out;
+}
+
+/** パッチを許可キー（関連キー拡張後）だけに絞る */
+export function filterPatchToChangeRequestKeys(patch, patchKeys) {
+  if (!isPlainPatch(patch)) return {};
+  const allow = expandChangeRequestKeys(patchKeys);
+  const out = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (allow.has(String(key))) out[key] = value;
+  }
+  return out;
+}
+
+/** 2つのパッチが同じ変更内容か（項目ラベル単位の表示値で比較） */
+export function changeRequestPatchesEqual(a, b) {
+  const left = Object.fromEntries(
+    listChangeRequestItems(isPlainPatch(a) ? a : {}).map((item) => [item.id, item.display]),
+  );
+  const right = Object.fromEntries(
+    listChangeRequestItems(isPlainPatch(b) ? b : {}).map((item) => [item.id, item.display]),
+  );
+  const ids = new Set([...Object.keys(left), ...Object.keys(right)]);
+  if (ids.size === 0) return true;
+  for (const id of ids) {
+    if (String(left[id] || '') !== String(right[id] || '')) return false;
+  }
+  return true;
+}

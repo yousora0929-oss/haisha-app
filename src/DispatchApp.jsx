@@ -56,6 +56,7 @@ import {
   formatChangeRequestItemLine,
   isAwaitingCustomerChangeDecision,
   splitChangeRequestDecisions,
+  CUSTOMER_CHANGE_REQUEST_REREQUEST_NOTICE,
 } from './utils/changeRequestItems.js';
 import { ReservationGroupStatusPanel } from './components/ReservationGroupStatusPanel.jsx';
 import { ReservationGroupStatusBadge } from './components/ReservationGroupMonitorBadge.jsx';
@@ -2120,6 +2121,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [dashboardOrders, setDashboardOrders] = useState([]);
       const [customerEditOrder, setCustomerEditOrder] = useState(null);
       const [customerEditMode, setCustomerEditMode] = useState('edit');
+      /** 客確認待ち→再依頼モーダル用（declined_keys / original_patch） */
+      const [customerReRequestContext, setCustomerReRequestContext] = useState(null);
       const [changeRequestNotice, setChangeRequestNotice] = useState('');
       const [orderChangeProposals, setOrderChangeProposals] = useState([]);
       const [answeredChangeProposalIds, setAnsweredChangeProposalIds] = useState(
@@ -3737,12 +3740,44 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
       const handleOpenCustomerOrderEdit = useCallback((order) => {
         if (!isPreAcceptOrderEditable(order)) return;
+        setCustomerReRequestContext(null);
         setCustomerEditMode('edit');
         setCustomerEditOrder(order);
       }, []);
 
       const handleOpenCustomerChangeRequest = useCallback((order) => {
         if (!isAcceptedOrderChangeRequestable(order)) return;
+        setCustomerReRequestContext(null);
+        setCustomerEditMode('request');
+        setCustomerEditOrder(order);
+      }, []);
+
+      const handleOpenCustomerChangeRequestReRequest = useCallback((order) => {
+        if (!order?.id || !isAwaitingCustomerChangeDecision(order)) return;
+        const resolution =
+          order.change_request_resolution &&
+          typeof order.change_request_resolution === 'object' &&
+          !Array.isArray(order.change_request_resolution)
+            ? order.change_request_resolution
+            : null;
+        const originalPatch =
+          resolution?.original_patch &&
+          typeof resolution.original_patch === 'object' &&
+          !Array.isArray(resolution.original_patch)
+            ? resolution.original_patch
+            : null;
+        const declinedKeys = Array.isArray(resolution?.declined_keys)
+          ? resolution.declined_keys.map((key) => String(key))
+          : [];
+        if (!originalPatch || declinedKeys.length === 0) {
+          window.alert('再依頼する項目がありません。');
+          return;
+        }
+        setCustomerReRequestContext({
+          orderId: String(order.id),
+          declinedKeys,
+          originalPatch,
+        });
         setCustomerEditMode('request');
         setCustomerEditOrder(order);
       }, []);
@@ -3756,7 +3791,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 ? meta.structuredPatch
                 : {};
             if (!message || Object.keys(structuredPatch).length === 0) return false;
-            const updated = await db.submitOrderChangeRequest(orderId, message, structuredPatch);
+            const isReRequest =
+              customerReRequestContext &&
+              String(customerReRequestContext.orderId) === String(orderId);
+            const updated = isReRequest
+              ? await db.confirmCustomerChangeRequestReRequest(orderId, {
+                  message,
+                  structuredPatch,
+                })
+              : await db.submitOrderChangeRequest(orderId, message, structuredPatch);
             setDashboardOrders((prev) =>
               (Array.isArray(prev) ? prev : []).map((o) =>
                 o?.id === orderId
@@ -3766,13 +3809,20 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       has_pending_change_request: true,
                       pending_change_request_patch:
                         updated?.pending_change_request_patch ?? structuredPatch,
+                      change_request_customer_decision_status: null,
+                      change_request_resolution: null,
                     }
                   : o,
               ),
             );
             setCustomerEditOrder(null);
             setCustomerEditMode('edit');
-            setChangeRequestNotice('変更依頼を送信しました。工場からの返信をお待ちください');
+            setCustomerReRequestContext(null);
+            setChangeRequestNotice(
+              isReRequest
+                ? '変更依頼を再送しました。工場からの返信をお待ちください'
+                : '変更依頼を送信しました。工場からの返信をお待ちください',
+            );
             window.setTimeout(() => setChangeRequestNotice(''), 5000);
             await refreshDashboard({ skipChatSound: true });
             return true;
@@ -3785,10 +3835,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           );
           setCustomerEditOrder(null);
           setCustomerEditMode('edit');
+          setCustomerReRequestContext(null);
           await refreshDashboard({ skipChatSound: true });
           return true;
         },
-        [refreshDashboard],
+        [customerReRequestContext, refreshDashboard],
       );
       // 進行中一覧の対象。会社全体表示のときだけ同僚分を足す（重複IDは除外）。
       const inProgressSourceOrders = useMemo(() => {
@@ -4614,11 +4665,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const handleChangeRequestDecision = useCallback(
         async (choice, order) => {
           if (!order?.id || changeRequestDecisionSubmitting) return;
+          if (choice === 're_request') {
+            handleOpenCustomerChangeRequestReRequest(order);
+            return;
+          }
           if (choice === 'cancel') {
             if (!window.confirm('この注文をキャンセルしますか？')) return;
-          }
-          if (choice === 're_request') {
-            if (!window.confirm('却下された項目だけ、同じ工場へ再度変更依頼しますか？')) return;
           }
           if (choice === 'proceed') {
             if (!window.confirm('承諾された項目だけ反映して、このまま進めますか？')) return;
@@ -4629,9 +4681,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             if (choice === 'proceed') {
               updated = await db.confirmCustomerChangeRequestProceed(order.id);
               setChangeRequestNotice('承諾分を反映し、注文を進めます');
-            } else if (choice === 're_request') {
-              updated = await db.confirmCustomerChangeRequestReRequest(order.id);
-              setChangeRequestNotice('却下項目の再依頼を送信しました');
             } else if (choice === 'cancel') {
               updated = await db.markOrderCustomerCancelled(order.id);
               await appendOrderChatMessage(order.id, 'customer', '【キャンセル】変更依頼の結果を受け、注文をキャンセルしました。');
@@ -4653,7 +4702,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             setChangeRequestDecisionSubmitting(false);
           }
         },
-        [changeRequestDecisionSubmitting, refreshDashboard],
+        [
+          changeRequestDecisionSubmitting,
+          handleOpenCustomerChangeRequestReRequest,
+          refreshDashboard,
+        ],
       );
 
       const [choiceSubmitting, setChoiceSubmitting] = useState(false);
@@ -7095,9 +7148,19 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               onClose={() => {
                 setCustomerEditOrder(null);
                 setCustomerEditMode('edit');
+                setCustomerReRequestContext(null);
               }}
               editorRole="customer"
               mode={customerEditMode === 'request' ? 'request' : 'edit'}
+              requestNotice={
+                customerReRequestContext ? CUSTOMER_CHANGE_REQUEST_REREQUEST_NOTICE : undefined
+              }
+              requestFocusKeys={
+                customerReRequestContext ? customerReRequestContext.declinedKeys : null
+              }
+              initialPatch={
+                customerReRequestContext ? customerReRequestContext.originalPatch : null
+              }
               projectById={projectById}
               customerById={customerById}
               organizations={agentOrganizations}

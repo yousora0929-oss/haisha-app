@@ -5,6 +5,9 @@ import {
   pickAcceptedChangeRequestPatch,
   pickDeclinedChangeRequestPatch,
   splitChangeRequestDecisions,
+  changeRequestFormFieldsForKeys,
+  filterPatchToChangeRequestKeys,
+  changeRequestPatchesEqual,
 } from './changeRequestItems.js';
 
 describe('changeRequestItems', () => {
@@ -74,5 +77,19 @@ describe('changeRequestItems', () => {
     });
     expect(body).toContain('お客様の確認をお待ちしています');
     expect(body).not.toContain('承諾した項目を注文へ反映しました。');
+  });
+
+  it('maps declined keys to form fields and compares patch summaries', () => {
+    const fields = changeRequestFormFieldsForKeys(['preferredDate', 'quantityM3']);
+    expect([...fields].sort()).toEqual(['preferredDate', 'quantityM3']);
+    const filtered = filterPatchToChangeRequestKeys(patch, ['mixText']);
+    expect(Object.keys(filtered).sort()).toEqual(['confirmedMixText', 'mixText']);
+    expect(
+      changeRequestPatchesEqual(
+        { mixText: '33-15-20N', confirmedMixText: '33-15-20N' },
+        { mixText: '33-15-20N' },
+      ),
+    ).toBe(true);
+    expect(changeRequestPatchesEqual({ mixText: 'A' }, { mixText: 'B' })).toBe(false);
   });
 });

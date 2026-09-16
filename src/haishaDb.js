@@ -40,6 +40,7 @@ import { resolveOrderParties } from './utils/orderPartyInfo.js';
 import {
   formatChangeRequestItemLine,
   formatChangeRequestResolveChatBody,
+  filterPatchToChangeRequestKeys,
   listChangeRequestItems,
   pickAcceptedChangeRequestPatch,
   pickDeclinedChangeRequestPatch,
@@ -2356,31 +2357,45 @@ export async function confirmCustomerChangeRequestProceed(orderId) {
 }
 
 /**
- * 客確認待ち: 承認分を反映し、却下分だけで新しい変更依頼を立てる
+ * 客確認待ち: 承認分を反映し、客が編集した却下分パッチで新しい変更依頼を立てる
  * @param {string} orderId
+ * @param {{ structuredPatch?: object, message?: string }} [opts]
  */
-export async function confirmCustomerChangeRequestReRequest(orderId) {
+export async function confirmCustomerChangeRequestReRequest(orderId, opts = {}) {
   const id = String(orderId || '').trim();
   if (!id) throw new Error('orderId が必要です');
   const latest = await fetchOrderById(id);
   const { originalPatch, acceptedKeys, declinedKeys } = assertAwaitingCustomerChangeDecision(latest);
-  const declinedPatch = pickDeclinedChangeRequestPatch(originalPatch, acceptedKeys);
-  if (!Object.keys(declinedPatch).length) {
-    throw new Error('再依頼する項目がありません');
-  }
-  // declinedKeys が明示されていればそれに合わせる（accepted に含まれないキーのみ）
-  const reRequestPatch =
-    declinedKeys.length > 0
-      ? pickAcceptedChangeRequestPatch(originalPatch, declinedKeys)
-      : declinedPatch;
+
+  const providedPatch =
+    opts.structuredPatch &&
+    typeof opts.structuredPatch === 'object' &&
+    !Array.isArray(opts.structuredPatch)
+      ? opts.structuredPatch
+      : null;
+  const reRequestPatch = providedPatch
+    ? filterPatchToChangeRequestKeys(
+        providedPatch,
+        declinedKeys.length > 0 ? declinedKeys : Object.keys(providedPatch),
+      )
+    : (() => {
+        const declinedPatch = pickDeclinedChangeRequestPatch(originalPatch, acceptedKeys);
+        return declinedKeys.length > 0
+          ? pickAcceptedChangeRequestPatch(originalPatch, declinedKeys)
+          : declinedPatch;
+      })();
   if (!Object.keys(reRequestPatch).length) {
     throw new Error('再依頼する項目がありません');
   }
+
   const applyPatch = pickAcceptedChangeRequestPatch(originalPatch, acceptedKeys);
+  const messageBody = String(opts.message || '').trim();
   const itemLines = listChangeRequestItems(reRequestPatch).map(formatChangeRequestItemLine);
-  const chatBody = `【変更依頼】却下された項目について再度依頼します${
-    itemLines.length ? `（${itemLines.join('、')}）` : ''
-  }`;
+  const chatBody =
+    messageBody ||
+    `【変更依頼】対応できなかった項目について再度依頼します${
+      itemLines.length ? `（${itemLines.join('、')}）` : ''
+    }`;
 
   const updated = await updateOrderDetails(id, {
     ...(Object.keys(applyPatch).length > 0 ? applyPatch : {}),
