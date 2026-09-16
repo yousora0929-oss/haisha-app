@@ -3,6 +3,7 @@ import {
   formatChangeRequestResolveChatBody,
   listChangeRequestItems,
   pickAcceptedChangeRequestPatch,
+  pickDeclinedChangeRequestPatch,
   splitChangeRequestDecisions,
 } from './changeRequestItems.js';
 
@@ -34,6 +35,16 @@ describe('changeRequestItems', () => {
     expect(qty.confirmedQuantityM3).toBe('12');
   });
 
+  it('keeps only declined keys when building re-request patch', () => {
+    const declined = pickDeclinedChangeRequestPatch(patch, ['mixText', 'confirmedMixText']);
+    expect(declined).toEqual({
+      preferredDate: '2026-09-20',
+      scheduleMatchDate: '2026-09-20',
+      quantityM3: '12',
+      confirmedQuantityM3: '12',
+    });
+  });
+
   it('splits accepted vs declined items from acceptedKeys', () => {
     const { accepted, declined } = splitChangeRequestDecisions(patch, ['mixText']);
     expect(accepted.map((item) => item.id)).toEqual(['mix']);
@@ -51,5 +62,17 @@ describe('changeRequestItems', () => {
     expect(body).toContain('承諾した項目:');
     expect(body).toContain('対応不可の項目:');
     expect(body).toContain('承諾した項目を注文へ反映しました。');
+  });
+
+  it('builds a deferred chat body when awaiting customer', () => {
+    const { accepted, declined } = splitChangeRequestDecisions(patch, ['quantityM3']);
+    const body = formatChangeRequestResolveChatBody({
+      factoryName: '第一工場',
+      acceptedItems: accepted,
+      declinedItems: declined,
+      deferredApply: true,
+    });
+    expect(body).toContain('お客様の確認をお待ちしています');
+    expect(body).not.toContain('承諾した項目を注文へ反映しました。');
   });
 });

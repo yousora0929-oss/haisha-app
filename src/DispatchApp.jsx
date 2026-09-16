@@ -52,6 +52,11 @@ import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { CompanyMemberContactList } from './components/CompanyMemberContactList.jsx';
 import { OrderFullEditModal, isPreAcceptOrderEditable, isAcceptedOrderChangeRequestable } from './components/OrderFullEditModal.jsx';
+import {
+  formatChangeRequestItemLine,
+  isAwaitingCustomerChangeDecision,
+  splitChangeRequestDecisions,
+} from './utils/changeRequestItems.js';
 import { ReservationGroupStatusPanel } from './components/ReservationGroupStatusPanel.jsx';
 import { ReservationGroupStatusBadge } from './components/ReservationGroupMonitorBadge.jsx';
 import { AdminScheduleImportSection } from './components/AdminScheduleImportSection.jsx';
@@ -789,6 +794,84 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
     }
 
+    /** 項目ごと変更依頼の一部却下後、客が最終判断するパネル（order_change_proposals とは別系統） */
+    function CustomerChangeRequestDecisionPanel({
+      order,
+      submitting = false,
+      onProceed,
+      onCancel,
+      onReRequest,
+    }) {
+      if (!isAwaitingCustomerChangeDecision(order)) return null;
+      const resolution =
+        order?.change_request_resolution &&
+        typeof order.change_request_resolution === 'object' &&
+        !Array.isArray(order.change_request_resolution)
+          ? order.change_request_resolution
+          : null;
+      const originalPatch =
+        resolution?.original_patch &&
+        typeof resolution.original_patch === 'object' &&
+        !Array.isArray(resolution.original_patch)
+          ? resolution.original_patch
+          : null;
+      const acceptedKeys = Array.isArray(resolution?.accepted_keys) ? resolution.accepted_keys : [];
+      const { accepted, declined } = splitChangeRequestDecisions(originalPatch, acceptedKeys);
+      return (
+        <div className="mx-2 my-3 space-y-3 rounded-2xl border-2 border-orange-400 bg-orange-50 p-4 shadow-sm dark:border-orange-600 dark:bg-orange-950/40">
+          <p className="text-sm font-black text-orange-950 dark:text-orange-100">
+            工場が変更依頼の一部に対応できないと回答しました。次の対応を選んでください。
+          </p>
+          {accepted.length ? (
+            <div>
+              <p className="text-xs font-black text-emerald-800 dark:text-emerald-200">承諾された項目</p>
+              <ul className="mt-1 space-y-0.5 text-xs font-bold text-slate-800 dark:text-slate-200">
+                {accepted.map((item) => (
+                  <li key={item.id}>・{formatChangeRequestItemLine(item)}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {declined.length ? (
+            <div>
+              <p className="text-xs font-black text-red-800 dark:text-red-200">対応不可の項目</p>
+              <ul className="mt-1 space-y-0.5 text-xs font-bold text-slate-800 dark:text-slate-200">
+                {declined.map((item) => (
+                  <li key={item.id}>・{formatChangeRequestItemLine(item)}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => onProceed?.(order)}
+              className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white hover:bg-emerald-700 disabled:opacity-60"
+            >
+              このまま進める
+            </button>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => onReRequest?.(order)}
+              className="w-full rounded-xl bg-amber-600 px-4 py-3 text-sm font-black text-white hover:bg-amber-700 disabled:opacity-60"
+            >
+              却下項目だけ再依頼
+            </button>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => onCancel?.(order)}
+              className="w-full rounded-xl border-2 border-slate-300 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-500 dark:bg-slate-900 dark:text-slate-100"
+            >
+              キャンセル
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     function CustomerOrderChangeProposeModal({
       order,
       open,
@@ -1006,6 +1089,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       rejectedChangeProposal = null,
       onChangeProposalChoice = null,
       changeProposalChoiceSubmitting = false,
+      onChangeRequestDecision = null,
+      changeRequestDecisionSubmitting = false,
     }) {
       const [draft, setDraft] = useState('');
       const [choiceSubmitting, setChoiceSubmitting] = useState(false);
@@ -1021,6 +1106,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const showFullRejectChoice =
         isFullCompanyRejectionForCustomer(order, escalationCtx || {}) && !choiceHiddenLocally;
       const showChoice = showPreferredChoice || showFullRejectChoice;
+      const showChangeRequestDecision = isAwaitingCustomerChangeDecision(order);
       useEffect(() => {
         setChoiceHiddenLocally(false);
       }, [orderId]);
@@ -1028,7 +1114,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         const el = messagesListRef.current;
         if (!el) return;
         el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-      }, [list.length, messages, showChoice, rejectedChangeProposal?.id]);
+      }, [list.length, messages, showChoice, rejectedChangeProposal?.id, showChangeRequestDecision]);
       useEffect(() => {
         clearAppBadge();
       }, [orderId]);
@@ -1149,6 +1235,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   onRescheduleDate={() => void onChangeProposalChoice?.('reschedule_date', rejectedChangeProposal)}
                   onChangeFactory={() => void onChangeProposalChoice?.('change_factory', rejectedChangeProposal)}
                   onKeepOriginal={() => void onChangeProposalChoice?.('keep_original', rejectedChangeProposal)}
+                />
+              </li>
+            ) : null}
+            {showChangeRequestDecision ? (
+              <li>
+                <CustomerChangeRequestDecisionPanel
+                  order={order}
+                  submitting={changeRequestDecisionSubmitting}
+                  onProceed={() => void onChangeRequestDecision?.('proceed', order)}
+                  onCancel={() => void onChangeRequestDecision?.('cancel', order)}
+                  onReRequest={() => void onChangeRequestDecision?.('re_request', order)}
                 />
               </li>
             ) : null}
@@ -1320,6 +1417,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       onReschedulePreferred,
       onCancelPreferred,
       choiceSubmitting = false,
+      onChangeRequestDecision = null,
+      changeRequestDecisionSubmitting = false,
       onEditOrder = null,
       onRequestChange = null,
       readOnly = false,
@@ -1345,11 +1444,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const showPreferredChoice = !readOnly && needsPreferredCustomerChoice(order);
       const showFullRejectChoice =
         !readOnly && isFullCompanyRejectionForCustomer(order, escalationCtx || {});
+      const showChangeRequestDecision = !readOnly && isAwaitingCustomerChangeDecision(order);
       const canEditPending =
         !readOnly && isPreAcceptOrderEditable(order) && typeof onEditOrder === 'function';
       const canRequestChange =
         !readOnly &&
         !canEditPending &&
+        !order.has_pending_change_request &&
+        !showChangeRequestDecision &&
         isAcceptedOrderChangeRequestable(order) &&
         typeof onRequestChange === 'function';
       const showMapPlaceholder = useMemo(
@@ -1502,6 +1604,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     工場変更
                   </span>
                 ) : null}
+                {isAwaitingCustomerChangeDecision(order) ? (
+                  <span className="inline-flex rounded-full border border-orange-400 bg-orange-50 px-2 py-0.5 text-[11px] font-black text-orange-950">
+                    客確認待ち
+                  </span>
+                ) : null}
               </div>
 
               <div className="flex w-full min-w-0 items-stretch justify-end gap-2 sm:w-auto sm:items-center">
@@ -1647,6 +1754,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               onEscalate={onEscalatePreferred}
               onReschedule={onReschedulePreferred}
               onCancel={onCancelPreferred}
+            />
+          ) : null}
+
+          {showChangeRequestDecision ? (
+            <CustomerChangeRequestDecisionPanel
+              order={order}
+              submitting={changeRequestDecisionSubmitting}
+              onProceed={(o) => onChangeRequestDecision?.('proceed', o)}
+              onCancel={(o) => onChangeRequestDecision?.('cancel', o)}
+              onReRequest={(o) => onChangeRequestDecision?.('re_request', o)}
             />
           ) : null}
 
@@ -4493,6 +4610,52 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         [applyHistoryOrderToNewForm, refreshDashboard],
       );
 
+      const [changeRequestDecisionSubmitting, setChangeRequestDecisionSubmitting] = useState(false);
+      const handleChangeRequestDecision = useCallback(
+        async (choice, order) => {
+          if (!order?.id || changeRequestDecisionSubmitting) return;
+          if (choice === 'cancel') {
+            if (!window.confirm('この注文をキャンセルしますか？')) return;
+          }
+          if (choice === 're_request') {
+            if (!window.confirm('却下された項目だけ、同じ工場へ再度変更依頼しますか？')) return;
+          }
+          if (choice === 'proceed') {
+            if (!window.confirm('承諾された項目だけ反映して、このまま進めますか？')) return;
+          }
+          setChangeRequestDecisionSubmitting(true);
+          try {
+            let updated = null;
+            if (choice === 'proceed') {
+              updated = await db.confirmCustomerChangeRequestProceed(order.id);
+              setChangeRequestNotice('承諾分を反映し、注文を進めます');
+            } else if (choice === 're_request') {
+              updated = await db.confirmCustomerChangeRequestReRequest(order.id);
+              setChangeRequestNotice('却下項目の再依頼を送信しました');
+            } else if (choice === 'cancel') {
+              updated = await db.markOrderCustomerCancelled(order.id);
+              await appendOrderChatMessage(order.id, 'customer', '【キャンセル】変更依頼の結果を受け、注文をキャンセルしました。');
+              setChangeRequestNotice('注文をキャンセルしました');
+            } else {
+              return;
+            }
+            setDashboardOrders((prev) =>
+              (Array.isArray(prev) ? prev : []).map((o) =>
+                o?.id === order.id ? { ...o, ...(updated || {}) } : o,
+              ),
+            );
+            window.setTimeout(() => setChangeRequestNotice(''), 5000);
+            await refreshDashboard({ skipChatSound: true });
+          } catch (err) {
+            console.error('change request decision failed', err);
+            window.alert(formatSupabaseError(err, '処理に失敗しました'));
+          } finally {
+            setChangeRequestDecisionSubmitting(false);
+          }
+        },
+        [changeRequestDecisionSubmitting, refreshDashboard],
+      );
+
       const [choiceSubmitting, setChoiceSubmitting] = useState(false);
       const runCustomerChoice = useCallback(
         async (order, choice) => {
@@ -6548,6 +6711,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                 onEscalatePreferred={(o) => void runCustomerChoice(o, 'escalate')}
                                 onReschedulePreferred={(o) => void runCustomerChoice(o, 'reschedule')}
                                 onCancelPreferred={(o) => void runCustomerChoice(o, 'cancel')}
+                                onChangeRequestDecision={
+                                  isColleagueOrder ? null : handleChangeRequestDecision
+                                }
+                                changeRequestDecisionSubmitting={changeRequestDecisionSubmitting}
                                 onEditOrder={isColleagueOrder ? null : handleOpenCustomerOrderEdit}
                                 onRequestChange={isColleagueOrder ? null : handleOpenCustomerChangeRequest}
                                 readOnly={isColleagueOrder}
@@ -7029,6 +7196,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               )}
               onChangeProposalChoice={handleChangeProposalChoice}
               changeProposalChoiceSubmitting={changeProposalChoiceSubmitting}
+              onChangeRequestDecision={handleChangeRequestDecision}
+              changeRequestDecisionSubmitting={changeRequestDecisionSubmitting}
             />
           ) : null}
         </div>

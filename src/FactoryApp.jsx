@@ -24,6 +24,7 @@ import { factoryUnloadDurationLabel } from './utils/unloadDurationLabel.js';
 import BillingMark from './components/BillingMark.jsx';
 import { OrderFullEditModal } from './components/OrderFullEditModal.jsx';
 import { ChangeRequestResolvePanel } from './components/ChangeRequestResolvePanel.jsx';
+import { isAwaitingCustomerChangeDecision } from './utils/changeRequestItems.js';
 import {
   FACTORY_SITE_ID,
   FACTORY_SITE_NAME,
@@ -2365,6 +2366,11 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
             {order.has_pending_change_request ? (
               <span className="inline-flex rounded-full border-2 border-orange-400 bg-orange-50 px-2 py-0.5 text-[10px] font-black text-orange-950 sm:text-[11px]">
                 📝 変更依頼あり
+              </span>
+            ) : null}
+            {isAwaitingCustomerChangeDecision(order) ? (
+              <span className="inline-flex rounded-full border-2 border-orange-400 bg-orange-50 px-2 py-0.5 text-[10px] font-black text-orange-950 sm:text-[11px]">
+                客確認待ち
               </span>
             ) : null}
             <LocationPendingBadge order={order} />
@@ -5771,6 +5777,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
           try {
             const updated = await db.resolveOrderChangeRequest(orderId, {
               factoryName: activeFactoryName,
+              factoryId: activeFactoryId,
               acceptedKeys: Array.isArray(acceptedKeys) ? acceptedKeys : [],
             });
             if (!updated) return false;
@@ -5785,11 +5792,18 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                 : prev,
             );
             await refreshChatThreads();
+            const awaiting =
+              String(updated?.change_request_customer_decision_status || '').trim() ===
+              'awaiting_customer';
             const acceptedCount = Array.isArray(acceptedKeys) ? acceptedKeys.length : 0;
             setActionNotice(
-              acceptedCount > 0
-                ? '変更依頼への回答を反映しました'
-                : '変更依頼を対応不可として処理しました',
+              awaiting
+                ? acceptedCount > 0
+                  ? '一部対応不可のため、お客様の確認待ちにしました'
+                  : '対応不可のため、お客様の確認待ちにしました'
+                : acceptedCount > 0
+                  ? '変更依頼への回答を反映しました'
+                  : '変更依頼を対応不可として処理しました',
             );
             window.setTimeout(() => setActionNotice(''), 3500);
             return true;
@@ -5803,7 +5817,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
             orderPatchInFlightRef.current.delete(inFlightKey);
           }
         },
-        [activeFactoryName, refreshChatThreads],
+        [activeFactoryId, activeFactoryName, refreshChatThreads],
       );
 
       const pendingCustomerChangeRequestOrders = useMemo(() => {

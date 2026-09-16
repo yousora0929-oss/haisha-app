@@ -38,8 +38,11 @@ import { mapMixDesignFactoryLinks } from './utils/mixDesignAccept.js';
 import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.js';
 import { resolveOrderParties } from './utils/orderPartyInfo.js';
 import {
+  formatChangeRequestItemLine,
   formatChangeRequestResolveChatBody,
+  listChangeRequestItems,
   pickAcceptedChangeRequestPatch,
+  pickDeclinedChangeRequestPatch,
   splitChangeRequestDecisions,
 } from './utils/changeRequestItems.js';
 import {
@@ -72,7 +75,7 @@ import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils
 import { generateInitialPassword } from './utils/initialPassword.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, trading_agent_customer_id, site_history_contractor_id, is_admin_modified, is_factory_modified, is_customer_modified, has_pending_change_request, pending_change_request_patch, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at, factory_map_received_at, factory_map_received_by, customer_cancel_requested, customer_cancel_requested_at, customer_cancel_requested_change_id';
+  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, trading_agent_customer_id, site_history_contractor_id, is_admin_modified, is_factory_modified, is_customer_modified, has_pending_change_request, pending_change_request_patch, change_request_customer_decision_status, change_request_resolution, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at, factory_map_received_at, factory_map_received_by, customer_cancel_requested, customer_cancel_requested_at, customer_cancel_requested_change_id';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -426,6 +429,16 @@ export function normalizeOrderRow(row) {
     is_factory_modified: row.is_factory_modified === true,
     is_customer_modified: row.is_customer_modified === true,
     has_pending_change_request: row.has_pending_change_request === true,
+    change_request_customer_decision_status:
+      row.change_request_customer_decision_status != null
+        ? String(row.change_request_customer_decision_status).trim() || null
+        : null,
+    change_request_resolution:
+      row.change_request_resolution &&
+      typeof row.change_request_resolution === 'object' &&
+      !Array.isArray(row.change_request_resolution)
+        ? row.change_request_resolution
+        : null,
     customer_cancel_requested:
       row.customer_cancel_requested === true || od.customer_cancel_requested === true,
     customer_cancel_requested_at:
@@ -1940,10 +1953,43 @@ export async function updateOrderDetails(orderId, updatedData) {
     updateRow.pending_change_request_patch =
       raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
   }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'change_request_customer_decision_status') ||
+    Object.prototype.hasOwnProperty.call(patch, 'changeRequestCustomerDecisionStatus')
+  ) {
+    const raw =
+      patch.change_request_customer_decision_status ?? patch.changeRequestCustomerDecisionStatus;
+    const status = raw == null || String(raw).trim() === '' ? null : String(raw).trim();
+    updateRow.change_request_customer_decision_status = status;
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'change_request_resolution') ||
+    Object.prototype.hasOwnProperty.call(patch, 'changeRequestResolution')
+  ) {
+    const raw = patch.change_request_resolution ?? patch.changeRequestResolution;
+    updateRow.change_request_resolution =
+      raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
+  }
   // 工場・管理者が内容を編集して保存したら変更依頼は対応済みとみなす
   if (updateRow.is_admin_modified === true || updateRow.is_factory_modified === true) {
-    updateRow.has_pending_change_request = false;
-    updateRow.pending_change_request_patch = null;
+    const explicitlySetsPending =
+      Object.prototype.hasOwnProperty.call(patch, 'has_pending_change_request') ||
+      Object.prototype.hasOwnProperty.call(patch, 'hasPendingChangeRequest') ||
+      Object.prototype.hasOwnProperty.call(patch, 'pending_change_request_patch') ||
+      Object.prototype.hasOwnProperty.call(patch, 'pendingChangeRequestPatch');
+    if (!explicitlySetsPending) {
+      updateRow.has_pending_change_request = false;
+      updateRow.pending_change_request_patch = null;
+    }
+    const explicitlySetsAwaiting =
+      Object.prototype.hasOwnProperty.call(patch, 'change_request_customer_decision_status') ||
+      Object.prototype.hasOwnProperty.call(patch, 'changeRequestCustomerDecisionStatus') ||
+      Object.prototype.hasOwnProperty.call(patch, 'change_request_resolution') ||
+      Object.prototype.hasOwnProperty.call(patch, 'changeRequestResolution');
+    if (!explicitlySetsAwaiting) {
+      updateRow.change_request_customer_decision_status = null;
+      updateRow.change_request_resolution = null;
+    }
   }
   if (
     Object.prototype.hasOwnProperty.call(patch, 'agent_organization_id') ||
@@ -2108,6 +2154,8 @@ export async function submitOrderChangeRequest(orderId, messageBody, structuredP
     .update({
       has_pending_change_request: true,
       pending_change_request_patch: patchObj,
+      change_request_customer_decision_status: null,
+      change_request_resolution: null,
     })
     .eq('id', id)
     .select(ORDER_SELECT)
@@ -2146,7 +2194,12 @@ export async function clearOrderPendingChangeRequest(orderId) {
   try {
     const { data, error } = await supabase
       .from('orders')
-      .update({ has_pending_change_request: false, pending_change_request_patch: null })
+      .update({
+        has_pending_change_request: false,
+        pending_change_request_patch: null,
+        change_request_customer_decision_status: null,
+        change_request_resolution: null,
+      })
       .eq('id', id)
       .select(ORDER_SELECT)
       .maybeSingle();
@@ -2162,9 +2215,10 @@ export async function clearOrderPendingChangeRequest(orderId) {
 }
 
 /**
- * 工場が変更依頼を項目ごとに承諾／対応不可し、承諾分だけ注文へ反映する
+ * 工場が変更依頼を項目ごとに承諾／対応不可する。
+ * 全承諾時は即反映。却下が1件以上ある場合は注文は変えず客確認待ちにする。
  * @param {string} orderId
- * @param {{ factoryName?: string, acceptedKeys?: string[] }} [opts]
+ * @param {{ factoryName?: string, factoryId?: string, acceptedKeys?: string[] }} [opts]
  */
 export async function resolveOrderChangeRequest(orderId, opts = {}) {
   const id = String(orderId || '').trim();
@@ -2188,17 +2242,36 @@ export async function resolveOrderChangeRequest(orderId, opts = {}) {
   const acceptedKeys = Array.isArray(opts.acceptedKeys)
     ? opts.acceptedKeys.map((key) => String(key))
     : [];
+  const acceptedKeySet = new Set(acceptedKeys);
+  const declinedKeys = Object.keys(structured).filter((key) => !acceptedKeySet.has(String(key)));
   const applyPatch = pickAcceptedChangeRequestPatch(structured, acceptedKeys);
   const { accepted, declined } = splitChangeRequestDecisions(structured, acceptedKeys);
+  const hasDeclines = declinedKeys.length > 0;
 
   let updated;
-  if (Object.keys(applyPatch).length > 0) {
+  if (hasDeclines) {
+    // 一部／全部却下: 注文本体はまだ変更せず、客確認待ちへ
+    updated = await updateOrderDetails(id, {
+      has_pending_change_request: false,
+      pending_change_request_patch: null,
+      change_request_customer_decision_status: 'awaiting_customer',
+      change_request_resolution: {
+        original_patch: structured,
+        accepted_keys: acceptedKeys,
+        declined_keys: declinedKeys,
+        resolved_at: new Date().toISOString(),
+        resolved_by_factory_id: sanitizeRefId(opts.factoryId) || null,
+      },
+    });
+  } else if (Object.keys(applyPatch).length > 0) {
     updated = await updateOrderDetails(id, {
       ...applyPatch,
       is_factory_modified: true,
       is_customer_modified: false,
       has_pending_change_request: false,
       pending_change_request_patch: null,
+      change_request_customer_decision_status: null,
+      change_request_resolution: null,
     });
   } else {
     updated = await clearOrderPendingChangeRequest(id);
@@ -2212,10 +2285,116 @@ export async function resolveOrderChangeRequest(orderId, opts = {}) {
         factoryName: opts.factoryName,
         acceptedItems: accepted,
         declinedItems: declined,
+        deferredApply: hasDeclines,
       }),
     );
   } catch (chatErr) {
     console.warn('[haisha] 変更依頼回答チャット投稿失敗', chatErr);
+  }
+  return updated;
+}
+
+function assertAwaitingCustomerChangeDecision(order) {
+  if (!order) throw new Error('注文が見つかりません');
+  if (String(order.change_request_customer_decision_status || '').trim() !== 'awaiting_customer') {
+    throw new Error('客確認待ちの変更依頼がありません');
+  }
+  const resolution =
+    order.change_request_resolution &&
+    typeof order.change_request_resolution === 'object' &&
+    !Array.isArray(order.change_request_resolution)
+      ? order.change_request_resolution
+      : null;
+  if (!resolution) throw new Error('変更依頼の回答内容がありません');
+  const originalPatch =
+    resolution.original_patch &&
+    typeof resolution.original_patch === 'object' &&
+    !Array.isArray(resolution.original_patch)
+      ? resolution.original_patch
+      : null;
+  if (!originalPatch || Object.keys(originalPatch).length === 0) {
+    throw new Error('変更依頼の元パッチがありません');
+  }
+  return {
+    resolution,
+    originalPatch,
+    acceptedKeys: Array.isArray(resolution.accepted_keys)
+      ? resolution.accepted_keys.map((key) => String(key))
+      : [],
+    declinedKeys: Array.isArray(resolution.declined_keys)
+      ? resolution.declined_keys.map((key) => String(key))
+      : [],
+  };
+}
+
+/**
+ * 客確認待ち: 承認分だけ反映して状態をクリア（このまま進める）
+ * @param {string} orderId
+ */
+export async function confirmCustomerChangeRequestProceed(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id) throw new Error('orderId が必要です');
+  const latest = await fetchOrderById(id);
+  const { originalPatch, acceptedKeys } = assertAwaitingCustomerChangeDecision(latest);
+  const applyPatch = pickAcceptedChangeRequestPatch(originalPatch, acceptedKeys);
+  if (Object.keys(applyPatch).length > 0) {
+    return updateOrderDetails(id, {
+      ...applyPatch,
+      is_customer_modified: false,
+      has_pending_change_request: false,
+      pending_change_request_patch: null,
+      change_request_customer_decision_status: null,
+      change_request_resolution: null,
+    });
+  }
+  return updateOrderDetails(id, {
+    has_pending_change_request: false,
+    pending_change_request_patch: null,
+    change_request_customer_decision_status: null,
+    change_request_resolution: null,
+  });
+}
+
+/**
+ * 客確認待ち: 承認分を反映し、却下分だけで新しい変更依頼を立てる
+ * @param {string} orderId
+ */
+export async function confirmCustomerChangeRequestReRequest(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id) throw new Error('orderId が必要です');
+  const latest = await fetchOrderById(id);
+  const { originalPatch, acceptedKeys, declinedKeys } = assertAwaitingCustomerChangeDecision(latest);
+  const declinedPatch = pickDeclinedChangeRequestPatch(originalPatch, acceptedKeys);
+  if (!Object.keys(declinedPatch).length) {
+    throw new Error('再依頼する項目がありません');
+  }
+  // declinedKeys が明示されていればそれに合わせる（accepted に含まれないキーのみ）
+  const reRequestPatch =
+    declinedKeys.length > 0
+      ? pickAcceptedChangeRequestPatch(originalPatch, declinedKeys)
+      : declinedPatch;
+  if (!Object.keys(reRequestPatch).length) {
+    throw new Error('再依頼する項目がありません');
+  }
+  const applyPatch = pickAcceptedChangeRequestPatch(originalPatch, acceptedKeys);
+  const itemLines = listChangeRequestItems(reRequestPatch).map(formatChangeRequestItemLine);
+  const chatBody = `【変更依頼】却下された項目について再度依頼します${
+    itemLines.length ? `（${itemLines.join('、')}）` : ''
+  }`;
+
+  const updated = await updateOrderDetails(id, {
+    ...(Object.keys(applyPatch).length > 0 ? applyPatch : {}),
+    is_customer_modified: false,
+    has_pending_change_request: true,
+    pending_change_request_patch: reRequestPatch,
+    change_request_customer_decision_status: null,
+    change_request_resolution: null,
+  });
+
+  try {
+    await appendChatMessage(id, 'customer', chatBody);
+  } catch (chatErr) {
+    console.warn('[haisha] 変更依頼再送チャット投稿失敗（パッチは保存済み）', chatErr);
   }
   return updated;
 }
@@ -2375,6 +2554,10 @@ export async function markOrderCustomerCancelled(orderId) {
     factoryPendingStartedAt: undefined,
     factoryPendingByName: undefined,
     factory_consult_status: '',
+    has_pending_change_request: false,
+    pending_change_request_patch: null,
+    change_request_customer_decision_status: null,
+    change_request_resolution: null,
   });
 }
 

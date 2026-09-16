@@ -125,6 +125,14 @@ export function pickAcceptedChangeRequestPatch(patch, acceptedKeys) {
   return out;
 }
 
+/** 却下キー（accepted に含まれないパッチキー）だけを抽出 */
+export function pickDeclinedChangeRequestPatch(patch, acceptedKeys) {
+  if (!isPlainPatch(patch)) return {};
+  const acceptedSet = new Set((Array.isArray(acceptedKeys) ? acceptedKeys : []).map((key) => String(key)));
+  const declinedKeys = Object.keys(patch).filter((key) => !acceptedSet.has(String(key)));
+  return pickAcceptedChangeRequestPatch(patch, declinedKeys);
+}
+
 export function splitChangeRequestDecisions(patch, acceptedKeys) {
   const acceptedSet = new Set((Array.isArray(acceptedKeys) ? acceptedKeys : []).map((key) => String(key)));
   const accepted = [];
@@ -143,7 +151,12 @@ export function formatChangeRequestItemLine(item) {
   return display ? `${label}（${display}）` : label;
 }
 
-export function formatChangeRequestResolveChatBody({ factoryName, acceptedItems, declinedItems }) {
+export function formatChangeRequestResolveChatBody({
+  factoryName,
+  acceptedItems,
+  declinedItems,
+  deferredApply = false,
+}) {
   const factoryLabel = String(factoryName || '').trim() || '工場';
   const accepted = Array.isArray(acceptedItems) ? acceptedItems : [];
   const declined = Array.isArray(declinedItems) ? declinedItems : [];
@@ -154,7 +167,9 @@ export function formatChangeRequestResolveChatBody({ factoryName, acceptedItems,
   if (declined.length) {
     lines.push(`対応不可の項目: ${declined.map(formatChangeRequestItemLine).join('、')}`);
   }
-  if (accepted.length && declined.length) {
+  if (deferredApply && accepted.length && declined.length) {
+    lines.push('一部対応不可のため、お客様の確認をお待ちしています。');
+  } else if (accepted.length && declined.length) {
     lines.push('承諾した項目を注文へ反映しました。');
   } else if (accepted.length) {
     lines.push('変更依頼を承諾し、内容を反映しました。');
@@ -162,4 +177,8 @@ export function formatChangeRequestResolveChatBody({ factoryName, acceptedItems,
     lines.push('変更依頼には対応できませんでした。');
   }
   return lines.join('\n');
+}
+
+export function isAwaitingCustomerChangeDecision(order) {
+  return String(order?.change_request_customer_decision_status || '').trim() === 'awaiting_customer';
 }

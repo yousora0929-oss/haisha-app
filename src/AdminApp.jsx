@@ -4239,6 +4239,9 @@ function OrdersMonitorSection({
                           {o.has_pending_change_request ? (
                             <span className="inline-flex rounded-full border border-orange-400 bg-orange-50 px-2 py-0.5 text-xs font-black text-orange-950">📝 変更依頼あり</span>
                           ) : null}
+                          {String(o.change_request_customer_decision_status || '').trim() === 'awaiting_customer' ? (
+                            <span className="inline-flex rounded-full border border-orange-400 bg-orange-50 px-2 py-0.5 text-xs font-black text-orange-950">客確認待ち</span>
+                          ) : null}
                           <LocationPendingBadge order={o} className="text-xs" />
                           <PhoneOrderBadge order={o} className="text-xs" />
                           {renderReservationGroupBadge(o)}
