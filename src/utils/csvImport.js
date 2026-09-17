@@ -426,27 +426,21 @@ function spreadsheetExt(file) {
 /**
  * CSV / Excel を共通の string[][] matrix に変換
  * @param {File} file
+ * @param {{ sheetName?: string }} [opts]
  * @returns {Promise<string[][]>}
  */
-export async function parseSpreadsheetFile(file) {
+export async function parseSpreadsheetFile(file, opts = {}) {
   if (!file) throw new Error('ファイルが選択されていません。');
   const ext = spreadsheetExt(file);
   const isExcel = ext === '.xlsx' || ext === '.xls';
   const isCsv = ext === '.csv' || (!ext && /csv|text\/plain/i.test(String(file.type || '')));
 
   if (isExcel) {
-    const XLSX = await import('xlsx');
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: 'array' });
-    const sheetName = workbook.SheetNames?.[0];
-    if (!sheetName) throw new Error('Excelファイルにシートがありません。');
-    const sheet = workbook.Sheets[sheetName];
-    const matrix = XLSX.utils.sheet_to_json(sheet, {
-      header: 1,
+    const { matrix } = await readExcelSheetMatrix(file, {
+      sheetName: opts.sheetName,
       raw: false,
-      defval: '',
     });
-    return (Array.isArray(matrix) ? matrix : [])
+    return matrix
       .map((r) => (Array.isArray(r) ? r : []).map((c) => String(c ?? '').trim()))
       .filter((r) => r.some((c) => c !== ''));
   }
@@ -457,4 +451,71 @@ export async function parseSpreadsheetFile(file) {
 
   const text = await readCsvFileAsText(file);
   return parseCsvText(text);
+}
+
+/**
+ * Excel ワークブックのシート名一覧とデフォルト選択（日付形式 M.D なら最新）
+ * @param {File} file
+ * @returns {Promise<{ sheetNames: string[], defaultSheetName: string }>}
+ */
+export async function listExcelSheetNames(file) {
+  if (!file) throw new Error('ファイルが選択されていません。');
+  const ext = spreadsheetExt(file);
+  if (ext !== '.xlsx' && ext !== '.xls') {
+    throw new Error('Excelファイル（.xlsx / .xls）を選択してください。');
+  }
+  const XLSX = await import('xlsx');
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: 'array' });
+  const sheetNames = Array.isArray(workbook.SheetNames) ? [...workbook.SheetNames] : [];
+  if (!sheetNames.length) throw new Error('Excelファイルにシートがありません。');
+  return { sheetNames, defaultSheetName: pickDefaultMeetingSheetName(sheetNames) };
+}
+
+/**
+ * 会議日シート名（例: 4.7, 9.15）を新しい順に並べ、先頭をデフォルトにする。
+ * 日付形式でない場合は末尾シートをデフォルトにする。
+ * @param {string[]} sheetNames
+ */
+export function pickDefaultMeetingSheetName(sheetNames) {
+  const list = Array.isArray(sheetNames) ? sheetNames.map((s) => String(s || '').trim()).filter(Boolean) : [];
+  if (!list.length) return '';
+  const dated = list
+    .map((name) => {
+      const m = /^(\d{1,2})\.(\d{1,2})$/.exec(name);
+      if (!m) return null;
+      return { name, month: Number(m[1]), day: Number(m[2]) };
+    })
+    .filter(Boolean);
+  if (dated.length) {
+    dated.sort((a, b) => (a.month !== b.month ? b.month - a.month : b.day - a.day));
+    return dated[0].name;
+  }
+  return list[list.length - 1];
+}
+
+/**
+ * Excel 1シートを行列として読む（結合セル・改行・数値を保持）
+ * @param {File} file
+ * @param {{ sheetName?: string, raw?: boolean }} [opts]
+ * @returns {Promise<{ sheetName: string, matrix: unknown[][] }>}
+ */
+export async function readExcelSheetMatrix(file, opts = {}) {
+  if (!file) throw new Error('ファイルが選択されていません。');
+  const XLSX = await import('xlsx');
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: 'array', cellDates: false });
+  const names = Array.isArray(workbook.SheetNames) ? workbook.SheetNames : [];
+  if (!names.length) throw new Error('Excelファイルにシートがありません。');
+  const wanted = String(opts.sheetName || '').trim();
+  const sheetName = wanted && names.includes(wanted) ? wanted : names[0];
+  const sheet = workbook.Sheets[sheetName];
+  if (!sheet) throw new Error(`シート「${sheetName}」が見つかりません。`);
+  const matrix = XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    raw: opts.raw !== false,
+    defval: '',
+    blankrows: true,
+  });
+  return { sheetName, matrix: Array.isArray(matrix) ? matrix : [] };
 }

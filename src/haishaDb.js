@@ -4788,6 +4788,17 @@ function mapProjectRow(row) {
       row.contractor_display_name != null ? String(row.contractor_display_name) : '',
     delivery_area: row.delivery_area != null ? String(row.delivery_area) : '',
     site_address: row.site_address != null ? String(row.site_address) : '',
+    period_start_date: row.period_start_date != null ? String(row.period_start_date).slice(0, 10) : '',
+    period_end_date: row.period_end_date != null ? String(row.period_end_date).slice(0, 10) : '',
+    planned_quantity_m3:
+      row.planned_quantity_m3 != null && row.planned_quantity_m3 !== '' && Number.isFinite(Number(row.planned_quantity_m3))
+        ? Number(row.planned_quantity_m3)
+        : null,
+    planned_delivery_note:
+      row.planned_delivery_note != null ? String(row.planned_delivery_note) : '',
+    notes: row.notes != null ? String(row.notes) : '',
+    is_new_project:
+      row.is_new_project === true ? true : row.is_new_project === false ? false : null,
     url_token:
       row.url_token != null && isValidSiteOrderUrlToken(String(row.url_token))
         ? String(row.url_token).trim()
@@ -6153,19 +6164,32 @@ async function resolveProjectOrganizationIds(customerIds) {
   return map;
 }
 
-export async function bulkInsertProjects(projectRows) {
+export async function bulkInsertProjects(projectRows, opts = {}) {
   const list = Array.isArray(projectRows) ? projectRows.filter((r) => r && typeof r === 'object') : [];
   if (list.length === 0) return [];
+  const allowEmptyMainFactory = opts.allowEmptyMainFactory === true;
 
   const orgIdByCustomerId = await resolveProjectOrganizationIds(list.map((p) => p?.customer_id));
 
   const prepared = list.map((payload) => {
-    const main_factory_id = String(payload.main_factory_id || '').trim();
-    if (!main_factory_id) throw new Error('メイン工場が未設定の行があります');
+    const main_factory_id = String(payload.main_factory_id || '').trim() || null;
+    if (!main_factory_id && !allowEmptyMainFactory) {
+      throw new Error('メイン工場が未設定の行があります');
+    }
     const name = String(payload.name || '').trim();
     if (!name) throw new Error('物件名が空の行があります');
-    const sub_factory_ids = normalizeSubFactoryIds(payload.sub_factory_ids).filter((id) => id !== main_factory_id);
+    const sub_factory_ids = normalizeSubFactoryIds(payload.sub_factory_ids).filter(
+      (id) => id && id !== main_factory_id,
+    );
     const customer_id = sanitizeRefId(payload.customer_id);
+    const plannedQty =
+      payload.planned_quantity_m3 != null &&
+      payload.planned_quantity_m3 !== '' &&
+      Number.isFinite(Number(payload.planned_quantity_m3))
+        ? Number(payload.planned_quantity_m3)
+        : null;
+    const isNew =
+      payload.is_new_project === true ? true : payload.is_new_project === false ? false : null;
     return {
       name,
       customer_id,
@@ -6195,6 +6219,12 @@ export async function bulkInsertProjects(projectRows) {
       site_contacts: normalizeContactList(payload.site_contacts),
       trading_contact_name: String(payload.trading_contact_name ?? '').trim() || null,
       trading_contact_phone: String(payload.trading_contact_phone ?? '').trim() || null,
+      period_start_date: String(payload.period_start_date || '').trim().slice(0, 10) || null,
+      period_end_date: String(payload.period_end_date || '').trim().slice(0, 10) || null,
+      planned_quantity_m3: plannedQty,
+      planned_delivery_note: String(payload.planned_delivery_note || '').trim() || null,
+      notes: String(payload.notes || '').trim() || null,
+      is_new_project: isNew,
     };
   });
 

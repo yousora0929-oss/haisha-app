@@ -96,7 +96,8 @@ import {
   stripImportMeta,
   tradingCompanySelectOptions,
 } from './utils/adminCsvImport.js';
-import { normalizeCompanyName, normalizeCsvPhoneNumber } from './utils/csvImport.js';
+import { listExcelSheetNames, normalizeCompanyName, normalizeCsvPhoneNumber } from './utils/csvImport.js';
+import { parseMeetingProjectsFile } from './utils/meetingImport.js';
 import {
   findAgentOrganizationByName,
   isUnregisteredTradingCompanyName,
@@ -1631,6 +1632,80 @@ function formatProjectRegisteredAt(value) {
   return `${y}/${m}/${day}`;
 }
 
+/** 物件CSV/割決会議取込の共通コミット */
+async function commitProjectImportPreview(preview, { customers = [], allowEmptyMainFactory = false, setImportNotice }) {
+  const contractorKeyOn = preview.registerContractorKeys || {};
+  const tradingKeyOn = preview.registerTradingCompanyKeys || {};
+
+  const contractorsToInsert = (preview.newContractors || []).filter(
+    (c) => contractorKeyOn[normalizeCompanyName(c.name)],
+  );
+  const tradingToInsert = (preview.newTradingCompanies || []).filter(
+    (t) => tradingKeyOn[normalizeCompanyName(t.name)],
+  );
+
+  let insertedTrading = [];
+  if (tradingToInsert.length > 0) {
+    insertedTrading = await db.bulkInsertTradingCompanies(
+      tradingToInsert.map((t) => ({ name: t.name })),
+    );
+  }
+
+  const insertedContractors = [];
+  for (const c of contractorsToInsert) {
+    const created = await db.createProvisionalCompany({
+      name: c.name,
+      role: 'contractor',
+    });
+    if (created?.customer) insertedContractors.push(created.customer);
+  }
+
+  const contractorIdByName = new Map();
+  for (const c of customers || []) {
+    const key = normalizeCompanyName(c.company_name || c.name);
+    if (key && c.id) contractorIdByName.set(key, c.id);
+  }
+  for (const c of insertedContractors) {
+    const key = normalizeCompanyName(c.company_name || c.name);
+    if (key && c.id) contractorIdByName.set(key, c.id);
+  }
+
+  const payload = preview.rows.map((row) => {
+    const next = { ...stripImportMeta(row) };
+    const unmatchedC = row.__unmatchedContractorName;
+    if (unmatchedC) {
+      const key = normalizeCompanyName(unmatchedC);
+      if (contractorKeyOn[key] && contractorIdByName.has(key)) {
+        next.customer_id = contractorIdByName.get(key);
+      } else {
+        next.customer_id = null;
+        if (!next.contractor_display_name) {
+          next.contractor_display_name = unmatchedC;
+        }
+      }
+    }
+    return next;
+  });
+
+  await db.bulkInsertProjects(payload, { allowEmptyMainFactory });
+  const skipped = preview.skipped?.length ?? 0;
+  const manualCount =
+    preview.manualFactoryCount ??
+    preview.rows.filter((r) => r?.__needsManualFactory || !String(r?.main_factory_id || '').trim())
+      .length;
+  const parts = [
+    `${payload.length}件の物件`,
+    `${insertedContractors.length}件の業者（仮登録）`,
+    `${insertedTrading.length}件の商社（仮登録）`,
+  ];
+  let message = `${parts.join('、')}を取り込みました。`;
+  if (manualCount > 0) {
+    message += `うち${manualCount}件は工場の手動設定が必要です。`;
+  }
+  if (skipped > 0) message += `（${skipped}行スキップ）`;
+  setImportNotice?.(message);
+}
+
 function ProjectsSection({ factories, factoryNameById }) {
   const [projects, setProjects] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -2112,6 +2187,7 @@ function ProjectsSection({ factories, factoryNameById }) {
                       ...r,
                       main_factory_id: v || '',
                       __mainFactoryLabel: hit ? String(hit.name || '').trim() : '',
+                      __needsManualFactory: !v,
                     },
                     importResolveCtx,
                   );
@@ -2164,83 +2240,211 @@ function ProjectsSection({ factories, factoryNameById }) {
               },
             ]}
             onImport={async (preview) => {
-              const contractorKeyOn = preview.registerContractorKeys || {};
-              const tradingKeyOn = preview.registerTradingCompanyKeys || {};
-
-              const contractorsToInsert = (preview.newContractors || []).filter(
-                (c) => contractorKeyOn[normalizeCompanyName(c.name)],
-              );
-              const tradingToInsert = (preview.newTradingCompanies || []).filter(
-                (t) => tradingKeyOn[normalizeCompanyName(t.name)],
-              );
-
-              let insertedTrading = [];
-              if (tradingToInsert.length > 0) {
-                insertedTrading = await db.bulkInsertTradingCompanies(
-                  tradingToInsert.map((t) => ({ name: t.name })),
-                );
-              }
-
-              // 物件フォームと同じく organizations とのペアで仮登録する
-              const insertedContractors = [];
-              for (const c of contractorsToInsert) {
-                const created = await db.createProvisionalCompany({
-                  name: c.name,
-                  role: 'contractor',
-                });
-                if (created?.customer) insertedContractors.push(created.customer);
-              }
-
-              const contractorIdByName = new Map();
-              for (const c of customers || []) {
-                const key = normalizeCompanyName(c.company_name || c.name);
-                if (key && c.id) contractorIdByName.set(key, c.id);
-              }
-              for (const c of insertedContractors) {
-                const key = normalizeCompanyName(c.company_name || c.name);
-                if (key && c.id) contractorIdByName.set(key, c.id);
-              }
-
-              const payload = preview.rows.map((row) => {
-                const next = { ...stripImportMeta(row) };
-                const unmatchedC = row.__unmatchedContractorName;
-                if (unmatchedC) {
-                  const key = normalizeCompanyName(unmatchedC);
-                  if (contractorKeyOn[key] && contractorIdByName.has(key)) {
-                    next.customer_id = contractorIdByName.get(key);
-                  } else {
-                    next.customer_id = null;
-                    if (!next.contractor_display_name) {
-                      next.contractor_display_name = unmatchedC;
-                    }
-                  }
-                }
-                // 商社は名称保存。新規登録ONなら trading_companies に載った名前のまま残す
-                const unmatchedT = row.__unmatchedTradingCompanyName;
-                if (unmatchedT) {
-                  const key = normalizeCompanyName(unmatchedT);
-                  if (!tradingKeyOn[key]) {
-                    // 登録しない：名称は残すが新規マスタには載せない（表記用テキストのみ）
-                  }
-                }
-                return next;
+              await commitProjectImportPreview(preview, {
+                customers,
+                allowEmptyMainFactory: false,
+                setImportNotice,
               });
-
-              await db.bulkInsertProjects(payload);
-              const skipped = preview.skipped?.length ?? 0;
-              const parts = [
-                `${payload.length}件の物件`,
-                `${insertedContractors.length}件の業者（仮登録）`,
-                `${insertedTrading.length}件の商社`,
-              ];
-              setImportNotice(
-                `${parts.join('、')}を取り込みました。${skipped > 0 ? `（${skipped}行スキップ）` : ''}`,
-              );
             }}
             onComplete={() => {
               void loadProjects();
               void loadMasters();
               window.setTimeout(() => setImportNotice(''), 5000);
+            }}
+          />
+          <AdminCsvImportButton
+            label="割決会議資料取込"
+            disabled={!factories?.length}
+            entityLabel="件の物件"
+            editablePreview
+            allowEmptyMainFactory
+            accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+            listSheets={listExcelSheetNames}
+            parseFile={(file, opts) =>
+              parseMeetingProjectsFile(file, {
+                sheetName: opts?.sheetName,
+                customers,
+                tradingCompanies,
+                agentOrganizations,
+                factories,
+                existingProjects: projects,
+              })
+            }
+            previewColumns={[
+              {
+                key: 'meeting_no',
+                label: 'No',
+                getValue: (r) => String(r.__meetingNo ?? ''),
+                render: (r) => String(r.__meetingNo || '—'),
+              },
+              {
+                key: 'name',
+                label: '工事名',
+                editable: true,
+                getValue: (r) => String(r.name ?? ''),
+                applyValue: (r, v) => ({ ...r, name: v }),
+              },
+              {
+                key: 'contractor',
+                label: '施工業者',
+                editable: true,
+                getValue: (r) => String(r.__contractorLabel ?? ''),
+                applyValue: (r, v) =>
+                  reresolveProjectImportRow(
+                    { ...r, __contractorLabel: v, contractor_display_name: v || r.contractor_display_name },
+                    importResolveCtx,
+                  ),
+                render: (r, ctx) => (
+                  <>
+                    {r.__contractorLabel || '—'}
+                    {r.__unmatchedContractorName &&
+                    ctx?.contractorSelection?.[normalizeCompanyName(r.__unmatchedContractorName)]
+                      ? ctx.renderNewBadge?.(true)
+                      : null}
+                  </>
+                ),
+              },
+              {
+                key: 'trading_company_name',
+                label: '受注先名',
+                editable: true,
+                editType: (r) =>
+                  (r.__tradingCandidates || []).length >= 2 ? 'select' : 'text',
+                getValue: (r) => String(r.trading_company_name ?? ''),
+                options: (r) =>
+                  tradingCompanySelectOptions(r, { tradingCompanies, agentOrganizations }),
+                applyValue: (r, v) =>
+                  reresolveProjectImportRow({ ...r, trading_company_name: v }, importResolveCtx),
+                render: (r, ctx) => (
+                  <>
+                    {r.trading_company_name || '—'}
+                    {r.__unmatchedTradingCompanyName &&
+                    ctx?.tradingSelection?.[normalizeCompanyName(r.__unmatchedTradingCompanyName)]
+                      ? ctx.renderNewBadge?.(true)
+                      : null}
+                  </>
+                ),
+              },
+              {
+                key: 'delivery_area',
+                label: '工事場所',
+                editable: true,
+                getValue: (r) => String(r.delivery_area ?? ''),
+                applyValue: (r, v) => ({ ...r, delivery_area: v || null }),
+              },
+              {
+                key: 'period',
+                label: '工期',
+                render: (r) =>
+                  r.period_start_date || r.period_end_date
+                    ? `${r.period_start_date || '—'}〜${r.period_end_date || '—'}`
+                    : r.__periodRaw || '—',
+              },
+              {
+                key: 'planned_quantity_m3',
+                label: '数量',
+                editable: true,
+                getValue: (r) =>
+                  r.planned_quantity_m3 == null ? '' : String(r.planned_quantity_m3),
+                applyValue: (r, v) => {
+                  const n = Number(String(v || '').replace(/,/g, ''));
+                  return {
+                    ...r,
+                    planned_quantity_m3: String(v || '').trim() && Number.isFinite(n) ? n : null,
+                  };
+                },
+              },
+              {
+                key: 'main_factory',
+                label: '組合提案メイン',
+                editable: true,
+                editType: 'select',
+                getValue: (r) => String(r.main_factory_id ?? ''),
+                options: (r) => {
+                  const opts = [
+                    { value: '', label: '（未選択・手動設定）' },
+                    ...(factories || []).map((f) => ({
+                      value: String(f.id),
+                      label: String(f.name || f.id).trim(),
+                    })),
+                  ];
+                  const id = String(r.main_factory_id || '');
+                  if (id && !opts.some((o) => o.value === id)) {
+                    opts.push({ value: id, label: r.__mainFactoryLabel || id });
+                  }
+                  return opts;
+                },
+                applyValue: (r, v) => {
+                  const hit = (factories || []).find((f) => String(f.id) === String(v));
+                  return {
+                    ...r,
+                    main_factory_id: v || '',
+                    __mainFactoryLabel: hit ? String(hit.name || '').trim() : '',
+                    __needsManualFactory: !v,
+                    __rowNotes: !v
+                      ? r.__rowNotes
+                      : (r.__rowNotes || []).filter((n) => !String(n).includes('手動で工場')),
+                  };
+                },
+              },
+              {
+                key: 'sub_factory',
+                label: 'サブ',
+                editable: true,
+                placeholder: '略称可',
+                getValue: (r) => String(r.__subFactoryLabels ?? ''),
+                applyValue: (r, v) =>
+                  reresolveProjectImportRow({ ...r, __subFactoryLabels: v }, importResolveCtx),
+              },
+              {
+                key: 'assigned_display',
+                label: '割当工場（参考）',
+                render: (r) => String(r.__assignedDisplay || '—'),
+              },
+              {
+                key: 'planned_delivery_note',
+                label: '納期予定',
+                editable: true,
+                getValue: (r) => String(r.planned_delivery_note ?? ''),
+                applyValue: (r, v) => ({ ...r, planned_delivery_note: v || null }),
+              },
+              {
+                key: 'notes',
+                label: '備考',
+                editable: true,
+                getValue: (r) => String(r.notes ?? ''),
+                applyValue: (r, v) => ({ ...r, notes: v || null }),
+              },
+              {
+                key: 'is_new_project',
+                label: '新・旧',
+                render: (r) =>
+                  r.is_new_project === true ? '新' : r.is_new_project === false ? '旧' : '—',
+              },
+              {
+                key: 'warnings',
+                label: '警告',
+                render: (r) =>
+                  (r.__rowNotes || []).length ? (
+                    <span className="text-[11px] font-bold text-amber-800">
+                      {(r.__rowNotes || []).join(' / ')}
+                    </span>
+                  ) : (
+                    '—'
+                  ),
+              },
+            ]}
+            onImport={async (preview) => {
+              await commitProjectImportPreview(preview, {
+                customers,
+                allowEmptyMainFactory: true,
+                setImportNotice,
+              });
+            }}
+            onComplete={() => {
+              void loadProjects();
+              void loadMasters();
+              window.setTimeout(() => setImportNotice(''), 6000);
             }}
           />
           <AdminCsvDownloadButton

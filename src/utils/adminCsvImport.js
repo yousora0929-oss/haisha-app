@@ -601,15 +601,21 @@ export async function parseTradingCompaniesCsvFile(file) {
 export function stripImportMeta(row) {
   const {
     __line,
+    __sheetName,
+    __meetingNo,
     __contractorLabel,
     __unmatchedContractorName,
     __unmatchedTradingCompanyName,
     __mainFactoryLabel,
     __subFactoryLabels,
+    __assignedDisplay,
+    __periodRaw,
     __siteContactsRaw,
     __rowNotes,
     __tradingNotes,
     __tradingCandidates,
+    __needsManualFactory,
+    __similarProjects,
     ...rest
   } = row;
   return rest;

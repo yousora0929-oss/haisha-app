@@ -35,20 +35,28 @@ export function AdminCsvImportButton({
   label = 'CSV一括取込',
   disabled = false,
   parseFile,
+  /** Excel 複数シート選択: (file) => { sheetNames, defaultSheetName } */
+  listSheets = null,
   entityLabel = '件',
   previewColumns = [],
   onImport,
   onComplete,
   /** 物件取込などで全行を編集可能にする */
   editablePreview = false,
+  /** フェーズ分割など工場未設定行を許可 */
+  allowEmptyMainFactory = false,
+  accept = '.csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel',
 }) {
   const inputRef = useRef(null);
+  const pendingFileRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(null);
   const [editedRows, setEditedRows] = useState([]);
   const [error, setError] = useState('');
   const [contractorSelection, setContractorSelection] = useState({});
   const [tradingSelection, setTradingSelection] = useState({});
+  const [sheetNames, setSheetNames] = useState([]);
+  const [selectedSheet, setSelectedSheet] = useState('');
 
   const resetInput = () => {
     if (inputRef.current) inputRef.current.value = '';
@@ -93,6 +101,15 @@ export function AdminCsvImportButton({
   );
 
   const displayRows = editablePreview ? editedRows : preview?.rows || [];
+  const manualFactoryCount = useMemo(
+    () => displayRows.filter((r) => r?.__needsManualFactory).length,
+    [displayRows],
+  );
+
+  const runParse = async (file, sheetName) => {
+    const result = await parseFile(file, sheetName ? { sheetName } : undefined);
+    setPreview(result);
+  };
 
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
@@ -101,12 +118,43 @@ export function AdminCsvImportButton({
 
     setError('');
     setBusy(true);
+    pendingFileRef.current = file;
     try {
-      const result = await parseFile(file);
-      setPreview(result);
+      let sheetName = '';
+      if (typeof listSheets === 'function') {
+        const listed = await listSheets(file);
+        const names = Array.isArray(listed?.sheetNames) ? listed.sheetNames : [];
+        const def = String(listed?.defaultSheetName || names[names.length - 1] || '').trim();
+        setSheetNames(names);
+        setSelectedSheet(def);
+        sheetName = def;
+      } else {
+        setSheetNames([]);
+        setSelectedSheet('');
+      }
+      await runParse(file, sheetName);
     } catch (err) {
       setError(err?.message || 'ファイルの読み込みに失敗しました。');
       setPreview(null);
+      pendingFileRef.current = null;
+      setSheetNames([]);
+      setSelectedSheet('');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSheetChange = async (nextSheet) => {
+    const file = pendingFileRef.current;
+    const name = String(nextSheet || '').trim();
+    if (!file || !name || name === selectedSheet) return;
+    setSelectedSheet(name);
+    setError('');
+    setBusy(true);
+    try {
+      await runParse(file, name);
+    } catch (err) {
+      setError(err?.message || 'シートの読み込みに失敗しました。');
     } finally {
       setBusy(false);
     }
@@ -116,6 +164,9 @@ export function AdminCsvImportButton({
     setPreview(null);
     setEditedRows([]);
     setError('');
+    pendingFileRef.current = null;
+    setSheetNames([]);
+    setSelectedSheet('');
   };
 
   const updateEditedRow = (index, updater) => {
@@ -138,7 +189,7 @@ export function AdminCsvImportButton({
       setError(`行${emptyName.__line ?? '?'}：物件名が空です。プレビューで入力してください。`);
       return;
     }
-    if (editablePreview) {
+    if (editablePreview && !allowEmptyMainFactory) {
       const missingFactory = rowsForImport.find((r) => !String(r?.main_factory_id || '').trim());
       if (missingFactory) {
         setError(
@@ -155,9 +206,11 @@ export function AdminCsvImportButton({
       newContractorCount || newTradingCount
         ? `\n（新規登録予定: 業者 ${selectedContractorCount}件 / 商社 ${selectedTradingCount}件）`
         : '';
+    const manualNote =
+      manualFactoryCount > 0 ? `\n（うち ${manualFactoryCount}件は工場の手動設定が必要）` : '';
     if (
       !window.confirm(
-        `${count}${entityLabel}を検出しました。取り込みますか？${skippedNote}${registerNote}`,
+        `${count}${entityLabel}を検出しました。取り込みますか？${skippedNote}${registerNote}${manualNote}`,
       )
     ) {
       return;
@@ -184,6 +237,8 @@ export function AdminCsvImportButton({
         newTradingCompanies: newEntities.newTradingCompanies,
         registerContractorKeys,
         registerTradingCompanyKeys,
+        selectedSheet,
+        manualFactoryCount,
       });
       closePreview();
       onComplete?.();
@@ -275,7 +330,7 @@ export function AdminCsvImportButton({
       <input
         ref={inputRef}
         type="file"
-        accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+        accept={accept}
         className="hidden"
         onChange={handleFile}
       />
@@ -309,6 +364,30 @@ export function AdminCsvImportButton({
                 <span className="ml-2 text-xs font-bold text-slate-600">（セルを編集してから取り込めます）</span>
               ) : null}
             </p>
+
+            {sheetNames.length > 1 ? (
+              <label className="mt-3 flex flex-wrap items-center gap-2 text-xs font-bold text-slate-700">
+                会議シート
+                <select
+                  className="min-h-[36px] rounded-lg border border-slate-300 bg-white px-2 text-sm font-bold text-slate-900"
+                  value={selectedSheet}
+                  disabled={busy}
+                  onChange={(e) => void handleSheetChange(e.target.value)}
+                >
+                  {sheetNames.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+
+            {manualFactoryCount > 0 ? (
+              <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">
+                ⚠️ {manualFactoryCount}件は工場の手動設定が必要です（フェーズ分割・工場名不一致など）
+              </p>
+            ) : null}
 
             {newContractorCount > 0 || newTradingCount > 0 ? (
               <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/80 px-3 py-2">
