@@ -96,7 +96,7 @@ import {
   stripImportMeta,
   tradingCompanySelectOptions,
 } from './utils/adminCsvImport.js';
-import { listExcelSheetNames, normalizeCompanyName, normalizeCsvPhoneNumber } from './utils/csvImport.js';
+import { normalizeCompanyName, normalizeCsvPhoneNumber } from './utils/csvImport.js';
 import { parseMeetingProjectsFile } from './utils/meetingImport.js';
 import {
   findAgentOrganizationByName,
@@ -2258,18 +2258,21 @@ function ProjectsSection({ factories, factoryNameById }) {
             entityLabel="件の物件"
             editablePreview
             allowEmptyMainFactory
+            enableRowSelection
             accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-            listSheets={listExcelSheetNames}
-            parseFile={(file, opts) =>
-              parseMeetingProjectsFile(file, {
-                sheetName: opts?.sheetName,
+            parseFile={async (file) => {
+              const allProjects = await db.fetchProjects().catch((e) => {
+                console.warn('[ProjectsSection] fetchProjects for meeting import failed', e);
+                return projects;
+              });
+              return parseMeetingProjectsFile(file, {
                 customers,
                 tradingCompanies,
                 agentOrganizations,
                 factories,
-                existingProjects: projects,
-              })
-            }
+                existingProjects: allProjects,
+              });
+            }}
             previewColumns={[
               {
                 key: 'meeting_no',
@@ -2423,15 +2426,22 @@ function ProjectsSection({ factories, factoryNameById }) {
               },
               {
                 key: 'warnings',
-                label: '警告',
-                render: (r) =>
-                  (r.__rowNotes || []).length ? (
-                    <span className="text-[11px] font-bold text-amber-800">
-                      {(r.__rowNotes || []).join(' / ')}
-                    </span>
-                  ) : (
-                    '—'
-                  ),
+                label: '注意',
+                render: (r) => {
+                  if ((r.__similarWarnings || []).length) {
+                    return (
+                      <span className="text-[11px] font-black text-orange-900">
+                        類似物件あり（取込注意）
+                      </span>
+                    );
+                  }
+                  if ((r.__factoryWarnings || []).length) {
+                    return (
+                      <span className="text-[11px] font-bold text-slate-600">工場手動設定</span>
+                    );
+                  }
+                  return '—';
+                },
               },
             ]}
             onImport={async (preview) => {

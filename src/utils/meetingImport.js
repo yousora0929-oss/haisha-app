@@ -1,7 +1,6 @@
 /** 割決会議資料（特殊帳票）専用パーサー */
 
 import {
-  listExcelSheetNames,
   normalizeCompanyName,
   readExcelSheetMatrix,
   resolveFactoryId,
@@ -241,9 +240,8 @@ function upsertNamedEntity(map, name, line) {
 
 /**
  * 既存物件との類似チェック（名前の正規化一致・部分一致）
- * @param {{ name?: string, delivery_area?: string|null, contractor_display_name?: string|null, __contractorLabel?: string }} candidate
- * @param {object[]} existingProjects
- * @returns {{ id: string, name: string, reason: string }[]}
+ * 二重登録防止が最重要目的。
+ * @returns {{ id: string, name: string, reason: string, registeredAt: string, contractorName: string, warning: string }[]}
  */
 export function findSimilarProjects(candidate, existingProjects) {
   const name = normalizeCompanyName(candidate?.name);
@@ -261,19 +259,36 @@ export function findSimilarProjects(candidate, existingProjects) {
     else if (pname.includes(name) || name.includes(pname)) reason = '物件名が類似';
     if (!reason) continue;
     const pArea = normalizeCompanyName(p?.delivery_area);
-    const pContractor = normalizeCompanyName(
-      p?.contractor_display_name || p?.contractor || p?.sub_contractor_name,
-    );
+    const pContractorName = String(
+      p?.contractor_display_name || p?.contractor || p?.sub_contractor_name || '',
+    ).trim();
+    const pContractor = normalizeCompanyName(pContractorName);
     if (area && pArea && area === pArea) reason += '・エリア一致';
     if (contractor && pContractor && contractor === pContractor) reason += '・業者一致';
+    const registeredAt = formatProjectRegisteredDate(p?.created_at || p?.updated_at);
+    const warning = `⚠️類似物件あり: ${String(p.name || '').trim() || '（名称不明）'}（登録日: ${registeredAt}、業者: ${pContractorName || '—'}）`;
     out.push({
       id: String(p.id || ''),
       name: String(p.name || ''),
       reason,
+      registeredAt,
+      contractorName: pContractorName,
+      warning,
     });
     if (out.length >= 5) break;
   }
   return out;
+}
+
+function formatProjectRegisteredDate(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '—';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw.slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}/${m}/${day}`;
 }
 
 /**
@@ -344,7 +359,9 @@ export function parseMeetingSheetMatrix(
 
     const mainCell = parseFactoryAssignmentCell(getCell(row, headerIndexes.main_factory), factories);
     const subCell = parseFactoryAssignmentCell(getCell(row, headerIndexes.sub_factory), factories);
-    const rowNotes = [];
+    const similarWarnings = [];
+    const factoryWarnings = [];
+    const otherNotes = [];
 
     let main_factory_id = '';
     let __mainFactoryLabel = '';
@@ -356,7 +373,7 @@ export function parseMeetingSheetMatrix(
       __needsManualFactory = true;
       manualFactoryCount += 1;
       const rawText = mainCell.isMultiPhase ? mainCell.rawText : subCell.rawText;
-      rowNotes.push(
+      factoryWarnings.push(
         `⚠️工期中に工場が複数回切り替わる可能性があります（内容: "${rawText}"）。手動で工場を設定してください`,
       );
     } else {
@@ -368,7 +385,7 @@ export function parseMeetingSheetMatrix(
           __needsManualFactory = true;
           manualFactoryCount += 1;
           __mainFactoryLabel = mainCell.rawText;
-          rowNotes.push(`⚠️メイン工場名不一致: ${mainCell.rawText}`);
+          factoryWarnings.push(`⚠️メイン工場名不一致: ${mainCell.rawText}`);
         }
       }
       if (subCell.rawText) {
@@ -381,7 +398,7 @@ export function parseMeetingSheetMatrix(
             __subFactoryLabels = factoryLabelById(factories, sid, subCell.rawText);
           }
         } else {
-          rowNotes.push(`⚠️サブ工場名不一致: ${subCell.rawText}`);
+          factoryWarnings.push(`⚠️サブ工場名不一致: ${subCell.rawText}`);
           __subFactoryLabels = subCell.rawText;
         }
       }
@@ -390,7 +407,7 @@ export function parseMeetingSheetMatrix(
     if (!main_factory_id && !__needsManualFactory && !mainCell.rawText) {
       __needsManualFactory = true;
       manualFactoryCount += 1;
-      rowNotes.push('⚠️組合提案メインが空のため、工場は手動設定が必要です');
+      factoryWarnings.push('⚠️組合提案メインが空のため、工場は手動設定が必要です');
     }
 
     const customer_id = findCustomerIdByNormalizedName(customers, contractorName);
@@ -404,7 +421,7 @@ export function parseMeetingSheetMatrix(
       tradingCompanies,
       agentOrganizations,
     });
-    for (const n of trading.__tradingNotes || []) rowNotes.push(n);
+    for (const n of trading.__tradingNotes || []) otherNotes.push(n);
     if (trading.__unmatchedTradingCompanyName) {
       upsertNamedEntity(newTradingMap, trading.__unmatchedTradingCompanyName, line);
     }
@@ -418,12 +435,12 @@ export function parseMeetingSheetMatrix(
       },
       existingProjects,
     );
-    if (similar.length) {
-      rowNotes.push(
-        `⚠️類似物件の可能性: ${similar.map((s) => `${s.name}（${s.reason}）`).join(' / ')}`,
-      );
+    for (const s of similar) {
+      if (s.warning) similarWarnings.push(s.warning);
     }
 
+    // 重複警告を最優先で一覧に載せる
+    const rowNotes = [...similarWarnings, ...factoryWarnings, ...otherNotes];
     for (const note of rowNotes) {
       warnings.push(`行${line}: ${note}`);
     }
@@ -468,8 +485,12 @@ export function parseMeetingSheetMatrix(
       __periodRaw: periodRaw || null,
       __siteContactsRaw: '',
       __rowNotes: rowNotes,
+      __similarWarnings: similarWarnings,
+      __factoryWarnings: factoryWarnings,
       __needsManualFactory,
       __similarProjects: similar,
+      // 類似物件がある行は二重登録防止のためデフォルト取込OFF
+      __importSelected: similar.length === 0,
       ...(__unmatchedContractorName ? { __unmatchedContractorName } : {}),
       ...(trading.__unmatchedTradingCompanyName
         ? { __unmatchedTradingCompanyName: trading.__unmatchedTradingCompanyName }
@@ -504,17 +525,13 @@ export function parseMeetingSheetMatrix(
 }
 
 /**
- * 割決会議資料 Excel をパース
+ * 割決会議資料 Excel をパース（先頭シートのみ）
  * @param {File} file
- * @param {{ sheetName?: string, customers?: object[], tradingCompanies?: object[], agentOrganizations?: object[], factories?: object[], existingProjects?: object[] }} [ctx]
+ * @param {{ customers?: object[], tradingCompanies?: object[], agentOrganizations?: object[], factories?: object[], existingProjects?: object[] }} [ctx]
  */
 export async function parseMeetingProjectsFile(file, ctx = {}) {
-  const sheetName = String(ctx.sheetName || '').trim();
   const { sheetName: resolvedSheet, matrix } = await readExcelSheetMatrix(file, {
-    sheetName: sheetName || undefined,
     raw: true,
   });
   return parseMeetingSheetMatrix(matrix, { ...ctx, sheetName: resolvedSheet });
 }
-
-export { listExcelSheetNames };

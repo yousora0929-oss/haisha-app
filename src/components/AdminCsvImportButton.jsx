@@ -45,6 +45,8 @@ export function AdminCsvImportButton({
   editablePreview = false,
   /** フェーズ分割など工場未設定行を許可 */
   allowEmptyMainFactory = false,
+  /** 行ごとの取込チェック（類似物件はデフォルトOFF） */
+  enableRowSelection = false,
   accept = '.csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel',
 }) {
   const inputRef = useRef(null);
@@ -55,6 +57,7 @@ export function AdminCsvImportButton({
   const [error, setError] = useState('');
   const [contractorSelection, setContractorSelection] = useState({});
   const [tradingSelection, setTradingSelection] = useState({});
+  const [rowSelection, setRowSelection] = useState({});
   const [sheetNames, setSheetNames] = useState([]);
   const [selectedSheet, setSelectedSheet] = useState('');
 
@@ -62,26 +65,48 @@ export function AdminCsvImportButton({
     if (inputRef.current) inputRef.current.value = '';
   };
 
+  const rowKey = (row, index) => String(row?.__line ?? index);
+
   useEffect(() => {
     if (!preview) {
       setContractorSelection({});
       setTradingSelection({});
+      setRowSelection({});
       setEditedRows([]);
       return;
     }
     setContractorSelection(buildDefaultSelection(preview.newContractors));
     setTradingSelection(buildDefaultSelection(preview.newTradingCompanies));
     setEditedRows(cloneRows(preview.rows));
-  }, [preview]);
+    if (enableRowSelection) {
+      const next = {};
+      for (let i = 0; i < (preview.rows || []).length; i += 1) {
+        const row = preview.rows[i];
+        next[rowKey(row, i)] = row?.__importSelected !== false;
+      }
+      setRowSelection(next);
+    } else {
+      setRowSelection({});
+    }
+  }, [preview, enableRowSelection]);
+
+  const selectedEditedRows = useMemo(() => {
+    if (!enableRowSelection) return editedRows;
+    return editedRows.filter((row, i) => rowSelection[rowKey(row, i)] === true);
+  }, [enableRowSelection, editedRows, rowSelection]);
 
   const newEntities = useMemo(() => {
     if (!preview) return { newContractors: [], newTradingCompanies: [] };
-    if (editablePreview) return collectNewEntitiesFromProjectRows(editedRows);
+    if (editablePreview) {
+      return collectNewEntitiesFromProjectRows(
+        enableRowSelection ? selectedEditedRows : editedRows,
+      );
+    }
     return {
       newContractors: preview.newContractors || [],
       newTradingCompanies: preview.newTradingCompanies || [],
     };
-  }, [preview, editablePreview, editedRows]);
+  }, [preview, editablePreview, editedRows, enableRowSelection, selectedEditedRows]);
 
   const newContractorCount = newEntities.newContractors.length;
   const newTradingCount = newEntities.newTradingCompanies.length;
@@ -101,9 +126,19 @@ export function AdminCsvImportButton({
   );
 
   const displayRows = editablePreview ? editedRows : preview?.rows || [];
-  const manualFactoryCount = useMemo(
-    () => displayRows.filter((r) => r?.__needsManualFactory).length,
+  const selectedCount = enableRowSelection
+    ? selectedEditedRows.length
+    : displayRows.length;
+  const similarCount = useMemo(
+    () => displayRows.filter((r) => (r?.__similarProjects || []).length > 0).length,
     [displayRows],
+  );
+  const manualFactoryCount = useMemo(
+    () =>
+      (enableRowSelection ? selectedEditedRows : displayRows).filter(
+        (r) => r?.__needsManualFactory,
+      ).length,
+    [displayRows, enableRowSelection, selectedEditedRows],
   );
 
   const runParse = async (file, sheetName) => {
@@ -167,6 +202,7 @@ export function AdminCsvImportButton({
     pendingFileRef.current = null;
     setSheetNames([]);
     setSelectedSheet('');
+    setRowSelection({});
   };
 
   const updateEditedRow = (index, updater) => {
@@ -180,8 +216,17 @@ export function AdminCsvImportButton({
   };
 
   const handleConfirm = async () => {
-    const rowsForImport = editablePreview ? editedRows : preview?.rows;
-    if (!rowsForImport?.length) return;
+    const rowsForImport = enableRowSelection
+      ? selectedEditedRows
+      : editablePreview
+        ? editedRows
+        : preview?.rows;
+    if (!rowsForImport?.length) {
+      if (enableRowSelection) {
+        setError('取込対象の行がありません。チェックを入れてください。');
+      }
+      return;
+    }
 
     // 物件名必須の再チェック
     const emptyName = rowsForImport.find((r) => !String(r?.name || '').trim());
@@ -206,11 +251,15 @@ export function AdminCsvImportButton({
       newContractorCount || newTradingCount
         ? `\n（新規登録予定: 業者 ${selectedContractorCount}件 / 商社 ${selectedTradingCount}件）`
         : '';
+    const similarNote =
+      enableRowSelection && similarCount > 0
+        ? `\n（類似物件あり ${similarCount}件はデフォルト除外。必要ならチェックを入れてください）`
+        : '';
     const manualNote =
       manualFactoryCount > 0 ? `\n（うち ${manualFactoryCount}件は工場の手動設定が必要）` : '';
     if (
       !window.confirm(
-        `${count}${entityLabel}を検出しました。取り込みますか？${skippedNote}${registerNote}${manualNote}`,
+        `${count}${entityLabel}を検出しました。取り込みますか？${skippedNote}${registerNote}${similarNote}${manualNote}`,
       )
     ) {
       return;
@@ -358,8 +407,17 @@ export function AdminCsvImportButton({
           >
             <h3 className="text-lg font-black text-slate-900">取込プレビュー</h3>
             <p className="mt-1 text-sm font-bold text-emerald-800">
-              {displayRows.length}
-              {entityLabel}を登録できます
+              {enableRowSelection ? (
+                <>
+                  {selectedCount}/{displayRows.length}
+                  {entityLabel}を登録できます（チェックした行のみ）
+                </>
+              ) : (
+                <>
+                  {displayRows.length}
+                  {entityLabel}を登録できます
+                </>
+              )}
               {editablePreview ? (
                 <span className="ml-2 text-xs font-bold text-slate-600">（セルを編集してから取り込めます）</span>
               ) : null}
@@ -383,9 +441,15 @@ export function AdminCsvImportButton({
               </label>
             ) : null}
 
+            {similarCount > 0 ? (
+              <p className="mt-2 rounded-lg border-2 border-orange-400 bg-orange-50 px-3 py-2 text-xs font-black text-orange-950">
+                ⚠️ 類似物件あり {similarCount}件 — 二重登録防止のためデフォルトで取込OFFです。新規として取り込む場合のみチェックを入れてください。
+              </p>
+            ) : null}
+
             {manualFactoryCount > 0 ? (
-              <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">
-                ⚠️ {manualFactoryCount}件は工場の手動設定が必要です（フェーズ分割・工場名不一致など）
+              <p className="mt-2 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700">
+                工場の手動設定が必要な行が {manualFactoryCount}件あります（フェーズ分割・工場名不一致など）
               </p>
             ) : null}
 
@@ -491,6 +555,9 @@ export function AdminCsvImportButton({
                 <table className="w-full min-w-[1100px] border-collapse text-left text-xs">
                   <thead>
                     <tr className="bg-slate-50">
+                      {enableRowSelection ? (
+                        <th className="px-2 py-1.5 font-black text-slate-700">取込</th>
+                      ) : null}
                       {previewColumns.map((col) => (
                         <th key={col.key} className="px-2 py-1.5 font-black text-slate-700">
                           {col.label}
@@ -499,22 +566,80 @@ export function AdminCsvImportButton({
                     </tr>
                   </thead>
                   <tbody>
-                    {displayRows.slice(0, previewLimit).map((row, i) => (
-                      <tr key={row.__line ?? i} className="border-t border-slate-100 align-top">
+                    {displayRows.slice(0, previewLimit).map((row, i) => {
+                      const hasSimilar = (row?.__similarProjects || []).length > 0;
+                      const key = rowKey(row, i);
+                      const checked = rowSelection[key] === true;
+                      return (
+                      <tr
+                        key={key}
+                        className={
+                          'border-t border-slate-100 align-top ' +
+                          (hasSimilar
+                            ? 'bg-orange-50/90'
+                            : row.__needsManualFactory
+                              ? 'bg-slate-50'
+                              : '')
+                        }
+                      >
+                        {enableRowSelection ? (
+                          <td className="px-2 py-1.5">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded border-slate-300 text-emerald-600"
+                              checked={checked}
+                              title={
+                                hasSimilar
+                                  ? '類似物件あり（二重登録に注意）'
+                                  : 'この行を取り込む'
+                              }
+                              onChange={(e) =>
+                                setRowSelection((prev) => ({
+                                  ...prev,
+                                  [key]: e.target.checked,
+                                }))
+                              }
+                            />
+                          </td>
+                        ) : null}
                         {previewColumns.map((col) => (
                           <td key={col.key} className="px-2 py-1.5 text-slate-800">
                             {renderCell(col, row, i)}
-                            {col.key === 'name' && Array.isArray(row.__rowNotes) && row.__rowNotes.length > 0 ? (
-                              <ul className="mt-1 space-y-0.5 text-[10px] font-bold text-amber-800">
-                                {row.__rowNotes.map((n) => (
-                                  <li key={n}>{n}</li>
+                            {col.key === 'name' ? (
+                              <div className="mt-1 space-y-1">
+                                {(row.__similarWarnings || []).map((n) => (
+                                  <p
+                                    key={n}
+                                    className="rounded border border-orange-300 bg-orange-100 px-1.5 py-1 text-[10px] font-black text-orange-950"
+                                  >
+                                    {n}
+                                  </p>
                                 ))}
-                              </ul>
+                                {(row.__factoryWarnings || []).map((n) => (
+                                  <p
+                                    key={n}
+                                    className="rounded border border-slate-200 bg-slate-100 px-1.5 py-1 text-[10px] font-bold text-slate-600"
+                                  >
+                                    {n}
+                                  </p>
+                                ))}
+                                {!row.__similarWarnings?.length &&
+                                !row.__factoryWarnings?.length &&
+                                Array.isArray(row.__rowNotes) &&
+                                row.__rowNotes.length > 0 ? (
+                                  <ul className="space-y-0.5 text-[10px] font-bold text-amber-800">
+                                    {row.__rowNotes.map((n) => (
+                                      <li key={n}>{n}</li>
+                                    ))}
+                                  </ul>
+                                ) : null}
+                              </div>
                             ) : null}
                           </td>
                         ))}
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
                 {!editablePreview && (preview.rows?.length || 0) > 8 ? (

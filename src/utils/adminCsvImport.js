@@ -616,6 +616,9 @@ export function stripImportMeta(row) {
     __tradingCandidates,
     __needsManualFactory,
     __similarProjects,
+    __similarWarnings,
+    __factoryWarnings,
+    __importSelected,
     ...rest
   } = row;
   return rest;

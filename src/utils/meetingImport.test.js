@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { pickDefaultMeetingSheetName } from './csvImport.js';
 import {
   findMeetingHeaderRowIndex,
   findSimilarProjects,
@@ -93,17 +92,37 @@ describe('meetingImport helpers', () => {
     expect(result.skipped.some((s) => String(s.reason).includes('区切り'))).toBe(true);
   });
 
-  it('finds similar projects by name', () => {
+  it('finds similar projects by name with registration meta', () => {
     const hits = findSimilarProjects(
       { name: '高城南町マンション', delivery_area: '大分市' },
-      [{ id: '1', name: '高城南町マンション', delivery_area: '大分市' }],
+      [
+        {
+          id: '1',
+          name: '高城南町マンション',
+          delivery_area: '大分市',
+          contractor_display_name: '〇〇建設',
+          created_at: '2026-04-01T00:00:00.000Z',
+        },
+      ],
     );
     expect(hits).toHaveLength(1);
     expect(hits[0].reason).toContain('物件名が一致');
+    expect(hits[0].warning).toContain('⚠️類似物件あり: 高城南町マンション');
+    expect(hits[0].warning).toContain('業者: 〇〇建設');
   });
 
-  it('picks newest M.D sheet as default', () => {
-    expect(pickDefaultMeetingSheetName(['4.7', '9.15', '6.2'])).toBe('9.15');
-    expect(pickDefaultMeetingSheetName(['メモ', 'その他'])).toBe('その他');
+  it('defaults import off when similar projects exist', () => {
+    const factories = [{ id: 'FACTORY_01', name: '千歳生コン' }];
+    const matrix = [
+      ['No', '受注先名', '施工業者名（元請）', '工事名', '工事場所', '工期', '数量', '割当工場', '納期予定', '備考', '新・旧', '組合提案メイン', 'サブ'],
+      [1, '商社A', '業者A', '既存工事', '大分市', '自R8.9.1\n至R8.10.1', 12, '', '', '', '新', '千歳', ''],
+      ['小計'],
+    ];
+    const result = parseMeetingSheetMatrix(matrix, {
+      factories,
+      existingProjects: [{ id: 'p1', name: '既存工事', created_at: '2026-01-01', contractor_display_name: '業者A' }],
+    });
+    expect(result.rows[0].__importSelected).toBe(false);
+    expect(result.rows[0].__similarWarnings[0]).toContain('類似物件あり');
   });
 });
