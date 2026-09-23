@@ -9,7 +9,10 @@ import {
   readAuthValue,
   writeAuthValue,
   removeAuthValue,
+  supabase,
 } from './supabaseClient.js';
+import { CashPriceCalculator } from './components/CashPriceCalculator.jsx';
+import { CashPriceListEditor } from './components/admin/CashPriceListEditor.jsx';
 import { ProjectMapEditorUrlActions } from './components/ProjectMapEditorUrlActions.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
@@ -4776,6 +4779,7 @@ function readAdminTabFromUrl() {
     'settings',
     'escalation',
     'mixDesignRequests',
+    'cashPrice',
   ]);
   try {
     const tab = new URLSearchParams(window.location.search).get('tab');
@@ -4785,6 +4789,22 @@ function readAdminTabFromUrl() {
     /* ignore */
   }
   return 'monitor';
+}
+
+function CashPriceAdminSection() {
+  const [refreshKey, setRefreshKey] = useState(0);
+  return (
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-800 sm:p-4">
+        <h2 className="mb-3 text-lg font-black text-slate-900 dark:text-slate-100">窓口現金 概算計算</h2>
+        <CashPriceCalculator supabase={supabase} refreshKey={refreshKey} />
+      </div>
+      <CashPriceListEditor
+        supabase={supabase}
+        onSaved={() => setRefreshKey((k) => k + 1)}
+      />
+    </div>
+  );
 }
 
 export function AdminApp() {
@@ -4961,6 +4981,7 @@ export function AdminApp() {
             {tabBtn('charter', 'チャーター業務')}
             {tabBtn('inquiries', '問い合わせ対応')}
             {tabBtn('settings', '休日・稼働時間')}
+            {tabBtn('cashPrice', '窓口価格表')}
             {tabBtn('escalation', 'エスカレーション設定')}
             {tabBtn('mixDesignRequests', '配合計画書依頼')}
           </div>
@@ -4994,6 +5015,7 @@ export function AdminApp() {
         {tab === 'charter' ? <AdminCharterSection /> : null}
         {tab === 'inquiries' ? <CustomerInquirySection /> : null}
         {tab === 'settings' ? <HolidaysAndSettingsSection /> : null}
+        {tab === 'cashPrice' ? <CashPriceAdminSection /> : null}
         {tab === 'escalation' ? <AdminEscalationSection factories={factories} /> : null}
         {tab === 'mixDesignRequests' ? (
           <MixDesignRequestHistorySection
