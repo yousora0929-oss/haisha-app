@@ -58,6 +58,57 @@ describe('buildRepeatOrderDraft', () => {
     expect(draft.tradingCompanyName).toBe('');
   });
 
+  it('copies both agent_organization_id and trading_agent_customer_id independently', () => {
+    const draft = buildRepeatOrderDraft(
+      {
+        ...past,
+        agent_organization_id: 'org-1',
+        trading_agent_customer_id: 'agent-9',
+        trading_company_name: '〇〇商社',
+      },
+      null,
+      { factories: [factoryA] },
+    );
+    expect(draft.agentOrganizationId).toBe('org-1');
+    expect(draft.tradingAgentCustomerId).toBe('agent-9');
+    expect(draft.traderName).toBe('〇〇商社');
+  });
+
+  it('copies trading_agent_customer_id even when agent_organization_id is null', () => {
+    const draft = buildRepeatOrderDraft(
+      {
+        ...past,
+        agent_organization_id: null,
+        trading_agent_customer_id: 'agent-only',
+        trading_company_name: '残ってはいけない',
+      },
+      null,
+      { factories: [factoryA] },
+    );
+    expect(draft.agentOrganizationId).toBe(null);
+    expect(draft.tradingAgentCustomerId).toBe('agent-only');
+    expect(draft.tradingCompanyName).toBe('');
+    expect(draft.traderName).toBe('');
+  });
+
+  it('copies map_annotations and override_map_image_url', () => {
+    const annotations = { stamps: [{ id: 's1' }], unloadPoints: [] };
+    const draft = buildRepeatOrderDraft(
+      {
+        ...past,
+        map_annotations: annotations,
+        override_map_image_url: 'https://example.com/map.png',
+      },
+      null,
+      { factories: [factoryA] },
+    );
+    expect(draft.mapAnnotations).toEqual(annotations);
+    expect(draft.overrideMapImageUrl).toBe('https://example.com/map.png');
+    expect(draft.ignoredOrderDataKeys).not.toContain('map_annotations');
+    expect(draft.ignoredOrderDataKeys).not.toContain('override_map_image_url');
+    expect(draft.ignoredOrderDataKeys).not.toContain('trading_agent_customer_id');
+  });
+
   it('clears preferred factory when not selectable', () => {
     const draft = buildRepeatOrderDraft(past, null, { factories: [{ id: 'other' }] });
     expect(draft.preferredFactoryId).toBe('');

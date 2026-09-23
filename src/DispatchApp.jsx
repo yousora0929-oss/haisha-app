@@ -2140,6 +2140,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [sameFactoryRequired, setSameFactoryRequired] = useState(false);
       const [showCashPriceModal, setShowCashPriceModal] = useState(false);
       const [repeatDraftBanner, setRepeatDraftBanner] = useState(false);
+      const [repeatMapAnnotations, setRepeatMapAnnotations] = useState(null);
+      const [repeatOverrideMapImageUrl, setRepeatOverrideMapImageUrl] = useState('');
 
       useEffect(() => {
         const blocking = newOrderMode === 'form' || cartItems.length > 0 || showCashPriceModal;
@@ -4379,8 +4381,26 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           setContractorName(draft.contractorName || '');
           setContractorCustomerId(draft.contractorCustomerId || '');
           setContractorSearchText(draft.contractorName || '');
-          setTradingAgentCustomerId('');
-          setTradingAgentSearchText('');
+          const agentId = String(draft.tradingAgentCustomerId || '').trim();
+          setTradingAgentCustomerId(agentId);
+          if (agentId) {
+            const agent = (customers || []).find((c) => c && String(c.id) === agentId);
+            const label = agent
+              ? [agent.manager_name, agent.company_name || agent.name]
+                  .map((v) => String(v || '').trim())
+                  .filter(Boolean)
+                  .join(' · ')
+              : '';
+            setTradingAgentSearchText(label);
+          } else {
+            setTradingAgentSearchText('');
+          }
+          setRepeatMapAnnotations(
+            draft.mapAnnotations && typeof draft.mapAnnotations === 'object'
+              ? draft.mapAnnotations
+              : null,
+          );
+          setRepeatOverrideMapImageUrl(String(draft.overrideMapImageUrl || '').trim());
           setSiteName(draft.siteName || '');
           setDeliveryArea(draft.deliveryArea || '');
           setSiteAddressDetail(draft.siteAddressDetail || '');
@@ -4424,7 +4444,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             orderFormRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
           }, 120);
         },
-        [applyProjectSelection, currentCustomer, projects, today],
+        [applyProjectSelection, currentCustomer, customers, projects, today],
       );
 
       const applyHistoryOrderToNewForm = useCallback(
@@ -4843,6 +4863,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           timeSlot,
           quantityM3,
           mixText,
+          mapAnnotations: repeatMapAnnotations,
+          overrideMapImageUrl: repeatOverrideMapImageUrl,
         }),
         [
           isGuestSiteOrder,
@@ -4881,6 +4903,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           timeSlot,
           quantityM3,
           mixText,
+          repeatMapAnnotations,
+          repeatOverrideMapImageUrl,
         ],
       );
 
@@ -4932,6 +4956,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setTradingAgentSearchText('');
         setLinkedContractorIds([]);
         setRepeatDraftBanner(false);
+        setRepeatMapAnnotations(null);
+        setRepeatOverrideMapImageUrl('');
         if (isAgentOrCooperative) {
           // agent/cooperativeは業者選択を保持する（発注ごとにリセットしない）
           // 必要ならコメントアウトを外す:

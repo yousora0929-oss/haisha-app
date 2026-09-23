@@ -223,9 +223,15 @@ const REPEAT_DRAFT_COPY_KEYS = new Set([
   'isSpot',
   'agent_organization_id',
   'agentOrganizationId',
+  'trading_agent_customer_id',
+  'tradingAgentCustomerId',
   'trading_company_name',
   'traderName',
   'projectTradingCompanyName',
+  'map_annotations',
+  'mapAnnotations',
+  'override_map_image_url',
+  'overrideMapImageUrl',
   'strength',
   'slump',
   'aggregate',
@@ -261,6 +267,14 @@ export function buildRepeatOrderDraft(pastOrder, _currentUser = null, options = 
     agentOrganizationIdRaw != null && String(agentOrganizationIdRaw).trim()
       ? String(agentOrganizationIdRaw).trim()
       : null;
+  // agent_organization_id と独立にコピー（片方から他方を推測・補完しない）
+  const tradingAgentCustomerIdRaw =
+    item.trading_agent_customer_id ?? item.tradingAgentCustomerId ?? null;
+  const tradingAgentCustomerId =
+    tradingAgentCustomerIdRaw != null && String(tradingAgentCustomerIdRaw).trim()
+      ? String(tradingAgentCustomerIdRaw).trim()
+      : '';
+  // agent_organization_id が null のときは trading_company_name を空のまま
   const tradingCompanyName = agentOrganizationId
     ? String(
         item.trading_company_name ?? item.traderName ?? item.projectTradingCompanyName ?? '',
@@ -275,6 +289,13 @@ export function buildRepeatOrderDraft(pastOrder, _currentUser = null, options = 
 
   const contractorCustomerId = String(
     item.contractor_customer_id ?? item.contractorCustomerId ?? '',
+  ).trim();
+
+  const mapAnnotationsRaw = item.map_annotations ?? item.mapAnnotations ?? null;
+  const mapAnnotations =
+    mapAnnotationsRaw && typeof mapAnnotationsRaw === 'object' ? mapAnnotationsRaw : null;
+  const overrideMapImageUrl = String(
+    item.override_map_image_url ?? item.overrideMapImageUrl ?? '',
   ).trim();
 
   const scannedKeys = new Set();
@@ -302,6 +323,7 @@ export function buildRepeatOrderDraft(pastOrder, _currentUser = null, options = 
     traderName: tradingCompanyName,
     tradingCompanyName,
     agentOrganizationId,
+    tradingAgentCustomerId,
     contractorName: defaults.contractorName || '',
     contractorCustomerId,
     siteName: defaults.siteName || '',
@@ -323,6 +345,8 @@ export function buildRepeatOrderDraft(pastOrder, _currentUser = null, options = 
       defaults.deliveryLng != null && defaults.deliveryLng !== ''
         ? String(defaults.deliveryLng)
         : '',
+    mapAnnotations,
+    overrideMapImageUrl,
     preferredDate: '',
     timeSlot: '',
     fromHistoryRepeat: true,
@@ -458,6 +482,8 @@ export function buildDispatchOrderForDate(preferredDate, context) {
     tradingAgentCustomerId,
     currentCustomerRole,
     isAgentOrCooperative,
+    mapAnnotations,
+    overrideMapImageUrl,
   } = context;
 
   const isSpot = orderKind === 'spot';
@@ -579,6 +605,10 @@ export function buildDispatchOrderForDate(preferredDate, context) {
       }) || null,
     trading_agent_customer_id:
       currentCustomerRole === 'cooperative' ? tradingAgentCustomerId || null : null,
+    ...(mapAnnotations && typeof mapAnnotations === 'object' ? { map_annotations: mapAnnotations } : {}),
+    ...(String(overrideMapImageUrl || '').trim()
+      ? { override_map_image_url: String(overrideMapImageUrl).trim() }
+      : {}),
   };
 }
 
