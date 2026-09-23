@@ -163,6 +163,173 @@ export function extractOrderFormDefaultsFromHistory(row) {
   };
 }
 
+/** 履歴再注文でフォームへコピーする order_data / 注文キー（これ以外は安全側でリセット） */
+const REPEAT_DRAFT_COPY_KEYS = new Set([
+  'siteName',
+  'site_name',
+  'projectName',
+  'project_name',
+  'siteAddress',
+  'site_address',
+  'delivery_area',
+  'deliveryArea',
+  'site_address_detail',
+  'siteAddressDetail',
+  'mixText',
+  'confirmedMixText',
+  'quantityM3',
+  'confirmedQuantityM3',
+  'vehicleType',
+  'vehicle',
+  'vehicleLabel',
+  'unloadDuration',
+  'unloadDurationMinutes',
+  'unloadingTime',
+  'unloadDurationLabel',
+  'orderedBy',
+  'siteContactName',
+  'site_contact_name',
+  'sitePhone',
+  'phone',
+  'preferred_factory_id',
+  'preferredFactoryId',
+  'main_factory_id',
+  'mainFactoryId',
+  'preferredFactoryName',
+  'preferred_factory_user_specified',
+  'preferredFactoryUserSpecified',
+  'has_test',
+  'hasTest',
+  'is_location_pending',
+  'isLocationPending',
+  'delivery_lat',
+  'delivery_lng',
+  'deliveryLat',
+  'deliveryLng',
+  'representative_lat',
+  'representative_lng',
+  'representativeLat',
+  'representativeLng',
+  'rough_lat',
+  'rough_lng',
+  'contractorName',
+  'customerName',
+  'customer_name',
+  'contractor_customer_id',
+  'contractorCustomerId',
+  'project_id',
+  'projectId',
+  'is_spot',
+  'isSpot',
+  'agent_organization_id',
+  'agentOrganizationId',
+  'trading_company_name',
+  'traderName',
+  'projectTradingCompanyName',
+  'strength',
+  'slump',
+  'aggregate',
+]);
+
+/** 日時系は空欄必須 */
+const REPEAT_DRAFT_EMPTY_DATE_KEYS = new Set([
+  'preferredDate',
+  'timeSlot',
+  'timeSlotMinutes',
+  'timeSlotLabel',
+  'timePointLabel',
+  'scheduleMatchDate',
+  'scheduleMatchMinutes',
+]);
+
+/**
+ * 過去注文 → 新規発注フォーム下書き（純関数）。
+ * orders.ordered_by（ログイン発注担当）は設定しない。order_data.orderedBy は現場担当者名としてコピー。
+ * @param {object} pastOrder 履歴行（source 付き可）または正規化済み注文
+ * @param {object|null} [_currentUser] 将来拡張用（draft では ordered_by を設定しない）
+ * @param {{ factories?: object[] }} [options]
+ */
+export function buildRepeatOrderDraft(pastOrder, _currentUser = null, options = {}) {
+  const factories = Array.isArray(options.factories) ? options.factories : [];
+  const row = pastOrder && typeof pastOrder === 'object' ? pastOrder : {};
+  const item = row.source && typeof row.source === 'object' ? row.source : row;
+  const defaults = extractOrderFormDefaultsFromHistory(row);
+
+  const agentOrganizationIdRaw =
+    item.agent_organization_id ?? item.agentOrganizationId ?? null;
+  const agentOrganizationId =
+    agentOrganizationIdRaw != null && String(agentOrganizationIdRaw).trim()
+      ? String(agentOrganizationIdRaw).trim()
+      : null;
+  const tradingCompanyName = agentOrganizationId
+    ? String(
+        item.trading_company_name ?? item.traderName ?? item.projectTradingCompanyName ?? '',
+      ).trim()
+    : '';
+
+  let preferredFactoryId = String(defaults.preferredFactoryId || '').trim();
+  if (preferredFactoryId) {
+    const selectable = factories.some((f) => f && String(f.id) === preferredFactoryId);
+    if (!selectable) preferredFactoryId = '';
+  }
+
+  const contractorCustomerId = String(
+    item.contractor_customer_id ?? item.contractorCustomerId ?? '',
+  ).trim();
+
+  const scannedKeys = new Set();
+  for (const key of Object.keys(item || {})) scannedKeys.add(key);
+  if (item.order_data && typeof item.order_data === 'object' && !Array.isArray(item.order_data)) {
+    for (const key of Object.keys(item.order_data)) scannedKeys.add(key);
+  }
+  const ignoredOrderDataKeys = [...scannedKeys]
+    .filter(
+      (k) =>
+        !REPEAT_DRAFT_COPY_KEYS.has(k) &&
+        !REPEAT_DRAFT_EMPTY_DATE_KEYS.has(k) &&
+        k !== 'id' &&
+        k !== 'source' &&
+        k !== 'order_data',
+    )
+    .sort();
+
+  return {
+    orderKind: defaults.isSpot ? 'spot' : 'project',
+    selectedProjectId: defaults.isSpot ? '' : defaults.projectId || '',
+    preferredFactoryId,
+    quantityM3: defaults.quantityM3 || '',
+    mixText: defaults.mixText || '',
+    traderName: tradingCompanyName,
+    tradingCompanyName,
+    agentOrganizationId,
+    contractorName: defaults.contractorName || '',
+    contractorCustomerId,
+    siteName: defaults.siteName || '',
+    deliveryArea: defaults.deliveryArea || '',
+    siteAddressDetail: defaults.siteAddressDetail || '',
+    siteAddress: defaults.siteAddress || '',
+    sitePhone: defaults.sitePhone || '',
+    // order_data.orderedBy = 現場担当者名（orders.ordered_by とは別）
+    siteContactName: defaults.siteContactName || defaults.orderedBy || '',
+    vehicleType: defaults.vehicleType || 'large',
+    unloadDuration: defaults.unloadDuration || '30',
+    hasTest: Boolean(defaults.hasTest),
+    isLocationPending: Boolean(defaults.isLocationPending),
+    deliveryLat:
+      defaults.deliveryLat != null && defaults.deliveryLat !== ''
+        ? String(defaults.deliveryLat)
+        : '',
+    deliveryLng:
+      defaults.deliveryLng != null && defaults.deliveryLng !== ''
+        ? String(defaults.deliveryLng)
+        : '',
+    preferredDate: '',
+    timeSlot: '',
+    fromHistoryRepeat: true,
+    ignoredOrderDataKeys,
+  };
+}
+
 function parseOptionalCoord(value) {
   if (value == null || value === '') return null;
   const n = Number(value);

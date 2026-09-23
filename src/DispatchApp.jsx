@@ -3,13 +3,8 @@ import {
   DISPATCH_DEFAULT_FACTORY_SITE_NAME,
   DISPATCH_DEFAULT_FACTORY_SITE_ID,
   TIME_SLOTS,
-  SCHEDULE_BLOCKS,
   pad2,
   todayLocalISODate,
-  normalizeDayBlockSchedule,
-  computeScheduleAutoRejectReason,
-  getScheduleBlockIdForMinutes,
-  getOrderVehicleScheduleKey,
 } from './haishaConstants.js';
 import * as db from './haishaDb.js';
 import {
@@ -28,6 +23,7 @@ import {
   writeAuthValue,
   removeAuthValue,
 } from './supabaseClient.js';
+import { CashPriceCalculator } from './components/CashPriceCalculator.jsx';
 import {
   clearAppBadge,
   registerOneSignalUser,
@@ -67,7 +63,7 @@ import { resolveEffectiveContractorCustomerId } from './utils/resolveEffectiveCo
 import {
   buildDispatchOrderForDate,
   validateCartLineForm,
-  extractOrderFormDefaultsFromHistory,
+  buildRepeatOrderDraft,
 } from './utils/dispatchBulkOrder.js';
 import { MixDesignRequestHistorySection } from './components/MixDesignRequestHistorySection.jsx';
 import {
@@ -206,9 +202,10 @@ const CUSTOMER_ORDER_TABS = [
   ['siteContacts', '現場担当者', '👤'],
 ];
 
-const SCHEDULE_IMPORT_TAB = ['scheduleImport', '取込', '📄'];
 const MIX_DESIGN_HISTORY_TAB = ['mixDesignHistory', '配合依頼', '📑'];
 const REPRESENTATIVE_TAB = ['representativeOverview', '担当者一覧', '🏢'];
+const REPEAT_ORDER_DRAFT_NOTICE =
+  '履歴から複製した内容です。打設日時を入力し、必要な項目を修正してください';
 
 /** 進行中タブの物件グループ折りたたみ（true = 折りたたみ）。物件ID単位で保持。 */
 const INPROGRESS_GROUP_COLLAPSED_STORAGE_PREFIX = 'haisha_dispatch_inprogress_group_collapsed_v1';
@@ -2141,21 +2138,18 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [customerOrderTab, setCustomerOrderTab] = useState('active');
       const [newOrderMode, setNewOrderMode] = useState('');
       const [sameFactoryRequired, setSameFactoryRequired] = useState(false);
+      const [showCashPriceModal, setShowCashPriceModal] = useState(false);
+      const [repeatDraftBanner, setRepeatDraftBanner] = useState(false);
 
       useEffect(() => {
-        const blocking = newOrderMode === 'form' || cartItems.length > 0;
+        const blocking = newOrderMode === 'form' || cartItems.length > 0 || showCashPriceModal;
         setAutoReloadBlocked(blocking);
         return () => setAutoReloadBlocked(false);
-      }, [newOrderMode, cartItems.length]);
+      }, [newOrderMode, cartItems.length, showCashPriceModal]);
       const [customerCalendarSelectedDate, setCustomerCalendarSelectedDate] = useState(today);
       const [customerCalendarMonth, setCustomerCalendarMonth] = useState(() => {
         const now = new Date();
         return new Date(now.getFullYear(), now.getMonth(), 1);
-      });
-      const [expandedHistoryOrderId, setExpandedHistoryOrderId] = useState('');
-      const [repeatPreferredDate, setRepeatPreferredDate] = useState(initialOrderDateTime.date);
-      const [repeatTimeSlot, setRepeatTimeSlot] = useState(() => {
-        return initialOrderDateTime.slot;
       });
       const [inProgressSearchQuery, setInProgressSearchQuery] = useState('');
       const [inProgressSortMode, setInProgressSortMode] = useState('deliveryDate');
@@ -2385,14 +2379,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
       const canImportSchedule = Boolean(currentCustomer?.can_import_schedule);
       const canRequestMixDesign = Boolean(currentCustomer?.can_request_mix_design);
+      const isCooperativeCustomer = currentCustomerRole === 'cooperative';
       const visibleCustomerOrderTabs = useMemo(() => {
         let tabs =
           isGuestSiteOrder || currentCustomerRole !== 'contractor'
             ? CUSTOMER_ORDER_TABS.filter(([id]) => id !== 'siteContacts')
             : CUSTOMER_ORDER_TABS;
-        if (canImportSchedule && !isGuestSiteOrder) {
-          tabs = [...tabs, SCHEDULE_IMPORT_TAB];
-        }
         if (canRequestMixDesign && !isGuestSiteOrder) {
           tabs = [...tabs, MIX_DESIGN_HISTORY_TAB];
         }
@@ -2403,7 +2395,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [
         isGuestSiteOrder,
         currentCustomerRole,
-        canImportSchedule,
         canRequestMixDesign,
         currentCustomer?.is_representative,
       ]);
@@ -3065,9 +3056,25 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setProjectSearchText(selectedProject?.name ? String(selectedProject.name) : '');
       }, [selectedProject, selectedProjectId]);
       const selectCustomerTab = useCallback((tabId) => {
+        // 旧「取込」タブ参照は新規発注 → スケジュール取込へ付け替え
+        if (tabId === 'scheduleImport' || tabId === 'import') {
+          setCustomerOrderTab('new');
+          setNewOrderMode(canImportSchedule && !isGuestSiteOrder ? 'scheduleImport' : '');
+          setRepeatDraftBanner(false);
+          return;
+        }
         setCustomerOrderTab(tabId);
-        if (tabId === 'new') setNewOrderMode(isGuestSiteOrder ? 'form' : '');
-      }, [isGuestSiteOrder]);
+        if (tabId === 'new') {
+          setNewOrderMode(isGuestSiteOrder ? 'form' : '');
+          setRepeatDraftBanner(false);
+        }
+      }, [canImportSchedule, isGuestSiteOrder]);
+
+      useEffect(() => {
+        if (customerOrderTab !== 'scheduleImport' && customerOrderTab !== 'import') return;
+        setCustomerOrderTab('new');
+        setNewOrderMode(canImportSchedule && !isGuestSiteOrder ? 'scheduleImport' : '');
+      }, [customerOrderTab, canImportSchedule, isGuestSiteOrder]);
 
       const prevOrdersRef = useRef(null);
       const prevChatThreadsRef = useRef(null);
@@ -4349,57 +4356,111 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         }
       }, []);
 
-      const applyHistoryOrderToNewForm = useCallback(
-        (row) => {
-          if (!row?.id) {
+      const applyOrderDraftToForm = useCallback(
+        (draft, { notice = '', emptyDates = true } = {}) => {
+          if (!draft || typeof draft !== 'object') {
             setSubmitError('再発注対象の注文が見つかりません。');
             return;
           }
-          const defaults = extractOrderFormDefaultsFromHistory(row);
-          const next = nextAvailableOrderDateTime(today);
-          setOrderKind(defaults.isSpot ? 'spot' : 'project');
-          setSelectedProjectId(defaults.projectId || '');
-          if (defaults.projectId) {
-            const proj = (projects || []).find((p) => p && String(p.id) === String(defaults.projectId));
+          setOrderKind(draft.orderKind === 'project' ? 'project' : 'spot');
+          setSelectedProjectId(draft.selectedProjectId || '');
+          if (draft.selectedProjectId) {
+            const proj = (projects || []).find(
+              (p) => p && String(p.id) === String(draft.selectedProjectId),
+            );
             if (proj) applyProjectSelection(proj);
-            else setPreferredFactoryId(defaults.preferredFactoryId || '');
+            else setPreferredFactoryId(draft.preferredFactoryId || '');
           } else {
             setPreferredFactoryId('');
           }
-          setQuantityM3(defaults.quantityM3 || '');
-          setMixText(defaults.mixText || '');
-          setTraderName(defaults.traderName || '');
-          setContractorName(defaults.contractorName || '');
-          setSiteName(defaults.siteName || '');
-          setDeliveryArea(defaults.deliveryArea || '');
-          setSiteAddressDetail(defaults.siteAddressDetail || '');
-          setSitePhone(defaults.sitePhone || currentCustomer?.phone_number || '');
-          setSiteContactName(defaults.siteContactName || defaults.orderedBy || '');
-          setVehicleType(defaults.vehicleType || 'large');
-          setUnloadDuration(defaults.unloadDuration || '30');
-          setHasTest(defaults.hasTest);
-          setIsLocationPending(defaults.isLocationPending);
-          setDeliveryLat(defaults.deliveryLat != null ? String(defaults.deliveryLat) : '');
-          setDeliveryLng(defaults.deliveryLng != null ? String(defaults.deliveryLng) : '');
-          setPreferredDate(next.date);
-          setTimeSlot(next.slot);
-          if (!defaults.preferredFactoryId && defaults.projectId) {
-            const proj = (projects || []).find((p) => p && String(p.id) === String(defaults.projectId));
+          setQuantityM3(draft.quantityM3 || '');
+          setMixText(draft.mixText || '');
+          setTraderName(draft.traderName || '');
+          setContractorName(draft.contractorName || '');
+          setContractorCustomerId(draft.contractorCustomerId || '');
+          setContractorSearchText(draft.contractorName || '');
+          setTradingAgentCustomerId('');
+          setTradingAgentSearchText('');
+          setSiteName(draft.siteName || '');
+          setDeliveryArea(draft.deliveryArea || '');
+          setSiteAddressDetail(draft.siteAddressDetail || '');
+          setSitePhone(draft.sitePhone || currentCustomer?.phone_number || '');
+          setSiteContactName(draft.siteContactName || '');
+          setVehicleType(draft.vehicleType || 'large');
+          setUnloadDuration(draft.unloadDuration || '30');
+          setHasTest(Boolean(draft.hasTest));
+          setIsLocationPending(Boolean(draft.isLocationPending));
+          setDeliveryLat(draft.deliveryLat != null ? String(draft.deliveryLat) : '');
+          setDeliveryLng(draft.deliveryLng != null ? String(draft.deliveryLng) : '');
+          if (emptyDates) {
+            setPreferredDate('');
+            setTimeSlot('');
+          } else {
+            const next = nextAvailableOrderDateTime(today);
+            setPreferredDate(next.date);
+            setTimeSlot(next.slot);
+          }
+          if (draft.preferredFactoryId) {
+            setPreferredFactoryId(draft.preferredFactoryId);
+          } else if (!draft.preferredFactoryId && draft.selectedProjectId) {
+            const proj = (projects || []).find(
+              (p) => p && String(p.id) === String(draft.selectedProjectId),
+            );
             const mainId = resolveProjectMainFactoryId(proj);
-            if (mainId) setPreferredFactoryId(mainId);
-          } else if (defaults.preferredFactoryId) {
-            setPreferredFactoryId(defaults.preferredFactoryId);
+            // 履歴下書きで工場を空にした意図を優先（選択不可だった場合）
+            if (!emptyDates && mainId) setPreferredFactoryId(mainId);
+            else setPreferredFactoryId('');
+          } else {
+            setPreferredFactoryId('');
           }
           setSubmitError('');
-          setSubmitNotice('履歴の内容を新規発注フォームに反映しました。数量・配合を変更して発注できます。');
+          const message = notice || (draft.fromHistoryRepeat ? REPEAT_ORDER_DRAFT_NOTICE : '');
+          setSubmitNotice(message || null);
+          setRepeatDraftBanner(Boolean(draft.fromHistoryRepeat) || Boolean(emptyDates && notice));
           setCustomerOrderTab('new');
           setNewOrderMode('form');
-          window.setTimeout(() => setSubmitNotice(null), 4000);
+          if (message) window.setTimeout(() => setSubmitNotice(null), 5000);
           window.setTimeout(() => {
             orderFormRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
           }, 120);
         },
-        [applyProjectSelection, currentCustomer, orderPlacerName, projects, today],
+        [applyProjectSelection, currentCustomer, projects, today],
+      );
+
+      const applyHistoryOrderToNewForm = useCallback(
+        (row, options = {}) => {
+          if (!row?.id && !row?.source?.id) {
+            setSubmitError('再発注対象の注文が見つかりません。');
+            return;
+          }
+          const draft = buildRepeatOrderDraft(row, currentCustomer, { factories });
+          applyOrderDraftToForm(draft, {
+            emptyDates: options.emptyDates === true,
+            notice:
+              options.notice != null
+                ? options.notice
+                : '履歴の内容を新規発注フォームに反映しました。数量・配合を変更して発注できます。',
+          });
+          if (options.emptyDates !== true) {
+            setRepeatDraftBanner(false);
+          }
+        },
+        [applyOrderDraftToForm, currentCustomer, factories],
+      );
+
+      const openRepeatOrderDraft = useCallback(
+        (row) => {
+          if (!row?.id && !row?.source?.id) {
+            setSubmitError('再発注対象の注文が見つかりません。');
+            return;
+          }
+          const draft = buildRepeatOrderDraft(row, currentCustomer, { factories });
+          applyOrderDraftToForm(draft, {
+            emptyDates: true,
+            notice: REPEAT_ORDER_DRAFT_NOTICE,
+          });
+        },
+        [applyOrderDraftToForm, currentCustomer, factories],
       );
 
       const pendingChangeProposalOrderIds = useMemo(() => {
@@ -4726,172 +4787,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         [choiceSubmitting, handlePreferredFactoryChoice],
       );
 
-      const confirmRepeatOrder = useCallback(
-        async (row) => {
-          const item = row?.source || row || {};
-          if (!row?.id) {
-            setSubmitError('再発注対象の注文が見つかりません。');
-            window.alert('再発注対象の注文が見つかりません。');
-            return;
-          }
-          if (isPastPreferredDateTime(repeatPreferredDate, repeatTimeSlot)) {
-            const message = '現在より過去の日時は指定できません。正しい希望日時を入力してください。';
-            setSubmitError(message);
-            window.alert(message);
-            return;
-          }
-          const defaults = extractOrderFormDefaultsFromHistory(row);
-          if (!defaults.quantityM3) {
-            const message = '数量（m³）が履歴から取得できません。フォームから再発注してください。';
-            setSubmitError(message);
-            window.alert(message);
-            return;
-          }
-          if (!defaults.isSpot && !defaults.projectId) {
-            const message = '物件情報が履歴から取得できません。フォームから再発注してください。';
-            setSubmitError(message);
-            window.alert(message);
-            return;
-          }
-          const slotMeta = TIME_SLOTS.find((s) => s.value === repeatTimeSlot);
-          const slotLabel = slotMeta?.label ?? '';
-          const timeMinutes = parseInt(repeatTimeSlot, 10);
-          const prefFid = defaults.preferredFactoryId;
-          if (!defaults.isSpot && !prefFid) {
-            const message =
-              '工場情報が不足しています。物件をサジェストから選び直すか、第一希望工場を指定してください。';
-            setSubmitError(message);
-            window.alert(message);
-            return;
-          }
-          const repeatOrder = {
-            ...item,
-            id: undefined,
-            createdAt: new Date().toISOString(),
-            status: 'pending',
-            factoryResponseStatus: undefined,
-            factoryResponseLocked: false,
-            factoryUnlockRequested: false,
-            factoryPendingStartedAt: undefined,
-            factoryPendingByName: undefined,
-            acceptedFactoryLabel: undefined,
-            factorySiteName: '',
-            factorySiteId: null,
-            factory_site_id: null,
-            rejected_factory_ids: [],
-            customer_id: currentCustomerId || item.customer_id || row.customer_id || null,
-            customerName: currentCustomer?.company_name || currentCustomer?.name || item.customerName || item.customer_name || '',
-            phone_number: currentCustomer?.phone_number || item.phone_number || item.customerPhone || '',
-            customerPhone: currentCustomer?.phone_number || item.customerPhone || item.phone_number || '',
-            is_spot: defaults.isSpot,
-            project_id: !defaults.isSpot ? defaults.projectId || null : null,
-            projectName: item.projectName || item.project_name || row.site || '',
-            preferred_factory_id: prefFid || null,
-            preferredFactoryId: prefFid || null,
-            preferredDate: repeatPreferredDate,
-            timeSlot: repeatTimeSlot,
-            timeSlotMinutes: Number.isFinite(timeMinutes) ? timeMinutes : null,
-            timeSlotLabel: slotLabel,
-            timePointLabel: slotLabel,
-            scheduleMatchDate: repeatPreferredDate,
-            scheduleMatchMinutes: Number.isFinite(timeMinutes) ? timeMinutes : null,
-            vehicleType: defaults.vehicleType,
-            vehicleLabel: defaults.vehicleType === 'small' ? '小型' : '大型',
-            quantityM3: defaults.quantityM3,
-            confirmedQuantityM3: undefined,
-            unloadDuration: defaults.unloadDuration,
-            unloadDurationMinutes: defaults.unloadDuration,
-            mixText: defaults.mixText,
-            confirmedMixText: undefined,
-            traderName: defaults.traderName,
-            trading_company_name: defaults.traderName,
-            projectTradingCompanyName: defaults.traderName,
-            contractorName: defaults.contractorName,
-            siteName: defaults.siteName,
-            siteAddress: defaults.siteAddress || item.siteAddress || row.siteAddress || '',
-            sitePhone: defaults.sitePhone || currentCustomer?.phone_number || '',
-            ordered_by: orderPlacerName || defaults.orderPlacerName || '',
-            orderedBy: defaults.siteContactName || defaults.orderedBy || '',
-            order_placer_name: orderPlacerName || defaults.orderPlacerName || '',
-            orderPlacerName: orderPlacerName || defaults.orderPlacerName || '',
-            site_contact_name: defaults.siteContactName || defaults.orderedBy || '',
-            siteContactName: defaults.siteContactName || defaults.orderedBy || '',
-            has_test: defaults.hasTest,
-            delivery_lat: defaults.isSpot ? item.delivery_lat ?? item.deliveryLat ?? null : null,
-            delivery_lng: defaults.isSpot ? item.delivery_lng ?? item.deliveryLng ?? null : null,
-          };
-          setIsSubmittingOrder(true);
-          setSubmitError('');
-          try {
-            // 第一希望工場がある場合、選択日時がその工場の満車枠でないか事前チェックする。
-            // 満車のまま作成するとサーバー側自動拒否で行き止まりになるため、ここで止める。
-            if (prefFid) {
-              try {
-                const { data: scheduleRow, error: scheduleErr } = await supabase
-                  .from('schedules')
-                  .select('blocks')
-                  .eq('factory_site_id', prefFid)
-                  .eq('date', repeatPreferredDate)
-                  .maybeSingle();
-                if (scheduleErr) throw scheduleErr;
-                // 行が無い＝未設定＝全枠 available。存在する場合のみ満車判定する。
-                if (scheduleRow) {
-                  const dayBlocks = normalizeDayBlockSchedule(scheduleRow.blocks);
-                  const rejectReason = computeScheduleAutoRejectReason(repeatOrder, dayBlocks);
-                  if (rejectReason) {
-                    const factoryName =
-                      (Array.isArray(factories) ? factories : []).find(
-                        (f) => String(f?.id) === String(prefFid),
-                      )?.name || '選択した工場';
-                    const bid = getScheduleBlockIdForMinutes(
-                      Number.isFinite(timeMinutes) ? timeMinutes : NaN,
-                    );
-                    const windowLabel =
-                      SCHEDULE_BLOCKS.find((b) => b.id === bid)?.label || slotLabel || '選択した時間帯';
-                    const vj = getOrderVehicleScheduleKey(repeatOrder) === 'small' ? '小型' : '大型';
-                    const message = `選択した工場（${factoryName}）はこの日時（${windowLabel}・${vj}）は満車です。日時を変更するか、フォームから別の工場を選んで発注してください。`;
-                    setSubmitError(message);
-                    window.alert(message);
-                    return;
-                  }
-                }
-              } catch (scheduleCheckErr) {
-                // 取得失敗時は誤って正常発注を止めない（サーバー側自動拒否が保険になる）
-                console.warn(
-                  '[confirmRepeatOrder] schedule pre-check failed; allowing submit',
-                  scheduleCheckErr,
-                );
-              }
-            }
-
-            await db.insertOrdersBulk([repeatOrder], { factories, projects });
-            await refreshDashboard();
-            setCustomerOrderTab('active');
-            setExpandedHistoryOrderId('');
-            const siteLabel = row.site || defaults.siteName || '現場';
-            const message = `「${siteLabel}」の再発注を確定しました。`;
-            setSubmitNotice(message);
-            window.alert(message);
-            window.setTimeout(() => setSubmitNotice(null), 5000);
-          } catch (err) {
-            console.error('再発注の確定に失敗', err);
-            const message = formatSupabaseError(err, '再発注の確定に失敗しました');
-            setSubmitError(message);
-            window.alert(message);
-          } finally {
-            setIsSubmittingOrder(false);
-          }
-        },
-        [
-          currentCustomer,
-          currentCustomerId,
-          factories,
-          orderPlacerName,
-          repeatPreferredDate,
-          repeatTimeSlot,
-          refreshDashboard,
-        ],
-      );
+      // confirmRepeatOrder（日時だけ変えて即登録）は廃止。openRepeatOrderDraft を使用。
 
       const resolvedTradingAgentCustomerId = useMemo(() => {
         if (currentCustomerRole !== 'cooperative') return null;
@@ -5035,6 +4931,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setTradingAgentCustomerId('');
         setTradingAgentSearchText('');
         setLinkedContractorIds([]);
+        setRepeatDraftBanner(false);
         if (isAgentOrCooperative) {
           // agent/cooperativeは業者選択を保持する（発注ごとにリセットしない）
           // 必要ならコメントアウトを外す:
@@ -5239,7 +5136,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             setCartItems([]);
             setSameFactoryRequired(false);
             resetOrderForm();
-            setExpandedHistoryOrderId('');
             setCustomerOrderTab('active');
             const message = `${count}件を同一工場必須の予約グループとして受け付けました。進行中タブで工場の回答状況を確認できます。`;
             setSubmitNotice(message);
@@ -5259,7 +5155,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             openMapEditorsForInserted(insertedOrders, '');
             await refreshDashboard();
             setCustomerOrderTab(count > 1 ? 'calendar' : 'active');
-            setExpandedHistoryOrderId('');
           }
           setCartItems([]);
           setSameFactoryRequired(false);
@@ -5637,6 +5532,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       title: '🏢 登録物件から発注',
                       body: '管理画面で登録済みの物件から、住所・工場情報を使って発注します。',
                       onClick: () => {
+                        setRepeatDraftBanner(false);
                         setOrderKind('project');
                         setDeliveryLat('');
                         setDeliveryLng('');
@@ -5650,6 +5546,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       title: '📍 新規スポット注文',
                       body: '地図で納入場所を指定して、単発のスポット注文を作成します。',
                       onClick: () => {
+                        setRepeatDraftBanner(false);
                         setOrderKind('spot');
                         setSelectedProjectId('');
                         setPreferredFactoryId('');
@@ -5665,12 +5562,34 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     },
                     {
                       title: '🕒 履歴から選んで注文',
-                      body: '過去の注文を開き、日付と時間だけ変更して再発注します。',
+                      body: '過去の注文を開き、内容を確認・修正してから発注します。',
                       onClick: () => {
                         setCustomerOrderTab('history');
                         setNewOrderMode('');
+                        setRepeatDraftBanner(false);
                       },
                     },
+                    ...(canImportSchedule
+                      ? [
+                          {
+                            title: '📄 スケジュール取込',
+                            body: 'Excel等のスケジュール資料を取り込み、発注下書きとして登録します。',
+                            onClick: () => {
+                              setRepeatDraftBanner(false);
+                              setNewOrderMode('scheduleImport');
+                            },
+                          },
+                        ]
+                      : []),
+                    ...(isCooperativeCustomer
+                      ? [
+                          {
+                            title: '💴 窓口計算',
+                            body: '配合・数量・地区から窓口現金売りの概算金額を表示します（表示のみ）。',
+                            onClick: () => setShowCashPriceModal(true),
+                          },
+                        ]
+                      : []),
                   ].map((card) => (
                     <button
                       key={card.title}
@@ -5685,6 +5604,29 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </div>
               </section>
               ) : null}
+{customerOrderTab === 'new' && newOrderMode === 'scheduleImport' && canImportSchedule ? (
+              <section className="w-full rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6">
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-wider text-indigo-700">新規発注</p>
+                    <h2 className="mt-1 text-xl font-black text-slate-900">スケジュール取込</h2>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setNewOrderMode('')}
+                    className="rounded-xl border-2 border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                  >
+                    発注スタイル選択へ戻る
+                  </button>
+                </div>
+                <AdminScheduleImportSection
+                  factories={factories}
+                  mode="customer"
+                  uploadedBy={currentCustomerId}
+                  lockedOrderPlacerName={String(currentCustomer?.manager_name || '').trim()}
+                />
+              </section>
+            ) : null}
 {customerOrderTab === 'new' && newOrderMode === 'form' ? (
               <div ref={orderFormRef} className="mx-auto w-full max-w-4xl min-w-0 overflow-x-hidden overflow-y-visible rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6 lg:max-w-4xl lg:p-8">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -5695,11 +5637,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </p>
                   </div>
                   {!isGuestSiteOrder ? (
-                    <button type="button" onClick={() => setNewOrderMode('')} className="rounded-xl border-2 border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+                    <button type="button" onClick={() => { setNewOrderMode(''); setRepeatDraftBanner(false); }} className="rounded-xl border-2 border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
                       発注スタイル選択へ戻る
                     </button>
                   ) : null}
                 </div>
+                {repeatDraftBanner ? (
+                  <div className="mt-4 rounded-xl border-2 border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900" role="status">
+                    {REPEAT_ORDER_DRAFT_NOTICE}
+                  </div>
+                ) : null}
                 <form
                   className="mt-6 flex min-w-0 flex-col gap-6 overflow-x-hidden overflow-y-visible"
                   onSubmit={(e) => e.preventDefault()}
@@ -6911,19 +6858,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           <div className="flex shrink-0 flex-col gap-2">
                             <button
                               type="button"
-                              onClick={() => applyHistoryOrderToNewForm(row)}
+                              onClick={() => openRepeatOrderDraft(row)}
                               className="rounded-xl border-2 border-indigo-600 bg-indigo-600 px-3 py-2 text-xs font-black text-white shadow-sm transition hover:bg-indigo-700 active:scale-[0.99]"
                             >
-                              この内容で再発注
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setExpandedHistoryOrderId((cur) => (cur === row.id ? '' : row.id || ''))
-                              }
-                              className="rounded-xl border-2 border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 shadow-sm transition hover:bg-slate-50 active:scale-[0.99]"
-                            >
-                              {expandedHistoryOrderId === row.id ? '日時指定を閉じる' : '日時だけ変えて再発注'}
+                              この内容で注文
                             </button>
                           </div>
                         </div>
@@ -6956,61 +6894,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           </span>
                         </div>
 
-                        <div
-                          className="grid transition-[grid-template-rows] duration-300 ease-out"
-                          style={{ gridTemplateRows: expandedHistoryOrderId === row.id ? '1fr' : '0fr' }}
-                        >
-                          <div className="min-h-0 overflow-hidden">
-                            <div className="mt-4 border-t border-slate-200 bg-white p-4">
-                              <p className="text-sm font-black text-slate-900">再発注の希望日時</p>
-                              <div className="mt-3 grid gap-3">
-                                <label className="text-xs font-black text-slate-600">
-                                  希望日
-                                  <input
-                                    type="date"
-                                    min={today}
-                                    value={repeatPreferredDate}
-                                    onChange={(e) => {
-                                      const nextDate = e.target.value;
-                                      const nextSlot = firstAvailableTimeSlotForDate(nextDate);
-                                      if (nextSlot) {
-                                        setRepeatPreferredDate(nextDate);
-                                        if (isPastPreferredDateTime(nextDate, repeatTimeSlot)) setRepeatTimeSlot(nextSlot.value);
-                                      } else {
-                                        const next = nextAvailableOrderDateTime(nextDate);
-                                        setRepeatPreferredDate(next.date);
-                                        setRepeatTimeSlot(next.slot);
-                                      }
-                                    }}
-                                    className="mt-1 block min-h-[48px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 text-base font-bold text-slate-900"
-                                  />
-                                </label>
-                                <label className="text-xs font-black text-slate-600">
-                                  希望時刻
-                                  <select
-                                    value={repeatTimeSlot}
-                                    onChange={(e) => setRepeatTimeSlot(e.target.value)}
-                                    className="mt-1 min-h-[48px] w-full rounded-xl border-2 border-slate-200 bg-white px-3 text-base font-bold text-slate-900"
-                                  >
-                                    {TIME_SLOTS.map((s) => (
-                                      <option key={s.value} value={s.value} disabled={isPastPreferredDateTime(repeatPreferredDate, s.value)}>
-                                        {s.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </label>
-                                <button
-                                  type="button"
-                                  onClick={() => void confirmRepeatOrder(row)}
-                                  disabled={isSubmittingOrder}
-                                  className="min-h-[52px] rounded-xl border-2 border-orange-500 bg-orange-500 px-4 text-base font-black text-white shadow-sm transition hover:bg-orange-600 active:scale-[0.99] disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300"
-                                >
-                                  {isSubmittingOrder ? '登録中…' : 'この日時で確定'}
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
                       </article>
                     </li>
                   ))}
@@ -7117,14 +7000,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 )}
               </section>
             ) : null}
-            {customerOrderTab === 'scheduleImport' && canImportSchedule ? (
-              <AdminScheduleImportSection
-                factories={factories}
-                mode="customer"
-                uploadedBy={currentCustomerId}
-                lockedOrderPlacerName={String(currentCustomer?.manager_name || '').trim()}
-              />
-            ) : null}
             {customerOrderTab === 'mixDesignHistory' && canRequestMixDesign ? (
               <MixDesignRequestHistorySection
                 factories={factories}
@@ -7142,6 +7017,19 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </PullToRefresh>
             </main>
 
+            {showCashPriceModal ? (
+              <div
+                className="fixed inset-0 z-[96] flex items-center justify-center bg-slate-900/50 p-3 sm:p-6"
+                role="dialog"
+                aria-modal="true"
+                aria-label="窓口現金 概算計算"
+                onClick={() => setShowCashPriceModal(false)}
+              >
+                <div className="w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
+                  <CashPriceCalculator supabase={supabase} onClose={() => setShowCashPriceModal(false)} />
+                </div>
+              </div>
+            ) : null}
             <OrderFullEditModal
               order={customerEditOrder}
               open={Boolean(customerEditOrder)}
