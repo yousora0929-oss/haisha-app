@@ -2840,29 +2840,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const isRelevantDashboardOrder = useCallback(
         (order) => {
           if (isGuestSiteOrder && guestSiteOrderCtx) return isOrderForGuestSite(order, guestSiteOrderCtx);
-          if (isOrderForCurrentCustomer(order)) return true;
-          // 商社: 担当物件（trading_contact_customer_id = 自分）の注文もダッシュボード対象
-          if (currentCustomerRole === 'agent') {
-            const me = String(currentCustomerId || '').trim();
-            const pid = String(order?.project_id || '').trim();
-            if (!me || !pid) return false;
-            const project =
-              (projects || []).find((p) => String(p?.id || '').trim() === pid) ||
-              order?.linkedProject ||
-              null;
-            return Boolean(
-              project && String(project.trading_contact_customer_id || '').trim() === me,
-            );
-          }
-          return false;
+          // 商社: RLS が「自分の発注＋担当物件の注文」に絞るので、フロントでは落とさない
+          if (currentCustomerRole === 'agent') return true;
+          return isOrderForCurrentCustomer(order);
         },
         [
           isGuestSiteOrder,
           guestSiteOrderCtx,
           isOrderForCurrentCustomer,
           currentCustomerRole,
-          currentCustomerId,
-          projects,
         ],
       );
       const projectContractorLabels = useMemo(() => {
@@ -3200,10 +3186,18 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   : newThreads;
             }
             newOrders = newOrders.filter((o) => o && o.status !== 'deleted');
-            let displayOrders =
-              isGuestSiteOrder || String(currentCustomerId || '').trim()
-                ? newOrders.filter((o) => o && isRelevantDashboardOrder(o))
-                : newOrders;
+            // session 復帰直後は customers 未取得で role が仮の 'contractor' になる。
+            // 本人が解決するまで表示フィルタはかけず、RLS 結果をそのまま使う（role 確定後に再取得）。
+            const customerResolved = Boolean(
+              currentCustomer?.id &&
+                String(currentCustomer.id).trim() === String(currentCustomerId || '').trim(),
+            );
+            const shouldApplyDisplayFilter =
+              isGuestSiteOrder ||
+              (String(currentCustomerId || '').trim() && customerResolved);
+            let displayOrders = shouldApplyDisplayFilter
+              ? newOrders.filter((o) => o && isRelevantDashboardOrder(o))
+              : newOrders;
 
             const prevOrders = prevOrdersRef.current;
             if (prevOrders) {
@@ -3347,7 +3341,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             window.alert(formatSupabaseError(loadErr, '注文一覧の更新に失敗しました'));
           }
         },
-        [factories, preferredFactoryId, currentCustomerId, isGuestSiteOrder, isRelevantDashboardOrder, showDashboardNotice, registerBlinkFactoryOrderIds],
+        [factories, preferredFactoryId, currentCustomerId, currentCustomer, isGuestSiteOrder, isRelevantDashboardOrder, showDashboardNotice, registerBlinkFactoryOrderIds],
       );
 
       useEffect(() => {
@@ -3361,6 +3355,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         if (typeof refreshDashboardRef.current !== 'function') return;
         void refreshDashboardRef.current({ skipChatSound: true });
       }, [companyScopeActive]);
+
+      // role が仮値から確定（または切替）したら、正しい isRelevantDashboardOrder で一覧を取り直す
+      useEffect(() => {
+        if (isGuestSiteOrder) return;
+        if (!isLoggedIn || !String(currentCustomerId || '').trim()) return;
+        if (!currentCustomer?.id) return;
+        if (typeof refreshDashboardRef.current !== 'function') return;
+        void refreshDashboardRef.current({ skipChatSound: true });
+      }, [currentCustomerRole, currentCustomer?.id, currentCustomerId, isLoggedIn, isGuestSiteOrder]);
 
       useEffect(() => {
         if (isGuestSiteOrder) return undefined;
