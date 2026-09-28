@@ -205,6 +205,7 @@ const CUSTOMER_ORDER_TABS = [
 
 const MIX_DESIGN_HISTORY_TAB = ['mixDesignHistory', '配合依頼', '📑'];
 const REPRESENTATIVE_TAB = ['representativeOverview', '担当者一覧', '🏢'];
+const ASSIGNED_PROJECTS_TAB = ['assignedProjects', '担当物件', '🏗'];
 const REPEAT_ORDER_DRAFT_NOTICE =
   '履歴から複製した内容です。打設日時を入力し、必要な項目を修正してください';
 
@@ -1422,6 +1423,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       onRequestChange = null,
       readOnly = false,
       accountLabel = '',
+      placerLabel = '',
       customerById = {},
       highlighted = false,
       blinkFactoryName = false,
@@ -1440,7 +1442,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
       const timeSummary = `${formatOrderDate(order)} · ${order.timePointLabel || order.timeSlotLabel || '—'}`;
       const isCustomerCancelled = order.status === 'customer_cancelled';
-      // readOnly は「会社全体を表示」で見えている同僚の注文。閲覧のみ許可し操作系は出さない。
+      // readOnly は「会社全体を表示」の同僚注文、または商社が担当物件で見る他者発注。操作系は出さない。
       const showPreferredChoice = !readOnly && needsPreferredCustomerChoice(order);
       const showFullRejectChoice =
         !readOnly && isFullCompanyRejectionForCustomer(order, escalationCtx || {});
@@ -1539,6 +1541,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   {accountLabel ? (
                     <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-black text-slate-600 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-300">
                       {accountLabel}
+                    </span>
+                  ) : null}
+                  {readOnly ? (
+                    <span className="inline-flex rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-black text-amber-900">
+                      閲覧のみ
+                    </span>
+                  ) : null}
+                  {placerLabel ? (
+                    <span className="inline-flex rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-bold text-slate-600 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-300">
+                      発注者：{placerLabel}
                     </span>
                   ) : null}
                 </div>
@@ -2367,6 +2379,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           isGuestSiteOrder || currentCustomerRole !== 'contractor'
             ? CUSTOMER_ORDER_TABS.filter(([id]) => id !== 'siteContacts')
             : CUSTOMER_ORDER_TABS;
+        if (currentCustomerRole === 'agent' && !isGuestSiteOrder) {
+          // 進行中の次に「担当物件」を差し込む
+          const next = [];
+          for (const tab of tabs) {
+            next.push(tab);
+            if (tab[0] === 'active') next.push(ASSIGNED_PROJECTS_TAB);
+          }
+          tabs = next;
+        }
         if (canRequestMixDesign && !isGuestSiteOrder) {
           tabs = [...tabs, MIX_DESIGN_HISTORY_TAB];
         }
@@ -2819,9 +2840,30 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const isRelevantDashboardOrder = useCallback(
         (order) => {
           if (isGuestSiteOrder && guestSiteOrderCtx) return isOrderForGuestSite(order, guestSiteOrderCtx);
-          return isOrderForCurrentCustomer(order);
+          if (isOrderForCurrentCustomer(order)) return true;
+          // 商社: 担当物件（trading_contact_customer_id = 自分）の注文もダッシュボード対象
+          if (currentCustomerRole === 'agent') {
+            const me = String(currentCustomerId || '').trim();
+            const pid = String(order?.project_id || '').trim();
+            if (!me || !pid) return false;
+            const project =
+              (projects || []).find((p) => String(p?.id || '').trim() === pid) ||
+              order?.linkedProject ||
+              null;
+            return Boolean(
+              project && String(project.trading_contact_customer_id || '').trim() === me,
+            );
+          }
+          return false;
         },
-        [isGuestSiteOrder, guestSiteOrderCtx, isOrderForCurrentCustomer],
+        [
+          isGuestSiteOrder,
+          guestSiteOrderCtx,
+          isOrderForCurrentCustomer,
+          currentCustomerRole,
+          currentCustomerId,
+          projects,
+        ],
       );
       const projectContractorLabels = useMemo(() => {
         if (!selectedProject || isGuestSiteOrder) {
@@ -3727,19 +3769,71 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         [factories],
       );
 
+      /** 商社が担当物件として見る、自分以外が発注した注文（閲覧のみ） */
+      const isAgentForeignViewOrder = useCallback(
+        (order) => {
+          if (currentCustomerRole !== 'agent') return false;
+          const me = String(currentCustomerId || '').trim();
+          const ownerId = String(order?.customer_id ?? order?.customerId ?? '').trim();
+          return Boolean(me && ownerId && ownerId !== me);
+        },
+        [currentCustomerRole, currentCustomerId],
+      );
+
+      /** 発注者表示: orders.ordered_by（ログイン担当者名）。無ければ発注顧客の会社名 */
+      const resolveOrderPlacerDisplayName = useCallback(
+        (order) => {
+          const placer = String(order?.ordered_by || '').trim();
+          if (placer) return placer;
+          const ownerId = String(order?.customer_id ?? order?.customerId ?? '').trim();
+          const cust = ownerId ? customerById[ownerId] : null;
+          return String(cust?.company_name || cust?.name || '').trim();
+        },
+        [customerById],
+      );
+
+      const assignedContactProjects = useMemo(() => {
+        if (currentCustomerRole !== 'agent') return [];
+        const me = String(currentCustomerId || '').trim();
+        if (!me) return [];
+        return (projects || [])
+          .filter((p) => String(p?.trading_contact_customer_id || '').trim() === me)
+          .slice()
+          .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), 'ja'));
+      }, [currentCustomerRole, currentCustomerId, projects]);
+
+      const assignedProjectOrderGroups = useMemo(() => {
+        const groups = assignedContactProjects.map((project) => ({
+          project,
+          orders: [],
+        }));
+        const byId = new Map(groups.map((g) => [String(g.project.id), g]));
+        for (const order of dashboardOrders || []) {
+          const pid = String(order?.project_id || '').trim();
+          const group = pid ? byId.get(pid) : null;
+          if (group) group.orders.push(order);
+        }
+        for (const group of groups) {
+          group.orders.sort(compareInProgressOrdersByDeliveryDate);
+        }
+        return groups;
+      }, [assignedContactProjects, dashboardOrders]);
+
       const handleOpenCustomerOrderEdit = useCallback((order) => {
         if (!isPreAcceptOrderEditable(order)) return;
+        if (isAgentForeignViewOrder(order)) return;
         setCustomerReRequestContext(null);
         setCustomerEditMode('edit');
         setCustomerEditOrder(order);
-      }, []);
+      }, [isAgentForeignViewOrder]);
 
       const handleOpenCustomerChangeRequest = useCallback((order) => {
         if (!isAcceptedOrderChangeRequestable(order)) return;
+        if (isAgentForeignViewOrder(order)) return;
         setCustomerReRequestContext(null);
         setCustomerEditMode('request');
         setCustomerEditOrder(order);
-      }, []);
+      }, [isAgentForeignViewOrder]);
 
       const handleOpenCustomerChangeRequestReRequest = useCallback((order) => {
         if (!order?.id || !isAwaitingCustomerChangeDecision(order)) return;
@@ -6694,10 +6788,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                 />
                               ));
                             const renderCard = (ord) => {
-                              // 会社全体表示で見えている同僚の注文は閲覧のみ（操作ボタンを出さない）
+                              // 会社全体表示の同僚注文、または商社が担当物件で見る他者発注は閲覧のみ
                               const ownerId = String(ord?.customer_id ?? ord?.customerId ?? '').trim();
                               const isColleagueOrder =
                                 companyScopeActive && companyColleagueIdSet.has(ownerId);
+                              const isForeignAgentOrder = isAgentForeignViewOrder(ord);
+                              const isViewOnly = isColleagueOrder || isForeignAgentOrder;
+                              const placerLabel = isForeignAgentOrder
+                                ? resolveOrderPlacerDisplayName(ord)
+                                : '';
                               return (
                               <InProgressOrderCard
                                 key={ord.id}
@@ -6708,8 +6807,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                   unreadChatsByOrder[ord.id] ||
                                     isUnreadForDispatch(chatThreads[ord.id], readChatKeys[ord.id]),
                                 )}
-                                onOpenChat={isColleagueOrder ? null : handleOpenChat}
-                                onAllowStatusReset={isColleagueOrder ? null : handleAllowStatusReset}
+                                onOpenChat={isViewOnly ? null : handleOpenChat}
+                                onAllowStatusReset={isViewOnly ? null : handleAllowStatusReset}
                                 guestToken={isGuestSiteOrder ? guestOrderToken : ''}
                                 escalationCtx={customerEscalationCtx}
                                 factoryNameById={factoryNameById}
@@ -6718,17 +6817,18 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                 onReschedulePreferred={(o) => void runCustomerChoice(o, 'reschedule')}
                                 onCancelPreferred={(o) => void runCustomerChoice(o, 'cancel')}
                                 onChangeRequestDecision={
-                                  isColleagueOrder ? null : handleChangeRequestDecision
+                                  isViewOnly ? null : handleChangeRequestDecision
                                 }
                                 changeRequestDecisionSubmitting={changeRequestDecisionSubmitting}
-                                onEditOrder={isColleagueOrder ? null : handleOpenCustomerOrderEdit}
-                                onRequestChange={isColleagueOrder ? null : handleOpenCustomerChangeRequest}
-                                readOnly={isColleagueOrder}
+                                onEditOrder={isViewOnly ? null : handleOpenCustomerOrderEdit}
+                                onRequestChange={isViewOnly ? null : handleOpenCustomerChangeRequest}
+                                readOnly={isViewOnly}
                                 accountLabel={
                                   companyScopeActive
                                     ? formatProjectAccountLabel(customerById[ownerId])
                                     : ''
                                 }
+                                placerLabel={placerLabel}
                                 highlighted={String(ord?.id || '') === String(highlightedOrderId || '')}
                                 blinkFactoryName={blinkFactoryOrderIds.has(String(ord.id))}
                                 showCounterCashBadge={isAgentOrCooperative}
@@ -6842,7 +6942,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </p>
               ) : (
                 <ul className="mt-5 grid grid-cols-1 gap-6">
-                  {filteredHistoryRows.map((row) => (
+                  {filteredHistoryRows.map((row) => {
+                    const isForeign = isAgentForeignViewOrder(row.source);
+                    const placerLabel = isForeign ? resolveOrderPlacerDisplayName(row.source) : '';
+                    return (
                     <li key={row.id}>
                       <article
                         id={dispatchOrderElementId(row.id)}
@@ -6856,21 +6959,33 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       >
                         <div className="flex items-start justify-between gap-3 p-4">
                           <div className="min-w-0">
-                            <span className={'inline-flex rounded-full border-2 px-3 py-1 text-xs font-black shadow-sm ' + row.statusMeta.className}>
-                              {row.statusMeta.label}
-                            </span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={'inline-flex rounded-full border-2 px-3 py-1 text-xs font-black shadow-sm ' + row.statusMeta.className}>
+                                {row.statusMeta.label}
+                              </span>
+                              {isForeign ? (
+                                <span className="inline-flex rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-black text-amber-900">
+                                  閲覧のみ
+                                </span>
+                              ) : null}
+                            </div>
                             <p className="mt-2 break-words text-base font-black text-slate-900">{row.site || '現場未設定'}</p>
                             <p className="mt-1 text-xs font-bold text-slate-500">{row.dateLabel || '日時未設定'}</p>
+                            {placerLabel ? (
+                              <p className="mt-1 text-xs font-bold text-slate-600">発注者：{placerLabel}</p>
+                            ) : null}
                           </div>
-                          <div className="flex shrink-0 flex-col gap-2">
-                            <button
-                              type="button"
-                              onClick={() => openRepeatOrderDraft(row)}
-                              className="rounded-xl border-2 border-indigo-600 bg-indigo-600 px-3 py-2 text-xs font-black text-white shadow-sm transition hover:bg-indigo-700 active:scale-[0.99]"
-                            >
-                              この内容で注文
-                            </button>
-                          </div>
+                          {!isForeign ? (
+                            <div className="flex shrink-0 flex-col gap-2">
+                              <button
+                                type="button"
+                                onClick={() => openRepeatOrderDraft(row)}
+                                className="rounded-xl border-2 border-indigo-600 bg-indigo-600 px-3 py-2 text-xs font-black text-white shadow-sm transition hover:bg-indigo-700 active:scale-[0.99]"
+                              >
+                                この内容で注文
+                              </button>
+                            </div>
+                          ) : null}
                         </div>
 
                         <dl className="mx-4 grid gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-bold text-slate-600">
@@ -6903,8 +7018,124 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
                       </article>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
+              )}
+            </section>
+            ) : null}
+            {customerOrderTab === 'assignedProjects' && currentCustomerRole === 'agent' ? (
+            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-md sm:p-6 lg:p-8">
+              <div>
+                <h2 className="text-base font-black text-slate-900">担当物件の注文</h2>
+                <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                  あなたが商社担当者として設定されている物件の注文です。他者が発注した注文は閲覧のみです。
+                </p>
+              </div>
+              {assignedProjectOrderGroups.length === 0 ? (
+                <p className="mt-5 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm font-bold text-slate-500">
+                  担当物件がありません。管理者に物件の商社担当者アカウント設定を依頼してください。
+                </p>
+              ) : (
+                <div className="mt-5 space-y-6">
+                  {assignedProjectOrderGroups.map(({ project, orders }) => (
+                    <section
+                      key={project.id}
+                      className="rounded-2xl border border-indigo-200 bg-indigo-50/30 p-4 dark:border-indigo-800 dark:bg-indigo-950/20"
+                    >
+                      <h3 className="text-sm font-black text-slate-900 dark:text-gray-100">
+                        📍 {project.name || '物件名未設定'}
+                      </h3>
+                      {project.site_address ? (
+                        <p className="mt-1 text-xs font-bold text-slate-500">{project.site_address}</p>
+                      ) : null}
+                      {orders.length === 0 ? (
+                        <p className="mt-3 rounded-xl border border-dashed border-slate-300 bg-white/80 px-3 py-4 text-center text-xs font-bold text-slate-500">
+                          この物件の注文はまだありません
+                        </p>
+                      ) : (
+                        <ul className="mt-3 grid grid-cols-1 gap-3">
+                          {orders.map((ord) => {
+                            const isForeign = isAgentForeignViewOrder(ord);
+                            const placerLabel = resolveOrderPlacerDisplayName(ord);
+                            const statusMeta = historyStatusMeta(ord, customerEscalationCtx);
+                            const mix = String(ord.confirmedMixText ?? ord.mixText ?? '').trim();
+                            const qty = ord.confirmedQuantityM3 ?? ord.quantityM3 ?? '';
+                            const factoryLabel = getDefaultFactoryDisplayName(ord, factoryNameById);
+                            return (
+                              <li
+                                key={ord.id}
+                                className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-600 dark:bg-slate-900/40"
+                              >
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span
+                                    className={
+                                      'inline-flex rounded-full border px-2 py-0.5 text-[11px] font-black ' +
+                                      statusMeta.className
+                                    }
+                                  >
+                                    {statusMeta.label}
+                                  </span>
+                                  {isForeign ? (
+                                    <span className="inline-flex rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-black text-amber-900">
+                                      閲覧のみ
+                                    </span>
+                                  ) : null}
+                                  {isAgentOrCooperative ? <CounterCashBadge order={ord} /> : null}
+                                </div>
+                                <p className="mt-2 text-sm font-black text-slate-900 dark:text-gray-100">
+                                  {formatOrderDateTimeSummary(ord) || '打設日時未設定'}
+                                </p>
+                                <dl className="mt-2 grid gap-1 text-xs font-bold text-slate-600 dark:text-slate-300">
+                                  <div className="flex gap-2">
+                                    <dt className="w-20 shrink-0 text-slate-400">配合</dt>
+                                    <dd className="min-w-0 flex-1 break-words">{mix || '—'}</dd>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <dt className="w-20 shrink-0 text-slate-400">数量</dt>
+                                    <dd className="min-w-0 flex-1">
+                                      {qty !== '' && qty != null ? `${qty} ㎥` : '—'}
+                                    </dd>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <dt className="w-20 shrink-0 text-slate-400">受注工場</dt>
+                                    <dd className="min-w-0 flex-1 break-words">{factoryLabel || '—'}</dd>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <dt className="w-20 shrink-0 text-slate-400">発注者</dt>
+                                    <dd className="min-w-0 flex-1 break-words">{placerLabel || '—'}</dd>
+                                  </div>
+                                </dl>
+                                {!isForeign ? (
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    {isPreAcceptOrderEditable(ord) ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenCustomerOrderEdit(ord)}
+                                        className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-black text-indigo-800"
+                                      >
+                                        編集
+                                      </button>
+                                    ) : null}
+                                    {isAcceptedOrderChangeRequestable(ord) ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenCustomerChangeRequest(ord)}
+                                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-black text-slate-700"
+                                      >
+                                        変更を申し出る
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </section>
+                  ))}
+                </div>
               )}
             </section>
             ) : null}

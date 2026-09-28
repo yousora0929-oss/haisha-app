@@ -84,7 +84,7 @@ const CUSTOMER_SELECT_MIN =
 // projects は環境差分（未適用マイグレーション）でカラム欠損しやすい。
 // まずは trading_company_name を優先し、無ければ段階的にフォールバックする。
 const PROJECT_SELECT_MIN =
-  'id, name, customer_id, trading_company_name, main_factory_id, sub_factory_ids, lat, lng, contractor, sub_contractor_name, billing_target, delivery_area, site_address, site_contacts, trading_contact_name, trading_contact_phone, created_at, updated_at';
+  'id, name, customer_id, trading_company_name, main_factory_id, sub_factory_ids, lat, lng, contractor, sub_contractor_name, billing_target, delivery_area, site_address, site_contacts, trading_contact_name, trading_contact_phone, trading_contact_customer_id, created_at, updated_at';
 const PROJECT_SELECT_MIN_LEGACY =
   'id, name, main_factory_id, sub_factory_ids, lat, lng, trading_company, contractor, created_at, updated_at';
 const PROJECT_SELECT_MIN_BASE =
@@ -157,10 +157,14 @@ function buildProjectTradingCompanyFields(payload) {
   const trading_company =
     String(payload.trading_company || payload.trading_company_name || '').trim() || null;
   const trading_company_organization_id = sanitizeRefId(payload.trading_company_organization_id);
+  // 商社組織が無いときは担当者アカウントもクリアする
+  let trading_contact_customer_id = sanitizeRefId(payload.trading_contact_customer_id);
+  if (!trading_company_organization_id) trading_contact_customer_id = null;
   return {
     trading_company_name,
     trading_company,
     trading_company_organization_id: trading_company_organization_id || null,
+    trading_contact_customer_id: trading_contact_customer_id || null,
   };
 }
 
@@ -1734,7 +1738,7 @@ export async function fetchMixDesignRequestWithItems(requestId) {
     const { data: projectRow, error: projectError } = await supabase
       .from('projects')
       .select(
-        'id, name, customer_id, contractor, contractor_display_name, site_address, trading_company_name, trading_company_organization_id, delivery_area',
+        'id, name, customer_id, contractor, contractor_display_name, site_address, trading_company_name, trading_company_organization_id, trading_contact_customer_id, delivery_area',
       )
       .eq('id', projectId)
       .maybeSingle();
@@ -4824,6 +4828,8 @@ function mapProjectRow(row) {
       row.trading_contact_name != null ? String(row.trading_contact_name).trim() : '',
     trading_contact_phone:
       row.trading_contact_phone != null ? String(row.trading_contact_phone).trim() : '',
+    trading_contact_customer_id:
+      row.trading_contact_customer_id != null ? String(row.trading_contact_customer_id) : null,
     map_annotations: coerceMapAnnotationsRaw(row.map_annotations),
     commitment_level: String(row.commitment_level || 'spot'),
     created_at: row.created_at,

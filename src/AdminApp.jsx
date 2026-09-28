@@ -578,6 +578,9 @@ function ProjectForm({
   const [tradingContactPhone, setTradingContactPhone] = useState(
     () => String(initial?.trading_contact_phone ?? '').trim(),
   );
+  const [tradingContactCustomerId, setTradingContactCustomerId] = useState(
+    () => String(initial?.trading_contact_customer_id ?? '').trim(),
+  );
   const [siteContacts, setSiteContacts] = useState(() => {
     const list = Array.isArray(initial?.site_contacts) ? initial.site_contacts : [];
     return list.length
@@ -670,6 +673,7 @@ function ProjectForm({
     setRegisterNewTradingCompany(true);
     setTradingContactName(String(initial?.trading_contact_name ?? '').trim());
     setTradingContactPhone(String(initial?.trading_contact_phone ?? '').trim());
+    setTradingContactCustomerId(String(initial?.trading_contact_customer_id ?? '').trim());
     {
       const list = Array.isArray(initial?.site_contacts) ? initial.site_contacts : [];
       setSiteContacts(
@@ -870,35 +874,38 @@ function ProjectForm({
     };
   }, [deliveryArea, deliveryPrefecture]);
 
-  const matchedAgentOrganization = useMemo(() => {
-    const q = String(tradingCompany || '').trim();
-    if (!q) return null;
-    return (
-      (agentOrganizations || []).find(
-        (o) => String(o?.name || '').trim() === q,
-      ) || null
-    );
-  }, [agentOrganizations, tradingCompany]);
-
   const tradingContactCandidates = useMemo(() => {
-    const members = Array.isArray(matchedAgentOrganization?.members)
-      ? matchedAgentOrganization.members
-      : [];
-    return members
-      .map((m) => ({
-        id: m?.id != null ? String(m.id) : '',
-        manager_name: String(m?.manager_name || '').trim(),
-        phone_number: String(m?.phone_number || '').trim(),
+    const orgId = String(tradingCompanyOrganizationId || '').trim();
+    if (!orgId) return [];
+    return (customers || [])
+      .filter(
+        (c) =>
+          c &&
+          String(c.role || '').trim() === 'agent' &&
+          String(c.organization_id || '').trim() === orgId,
+      )
+      .map((c) => ({
+        id: c.id != null ? String(c.id) : '',
+        manager_name: String(c.manager_name || '').trim(),
+        phone_number: String(c.phone_number || '').trim(),
       }))
-      .filter((m) => m.manager_name);
-  }, [matchedAgentOrganization]);
+      .filter((m) => m.id)
+      .sort((a, b) =>
+        String(a.manager_name || a.id).localeCompare(String(b.manager_name || b.id), 'ja'),
+      );
+  }, [customers, tradingCompanyOrganizationId]);
 
   const formatTradingContactLabel = useCallback((member) => {
-    const name = String(member?.manager_name || '').trim();
+    const name = String(member?.manager_name || '').trim() || '（名前未設定）';
     const phone = String(member?.phone_number || '').trim();
-    if (!name) return '';
     return phone ? `${name}（${phone}）` : name;
   }, []);
+
+  const tradingContactAccountUnsetWarning = useMemo(() => {
+    const hasLegacyName = Boolean(String(tradingContactName || '').trim());
+    const hasAccount = Boolean(String(tradingContactCustomerId || '').trim());
+    return hasLegacyName && !hasAccount;
+  }, [tradingContactName, tradingContactCustomerId]);
 
   const showTradingCompanyWarning = useMemo(
     () => isUnregisteredTradingCompanyName(tradingCompany, agentOrganizations, tradingCompanyOrganizationId),
@@ -915,6 +922,7 @@ function ProjectForm({
   const handleTradingCompanyChange = useCallback(
     (text) => {
       setTradingCompany(text);
+      setTradingContactCustomerId('');
       setTradingContactName('');
       setTradingContactPhone('');
       const trimmed = String(text || '').trim();
@@ -932,27 +940,23 @@ function ProjectForm({
     if (!org?.id) return;
     setTradingCompanyOrganizationId(String(org.id));
     setTradingCompany(String(org.name || '').trim());
+    setTradingContactCustomerId('');
     setTradingContactName('');
     setTradingContactPhone('');
   }, []);
 
-  const handleTradingContactNameChange = useCallback(
-    (text) => {
-      setTradingContactName(text);
-      const trimmed = String(text || '').trim().toLowerCase();
-      if (!trimmed) return;
-      const hit = tradingContactCandidates.find(
-        (c) => String(c?.manager_name || '').trim().toLowerCase() === trimmed,
-      );
-      if (hit?.phone_number) setTradingContactPhone(String(hit.phone_number).trim());
+  const handleTradingContactCustomerChange = useCallback(
+    (nextId) => {
+      const id = String(nextId || '').trim();
+      setTradingContactCustomerId(id);
+      if (!id) return;
+      const hit = tradingContactCandidates.find((c) => String(c.id) === id);
+      if (!hit) return;
+      setTradingContactName(String(hit.manager_name || '').trim());
+      setTradingContactPhone(String(hit.phone_number || '').trim());
     },
     [tradingContactCandidates],
   );
-
-  const handleTradingContactSelect = useCallback((member) => {
-    setTradingContactName(String(member?.manager_name || '').trim());
-    setTradingContactPhone(String(member?.phone_number || '').trim());
-  }, []);
 
   const updateSiteContact = (index, key, value) => {
     setSiteContacts((prev) =>
@@ -1150,6 +1154,9 @@ function ProjectForm({
         trading_company_name: typedTradingCompany,
         trading_company: typedTradingCompany,
         trading_company_organization_id: nextTradingOrgId || null,
+        trading_contact_customer_id: nextTradingOrgId
+          ? String(tradingContactCustomerId || '').trim() || null
+          : null,
         trading_contact_name: tradingContactName.trim(),
         trading_contact_phone: tradingContactPhone.trim(),
         // チェックボックスの状態は物件データに残さない
@@ -1342,29 +1349,56 @@ function ProjectForm({
             </p>
           ) : null}
           <div className="mt-3 space-y-2">
-            <MasterSuggestInput
-              label="商社担当者（任意）"
-              htmlFor="proj-trading-contact-name"
-              name="proj_trading_contact_name"
-              value={tradingContactName}
-              onValueChange={handleTradingContactNameChange}
-              onSelect={handleTradingContactSelect}
-              items={tradingContactCandidates}
-              getItemKey={(c) => c.id || `${c.manager_name}::${c.phone_number}`}
-              getItemLabel={formatTradingContactLabel}
-              getSearchTexts={(c) => [c.manager_name || '', c.phone_number || '']}
-              placeholder={
-                tradingCompany.trim()
-                  ? '担当者名を入力（候補から選択可）'
-                  : '先に商社名を入力してください'
-              }
-              emptyHint="候補がありません（自由入力できます）"
-              disabled={!tradingCompany.trim()}
-              inputClassName="min-h-[44px] rounded-lg border-2 border-slate-200 px-3 py-2 text-sm"
-            />
+            <div>
+              <label className="text-xs font-bold text-slate-600" htmlFor="proj-trading-contact-customer">
+                商社担当者アカウント（任意）
+              </label>
+              <select
+                id="proj-trading-contact-customer"
+                value={tradingContactCustomerId}
+                onChange={(e) => handleTradingContactCustomerChange(e.target.value)}
+                className={fieldClass}
+                disabled={!String(tradingCompanyOrganizationId || '').trim()}
+              >
+                <option value="">未設定</option>
+                {tradingContactCandidates.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {formatTradingContactLabel(c)}
+                  </option>
+                ))}
+              </select>
+              {!String(tradingCompanyOrganizationId || '').trim() ? (
+                <p className="mt-1 text-[11px] font-medium text-slate-500">
+                  登録済み商社を選択すると担当者を選べます
+                </p>
+              ) : tradingContactCandidates.length === 0 ? (
+                <p className="mt-1 text-[11px] font-medium text-amber-800">
+                  この商社に紐づく担当者アカウントがありません
+                </p>
+              ) : null}
+              {tradingContactAccountUnsetWarning ? (
+                <p className="mt-1 text-[11px] font-bold text-amber-800" role="status">
+                  担当者アカウントが未設定です（帳票用の氏名のみ登録されています）
+                </p>
+              ) : null}
+            </div>
+            <div>
+              <label className="text-xs font-bold text-slate-600" htmlFor="proj-trading-contact-name">
+                商社担当者名（帳票用・任意）
+              </label>
+              <input
+                id="proj-trading-contact-name"
+                type="text"
+                value={tradingContactName}
+                onChange={(e) => setTradingContactName(e.target.value)}
+                className={fieldClass}
+                placeholder="アカウント選択で自動入力（手修正可）"
+                disabled={!tradingCompany.trim()}
+              />
+            </div>
             <div>
               <label className="text-xs font-bold text-slate-600" htmlFor="proj-trading-contact-phone">
-                商社担当者連絡先（任意）
+                商社担当者連絡先（帳票用・任意）
               </label>
               <input
                 id="proj-trading-contact-phone"
@@ -2571,6 +2605,7 @@ function ProjectsSection({ factories, factoryNameById }) {
                 {renderSortHeader('contractor_display_name', '業者（元請）')}
                 <th className={sortHeaderClass}>下請</th>
                 {renderSortHeader('trading_company_name', '商社')}
+                <th className={sortHeaderClass}>担当</th>
                 <th className={sortHeaderClass}>メイン工場</th>
                 <th className={sortHeaderClass}>サブ工場</th>
                 {renderSortHeader('created_at', '登録日')}
@@ -2617,6 +2652,29 @@ function ProjectsSection({ factories, factoryNameById }) {
                     </td>
                     <td className="px-3 py-2.5 text-slate-700">
                       {display.trader}
+                    </td>
+                    <td className="px-3 py-2.5 text-center">
+                      {String(p.trading_contact_customer_id || '').trim() ? (
+                        <span
+                          className="inline-flex rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-black text-indigo-800"
+                          title={
+                            String(p.trading_contact_name || '').trim()
+                              ? `担当アカウント設定済: ${p.trading_contact_name}`
+                              : '担当アカウント設定済'
+                          }
+                        >
+                          👤
+                        </span>
+                      ) : String(p.trading_contact_name || '').trim() ? (
+                        <span
+                          className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-black text-amber-900"
+                          title="帳票用氏名のみ（アカウント未設定）"
+                        >
+                          ⚠
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-400">—</span>
+                      )}
                     </td>
                   <td className="px-3 py-2.5">{factoryNameById[p.main_factory_id] || '—'}</td>
                   <td className="max-w-[12rem] px-3 py-2.5 text-xs text-slate-600">{(p.sub_factory_ids || []).map((id) => factoryNameById[id] || id).join('、') || '—'}</td>
