@@ -76,7 +76,7 @@ import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils
 import { generateInitialPassword } from './utils/initialPassword.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, trading_agent_customer_id, site_history_contractor_id, is_admin_modified, is_factory_modified, is_customer_modified, has_pending_change_request, pending_change_request_patch, change_request_customer_decision_status, change_request_resolution, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at, factory_map_received_at, factory_map_received_by, customer_cancel_requested, customer_cancel_requested_at, customer_cancel_requested_change_id';
+  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, trading_agent_customer_id, site_history_contractor_id, is_admin_modified, is_factory_modified, is_customer_modified, has_pending_change_request, pending_change_request_patch, change_request_customer_decision_status, change_request_resolution, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at, factory_map_received_at, factory_map_received_by, customer_cancel_requested, customer_cancel_requested_at, customer_cancel_requested_change_id, is_counter_cash';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
@@ -677,6 +677,8 @@ export function normalizeOrderRow(row) {
           : '',
     is_phone_order: row.is_phone_order === true || od.is_phone_order === true,
     isPhoneOrder: row.is_phone_order === true || od.is_phone_order === true || od.isPhoneOrder === true,
+    is_counter_cash: row.is_counter_cash === true,
+    isCounterCash: row.is_counter_cash === true,
     phone_order_factory_id: sanitizeRefId(
       row.phone_order_factory_id ?? od.phone_order_factory_id ?? od.phoneOrderFactoryId,
     ),
@@ -1398,6 +1400,13 @@ async function resolveMixDesignDraftParties(draft) {
     if (error) throw error;
     contractorCustomerId = data != null ? String(data) : '';
     next.contractorCustomerId = contractorCustomerId;
+    if (contractorCustomerId && next.isCounterCash) {
+      const { error: flagErr } = await supabase
+        .from('customers')
+        .update({ is_counter_cash: true })
+        .eq('id', contractorCustomerId);
+      if (flagErr) throw flagErr;
+    }
   }
 
   const traderName = String(next.traderName || '').trim();
@@ -4967,7 +4976,7 @@ export async function fetchOrganizationsWithMembers(type) {
   const { data, error: ce } = await supabase
     .from('customers')
     .select(
-      'id, company_name, furigana, manager_name, phone_number, login_password, organization_id, can_import_schedule, can_request_mix_design, is_credit_eligible, credit_source',
+      'id, company_name, furigana, manager_name, phone_number, login_password, organization_id, can_import_schedule, can_request_mix_design, is_credit_eligible, credit_source, is_counter_cash',
     )
     .eq('role', type)
     .order('manager_name');
@@ -5003,10 +5012,11 @@ export async function createOrganization(name, type, { furigana } = {}) {
  * 同名の組織・担当者が既にあれば再利用し、重複を作らない。
  * @param {{ name: string, role: 'contractor'|'agent'|'cooperative' }} params
  */
-export async function createProvisionalCompany({ name, role }) {
+export async function createProvisionalCompany({ name, role, is_counter_cash = false }) {
   const trimmed = String(name ?? '').trim();
   if (!trimmed) throw new Error('会社名を入力してください');
   validateOrganizationType(role);
+  const counterCash = Boolean(is_counter_cash);
 
   const { data: existingOrgs, error: orgFetchError } = await supabase
     .from('organizations')
@@ -5042,6 +5052,14 @@ export async function createProvisionalCompany({ name, role }) {
   if (memberFetchError) throw memberFetchError;
   const existingMember = (existingMembers || [])[0];
   if (existingMember) {
+    if (counterCash && !existingMember.is_counter_cash) {
+      const { error: flagErr } = await supabase
+        .from('customers')
+        .update({ is_counter_cash: true })
+        .eq('id', existingMember.id);
+      if (flagErr) throw flagErr;
+      existingMember.is_counter_cash = true;
+    }
     return { organization, customer: mapCustomerRow(existingMember), created: false };
   }
 
@@ -5058,7 +5076,10 @@ export async function createProvisionalCompany({ name, role }) {
   if (orphan) {
     const { data: linked, error: linkError } = await supabase
       .from('customers')
-      .update({ organization_id: organizationId })
+      .update({
+        organization_id: organizationId,
+        ...(counterCash ? { is_counter_cash: true } : {}),
+      })
       .eq('id', orphan.id)
       .select('*')
       .single();
@@ -5071,6 +5092,7 @@ export async function createProvisionalCompany({ name, role }) {
     phone_number: null,
     role,
     organization_id: organizationId,
+    is_counter_cash: counterCash,
   });
 
   return { organization, customer, created: true };
@@ -5136,6 +5158,7 @@ export async function createOrgMember({
   canRequestMixDesign,
   isCreditEligible,
   creditSource,
+  isCounterCash,
 }) {
   let resolvedCompanyName = String(companyName ?? '').trim();
   if (!resolvedCompanyName && organizationId) {
@@ -5162,6 +5185,7 @@ export async function createOrgMember({
       can_request_mix_design: Boolean(canRequestMixDesign),
       is_credit_eligible: Boolean(isCreditEligible),
       credit_source: String(creditSource ?? '').trim() || null,
+      is_counter_cash: Boolean(isCounterCash),
     })
     .select()
     .single();
@@ -5183,6 +5207,7 @@ export async function updateOrgMember(
     canRequestMixDesign,
     isCreditEligible,
     creditSource,
+    isCounterCash,
   },
 ) {
   let resolvedCompanyName = String(companyName ?? '').trim();
@@ -5214,6 +5239,9 @@ export async function updateOrgMember(
   }
   if (creditSource !== undefined) {
     updateRow.credit_source = String(creditSource ?? '').trim() || null;
+  }
+  if (isCounterCash !== undefined) {
+    updateRow.is_counter_cash = Boolean(isCounterCash);
   }
 
   const { error } = await supabase.from('customers').update(updateRow).eq('id', id);
@@ -5424,6 +5452,7 @@ function mapCustomerRow(row) {
     is_representative: Boolean(row.is_representative),
     is_credit_eligible: Boolean(row.is_credit_eligible),
     credit_source: row.credit_source != null ? String(row.credit_source) : '',
+    is_counter_cash: Boolean(row.is_counter_cash),
     created_at: row.created_at,
   };
 }
@@ -5538,6 +5567,7 @@ export async function bulkInsertCustomers(customerRows) {
         manager_name: String(customerData?.manager_name || '').trim() || null,
         phone_number: null,
         role: String(customerData?.role || 'contractor').trim() || 'contractor',
+        is_counter_cash: Boolean(customerData?.is_counter_cash ?? customerData?.isCounterCash),
       };
     }
     const loginPassword = String(customerData?.login_password || '').trim();
@@ -5550,6 +5580,7 @@ export async function bulkInsertCustomers(customerRows) {
       manager_name: String(customerData?.manager_name || '').trim() || null,
       phone_number: phoneNumber,
       login_password: loginPassword,
+      is_counter_cash: Boolean(customerData?.is_counter_cash ?? customerData?.isCounterCash),
     };
   });
 
@@ -5570,32 +5601,34 @@ export async function addCustomer(customerData) {
     customerData?.phone_number === null ||
     customerData?.allowProvisional === true ||
     customerData?.__provisional === true;
-  if (provisional) {
+    if (provisional) {
+      const row = {
+        company_name: companyName,
+        furigana: String(customerData?.furigana || '').trim() || null,
+        manager_name: String(customerData?.manager_name || '').trim() || null,
+        phone_number: null,
+        role: String(customerData?.role || 'contractor').trim() || 'contractor',
+        organization_id: customerData?.organization_id || null,
+        is_counter_cash: Boolean(customerData?.is_counter_cash ?? customerData?.isCounterCash),
+      };
+      const { data, error } = await supabase.from('customers').insert(row).select('*').single();
+      if (error) throw error;
+      return mapCustomerRow(data);
+    }
+    const loginPassword = String(customerData?.login_password || '').trim();
+    if (!loginPassword) throw new Error('ログインパスワードを入力してください');
+    const phoneNumber = String(customerData?.phone_number || '').trim();
+    if (!phoneNumber) throw new Error('電話番号を入力してください');
     const row = {
       company_name: companyName,
       furigana: String(customerData?.furigana || '').trim() || null,
       manager_name: String(customerData?.manager_name || '').trim() || null,
-      phone_number: null,
-      role: String(customerData?.role || 'contractor').trim() || 'contractor',
+      phone_number: phoneNumber,
+      login_password: loginPassword,
+      role: String(customerData?.role || 'contractor').trim(),
       organization_id: customerData?.organization_id || null,
+      is_counter_cash: Boolean(customerData?.is_counter_cash ?? customerData?.isCounterCash),
     };
-    const { data, error } = await supabase.from('customers').insert(row).select('*').single();
-    if (error) throw error;
-    return mapCustomerRow(data);
-  }
-  const loginPassword = String(customerData?.login_password || '').trim();
-  if (!loginPassword) throw new Error('ログインパスワードを入力してください');
-  const phoneNumber = String(customerData?.phone_number || '').trim();
-  if (!phoneNumber) throw new Error('電話番号を入力してください');
-  const row = {
-    company_name: companyName,
-    furigana: String(customerData?.furigana || '').trim() || null,
-    manager_name: String(customerData?.manager_name || '').trim() || null,
-    phone_number: phoneNumber,
-    login_password: loginPassword,
-    role: String(customerData?.role || 'contractor').trim(),
-    organization_id: customerData?.organization_id || null,
-  };
   const { data, error } = await supabase.from('customers').insert(row).select('*').single();
   if (error) throw error;
   return mapCustomerRow(data);

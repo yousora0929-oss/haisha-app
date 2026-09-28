@@ -259,6 +259,7 @@ export const CUSTOMER_CSV_ALIASES = {
   manager_name: ['担当者名', '代表担当者名', 'manager_name', '担当者', '担当'],
   phone_number: ['電話番号', 'phone_number', '電話', '連絡先', 'ログインid', 'ログインID'],
   login_password: ['ログインパスワード', 'login_password', 'パスワード', 'PW', 'pw'],
+  is_counter_cash: ['窓口現金', 'is_counter_cash', 'counter_cash', '現金窓口'],
 };
 
 /** CSV取込フォーマットと一致するエクスポート用ヘッダー */
@@ -277,8 +278,24 @@ export const PROJECT_EXPORT_HEADERS = [
   '現場担当者',
   '組合担当営業',
 ];
-export const CUSTOMER_EXPORT_HEADERS = ['業者名', 'フリガナ', '担当者名', '電話番号', 'ログインパスワード'];
+export const CUSTOMER_EXPORT_HEADERS = ['業者名', 'フリガナ', '担当者名', '電話番号', 'ログインパスワード', '窓口現金'];
 export const TRADING_COMPANY_EXPORT_HEADERS = ['商社名'];
+
+/** CSVの真偽セル（空欄=false、「○」「1」「true」等=true） */
+export function parseCsvBooleanFlag(value) {
+  const s = String(value ?? '').trim().toLowerCase();
+  if (!s) return false;
+  return (
+    s === '○' ||
+    s === '〇' ||
+    s === '1' ||
+    s === 'true' ||
+    s === 'yes' ||
+    s === 'y' ||
+    s === 'on' ||
+    s === 'はい'
+  );
+}
 
 /**
  * CSV / Excel 由来のセル値を文字列として正規化（数値化・式の解除）

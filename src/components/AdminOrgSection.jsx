@@ -15,6 +15,7 @@ const emptyMember = () => ({
   canRequestMixDesign: false,
   isCreditEligible: false,
   creditSource: '',
+  isCounterCash: false,
 });
 
 const newMemberWithGeneratedPassword = () => ({
@@ -159,6 +160,7 @@ function memberToForm(member, orgName = '') {
     canRequestMixDesign: Boolean(member.can_request_mix_design),
     isCreditEligible: Boolean(member.is_credit_eligible),
     creditSource: member.credit_source != null ? String(member.credit_source) : '',
+    isCounterCash: Boolean(member.is_counter_cash),
   };
 }
 
@@ -186,6 +188,7 @@ export function AdminOrgSection({ orgType, label }) {
   const [csvText, setCsvText] = useState('');
   const [csvPreview, setCsvPreview] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterCounterCashOnly, setFilterCounterCashOnly] = useState(false);
   const [contractors, setContractors] = useState([]);
   const [linkCountByAgentId, setLinkCountByAgentId] = useState({});
   const [selectedLinkContractorIds, setSelectedLinkContractorIds] = useState(() => new Set());
@@ -200,8 +203,12 @@ export function AdminOrgSection({ orgType, label }) {
 
   const filteredOrgs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return orgs;
     return orgs.filter((org) => {
+      if (filterCounterCashOnly) {
+        const hasCash = (org.members || []).some((m) => Boolean(m.is_counter_cash));
+        if (!hasCash) return false;
+      }
+      if (!q) return true;
       if (String(org.name || '').toLowerCase().includes(q)) return true;
       if (String(org.furigana || '').toLowerCase().includes(q)) return true;
       return (org.members || []).some((m) => {
@@ -212,7 +219,7 @@ export function AdminOrgSection({ orgType, label }) {
         return text.includes(q);
       });
     });
-  }, [orgs, searchQuery]);
+  }, [orgs, searchQuery, filterCounterCashOnly]);
 
   const loadOrgs = useCallback(async () => {
     setLoading(true);
@@ -409,6 +416,7 @@ export function AdminOrgSection({ orgType, label }) {
         canRequestMixDesign: newMember.canRequestMixDesign,
         isCreditEligible: isContractorOrg ? newMember.isCreditEligible : false,
         creditSource: isContractorOrg ? newMember.creditSource : '',
+        isCounterCash: isContractorOrg ? newMember.isCounterCash : false,
       });
       let linkError = null;
       if (isAgentOrg && selectedLinkContractorIds.size > 0) {
@@ -467,6 +475,7 @@ export function AdminOrgSection({ orgType, label }) {
         canRequestMixDesign: editingMember.canRequestMixDesign,
         isCreditEligible: isContractorOrg ? editingMember.isCreditEligible : undefined,
         creditSource: isContractorOrg ? editingMember.creditSource : undefined,
+        isCounterCash: isContractorOrg ? editingMember.isCounterCash : undefined,
       });
       let linkError = null;
       if (isAgentOrg) {
@@ -506,6 +515,9 @@ export function AdminOrgSection({ orgType, label }) {
                   credit_source: isContractorOrg
                     ? String(editingMember.creditSource || '').trim() || null
                     : m.credit_source,
+                  is_counter_cash: isContractorOrg
+                    ? Boolean(editingMember.isCounterCash)
+                    : Boolean(m.is_counter_cash),
                 }
               : m,
           ),
@@ -872,6 +884,17 @@ export function AdminOrgSection({ orgType, label }) {
             className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-bold text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
             placeholder="会社名・フリガナ・担当者名・電話番号で検索"
           />
+          {isContractorOrg ? (
+            <label className="mt-2 flex items-center gap-2 text-xs font-bold text-slate-700">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={filterCounterCashOnly}
+                onChange={(e) => setFilterCounterCashOnly(e.target.checked)}
+              />
+              窓口現金のみ表示
+            </label>
+          ) : null}
         </div>
       ) : null}
 
@@ -1130,6 +1153,29 @@ export function AdminOrgSection({ orgType, label }) {
                                   />
                                 </label>
                               ) : null}
+                              <label className="flex items-start gap-2 text-xs font-bold text-slate-700 sm:col-span-2">
+                                <input
+                                  type="checkbox"
+                                  className="mt-0.5 h-4 w-4"
+                                  checked={Boolean(editingMember.isCounterCash)}
+                                  onChange={(e) =>
+                                    setEditingMember((cur) =>
+                                      cur ? { ...cur, isCounterCash: e.target.checked } : cur,
+                                    )
+                                  }
+                                />
+                                <span>
+                                  窓口現金（現金払いの窓口客）
+                                  <span className="mt-0.5 block font-medium text-slate-500">
+                                    掛売可否とは独立したフラグです
+                                  </span>
+                                </span>
+                              </label>
+                              {editingMember.isCreditEligible && editingMember.isCounterCash ? (
+                                <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-900 sm:col-span-2">
+                                  ⚠ 掛売可と窓口現金の両方がONです。意図どおりか確認してください（保存は可能です）。
+                                </p>
+                              ) : null}
                             </>
                           ) : null}
                           {isAgentOrg ? (
@@ -1203,6 +1249,11 @@ export function AdminOrgSection({ orgType, label }) {
                         {isContractorOrg && member.is_credit_eligible ? (
                           <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800">
                             掛売可
+                          </span>
+                        ) : null}
+                        {isContractorOrg && member.is_counter_cash ? (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-900">
+                            窓口現金
                           </span>
                         ) : null}
                       </span>
@@ -1371,6 +1422,30 @@ export function AdminOrgSection({ orgType, label }) {
                                 className={`${inputClass} mt-1 w-full`}
                               />
                             </label>
+                          ) : null}
+                          <label className="flex items-start gap-2 text-xs font-bold text-slate-700 sm:col-span-2">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4"
+                              checked={Boolean(newMember.isCounterCash)}
+                              onChange={(e) =>
+                                setNewMember((m) => ({
+                                  ...m,
+                                  isCounterCash: e.target.checked,
+                                }))
+                              }
+                            />
+                            <span>
+                              窓口現金（現金払いの窓口客）
+                              <span className="mt-0.5 block font-medium text-slate-500">
+                                掛売可否とは独立したフラグです
+                              </span>
+                            </span>
+                          </label>
+                          {newMember.isCreditEligible && newMember.isCounterCash ? (
+                            <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-900 sm:col-span-2">
+                              ⚠ 掛売可と窓口現金の両方がONです。意図どおりか確認してください（保存は可能です）。
+                            </p>
                           ) : null}
                         </>
                       ) : null}

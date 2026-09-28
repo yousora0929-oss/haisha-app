@@ -44,6 +44,7 @@ import { OrderCartPreview } from './components/OrderCartPreview.jsx';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { PhoneOrderBadge } from './components/PhoneOrderBadge.jsx';
+import { CounterCashBadge } from './components/CounterCashBadge.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { CompanyMemberContactList } from './components/CompanyMemberContactList.jsx';
@@ -1424,6 +1425,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       customerById = {},
       highlighted = false,
       blinkFactoryName = false,
+      showCounterCashBadge = false,
     }) {
       const addr = order.siteAddress?.trim() || '';
       const party = orderPartyInfo(order);
@@ -1533,6 +1535,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   <ReservationGroupStatusBadge order={order} />
                   <LocationPendingBadge order={order} />
                   <PhoneOrderBadge order={order} />
+                  {showCounterCashBadge ? <CounterCashBadge order={order} /> : null}
                   {accountLabel ? (
                     <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-black text-slate-600 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-300">
                       {accountLabel}
@@ -1800,8 +1803,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       customerById = {},
       onEditOrder = null,
       onRequestChange = null,
-      onProposeOrderChange = null,
-      pendingChangeProposalOrderIds = null,
     }) {
       const [expandedStatusOrderId, setExpandedStatusOrderId] = useState('');
       const lastTapRef = useRef({ orderId: null, at: 0 });
@@ -1922,13 +1923,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       !canEditPending &&
                       isAcceptedOrderChangeRequestable(order) &&
                       typeof onRequestChange === 'function';
-                    const canProposeOrderChange =
-                      !canEditPending &&
-                      isAcceptedOrderChangeRequestable(order) &&
-                      typeof onProposeOrderChange === 'function';
-                    const hasPendingChangeProposal = Boolean(
-                      pendingChangeProposalOrderIds?.has?.(String(order?.id || '')),
-                    );
                     return (
                       <div
                         onDoubleClick={() => toggleStatusCard(order.id)}
@@ -1959,20 +1953,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                               className="rounded-lg border-2 border-amber-500 bg-amber-50 px-2.5 py-1 text-[11px] font-black text-amber-950 hover:bg-amber-100"
                             >
                               変更依頼
-                            </button>
-                          ) : null}
-                          {canProposeOrderChange ? (
-                            <button
-                              type="button"
-                              disabled={hasPendingChangeProposal}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (hasPendingChangeProposal) return;
-                                onProposeOrderChange(order);
-                              }}
-                              className="rounded-lg border-2 border-slate-500 bg-white px-2.5 py-1 text-[11px] font-black text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {hasPendingChangeProposal ? '変更打診中' : '変更を申し出る'}
                             </button>
                           ) : null}
                         </div>
@@ -6751,6 +6731,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                 }
                                 highlighted={String(ord?.id || '') === String(highlightedOrderId || '')}
                                 blinkFactoryName={blinkFactoryOrderIds.has(String(ord.id))}
+                                showCounterCashBadge={isAgentOrCooperative}
                               />
                               );
                             };
@@ -6938,8 +6919,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 customerById={customerById}
                 onEditOrder={handleOpenCustomerOrderEdit}
                 onRequestChange={handleOpenCustomerChangeRequest}
-                onProposeOrderChange={handleOpenOrderChangePropose}
-                pendingChangeProposalOrderIds={pendingChangeProposalOrderIds}
                 onMonthChange={(nextMonth) => {
                   const next = nextMonth instanceof Date && !Number.isNaN(nextMonth.getTime()) ? nextMonth : new Date();
                   const normalized = new Date(next.getFullYear(), next.getMonth(), 1);

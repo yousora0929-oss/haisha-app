@@ -18,6 +18,7 @@ import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { PhoneOrderBadge } from './components/PhoneOrderBadge.jsx';
+import { CounterCashBadge } from './components/CounterCashBadge.jsx';
 import { OrderVisibilityScopePanel } from './components/OrderVisibilityScopePanel.jsx';
 import { OrderVisibilityScopeBadge } from './components/OrderVisibilityScopeBadge.jsx';
 import { AssociationOrderApproveModal } from './components/AssociationOrderApproveModal.jsx';
@@ -565,6 +566,7 @@ function ProjectForm({
   const [customerId, setCustomerId] = useState(initial?.customer_id ?? '');
   const [contractorName, setContractorName] = useState('');
   const [registerNewContractor, setRegisterNewContractor] = useState(true);
+  const [newContractorIsCounterCash, setNewContractorIsCounterCash] = useState(false);
   const [tradingCompany, setTradingCompany] = useState(() => resolveProjectTradingCompanyName(initial));
   const [tradingCompanyOrganizationId, setTradingCompanyOrganizationId] = useState(
     initial?.trading_company_organization_id ?? '',
@@ -662,6 +664,7 @@ function ProjectForm({
       setCustomerId('');
     }
     setRegisterNewContractor(true);
+    setNewContractorIsCounterCash(false);
     setTradingCompany(resolveProjectTradingCompanyName(initial));
     setTradingCompanyOrganizationId(initial?.trading_company_organization_id ?? '');
     setRegisterNewTradingCompany(true);
@@ -1066,7 +1069,11 @@ function ProjectForm({
         nextDisplayName = typed;
       } else if (!nextCustomerId && registerNewContractor && isUnmatchedContractor) {
         try {
-          const created = await db.createProvisionalCompany({ name: typed, role: 'contractor' });
+          const created = await db.createProvisionalCompany({
+            name: typed,
+            role: 'contractor',
+            is_counter_cash: newContractorIsCounterCash,
+          });
           nextCustomerId = String(created?.customer?.id || '').trim();
           nextDisplayName = '';
           justCreatedCustomer = true;
@@ -1260,22 +1267,38 @@ function ProjectForm({
           </div>
         ) : null}
         {isUnmatchedContractor ? (
-          <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2">
-            <input
-              type="checkbox"
-              className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600"
-              checked={registerNewContractor}
-              onChange={(e) => setRegisterNewContractor(e.target.checked)}
-            />
-            <span>
-              <span className="block text-xs font-black text-amber-950">
-                業者管理にも登録する（新規: &quot;{contractorName.trim()}&quot;）
+          <div className="mt-2 space-y-2">
+            <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600"
+                checked={registerNewContractor}
+                onChange={(e) => setRegisterNewContractor(e.target.checked)}
+              />
+              <span>
+                <span className="block text-xs font-black text-amber-950">
+                  業者管理にも登録する（新規: &quot;{contractorName.trim()}&quot;）
+                </span>
+                <span className="mt-0.5 block text-[11px] font-medium text-amber-800">
+                  電話番号未設定のため、ログイン不可の仮登録として保存されます。後で業者管理画面から本登録できます。
+                </span>
               </span>
-              <span className="mt-0.5 block text-[11px] font-medium text-amber-800">
-                電話番号未設定のため、ログイン不可の仮登録として保存されます。後で業者管理画面から本登録できます。
-              </span>
-            </span>
-          </label>
+            </label>
+            {registerNewContractor ? (
+              <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-amber-600"
+                  checked={newContractorIsCounterCash}
+                  onChange={(e) => setNewContractorIsCounterCash(e.target.checked)}
+                />
+                <span className="text-xs font-bold text-slate-700">
+                  窓口現金（現金払いの窓口客）
+                  <span className="mt-0.5 block font-medium text-slate-500">デフォルトOFF</span>
+                </span>
+              </label>
+            ) : null}
+          </div>
         ) : null}
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -3188,6 +3211,7 @@ function AdminOrderDetailModal({
               <span className={'inline-flex rounded-full border px-2 py-0.5 text-xs font-black ' + statusBadgeClass(st)}>{orderStatusLabel(st)}</span>
               <LocationPendingBadge order={order} />
               <PhoneOrderBadge order={order} />
+              <CounterCashBadge order={order} />
             </div>
           </div>
 
@@ -4461,6 +4485,7 @@ function OrdersMonitorSection({
                           ) : null}
                           <LocationPendingBadge order={o} className="text-xs" />
                           <PhoneOrderBadge order={o} className="text-xs" />
+                          <CounterCashBadge order={o} className="text-xs" />
                           {renderReservationGroupBadge(o)}
                         </div>
                       </td>

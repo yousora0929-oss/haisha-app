@@ -739,15 +739,31 @@ export function MixDesignRequestModal({
                 inputClassName={FIELD}
               />
               {unmatchedContractor ? (
-                <label className="mt-1 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-[11px] font-bold text-amber-900">
-                  <input
-                    type="checkbox"
-                    className="mt-0.5 h-4 w-4"
-                    checked={draft.registerNewContractor !== false}
-                    onChange={(e) => patchDraft({ registerNewContractor: e.target.checked })}
-                  />
-                  <span>候補にないため、業者マスタに新規登録する</span>
-                </label>
+                <div className="mt-1 space-y-1">
+                  <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-[11px] font-bold text-amber-900">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4"
+                      checked={draft.registerNewContractor !== false}
+                      onChange={(e) => patchDraft({ registerNewContractor: e.target.checked })}
+                    />
+                    <span>候補にないため、業者マスタに新規登録する</span>
+                  </label>
+                  {draft.registerNewContractor !== false ? (
+                    <label className="flex items-start gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-4 w-4"
+                        checked={Boolean(draft.isCounterCash)}
+                        onChange={(e) => patchDraft({ isCounterCash: e.target.checked })}
+                      />
+                      <span>
+                        窓口現金（現金払いの窓口客）
+                        <span className="mt-0.5 block font-medium text-slate-500">デフォルトOFF</span>
+                      </span>
+                    </label>
+                  ) : null}
+                </div>
               ) : null}
             </label>
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">

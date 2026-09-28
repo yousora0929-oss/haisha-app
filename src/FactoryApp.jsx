@@ -65,6 +65,7 @@ import {
 } from './utils/chatMessageSenders.js';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { PhoneOrderBadge } from './components/PhoneOrderBadge.jsx';
+import { CounterCashBadge } from './components/CounterCashBadge.jsx';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
@@ -2377,6 +2378,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
             ) : null}
             <LocationPendingBadge order={order} />
             <PhoneOrderBadge order={order} />
+            <CounterCashBadge order={order} />
           </div>
           {!isSpotOrder ? (
             <FactoryOrderVisibilityMini
@@ -4076,6 +4078,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                         return (
                           <span key={order.id} className={'block truncate rounded-md px-1 py-0.5 text-[9px] font-black leading-tight ' + getOrderKindClass(order)}>
                             {isCustomerCancelRequested(order) ? 'キャンセル依頼 ' : ''}
+                            {order.isCounterCash || order.is_counter_cash ? '💴 ' : ''}
                             {party.site || '現場未設定'}: {factoryOrderQuantity(order)}㎡
                             {isLocationPendingOrder(order) ? ' ⚠️' : ''}
                           </span>
@@ -4115,6 +4118,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                       <div className="mt-1 flex flex-wrap items-center gap-1">
                         <LocationPendingBadge order={order} />
                         <PhoneOrderBadge order={order} />
+                        <CounterCashBadge order={order} />
                       </div>
                       {pendingProposal ? (
                         <div className="mt-2" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
@@ -6992,6 +6996,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                                   </span>
                                 ) : null}
                                 <PhoneOrderBadge order={order} />
+                                <CounterCashBadge order={order} />
                               </div>
                             </div>
                             <p className="mt-1 text-base font-black text-slate-900 dark:text-gray-100">

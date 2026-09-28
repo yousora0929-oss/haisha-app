@@ -11,6 +11,7 @@ import {
   normalizeCompanyName,
   normalizeCsvImportedText,
   normalizeCsvPhoneNumber,
+  parseCsvBooleanFlag,
   parseSpreadsheetFile,
   PROJECT_CSV_ALIASES,
   PROJECT_EXPORT_HEADERS,
@@ -543,6 +544,7 @@ export async function parseCustomersCsvFile(file) {
       manager_name: cleanCell(raw.manager_name) || null,
       phone_number,
       login_password,
+      is_counter_cash: parseCsvBooleanFlag(raw.is_counter_cash),
       __line: line,
     });
   }
@@ -755,6 +757,7 @@ export function buildCustomersExportRows(customers) {
     cleanCell(c.manager_name),
     formatCsvExcelTextField(c.phone_number),
     formatCsvExcelTextField(c.login_password),
+    c.is_counter_cash || c.isCounterCash ? '○' : '',
   ]);
   return [CUSTOMER_EXPORT_HEADERS, ...dataRows];
 }
@@ -790,6 +793,7 @@ export function buildOrgMembersExportRows(orgs) {
         manager_name: m.manager_name,
         phone_number: m.phone_number,
         login_password: m.login_password,
+        is_counter_cash: Boolean(m.is_counter_cash),
       });
     }
   }
