@@ -85,6 +85,56 @@ const CUSTOMER_SELECT_MIN =
 const CUSTOMER_SELECT_SAFE =
   'id,company_name,manager_name,phone_number,created_at,url_token,company_name_katakana,furigana,role,organization_id,can_import_schedule,is_credit_eligible,credit_source,can_request_mix_design,is_representative,is_counter_cash';
 
+/** PostgREST / Supabase のデフォルト max-rows */
+const SUPABASE_PAGE_SIZE = 1000;
+/** `.in(...)` を URL 長大化させないための分割サイズ */
+const IN_FILTER_CHUNK_SIZE = 200;
+
+/**
+ * max-rows（1000）を超えて全件取得する。
+ * buildQuery は毎回「order まで済んだ」新しいクエリを返す（range 適用前）。
+ * 並びの安定化のため、呼び出し側で一意キー（通常は id）を第2ソートに含めること。
+ * @param {() => { range: (from: number, to: number) => any }} buildQuery
+ * @returns {Promise<any[]>}
+ */
+async function fetchAllRowsPaged(buildQuery) {
+  const all = [];
+  let from = 0;
+  for (;;) {
+    const to = from + SUPABASE_PAGE_SIZE - 1;
+    const { data, error } = await buildQuery().range(from, to);
+    if (error) throw error;
+    const rows = Array.isArray(data) ? data : [];
+    all.push(...rows);
+    if (rows.length < SUPABASE_PAGE_SIZE) break;
+    from += SUPABASE_PAGE_SIZE;
+  }
+  return all;
+}
+
+/**
+ * `.in(column, ids)` を chunkSize 件ずつ分割して取得し結合する。
+ * @param {(chunkIds: string[]) => any} buildQuery chunk を受け取り thenable クエリを返す
+ * @param {unknown[]} ids
+ * @param {number} [chunkSize]
+ * @returns {Promise<any[]>}
+ */
+async function fetchRowsByIdsInChunks(buildQuery, ids, chunkSize = IN_FILTER_CHUNK_SIZE) {
+  const unique = [
+    ...new Set((Array.isArray(ids) ? ids : []).map((id) => String(id ?? '').trim()).filter(Boolean)),
+  ];
+  if (!unique.length) return [];
+  const size = Math.max(1, Number(chunkSize) || IN_FILTER_CHUNK_SIZE);
+  const all = [];
+  for (let i = 0; i < unique.length; i += size) {
+    const chunk = unique.slice(i, i + size);
+    const { data, error } = await buildQuery(chunk);
+    if (error) throw error;
+    if (Array.isArray(data) && data.length) all.push(...data);
+  }
+  return all;
+}
+
 // projects は環境差分（未適用マイグレーション）でカラム欠損しやすい。
 // まずは trading_company_name を優先し、無ければ段階的にフォールバックする。
 const PROJECT_SELECT_MIN =
@@ -108,8 +158,13 @@ async function enrichProjectsWithCustomerUrlTokens(projects) {
   const customerIds = [...new Set(list.map((p) => p?.customer_id).filter(Boolean))];
   if (!customerIds.length) return list;
 
-  const { data, error } = await supabase.from('customers').select('id, url_token').in('id', customerIds);
-  if (error) {
+  let data = [];
+  try {
+    data = await fetchRowsByIdsInChunks(
+      (chunk) => supabase.from('customers').select('id, url_token').in('id', chunk),
+      customerIds,
+    );
+  } catch (error) {
     console.warn('[fetchProjects] customers.url_token の取得に失敗しました', error);
     return list;
   }
@@ -134,11 +189,13 @@ async function enrichProjectsWithTradingCompanyOrgs(projects) {
     return list.map((p) => ({ ...p, trading_company_organization_name: '' }));
   }
 
-  const { data, error } = await supabase
-    .from('organizations')
-    .select('id, name')
-    .in('id', orgIds);
-  if (error) {
+  let data = [];
+  try {
+    data = await fetchRowsByIdsInChunks(
+      (chunk) => supabase.from('organizations').select('id, name').in('id', chunk),
+      orgIds,
+    );
+  } catch (error) {
     console.warn('[fetchProjects] organizations の取得に失敗しました', error);
     return list.map((p) => ({ ...p, trading_company_organization_name: '' }));
   }
@@ -969,13 +1026,15 @@ export async function fetchOrdersWithChat(options = {}) {
       ),
     ];
     if (missingIds.length) {
-      const { data: groups, error: gErr } = await supabase
-        .from('reservation_groups')
-        .select('id, status, same_factory_required')
-        .in('id', missingIds);
-      if (gErr) {
-        console.warn('[fetchOrdersWithChat] reservation_groups fallback load failed', gErr);
-      } else {
+      try {
+        const groups = await fetchRowsByIdsInChunks(
+          (chunk) =>
+            supabase
+              .from('reservation_groups')
+              .select('id, status, same_factory_required')
+              .in('id', chunk),
+          missingIds,
+        );
         const byId = new Map(
           (groups || [])
             .map((g) => unwrapReservationGroupEmbed(g))
@@ -987,6 +1046,8 @@ export async function fetchOrdersWithChat(options = {}) {
             o.reservation_group = byId.get(o.reservation_group_id) || null;
           }
         }
+      } catch (gErr) {
+        console.warn('[fetchOrdersWithChat] reservation_groups fallback load failed', gErr);
       }
     }
   }
@@ -1003,24 +1064,38 @@ export async function fetchOrdersWithChat(options = {}) {
   let projectById = new Map();
   let organizationById = new Map();
   if (customerIds.length) {
-    const { data: customers } = await supabase.from('customers').select(CUSTOMER_SELECT_MIN).in('id', customerIds);
-    customerById = new Map((customers || []).map((c) => [String(c.id), c]));
+    try {
+      const customers = await fetchRowsByIdsInChunks(
+        (chunk) => supabase.from('customers').select(CUSTOMER_SELECT_MIN).in('id', chunk),
+        customerIds,
+      );
+      customerById = new Map((customers || []).map((c) => [String(c.id), c]));
+    } catch (cErr) {
+      console.warn('[fetchOrdersWithChat] customers load failed', cErr);
+    }
   }
   if (projectIds.length) {
     let projects = null;
     let pErr = null;
-    ({ data: projects, error: pErr } = await supabase.from('projects').select(PROJECT_SELECT_MIN).in('id', projectIds));
+    const loadProjects = async (select) => {
+      try {
+        return {
+          data: await fetchRowsByIdsInChunks(
+            (chunk) => supabase.from('projects').select(select).in('id', chunk),
+            projectIds,
+          ),
+          error: null,
+        };
+      } catch (err) {
+        return { data: null, error: err };
+      }
+    };
+    ({ data: projects, error: pErr } = await loadProjects(PROJECT_SELECT_MIN));
     if (pErr && isMissingRelationOrColumnError(pErr)) {
-      ({ data: projects, error: pErr } = await supabase
-        .from('projects')
-        .select(PROJECT_SELECT_MIN_LEGACY)
-        .in('id', projectIds));
+      ({ data: projects, error: pErr } = await loadProjects(PROJECT_SELECT_MIN_LEGACY));
     }
     if (pErr && isMissingRelationOrColumnError(pErr)) {
-      ({ data: projects, error: pErr } = await supabase
-        .from('projects')
-        .select(PROJECT_SELECT_MIN_BASE)
-        .in('id', projectIds));
+      ({ data: projects, error: pErr } = await loadProjects(PROJECT_SELECT_MIN_BASE));
     }
     if (pErr) {
       console.warn('[fetchOrdersWithChat] projects load failed', pErr);
@@ -1034,14 +1109,14 @@ export async function fetchOrdersWithChat(options = {}) {
     );
   }
   if (organizationIds.length) {
-    const { data: orgs, error: orgErr } = await supabase
-      .from('organizations')
-      .select('id, name, type')
-      .in('id', organizationIds);
-    if (orgErr) {
-      console.warn('[fetchOrdersWithChat] organizations load failed', orgErr);
-    } else {
+    try {
+      const orgs = await fetchRowsByIdsInChunks(
+        (chunk) => supabase.from('organizations').select('id, name, type').in('id', chunk),
+        organizationIds,
+      );
       organizationById = new Map((orgs || []).filter((o) => o?.id).map((o) => [String(o.id), o]));
+    } catch (orgErr) {
+      console.warn('[fetchOrdersWithChat] organizations load failed', orgErr);
     }
   }
   for (let i = 0; i < orders.length; i += 1) {
@@ -1089,12 +1164,16 @@ export async function upsertOrdersBatch(orders, chatThreads) {
   if (ids.length === 0) return;
 
   let existingById = new Map();
-  const { data: existingRows, error: exErr } = await supabase
-    .from('orders')
-    .select('id, chat_messages')
-    .in('id', ids);
-  if (!exErr && Array.isArray(existingRows)) {
-    existingById = new Map(existingRows.map((r) => [r.id, r.chat_messages]));
+  try {
+    const existingRows = await fetchRowsByIdsInChunks(
+      (chunk) => supabase.from('orders').select('id, chat_messages').in('id', chunk),
+      ids,
+    );
+    if (Array.isArray(existingRows)) {
+      existingById = new Map(existingRows.map((r) => [r.id, r.chat_messages]));
+    }
+  } catch {
+    // 既存チャットの読み取りに失敗しても upsert 自体は続行する
   }
 
   const rows = ids.map((id) => {
@@ -1648,16 +1727,20 @@ export async function searchMixDesignRequests({ keyword = '', limit = 50 } = {})
   ];
   const projectById = new Map();
   if (projectIds.length) {
-    const { data: projects, error: projectError } = await supabase
-      .from('projects')
-      .select('id, name, contractor, contractor_display_name, site_address, trading_company_name')
-      .in('id', projectIds);
-    if (projectError) {
-      console.warn('[searchMixDesignRequests] projects lookup failed', projectError);
-    } else {
+    try {
+      const projects = await fetchRowsByIdsInChunks(
+        (chunk) =>
+          supabase
+            .from('projects')
+            .select('id, name, contractor, contractor_display_name, site_address, trading_company_name')
+            .in('id', chunk),
+        projectIds,
+      );
       for (const project of projects || []) {
         if (project?.id) projectById.set(String(project.id), project);
       }
+    } catch (projectError) {
+      console.warn('[searchMixDesignRequests] projects lookup failed', projectError);
     }
   }
 
@@ -1668,11 +1751,21 @@ export async function searchMixDesignRequests({ keyword = '', limit = 50 } = {})
   const requestIds = normalized.map((row) => String(row.id || '').trim()).filter(Boolean);
   const factoryIdsByRequestId = new Map();
   if (requestIds.length) {
-    const { data: factoryRows, error: factoryError } = await supabase
-      .from('mix_design_request_factories')
-      .select('request_id, factory_id, created_at')
-      .in('request_id', requestIds)
-      .order('created_at', { ascending: true });
+    let factoryRows = [];
+    let factoryError = null;
+    try {
+      factoryRows = await fetchRowsByIdsInChunks(
+        (chunk) =>
+          supabase
+            .from('mix_design_request_factories')
+            .select('request_id, factory_id, created_at')
+            .in('request_id', chunk)
+            .order('created_at', { ascending: true }),
+        requestIds,
+      );
+    } catch (err) {
+      factoryError = err;
+    }
     if (factoryError) {
       console.warn('[searchMixDesignRequests] factories lookup failed', factoryError);
     } else {
@@ -2764,11 +2857,13 @@ export async function fetchPendingOrderChangeProposals(factoryId) {
   const orderIds = [...new Set(list.map((p) => p.order_id).filter(Boolean))];
   if (!orderIds.length) return list;
 
-  const { data: orderRows, error: orderErr } = await supabase
-    .from('orders')
-    .select(ORDER_SELECT)
-    .in('id', orderIds);
-  if (orderErr) {
+  let orderRows = [];
+  try {
+    orderRows = await fetchRowsByIdsInChunks(
+      (chunk) => supabase.from('orders').select(ORDER_SELECT).in('id', chunk),
+      orderIds,
+    );
+  } catch (orderErr) {
     console.warn('fetchPendingOrderChangeProposals orders fetch failed', orderErr);
     return list;
   }
@@ -3132,20 +3227,27 @@ export async function fetchOrderChangeProposalsForOrders(orderIds) {
     const rows = Array.isArray(rpcData) ? rpcData : rpcData?.proposals || [];
     return rows.map(mapOrderChangeProposalRow).filter(Boolean);
   }
-  if (!isMissingRpcSignatureError(rpcErr)) {
-    console.warn('fetchOrderChangeProposalsForOrders rpc failed', rpcErr);
+  // RPC 未作成環境（404 / PGRST202）では空配列。DB 側に関数を足すまではテーブル直読みに落とさない。
+  if (isMissingRpcSignatureError(rpcErr)) {
+    return [];
   }
+  console.warn('fetchOrderChangeProposalsForOrders rpc failed', rpcErr);
 
-  const { data, error } = await supabase
-    .from('order_change_proposals')
-    .select('*')
-    .in('order_id', ids)
-    .order('created_at', { ascending: false });
-  if (error) {
+  try {
+    const data = await fetchRowsByIdsInChunks(
+      (chunk) =>
+        supabase
+          .from('order_change_proposals')
+          .select('*')
+          .in('order_id', chunk)
+          .order('created_at', { ascending: false }),
+      ids,
+    );
+    return (data || []).map(mapOrderChangeProposalRow).filter(Boolean);
+  } catch (error) {
     console.warn('fetchOrderChangeProposalsForOrders failed', error);
     return [];
   }
-  return (data || []).map(mapOrderChangeProposalRow).filter(Boolean);
 }
 
 /**
@@ -3408,14 +3510,13 @@ export async function invokeScheduleImportExtract({ pdfBase64, sourceFileName, u
 }
 
 export async function fetchScheduleImportBatches() {
-  const { data, error } = await supabase
-    .from('schedule_import_batches')
-    .select('*')
-    .order('created_at', { ascending: false });
-  if (error) {
-    console.error('fetchScheduleImportBatches failed', error);
-    throw error;
-  }
+  const data = await fetchAllRowsPaged(() =>
+    supabase
+      .from('schedule_import_batches')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: true }),
+  );
   return (data || []).map(mapScheduleImportBatchRow).filter(Boolean);
 }
 
@@ -3454,14 +3555,14 @@ export async function fetchScheduleImportBatchSummaries() {
   const batches = await fetchScheduleImportBatches();
   if (!batches.length) return [];
   const ids = batches.map((b) => b.id);
-  const { data, error } = await supabase
-    .from('schedule_import_rows')
-    .select('id, batch_id, match_type, row_status, factory_id')
-    .in('batch_id', ids);
-  if (error) {
-    console.error('fetchScheduleImportBatchSummaries rows failed', error);
-    throw error;
-  }
+  const data = await fetchRowsByIdsInChunks(
+    (chunk) =>
+      supabase
+        .from('schedule_import_rows')
+        .select('id, batch_id, match_type, row_status, factory_id')
+        .in('batch_id', chunk),
+    ids,
+  );
   const byBatch = new Map();
   for (const id of ids) {
     byBatch.set(id, {
@@ -4338,8 +4439,9 @@ function mapFactoryRow(row) {
 
 /** factories テーブルから全工場（id, name, latitude, longitude 等） */
 export async function fetchFactories() {
-  const { data, error } = await supabase.from('factories').select('*').order('name', { ascending: true });
-  if (error) throw error;
+  const data = await fetchAllRowsPaged(() =>
+    supabase.from('factories').select('*').order('name', { ascending: true }).order('id', { ascending: true }),
+  );
   return (data || []).map(mapFactoryRow).filter(Boolean);
 }
 
@@ -4381,11 +4483,11 @@ export async function fetchSchedulesForFactory(factorySiteId) {
 export async function fetchSchedulesForFactories(factorySiteIds) {
   const ids = [...new Set((factorySiteIds || []).map((x) => sanitizeRefId(x)).filter(Boolean))];
   if (ids.length === 0) return {};
-  const { data, error } = await supabase
-    .from('schedules')
-    .select('factory_site_id, date, blocks')
-    .in('factory_site_id', ids);
-  if (error) throw error;
+  const data = await fetchRowsByIdsInChunks(
+    (chunk) =>
+      supabase.from('schedules').select('factory_site_id, date, blocks').in('factory_site_id', chunk),
+    ids,
+  );
   /** @type {Record<string, Record<string, unknown>>} */
   const byFactory = {};
   for (const fid of ids) {
@@ -4863,12 +4965,14 @@ function validateOrganizationType(type) {
 }
 
 export async function fetchOrganizations() {
-  const { data, error } = await supabase
-    .from('organizations')
-    .select('*')
-    .order('type', { ascending: true })
-    .order('name', { ascending: true });
-  if (error) throw error;
+  const data = await fetchAllRowsPaged(() =>
+    supabase
+      .from('organizations')
+      .select('*')
+      .order('type', { ascending: true })
+      .order('name', { ascending: true })
+      .order('id', { ascending: true }),
+  );
   return (data || []).map(mapOrganizationRow).filter(Boolean);
 }
 
@@ -4974,21 +5078,25 @@ export async function deleteOrganizationWithMembers(orgId) {
  */
 export async function fetchOrganizationsWithMembers(type) {
   validateOrganizationType(type);
-  const { data: orgs, error: oe } = await supabase
-    .from('organizations')
-    .select('id, name, furigana, type, created_at')
-    .eq('type', type)
-    .order('name');
-  if (oe) throw oe;
+  const orgs = await fetchAllRowsPaged(() =>
+    supabase
+      .from('organizations')
+      .select('id, name, furigana, type, created_at')
+      .eq('type', type)
+      .order('name', { ascending: true })
+      .order('id', { ascending: true }),
+  );
 
   // organization_id を IN で列挙すると組織数が増えたときに PostgREST URL が
   // 長大化して 400 になる。role で絞り、所属はクライアント側で紐付ける。
-  const { data, error: ce } = await supabase
-    .from('customers')
-    .select(CUSTOMER_SELECT_SAFE)
-    .eq('role', type)
-    .order('manager_name');
-  if (ce) throw ce;
+  const data = await fetchAllRowsPaged(() =>
+    supabase
+      .from('customers')
+      .select(CUSTOMER_SELECT_SAFE)
+      .eq('role', type)
+      .order('manager_name', { ascending: true })
+      .order('id', { ascending: true }),
+  );
   const members = (data ?? []).map(mapCustomerRow).filter(Boolean);
 
   return (orgs || []).map((org) => ({
@@ -5026,11 +5134,18 @@ export async function createProvisionalCompany({ name, role, is_counter_cash = f
   validateOrganizationType(role);
   const counterCash = Boolean(is_counter_cash);
 
-  const { data: existingOrgs, error: orgFetchError } = await supabase
-    .from('organizations')
-    .select('*')
-    .eq('type', role);
-  if (orgFetchError) throw orgFetchError;
+  let existingOrgs;
+  try {
+    existingOrgs = await fetchAllRowsPaged(() =>
+      supabase
+        .from('organizations')
+        .select('*')
+        .eq('type', role)
+        .order('id', { ascending: true }),
+    );
+  } catch (orgFetchError) {
+    throw orgFetchError;
+  }
 
   const key = normalizeCompanyName(trimmed);
   let organizationRow =
@@ -5271,11 +5386,14 @@ export async function fetchAgentContractorLinksByAgentIds(agentCustomerIds) {
     ...new Set((agentCustomerIds || []).map((id) => String(id || '').trim()).filter(Boolean)),
   ];
   if (!ids.length || !supabase?.from) return [];
-  const { data, error } = await supabase
-    .from('agent_contractor_links')
-    .select('id, agent_customer_id, contractor_customer_id, created_at')
-    .in('agent_customer_id', ids);
-  if (error) throw error;
+  const data = await fetchRowsByIdsInChunks(
+    (chunk) =>
+      supabase
+        .from('agent_contractor_links')
+        .select('id, agent_customer_id, contractor_customer_id, created_at')
+        .in('agent_customer_id', chunk),
+    ids,
+  );
   return (data || []).map((row) => ({
     id: String(row.id),
     agent_customer_id: String(row.agent_customer_id),
@@ -5308,12 +5426,15 @@ export async function deleteAgentContractorLinks(agentCustomerId, contractorCust
     ...new Set((contractorCustomerIds || []).map((id) => String(id || '').trim()).filter(Boolean)),
   ];
   if (!agentId || !contractorIds.length || !supabase?.from) return;
-  const { error } = await supabase
-    .from('agent_contractor_links')
-    .delete()
-    .eq('agent_customer_id', agentId)
-    .in('contractor_customer_id', contractorIds);
-  if (error) throw error;
+  for (let i = 0; i < contractorIds.length; i += IN_FILTER_CHUNK_SIZE) {
+    const chunk = contractorIds.slice(i, i + IN_FILTER_CHUNK_SIZE);
+    const { error } = await supabase
+      .from('agent_contractor_links')
+      .delete()
+      .eq('agent_customer_id', agentId)
+      .in('contractor_customer_id', chunk);
+    if (error) throw error;
+  }
 }
 
 /**
@@ -5456,11 +5577,13 @@ function mapCustomerRow(row) {
 }
 
 export async function fetchCustomers() {
-  const { data, error } = await supabase
-    .from('customers')
-    .select(CUSTOMER_SELECT_SAFE)
-    .order('company_name', { ascending: true });
-  if (error) throw error;
+  const data = await fetchAllRowsPaged(() =>
+    supabase
+      .from('customers')
+      .select(CUSTOMER_SELECT_SAFE)
+      .order('company_name', { ascending: true })
+      .order('id', { ascending: true }),
+  );
   return (data || []).map(mapCustomerRow).filter(Boolean);
 }
 
@@ -5472,16 +5595,19 @@ export async function fetchCustomers() {
 export async function adminGetCustomerCredentials(customerIds) {
   const ids = [...new Set((customerIds || []).map((id) => sanitizeRefId(id)).filter(Boolean))];
   if (ids.length === 0) return {};
-  const { data, error } = await supabase.rpc('admin_get_customer_credentials', {
-    p_customer_ids: ids,
-  });
-  if (error) throw error;
   /** @type {Record<string, string>} */
   const map = {};
-  for (const row of data || []) {
-    const id = row?.id != null ? String(row.id) : '';
-    if (!id) continue;
-    map[id] = row.login_password != null ? String(row.login_password) : '';
+  for (let i = 0; i < ids.length; i += IN_FILTER_CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + IN_FILTER_CHUNK_SIZE);
+    const { data, error } = await supabase.rpc('admin_get_customer_credentials', {
+      p_customer_ids: chunk,
+    });
+    if (error) throw error;
+    for (const row of data || []) {
+      const id = row?.id != null ? String(row.id) : '';
+      if (!id) continue;
+      map[id] = row.login_password != null ? String(row.login_password) : '';
+    }
   }
   return map;
 }
@@ -5523,11 +5649,13 @@ const BULK_INSERT_CHUNK = 100;
 
 /** 商社マスタ（trading_companies） */
 export async function fetchTradingCompanies() {
-  const { data, error } = await supabase
-    .from('trading_companies')
-    .select('id, name, created_at, updated_at, contacts')
-    .order('name', { ascending: true });
-  if (error) throw error;
+  const data = await fetchAllRowsPaged(() =>
+    supabase
+      .from('trading_companies')
+      .select('id, name, created_at, updated_at, contacts')
+      .order('name', { ascending: true })
+      .order('id', { ascending: true }),
+  );
   return (data || [])
     .map((row) => ({
       id: row.id,
@@ -5997,19 +6125,28 @@ export async function fetchReservationGroupOrders(groupIds, factoryNameById = {}
     .map((id) => String(id || '').trim())
     .filter(Boolean);
   if (!ids.length) return [];
-  const { data, error } = await supabase
-    .from('orders')
-    .select(RESERVATION_GROUP_ORDER_SELECT)
-    .in('reservation_group_id', ids)
-    .order('created_at', { ascending: true });
-  if (error) throw error;
+  const data = await fetchRowsByIdsInChunks(
+    (chunk) =>
+      supabase
+        .from('orders')
+        .select(RESERVATION_GROUP_ORDER_SELECT)
+        .in('reservation_group_id', chunk)
+        .order('created_at', { ascending: true }),
+    ids,
+  );
   return (data || []).map((row) => mapReservationOrderRow(row, factoryNameById)).filter((row) => row?.id);
 }
 
 function isMissingRpcSignatureError(error) {
   const code = String(error?.code || '').trim();
-  const message = String(error?.message || error?.details || '').toLowerCase();
-  return code === 'PGRST202' || code === '42883' || /could not find the function|does not exist|no function matches/i.test(message);
+  const status = Number(error?.status ?? error?.statusCode ?? error?.status_code ?? NaN);
+  const message = String(error?.message || error?.details || error?.hint || '').toLowerCase();
+  return (
+    code === 'PGRST202' ||
+    code === '42883' ||
+    status === 404 ||
+    /could not find the function|does not exist|no function matches|404/i.test(message)
+  );
 }
 
 function mapReservationGroupFactoryResponseRow(row) {
@@ -6083,8 +6220,9 @@ export async function respondReservationGroupAvailability(groupId, factoryId, av
 
 /** 物件マスタ一覧 */
 export async function fetchProjects() {
-  const { data, error } = await supabase.from('projects').select('*').order('name', { ascending: true });
-  if (error) throw error;
+  const data = await fetchAllRowsPaged(() =>
+    supabase.from('projects').select('*').order('name', { ascending: true }).order('id', { ascending: true }),
+  );
   const mapped = (data || []).map(mapProjectRow).filter(Boolean);
   const withTokens = await enrichProjectsWithCustomerUrlTokens(mapped);
   return enrichProjectsWithTradingCompanyOrgs(withTokens);
@@ -6200,8 +6338,10 @@ async function resolveProjectOrganizationIds(customerIds) {
   ];
   const map = new Map();
   if (ids.length === 0) return map;
-  const { data, error } = await supabase.from('customers').select('id, role, organization_id').in('id', ids);
-  if (error) throw error;
+  const data = await fetchRowsByIdsInChunks(
+    (chunk) => supabase.from('customers').select('id, role, organization_id').in('id', chunk),
+    ids,
+  );
   for (const row of data || []) {
     const role = String(row?.role || 'contractor');
     map.set(String(row.id), role === 'contractor' ? sanitizeRefId(row?.organization_id) : null);
@@ -6451,8 +6591,13 @@ function mapHolidayRow(row) {
 
 /** 休日一覧 */
 export async function fetchHolidays() {
-  const { data, error } = await supabase.from('holidays').select('*').order('holiday_date', { ascending: true });
-  if (error) throw error;
+  const data = await fetchAllRowsPaged(() =>
+    supabase
+      .from('holidays')
+      .select('*')
+      .order('holiday_date', { ascending: true })
+      .order('id', { ascending: true }),
+  );
   return (data || []).map(mapHolidayRow).filter(Boolean);
 }
 
@@ -7226,11 +7371,11 @@ export async function fetchFactoryNewsFeed(factoryId) {
   const ids = visible.map((n) => n.id).filter(Boolean);
   let reads = [];
   if (ids.length > 0) {
-    const { data: readRows, error: readErr } = await supabase
-      .from('factory_news_reads')
-      .select('news_id, factory_id, read_at')
-      .in('news_id', ids);
-    if (readErr) throw readErr;
+    const readRows = await fetchRowsByIdsInChunks(
+      (chunk) =>
+        supabase.from('factory_news_reads').select('news_id, factory_id, read_at').in('news_id', chunk),
+      ids,
+    );
     reads = (readRows || []).map(mapFactoryNewsReadRow).filter(Boolean);
   }
 
@@ -7284,11 +7429,11 @@ export async function fetchFactoryNewsAdminFeed() {
   const ids = news.map((n) => n.id).filter(Boolean);
   let reads = [];
   if (ids.length > 0) {
-    const { data: readRows, error: readErr } = await supabase
-      .from('factory_news_reads')
-      .select('news_id, factory_id, read_at')
-      .in('news_id', ids);
-    if (readErr) throw readErr;
+    const readRows = await fetchRowsByIdsInChunks(
+      (chunk) =>
+        supabase.from('factory_news_reads').select('news_id, factory_id, read_at').in('news_id', chunk),
+      ids,
+    );
     reads = (readRows || []).map(mapFactoryNewsReadRow).filter(Boolean);
   }
   return { news, reads };
@@ -8054,12 +8199,15 @@ export async function fetchCharterRequestsWithProgress(factoryId) {
   if (!mapped.length) return [];
 
   const requestIds = mapped.map((r) => r.id);
-  const { data: responses, error: respErr } = await supabase
-    .from('charter_responses')
-    .select('request_id, offered_count, assigned_vehicles, status')
-    .in('request_id', requestIds)
-    .in('status', ['accepted', 'partially_accepted']);
-  if (respErr) throw respErr;
+  const responses = await fetchRowsByIdsInChunks(
+    (chunk) =>
+      supabase
+        .from('charter_responses')
+        .select('request_id, offered_count, assigned_vehicles, status')
+        .in('request_id', chunk)
+        .in('status', ['accepted', 'partially_accepted']),
+    requestIds,
+  );
 
   const acceptedByRequestId = new Map();
   for (const r of responses || []) {
@@ -8278,14 +8426,10 @@ export async function fetchCharterOperatorCompanyNames(operatorIds) {
   const ids = [...new Set((operatorIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
   if (!ids.length || !supabase?.from) return {};
   try {
-    const { data, error } = await supabase
-      .from('charter_operators')
-      .select('id, company_name')
-      .in('id', ids);
-    if (error) {
-      console.warn('[fetchCharterOperatorCompanyNames] failed', error);
-      return {};
-    }
+    const data = await fetchRowsByIdsInChunks(
+      (chunk) => supabase.from('charter_operators').select('id, company_name').in('id', chunk),
+      ids,
+    );
     const out = {};
     for (const row of data || []) {
       const id = String(row.id ?? '').trim();
@@ -8411,11 +8555,14 @@ async function fetchCharterLendBookingsForResponder(responderType, responderId) 
   if (!responses?.length) return [];
 
   const requestIds = [...new Set(responses.map((r) => r.request_id).filter(Boolean))];
-  const { data: requests, error: reqErr } = await supabase
-    .from('charter_requests')
-    .select('id, request_date, requesting_factory_id, vehicle_type, note, status')
-    .in('id', requestIds);
-  if (reqErr) throw reqErr;
+  const requests = await fetchRowsByIdsInChunks(
+    (chunk) =>
+      supabase
+        .from('charter_requests')
+        .select('id, request_date, requesting_factory_id, vehicle_type, note, status')
+        .in('id', chunk),
+    requestIds,
+  );
   const requestById = new Map((requests || []).map((r) => [r.id, r]));
 
   const factoryIds = [
@@ -8423,11 +8570,10 @@ async function fetchCharterLendBookingsForResponder(responderType, responderId) 
   ];
   let factoryNameById = new Map();
   if (factoryIds.length) {
-    const { data: factories, error: facErr } = await supabase
-      .from('factories')
-      .select('id, name')
-      .in('id', factoryIds);
-    if (facErr) throw facErr;
+    const factories = await fetchRowsByIdsInChunks(
+      (chunk) => supabase.from('factories').select('id, name').in('id', chunk),
+      factoryIds,
+    );
     factoryNameById = new Map((factories || []).map((f) => [f.id, f.name]));
   }
 
@@ -8654,17 +8800,17 @@ export async function fetchCharterRequestsByIds(requestIds) {
   const ids = [...new Set((requestIds || []).map((id) => sanitizeRefId(id)).filter(Boolean))];
   if (!ids.length || !supabase?.from) return [];
   try {
-    const { data, error } = await supabase
-      .from('charter_requests')
-      .select(
-        'id, requesting_factory_id, request_date, vehicle_type, desired_count, note, status, created_at, updated_at',
-      )
-      .in('id', ids)
-      .order('request_date', { ascending: false });
-    if (error) {
-      console.warn('[fetchCharterRequestsByIds] failed', error);
-      return [];
-    }
+    const data = await fetchRowsByIdsInChunks(
+      (chunk) =>
+        supabase
+          .from('charter_requests')
+          .select(
+            'id, requesting_factory_id, request_date, vehicle_type, desired_count, note, status, created_at, updated_at',
+          )
+          .in('id', chunk)
+          .order('request_date', { ascending: false }),
+      ids,
+    );
     const requests = (data || []).map(mapCharterRequestRow).filter(Boolean);
     if (!requests.length) return [];
     const factories = await fetchFactories();
