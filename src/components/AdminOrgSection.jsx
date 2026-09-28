@@ -147,7 +147,7 @@ function buildCsvPreview(rows, orgs) {
   return { groups: Object.values(grouped), importCount, skipCount };
 }
 
-function memberToForm(member, orgName = '') {
+function memberToForm(member, orgName = '', password = '') {
   return {
     id: member.id,
     organizationId: member.organization_id ?? null,
@@ -155,13 +155,63 @@ function memberToForm(member, orgName = '') {
     furigana: member.furigana ?? '',
     managerName: member.manager_name ?? '',
     phone: member.phone_number ?? '',
-    password: member.login_password ?? '',
+    password: password ?? '',
     canImportSchedule: Boolean(member.can_import_schedule),
     canRequestMixDesign: Boolean(member.can_request_mix_design),
     isCreditEligible: Boolean(member.is_credit_eligible),
     creditSource: member.credit_source != null ? String(member.credit_source) : '',
     isCounterCash: Boolean(member.is_counter_cash),
   };
+}
+
+/** パスワード入力欄（初期は伏せ字、「表示」で明文） */
+function MaskedPasswordInput({ value, onChange, inputClass, hint }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <>
+      <div className="mt-1 flex items-center gap-2">
+        <input
+          type={visible ? 'text' : 'password'}
+          value={value}
+          onChange={onChange}
+          autoComplete="new-password"
+          className={`${inputClass} min-w-0 flex-1`}
+        />
+        <button
+          type="button"
+          onClick={() => setVisible((v) => !v)}
+          className="shrink-0 text-sm text-indigo-600 hover:underline"
+        >
+          {visible ? '隠す' : '表示'}
+        </button>
+      </div>
+      {hint ? (
+        <span className="mt-1 block text-[11px] leading-relaxed text-slate-500">{hint}</span>
+      ) : null}
+    </>
+  );
+}
+
+/** 一覧用パスワード表示（初期は伏せ字） */
+function MaskedPasswordDisplay({ password }) {
+  const [visible, setVisible] = useState(false);
+  const value = String(password ?? '');
+  return (
+    <span className="inline-flex min-w-[7rem] items-center gap-1.5">
+      <span className="font-mono text-xs text-gray-600">
+        {visible ? value || '—' : value ? '••••••' : '—'}
+      </span>
+      {value ? (
+        <button
+          type="button"
+          onClick={() => setVisible((v) => !v)}
+          className="text-[11px] text-indigo-600 hover:underline"
+        >
+          {visible ? '隠す' : '表示'}
+        </button>
+      ) : null}
+    </span>
+  );
 }
 
 function formatError(err, fallback = '処理に失敗しました') {
@@ -194,6 +244,7 @@ export function AdminOrgSection({ orgType, label }) {
   const [selectedLinkContractorIds, setSelectedLinkContractorIds] = useState(() => new Set());
   const [initialLinkContractorIds, setInitialLinkContractorIds] = useState(() => new Set());
   const [contractorListFilter, setContractorListFilter] = useState('');
+  const [credentialsById, setCredentialsById] = useState(() => ({}));
   const csvFileInputRef = useRef(null);
 
   const isAgentOrg = orgType === 'agent';
@@ -228,6 +279,15 @@ export function AdminOrgSection({ orgType, label }) {
       const rows = await db.fetchOrganizationsWithMembers(orgType);
       const list = Array.isArray(rows) ? rows : [];
       setOrgs(list);
+
+      const memberIds = list.flatMap((o) => (o.members || []).map((m) => m.id).filter(Boolean));
+      try {
+        const creds = await db.adminGetCustomerCredentials(memberIds);
+        setCredentialsById(creds && typeof creds === 'object' ? creds : {});
+      } catch (credErr) {
+        console.warn('[AdminOrgSection] credentials fetch failed', credErr);
+        setCredentialsById({});
+      }
 
       if (orgType === 'agent') {
         const [allCustomers, links] = await Promise.all([
@@ -283,7 +343,8 @@ export function AdminOrgSection({ orgType, label }) {
 
   const beginEditMember = useCallback(
     async (member, orgName) => {
-      setEditingMember(memberToForm(member, orgName));
+      const password = credentialsById[String(member.id)] ?? '';
+      setEditingMember(memberToForm(member, orgName, password));
       setAddingMemberId(null);
       setError('');
       setContractorListFilter('');
@@ -302,7 +363,7 @@ export function AdminOrgSection({ orgType, label }) {
         setError(formatError(e, '取引業者の取得に失敗しました'));
       }
     },
-    [orgType, resetMemberLinkState],
+    [orgType, resetMemberLinkState, credentialsById],
   );
 
   useEffect(() => {
@@ -373,7 +434,7 @@ export function AdminOrgSection({ orgType, label }) {
               furigana: m.furigana ?? '',
               managerName: m.manager_name ?? '',
               phone: m.phone_number ?? '',
-              password: m.login_password ?? '',
+              // password は渡さない（組織名変更でパスワードを消さない）
             }),
           ),
         );
@@ -437,6 +498,12 @@ export function AdminOrgSection({ orgType, label }) {
             : o,
         ),
       );
+      if (created?.id) {
+        setCredentialsById((prev) => ({
+          ...prev,
+          [String(created.id)]: String(newMember.password ?? '').trim(),
+        }));
+      }
       setAddingMemberId(null);
       setNewMember(emptyMember());
       resetMemberLinkState();
@@ -506,7 +573,6 @@ export function AdminOrgSection({ orgType, label }) {
                   furigana: editingMember.furigana?.trim() ?? null,
                   manager_name: editingMember.managerName?.trim() ?? null,
                   phone_number: editingMember.phone?.trim() ?? null,
-                  login_password: editingMember.password?.trim() ?? null,
                   can_import_schedule: Boolean(editingMember.canImportSchedule),
                   can_request_mix_design: Boolean(editingMember.canRequestMixDesign),
                   is_credit_eligible: isContractorOrg
@@ -523,6 +589,10 @@ export function AdminOrgSection({ orgType, label }) {
           ),
         })),
       );
+      setCredentialsById((prev) => ({
+        ...prev,
+        [String(editingMember.id)]: String(editingMember.password ?? '').trim(),
+      }));
       setEditingMember(null);
       resetMemberLinkState();
       if (linkError) {
@@ -1068,15 +1138,14 @@ export function AdminOrgSection({ orgType, label }) {
                           </label>
                           <label className="block text-xs text-gray-600">
                             パスワード
-                            <input
-                              type="text"
+                            <MaskedPasswordInput
                               value={editingMember.password}
                               onChange={(e) =>
                                 setEditingMember((cur) =>
                                   cur ? { ...cur, password: e.target.value } : cur,
                                 )
                               }
-                              className={`${inputClass} mt-1 w-full`}
+                              inputClass={inputClass}
                             />
                           </label>
                           <label className="flex items-start gap-2 text-xs font-bold text-slate-700 sm:col-span-2">
@@ -1260,6 +1329,7 @@ export function AdminOrgSection({ orgType, label }) {
                       <span className="min-w-[7rem] text-gray-600">
                         {member.phone_number ? formatPhoneNumberJP(member.phone_number) : '—'}
                       </span>
+                      <MaskedPasswordDisplay password={credentialsById[String(member.id)] ?? ''} />
                       {isAgentOrg ? (
                         <span
                           className={
@@ -1344,17 +1414,14 @@ export function AdminOrgSection({ orgType, label }) {
                       </label>
                       <label className="block text-xs text-gray-600">
                         パスワード
-                        <input
-                          type="text"
+                        <MaskedPasswordInput
                           value={newMember.password}
                           onChange={(e) =>
                             setNewMember((m) => ({ ...m, password: e.target.value }))
                           }
-                          className={`${inputClass} mt-1 w-full`}
+                          inputClass={inputClass}
+                          hint="自動生成されています。先方の希望があれば書き換えてください。"
                         />
-                        <span className="mt-1 block text-[11px] leading-relaxed text-slate-500">
-                          自動生成されています。先方の希望があれば書き換えてください。
-                        </span>
                       </label>
                       <label className="flex items-start gap-2 text-xs font-bold text-slate-700 sm:col-span-2">
                         <input

@@ -81,6 +81,10 @@ const ORDER_SELECT =
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name, url_token';
 
+/** customers の通常取得用（login_password を含まない。列 SELECT 権限剥奪後も壊れない） */
+const CUSTOMER_SELECT_SAFE =
+  'id,company_name,manager_name,phone_number,created_at,url_token,company_name_katakana,furigana,role,organization_id,can_import_schedule,is_credit_eligible,credit_source,can_request_mix_design,is_representative,is_counter_cash';
+
 // projects は環境差分（未適用マイグレーション）でカラム欠損しやすい。
 // まずは trading_company_name を優先し、無ければ段階的にフォールバックする。
 const PROJECT_SELECT_MIN =
@@ -4965,7 +4969,7 @@ export async function deleteOrganizationWithMembers(orgId) {
  * @param {'agent'|'cooperative'|'contractor'} type
  * @returns Array<{
  *   id, name, type, created_at,
- *   members: Array<{id, company_name, furigana, manager_name, phone_number, login_password}>
+ *   members: Array<object>
  * }>
  */
 export async function fetchOrganizationsWithMembers(type) {
@@ -4981,13 +4985,11 @@ export async function fetchOrganizationsWithMembers(type) {
   // 長大化して 400 になる。role で絞り、所属はクライアント側で紐付ける。
   const { data, error: ce } = await supabase
     .from('customers')
-    .select(
-      'id, company_name, furigana, manager_name, phone_number, login_password, organization_id, can_import_schedule, can_request_mix_design, is_credit_eligible, credit_source, is_counter_cash',
-    )
+    .select(CUSTOMER_SELECT_SAFE)
     .eq('role', type)
     .order('manager_name');
   if (ce) throw ce;
-  const members = data ?? [];
+  const members = (data ?? []).map(mapCustomerRow).filter(Boolean);
 
   return (orgs || []).map((org) => ({
     ...org,
@@ -5051,7 +5053,7 @@ export async function createProvisionalCompany({ name, role, is_counter_cash = f
 
   const { data: existingMembers, error: memberFetchError } = await supabase
     .from('customers')
-    .select('*')
+    .select(CUSTOMER_SELECT_SAFE)
     .eq('organization_id', organizationId)
     .eq('role', role)
     .limit(1);
@@ -5072,7 +5074,7 @@ export async function createProvisionalCompany({ name, role, is_counter_cash = f
   // 旧実装が組織なしで作った担当者が残っている場合は、重複を作らず組織へ紐付ける
   const { data: orphans, error: orphanFetchError } = await supabase
     .from('customers')
-    .select('*')
+    .select(CUSTOMER_SELECT_SAFE)
     .is('organization_id', null)
     .eq('role', role)
     .eq('company_name', trimmed)
@@ -5087,7 +5089,7 @@ export async function createProvisionalCompany({ name, role, is_counter_cash = f
         ...(counterCash ? { is_counter_cash: true } : {}),
       })
       .eq('id', orphan.id)
-      .select('*')
+      .select(CUSTOMER_SELECT_SAFE)
       .single();
     if (linkError) throw linkError;
     return { organization, customer: mapCustomerRow(linked), created: false };
@@ -5127,7 +5129,7 @@ export async function createOrgStaffIfMissing({
 
   const { data: members, error } = await supabase
     .from('customers')
-    .select('*')
+    .select(CUSTOMER_SELECT_SAFE)
     .eq('organization_id', orgId);
   if (error) throw error;
 
@@ -5193,10 +5195,10 @@ export async function createOrgMember({
       credit_source: String(creditSource ?? '').trim() || null,
       is_counter_cash: Boolean(isCounterCash),
     })
-    .select()
+    .select(CUSTOMER_SELECT_SAFE)
     .single();
   if (error) throw error;
-  return data;
+  return mapCustomerRow(data);
 }
 
 /** 担当者を更新 */
@@ -5232,8 +5234,11 @@ export async function updateOrgMember(
     furigana: furigana?.trim() ?? null,
     manager_name: managerName?.trim() ?? null,
     phone_number: phone?.trim() ?? null,
-    login_password: password?.trim() ?? null,
   };
+  // password 未指定時は login_password を触らない（組織名変更など）
+  if (password !== undefined) {
+    updateRow.login_password = String(password ?? '').trim() || null;
+  }
   if (canImportSchedule !== undefined) {
     updateRow.can_import_schedule = Boolean(canImportSchedule);
   }
@@ -5352,19 +5357,6 @@ export async function syncAgentContractorLinks(agentCustomerId, nextContractorId
   return { inserted: toInsert.length, deleted: toDelete.length };
 }
 
-/** 組織に属する担当者（customers）一覧 — 現場担当者サジェスト用 */
-export async function fetchCustomersByOrganizationId(organizationId) {
-  const orgId = sanitizeRefId(organizationId);
-  if (!orgId) return [];
-  const { data, error } = await supabase
-    .from('customers')
-    .select('id, company_name, furigana, manager_name, phone_number, login_password, organization_id, role')
-    .eq('organization_id', orgId)
-    .order('manager_name');
-  if (error) throw error;
-  return (data ?? []).map(mapCustomerRow).filter(Boolean);
-}
-
 /**
  * CSVパース結果を一括インポート
  * @param {Array<{orgName, managerName, phone, password}>} rows
@@ -5464,9 +5456,34 @@ function mapCustomerRow(row) {
 }
 
 export async function fetchCustomers() {
-  const { data, error } = await supabase.from('customers').select('*').order('company_name', { ascending: true });
+  const { data, error } = await supabase
+    .from('customers')
+    .select(CUSTOMER_SELECT_SAFE)
+    .order('company_name', { ascending: true });
   if (error) throw error;
   return (data || []).map(mapCustomerRow).filter(Boolean);
+}
+
+/**
+ * 管理者専用: customers.login_password を RPC で取得（パネル以外は 42501）
+ * @param {string[]} customerIds
+ * @returns {Promise<Record<string, string>>} id → login_password
+ */
+export async function adminGetCustomerCredentials(customerIds) {
+  const ids = [...new Set((customerIds || []).map((id) => sanitizeRefId(id)).filter(Boolean))];
+  if (ids.length === 0) return {};
+  const { data, error } = await supabase.rpc('admin_get_customer_credentials', {
+    p_customer_ids: ids,
+  });
+  if (error) throw error;
+  /** @type {Record<string, string>} */
+  const map = {};
+  for (const row of data || []) {
+    const id = row?.id != null ? String(row.id) : '';
+    if (!id) continue;
+    map[id] = row.login_password != null ? String(row.login_password) : '';
+  }
+  return map;
 }
 
 /**
@@ -5593,7 +5610,7 @@ export async function bulkInsertCustomers(customerRows) {
   const inserted = [];
   for (let i = 0; i < prepared.length; i += BULK_INSERT_CHUNK) {
     const chunk = prepared.slice(i, i + BULK_INSERT_CHUNK);
-    const { data, error } = await supabase.from('customers').insert(chunk).select('*');
+    const { data, error } = await supabase.from('customers').insert(chunk).select(CUSTOMER_SELECT_SAFE);
     if (error) throw error;
     inserted.push(...(data || []));
   }
@@ -5617,7 +5634,7 @@ export async function addCustomer(customerData) {
         organization_id: customerData?.organization_id || null,
         is_counter_cash: Boolean(customerData?.is_counter_cash ?? customerData?.isCounterCash),
       };
-      const { data, error } = await supabase.from('customers').insert(row).select('*').single();
+      const { data, error } = await supabase.from('customers').insert(row).select(CUSTOMER_SELECT_SAFE).single();
       if (error) throw error;
       return mapCustomerRow(data);
     }
@@ -5635,7 +5652,7 @@ export async function addCustomer(customerData) {
       organization_id: customerData?.organization_id || null,
       is_counter_cash: Boolean(customerData?.is_counter_cash ?? customerData?.isCounterCash),
     };
-  const { data, error } = await supabase.from('customers').insert(row).select('*').single();
+  const { data, error } = await supabase.from('customers').insert(row).select(CUSTOMER_SELECT_SAFE).single();
   if (error) throw error;
   return mapCustomerRow(data);
 }
@@ -5658,7 +5675,12 @@ export async function updateCustomer(id, customerData) {
     role: String(customerData?.role || 'contractor').trim(),
     organization_id: customerData?.organization_id || null,
   };
-  const { data, error } = await supabase.from('customers').update(row).eq('id', customerId).select('*').single();
+  const { data, error } = await supabase
+    .from('customers')
+    .update(row)
+    .eq('id', customerId)
+    .select(CUSTOMER_SELECT_SAFE)
+    .single();
   if (error) throw error;
   return mapCustomerRow(data);
 }
@@ -5672,27 +5694,11 @@ export async function loginCustomer(phoneNumber, password) {
     p_phone: phone,
     p_password: pass,
   });
-  if (!error && data != null) {
-    const row = typeof data === 'string' ? JSON.parse(data) : data;
-    if (!row || !row.id) return null;
-    return mapCustomerRow({ ...row, login_password: pass, realtime_token: row.realtime_token });
-  }
-
-  const missingFn =
-    error && (error.code === '42883' || /login_customer/i.test(String(error.message || '')));
-  if (!missingFn) {
-    if (error) throw error;
-    return null;
-  }
-
-  const { data: legacy, error: legacyErr } = await supabase
-    .from('customers')
-    .select('*')
-    .eq('phone_number', phone)
-    .eq('login_password', pass)
-    .maybeSingle();
-  if (legacyErr) throw legacyErr;
-  return legacy ? mapCustomerRow(legacy) : null;
+  if (error) throw error;
+  if (data == null) return null;
+  const row = typeof data === 'string' ? JSON.parse(data) : data;
+  if (!row || !row.id) return null;
+  return mapCustomerRow({ ...row, login_password: pass, realtime_token: row.realtime_token });
 }
 
 export async function deleteCustomer(id) {

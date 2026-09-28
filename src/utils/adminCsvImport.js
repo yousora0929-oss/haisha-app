@@ -756,7 +756,6 @@ export function buildCustomersExportRows(customers) {
     cleanCell(c.furigana),
     cleanCell(c.manager_name),
     formatCsvExcelTextField(c.phone_number),
-    formatCsvExcelTextField(c.login_password),
     c.is_counter_cash || c.isCounterCash ? '○' : '',
   ]);
   return [CUSTOMER_EXPORT_HEADERS, ...dataRows];
@@ -792,7 +791,6 @@ export function buildOrgMembersExportRows(orgs) {
         furigana: m.furigana,
         manager_name: m.manager_name,
         phone_number: m.phone_number,
-        login_password: m.login_password,
         is_counter_cash: Boolean(m.is_counter_cash),
       });
     }

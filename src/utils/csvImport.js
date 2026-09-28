@@ -278,7 +278,7 @@ export const PROJECT_EXPORT_HEADERS = [
   '現場担当者',
   '組合担当営業',
 ];
-export const CUSTOMER_EXPORT_HEADERS = ['業者名', 'フリガナ', '担当者名', '電話番号', 'ログインパスワード', '窓口現金'];
+export const CUSTOMER_EXPORT_HEADERS = ['業者名', 'フリガナ', '担当者名', '電話番号', '窓口現金'];
 export const TRADING_COMPANY_EXPORT_HEADERS = ['商社名'];
 
 /** CSVの真偽セル（空欄=false、「○」「1」「true」等=true） */
