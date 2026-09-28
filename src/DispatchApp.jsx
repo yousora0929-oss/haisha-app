@@ -239,6 +239,34 @@ function compareInProgressOrdersByCreatedAtDesc(a, b) {
   return inProgressOrderCreatedAtMs(b) - inProgressOrderCreatedAtMs(a);
 }
 
+/**
+ * 商社の閲覧のみ注文向けの発注者・業者表示。
+ * customers は読まない（RLS で他社行が取れない）。注文スナップショットのみ使う。
+ * ※ order.orderedBy / order_data.orderedBy は現場担当者なので使わない。
+ */
+function resolveAgentForeignOrderPartyLabels(order) {
+  const company = String(order?.customerName ?? '').trim();
+  const person =
+    String(order?.ordered_by ?? '').trim() || String(order?.orderPlacerName ?? '').trim();
+  let placerCore = '';
+  if (company && person) placerCore = `${company}（${person}）`;
+  else if (company) placerCore = company;
+  else if (person) placerCore = person;
+  else placerCore = '不明';
+
+  const ownerId = String(order?.customer_id ?? order?.customerId ?? '').trim();
+  const contractorId = String(
+    order?.contractor_customer_id ?? order?.contractorCustomerId ?? '',
+  ).trim();
+  const isProxy = Boolean(contractorId && ownerId && contractorId !== ownerId);
+  const contractorName = String(order?.contractorName ?? '').trim();
+
+  return {
+    placerDisplay: `発注者：${placerCore}`,
+    contractorDisplay: isProxy && contractorName ? `業者：${contractorName}` : '',
+  };
+}
+
 function inProgressGroupCollapsedStorageKey(customerId) {
   const cid = String(customerId || '').trim() || 'anon';
   return `${INPROGRESS_GROUP_COLLAPSED_STORAGE_PREFIX}_${cid}`;
@@ -1424,6 +1452,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       readOnly = false,
       accountLabel = '',
       placerLabel = '',
+      contractorLabel = '',
       customerById = {},
       highlighted = false,
       blinkFactoryName = false,
@@ -1549,8 +1578,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     </span>
                   ) : null}
                   {placerLabel ? (
-                    <span className="inline-flex rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-bold text-slate-600 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-300">
-                      発注者：{placerLabel}
+                    <span className="inline-flex max-w-full flex-wrap gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-bold text-slate-600 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-300">
+                      <span className="min-w-0 break-words">{placerLabel}</span>
+                      {contractorLabel ? (
+                        <span className="min-w-0 break-words text-slate-500">{contractorLabel}</span>
+                      ) : null}
                     </span>
                   ) : null}
                 </div>
@@ -1929,9 +1961,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     const party = orderPartyInfo(order);
                     const meta = historyStatusMeta(order, escalationCtx);
                     const project = resolveOrderLinkedProject(order, projectById);
+                    const isForeign = isAgentForeignViewOrder(order);
+                    const foreignParty = isForeign
+                      ? resolveAgentForeignOrderPartyLabels(order)
+                      : null;
                     const canEditPending =
-                      isPreAcceptOrderEditable(order) && typeof onEditOrder === 'function';
+                      !isForeign &&
+                      isPreAcceptOrderEditable(order) &&
+                      typeof onEditOrder === 'function';
                     const canRequestChange =
+                      !isForeign &&
                       !canEditPending &&
                       isAcceptedOrderChangeRequestable(order) &&
                       typeof onRequestChange === 'function';
@@ -1943,7 +1982,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         title="ダブルタップで現在のステータスを表示"
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className={'inline-flex rounded-full px-3 py-1 text-xs font-black ' + statusClass(order)}>{meta.label}</span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={'inline-flex rounded-full px-3 py-1 text-xs font-black ' + statusClass(order)}>{meta.label}</span>
+                            {isForeign ? (
+                              <span className="inline-flex rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-black text-amber-900">
+                                閲覧のみ
+                              </span>
+                            ) : null}
+                          </div>
                           {canEditPending ? (
                             <button
                               type="button"
@@ -1972,12 +2018,21 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           <p className="mt-2 text-sm font-black text-slate-900">{party.site || '現場未設定'}</p>
                         ) : null}
                         <p className="mt-1 text-xs font-bold text-slate-500">{order.timePointLabel || order.timeSlotLabel || '時刻未設定'} / {order.confirmedQuantityM3 ?? order.quantityM3 ?? '—'}m³ / {order.confirmedMixText || order.mixText || '配合未入力'}</p>
-                        <OrderMasterContactLines
-                          order={order}
-                          project={project}
-                          customerById={customerById}
-                          className="mt-1 text-xs font-bold text-slate-600"
-                        />
+                        {foreignParty ? (
+                          <div className="mt-1 space-y-0.5 text-xs font-bold text-slate-600">
+                            <p>{foreignParty.placerDisplay}</p>
+                            {foreignParty.contractorDisplay ? (
+                              <p>{foreignParty.contractorDisplay}</p>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <OrderMasterContactLines
+                            order={order}
+                            project={project}
+                            customerById={customerById}
+                            className="mt-1 text-xs font-bold text-slate-600"
+                          />
+                        )}
                         <p className="mt-2 text-[10px] font-black text-indigo-600">ダブルタップで現在のステータス</p>
                         <div
                           className="grid transition-[grid-template-rows] duration-300 ease-out"
@@ -3781,18 +3836,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           return Boolean(me && ownerId && ownerId !== me);
         },
         [currentCustomerRole, currentCustomerId],
-      );
-
-      /** 発注者表示: orders.ordered_by（ログイン担当者名）。無ければ発注顧客の会社名 */
-      const resolveOrderPlacerDisplayName = useCallback(
-        (order) => {
-          const placer = String(order?.ordered_by || '').trim();
-          if (placer) return placer;
-          const ownerId = String(order?.customer_id ?? order?.customerId ?? '').trim();
-          const cust = ownerId ? customerById[ownerId] : null;
-          return String(cust?.company_name || cust?.name || '').trim();
-        },
-        [customerById],
       );
 
       const assignedContactProjects = useMemo(() => {
@@ -6797,9 +6840,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                 companyScopeActive && companyColleagueIdSet.has(ownerId);
                               const isForeignAgentOrder = isAgentForeignViewOrder(ord);
                               const isViewOnly = isColleagueOrder || isForeignAgentOrder;
-                              const placerLabel = isForeignAgentOrder
-                                ? resolveOrderPlacerDisplayName(ord)
-                                : '';
+                              const foreignParty = isForeignAgentOrder
+                                ? resolveAgentForeignOrderPartyLabels(ord)
+                                : null;
                               return (
                               <InProgressOrderCard
                                 key={ord.id}
@@ -6831,7 +6874,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                     ? formatProjectAccountLabel(customerById[ownerId])
                                     : ''
                                 }
-                                placerLabel={placerLabel}
+                                placerLabel={foreignParty?.placerDisplay || ''}
+                                contractorLabel={foreignParty?.contractorDisplay || ''}
                                 highlighted={String(ord?.id || '') === String(highlightedOrderId || '')}
                                 blinkFactoryName={blinkFactoryOrderIds.has(String(ord.id))}
                                 showCounterCashBadge={isAgentOrCooperative}
@@ -6947,7 +6991,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 <ul className="mt-5 grid grid-cols-1 gap-6">
                   {filteredHistoryRows.map((row) => {
                     const isForeign = isAgentForeignViewOrder(row.source);
-                    const placerLabel = isForeign ? resolveOrderPlacerDisplayName(row.source) : '';
+                    const foreignParty = isForeign
+                      ? resolveAgentForeignOrderPartyLabels(row.source)
+                      : null;
                     return (
                     <li key={row.id}>
                       <article
@@ -6974,8 +7020,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                             </div>
                             <p className="mt-2 break-words text-base font-black text-slate-900">{row.site || '現場未設定'}</p>
                             <p className="mt-1 text-xs font-bold text-slate-500">{row.dateLabel || '日時未設定'}</p>
-                            {placerLabel ? (
-                              <p className="mt-1 text-xs font-bold text-slate-600">発注者：{placerLabel}</p>
+                            {foreignParty ? (
+                              <div className="mt-1 space-y-0.5 text-xs font-bold text-slate-600">
+                                <p>{foreignParty.placerDisplay}</p>
+                                {foreignParty.contractorDisplay ? (
+                                  <p>{foreignParty.contractorDisplay}</p>
+                                ) : null}
+                              </div>
                             ) : null}
                           </div>
                           {!isForeign ? (
@@ -7060,7 +7111,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         <ul className="mt-3 grid grid-cols-1 gap-3">
                           {orders.map((ord) => {
                             const isForeign = isAgentForeignViewOrder(ord);
-                            const placerLabel = resolveOrderPlacerDisplayName(ord);
+                            const foreignParty = isForeign
+                              ? resolveAgentForeignOrderPartyLabels(ord)
+                              : null;
+                            const ownPlacer = !isForeign
+                              ? String(ord?.ordered_by || '').trim()
+                              : '';
                             const statusMeta = historyStatusMeta(ord, customerEscalationCtx);
                             const mix = String(ord.confirmedMixText ?? ord.mixText ?? '').trim();
                             const qty = ord.confirmedQuantityM3 ?? ord.quantityM3 ?? '';
@@ -7104,10 +7160,29 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                     <dt className="w-20 shrink-0 text-slate-400">受注工場</dt>
                                     <dd className="min-w-0 flex-1 break-words">{factoryLabel || '—'}</dd>
                                   </div>
-                                  <div className="flex gap-2">
-                                    <dt className="w-20 shrink-0 text-slate-400">発注者</dt>
-                                    <dd className="min-w-0 flex-1 break-words">{placerLabel || '—'}</dd>
-                                  </div>
+                                  {foreignParty ? (
+                                    <>
+                                      <div className="flex gap-2">
+                                        <dt className="w-20 shrink-0 text-slate-400">発注者</dt>
+                                        <dd className="min-w-0 flex-1 break-words">
+                                          {foreignParty.placerDisplay.replace(/^発注者：/, '')}
+                                        </dd>
+                                      </div>
+                                      {foreignParty.contractorDisplay ? (
+                                        <div className="flex gap-2">
+                                          <dt className="w-20 shrink-0 text-slate-400">業者</dt>
+                                          <dd className="min-w-0 flex-1 break-words">
+                                            {foreignParty.contractorDisplay.replace(/^業者：/, '')}
+                                          </dd>
+                                        </div>
+                                      ) : null}
+                                    </>
+                                  ) : (
+                                    <div className="flex gap-2">
+                                      <dt className="w-20 shrink-0 text-slate-400">発注者</dt>
+                                      <dd className="min-w-0 flex-1 break-words">{ownPlacer || '—'}</dd>
+                                    </div>
+                                  )}
                                 </dl>
                                 {!isForeign ? (
                                   <div className="mt-3 flex flex-wrap gap-2">
