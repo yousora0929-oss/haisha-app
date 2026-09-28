@@ -1836,6 +1836,39 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
     }
 
+    class CalendarDetailErrorBoundary extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = { error: null };
+      }
+      static getDerivedStateFromError(error) {
+        return { error };
+      }
+      componentDidCatch(error, info) {
+        console.error('[CustomerOrderCalendar] detail render failed', error, info);
+      }
+      render() {
+        if (this.state.error) {
+          return (
+            <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-4 py-6 text-center">
+              <p className="text-sm font-black text-red-700">この日の注文表示でエラーが発生しました。</p>
+              <p className="mt-2 break-all text-xs font-bold text-red-600">
+                {String(this.state.error?.message || this.state.error || '不明なエラー')}
+              </p>
+              <button
+                type="button"
+                onClick={() => this.setState({ error: null })}
+                className="mt-3 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-black text-red-800"
+              >
+                再表示
+              </button>
+            </div>
+          );
+        }
+        return this.props.children;
+      }
+    }
+
     function CustomerOrderCalendar({
       orders,
       selectedDate,
@@ -1847,7 +1880,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       customerById = {},
       onEditOrder = null,
       onRequestChange = null,
+      isAgentForeignViewOrder: isAgentForeignViewOrderProp = null,
     }) {
+      const isAgentForeignViewOrder =
+        typeof isAgentForeignViewOrderProp === 'function'
+          ? isAgentForeignViewOrderProp
+          : () => false;
       const [expandedStatusOrderId, setExpandedStatusOrderId] = useState('');
       const lastTapRef = useRef({ orderId: null, at: 0 });
       const days = useMemo(() => {
@@ -1952,6 +1990,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           </div>
           <div className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-4 lg:sticky lg:top-24">
             <h3 className="text-sm font-black text-slate-900">{selectedDate.replace(/-/g, '/')} の注文</h3>
+            <CalendarDetailErrorBoundary key={selectedDate}>
             {selectedOrders.length === 0 ? (
               <p className="mt-3 rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm font-bold text-slate-500">この日の注文はありません。</p>
             ) : (
@@ -2088,6 +2127,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 })}
               </ul>
             )}
+            </CalendarDetailErrorBoundary>
           </div>
           </div>
         </section>
@@ -7226,6 +7266,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 escalationCtx={customerEscalationCtx}
                 projectById={projectById}
                 customerById={customerById}
+                isAgentForeignViewOrder={isAgentForeignViewOrder}
                 onEditOrder={handleOpenCustomerOrderEdit}
                 onRequestChange={handleOpenCustomerChangeRequest}
                 onMonthChange={(nextMonth) => {
