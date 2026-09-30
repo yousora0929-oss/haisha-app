@@ -1,31 +1,16 @@
 /** 管理者向け order_priority_snapshots 表示ヘルパー */
 
+import { formatAuditOccurredAtJst } from './orderAuditDisplay.js';
+
 const REASON_LABELS = {
   created: '受付時',
   coords_resolved: '現場位置確定時',
   escalation_approved: '拡大承認時',
 };
 
-/** JST の M/D HH:mm（orderAuditDisplay と同形式） */
+/** @deprecated use formatAuditOccurredAtJst — 互換エイリアス */
 export function formatPriorityDateTimeJst(iso) {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Tokyo',
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).formatToParts(d);
-  const get = (type) => parts.find((p) => p.type === type)?.value || '';
-  const month = String(Number(get('month')));
-  const day = String(Number(get('day')));
-  let hour = get('hour');
-  if (hour === '24') hour = '00';
-  const minute = get('minute');
-  return `${month}/${day} ${hour}:${minute}`;
+  return formatAuditOccurredAtJst(iso);
 }
 
 export function snapshotReasonLabel(reason) {
@@ -46,7 +31,7 @@ export function formatVisibleFromLabel(visibleFromMinutes, effectiveStartAt) {
   const start = effectiveStartAt ? new Date(effectiveStartAt) : null;
   if (!start || Number.isNaN(start.getTime())) return '—';
   const at = new Date(start.getTime() + mins * 60 * 1000);
-  return formatPriorityDateTimeJst(at.toISOString());
+  return formatAuditOccurredAtJst(at.toISOString());
 }
 
 /**

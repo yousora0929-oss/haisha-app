@@ -29,7 +29,7 @@ describe('formatVisibleFromLabel', () => {
 
   it('adds minutes to effective_start_at in JST', () => {
     // 2026-09-30T00:00:00Z = 09:00 JST → +10min = 09:10 JST
-    expect(formatVisibleFromLabel(10, '2026-09-30T00:00:00.000Z')).toBe('9/30 09:10');
+    expect(formatVisibleFromLabel(10, '2026-09-30T00:00:00.000Z')).toBe('9/30 09:10:00');
   });
 });
 
@@ -46,8 +46,8 @@ describe('formatEscalationStepsChip', () => {
 });
 
 describe('formatPriorityDateTimeJst', () => {
-  it('formats M/D HH:mm in JST', () => {
-    expect(formatPriorityDateTimeJst('2026-09-30T09:05:00.000Z')).toBe('9/30 18:05');
+  it('formats M/D HH:mm:ss in JST via shared helper', () => {
+    expect(formatPriorityDateTimeJst('2026-09-30T09:05:00.000Z')).toBe('9/30 18:05:00');
   });
 });
 

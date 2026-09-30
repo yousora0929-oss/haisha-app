@@ -3,10 +3,10 @@ import * as db from '../haishaDb.js';
 import {
   actorRoleBadgeClass,
   actorRoleLabel,
+  buildAuditEventView,
   formatAuditOccurredAtJst,
+  formatAuditOccurredAtJstTitle,
   formatDeclineActorNote,
-  formatTimelineActorName,
-  normalizeAuditChanges,
   splitAuditLogs,
 } from '../utils/orderAuditDisplay.js';
 import {
@@ -18,6 +18,59 @@ import {
   isFactoryDeclinedInAudit,
   snapshotReasonLabel,
 } from '../utils/orderPriorityDisplay.js';
+
+function AuditChangeRows({ primary, internal }) {
+  const [showInternal, setShowInternal] = useState(false);
+  return (
+    <div className="mt-1 space-y-0.5">
+      {primary.length ? (
+        <ul className="space-y-0.5">
+          {primary.map((ch, idx) => (
+            <li key={`p-${ch.field}-${idx}`} className="text-xs text-slate-700">
+              <span className="font-bold text-slate-800">{ch.label}</span>
+              <span className="font-medium text-slate-600">
+                {': '}
+                {ch.beforeText}
+                {' → '}
+                {ch.afterText}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {internal.length ? (
+        <div className="mt-1">
+          <button
+            type="button"
+            onClick={() => setShowInternal((v) => !v)}
+            className="text-[11px] font-bold text-slate-500 underline-offset-2 hover:underline"
+          >
+            {showInternal
+              ? '内部項目を隠す'
+              : `内部項目 ${internal.length}件を表示`}
+          </button>
+          {showInternal ? (
+            <ul className="mt-1 space-y-0.5">
+              {internal.map((ch, idx) => (
+                <li key={`i-${ch.field}-${idx}`} className="text-xs text-slate-600">
+                  <span className="font-mono text-[10px] font-medium text-slate-400">
+                    {ch.label}
+                  </span>
+                  <span className="font-medium text-slate-500">
+                    {': '}
+                    {ch.beforeText}
+                    {' → '}
+                    {ch.afterText}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /**
  * 管理者・注文詳細内の「対応履歴」（辞退＋変更タイムライン＋スポット優先順位）
@@ -159,7 +212,10 @@ export function AdminOrderAuditHistory({
                     {backfilled ? (
                       <span className="font-medium text-slate-400">時刻不明（記録開始前）</span>
                     ) : (
-                      <span className="font-mono font-bold text-slate-600">
+                      <span
+                        className="font-mono font-bold text-slate-600"
+                        title={formatAuditOccurredAtJstTitle(row.occurred_at)}
+                      >
                         {formatAuditOccurredAtJst(row.occurred_at)}
                       </span>
                     )}
@@ -310,66 +366,49 @@ export function AdminOrderAuditHistory({
         ) : (
           <ol className="mt-2 space-y-3">
             {timeline.map((row) => {
-              const eventType = String(row?.event_type || '');
-              const backfilled = Boolean(row?.is_backfilled);
-              const actorName = formatTimelineActorName(row);
-              const role = String(row?.actor_role || '').trim();
-              const changeRows = normalizeAuditChanges(row?.changes);
+              const view = buildAuditEventView(row, { factoryNameById });
               return (
                 <li
-                  key={row.id || `${eventType}-${row.occurred_at}-${row.actor_id}`}
+                  key={row.id || `${view.eventType}-${row.occurred_at}-${row.actor_id}`}
                   className="border-l-2 border-slate-200 pl-3"
                 >
                   <div className="flex flex-wrap items-center gap-1.5">
-                    {backfilled ? (
+                    {view.backfilled ? (
                       <span className="text-[11px] font-medium text-slate-400">
                         時刻不明（記録開始前）
                       </span>
                     ) : (
-                      <span className="font-mono text-[11px] font-bold text-slate-600">
-                        {formatAuditOccurredAtJst(row.occurred_at)}
+                      <span
+                        className="font-mono text-[11px] font-bold text-slate-600"
+                        title={view.occurredAtTitle}
+                      >
+                        {view.occurredAtText}
                       </span>
                     )}
-                    {role ? (
+                    {view.actorRole ? (
                       <span
                         className={
                           'inline-flex rounded-full border px-1.5 py-0.5 text-[10px] font-black ' +
-                          actorRoleBadgeClass(role)
+                          actorRoleBadgeClass(view.actorRole)
                         }
                       >
-                        {actorRoleLabel(role)}
+                        {actorRoleLabel(view.actorRole)}
                       </span>
                     ) : null}
-                    {actorName ? (
-                      <span className="text-[11px] font-bold text-slate-800">{actorName}</span>
+                    {view.actorName ? (
+                      <span className="text-[11px] font-bold text-slate-800">{view.actorName}</span>
                     ) : null}
                   </div>
-                  {eventType === 'created' ? (
-                    <p className="mt-1 text-xs font-medium text-slate-700">注文が作成されました</p>
-                  ) : changeRows.length === 0 ? (
-                    <p className="mt-1 text-xs font-medium text-slate-500">
-                      {eventType === 'status_changed' ? 'ステータスが変更されました' : '更新されました'}
+                  <p className="mt-1 text-xs font-black text-slate-800">{view.headline}</p>
+                  {view.headlineExtra.map((line) => (
+                    <p key={line} className="text-[11px] font-bold text-slate-700">
+                      {line}
                     </p>
-                  ) : (
-                    <ul className="mt-1 space-y-0.5">
-                      {changeRows.map((ch, idx) => (
-                        <li key={`${ch.field}-${idx}`} className="text-xs text-slate-700">
-                          {ch.known ? (
-                            <span className="font-bold text-slate-800">{ch.label}</span>
-                          ) : (
-                            <span className="font-mono text-[10px] font-medium text-slate-400">
-                              {ch.label}
-                            </span>
-                          )}
-                          <span className="font-medium text-slate-600">
-                            {': '}
-                            {ch.beforeText}
-                            {' → '}
-                            {ch.afterText}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
+                  ))}
+                  {view.eventType === 'created' &&
+                  view.primary.length === 0 &&
+                  view.internal.length === 0 ? null : (
+                    <AuditChangeRows primary={view.primary} internal={view.internal} />
                   )}
                 </li>
               );
