@@ -3,6 +3,7 @@ import {
   DISPATCH_DEFAULT_FACTORY_SITE_NAME,
   DISPATCH_DEFAULT_FACTORY_SITE_ID,
   TIME_SLOTS,
+  FULL_DAY_TIME_SLOTS,
   pad2,
   todayLocalISODate,
 } from './haishaConstants.js';
@@ -564,15 +565,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       return `${base.getFullYear()}-${pad2(base.getMonth() + 1)}-${pad2(base.getDate())}`;
     }
 
-    function firstAvailableTimeSlotForDate(dateStr, now = new Date()) {
-      return TIME_SLOTS.find((slot) => !isPastPreferredDateTime(dateStr, slot.value, now)) || null;
+    function firstAvailableTimeSlotForDate(dateStr, now = new Date(), slots = TIME_SLOTS) {
+      return slots.find((slot) => !isPastPreferredDateTime(dateStr, slot.value, now)) || null;
     }
 
-    function nextAvailableOrderDateTime(baseDate = todayLocalISODate(), now = new Date()) {
-      const firstToday = firstAvailableTimeSlotForDate(baseDate, now);
+    function nextAvailableOrderDateTime(baseDate = todayLocalISODate(), now = new Date(), slots = TIME_SLOTS) {
+      const firstToday = firstAvailableTimeSlotForDate(baseDate, now, slots);
       if (firstToday) return { date: baseDate, slot: firstToday.value };
       const nextDate = addLocalDaysISO(baseDate, 1);
-      return { date: nextDate, slot: TIME_SLOTS[0]?.value ?? '480' };
+      return { date: nextDate, slot: slots[0]?.value ?? '480' };
     }
 
     function parseMixDetails(mixText) {
@@ -906,9 +907,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       requireDate = false,
       initialForm = null,
       submitting = false,
+      useFullDayTimeSlots = false,
       onClose,
       onSubmit,
     }) {
+      const proposeTimeSlots = useFullDayTimeSlots ? FULL_DAY_TIME_SLOTS : TIME_SLOTS;
       const [quantityM3, setQuantityM3] = useState('');
       const [preferredDate, setPreferredDate] = useState('');
       const [deliveryTime, setDeliveryTime] = useState('');
@@ -990,7 +993,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   className="min-h-[44px] rounded-xl border border-slate-300 px-3 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-300 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                 >
                   <option value="">変更しない</option>
-                  {TIME_SLOTS.map((slot) => (
+                  {proposeTimeSlots.map((slot) => (
                     <option key={slot.value} value={slot.label}>
                       {slot.label}
                     </option>
@@ -2142,29 +2145,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [timeSlot, setTimeSlot] = useState(initialOrderDateTime.slot);
       const [cartItems, setCartItems] = useState([]);
 
-      useEffect(() => {
-        if (!TIME_SLOTS.some((s) => s.value === timeSlot)) {
-          setTimeSlot(TIME_SLOTS[0]?.value ?? '480');
-        }
-      }, [timeSlot]);
-      useEffect(() => {
-        if (!preferredDate) return;
-        if (preferredDate < today) {
-          setPreferredDate(initialOrderDateTime.date);
-          setTimeSlot(initialOrderDateTime.slot);
-          return;
-        }
-        if (isPastPreferredDateTime(preferredDate, timeSlot)) {
-          const nextSlot = firstAvailableTimeSlotForDate(preferredDate);
-          if (nextSlot) {
-            setTimeSlot(nextSlot.value);
-          } else {
-            const next = nextAvailableOrderDateTime(preferredDate);
-            setPreferredDate(next.date);
-            setTimeSlot(next.slot);
-          }
-        }
-      }, [preferredDate, timeSlot, today, initialOrderDateTime.date, initialOrderDateTime.slot]);
       const [vehicleType, setVehicleType] = useState('large');
       const [mixText, setMixText] = useState('');
       const [quantityM3, setQuantityM3] = useState('');
@@ -2466,6 +2446,32 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         () => currentCustomerRole === 'agent' || currentCustomerRole === 'cooperative',
         [currentCustomerRole],
       );
+      const timeSlotOptions =
+        isAgentOrCooperative && !isGuestSiteOrder ? FULL_DAY_TIME_SLOTS : TIME_SLOTS;
+      useEffect(() => {
+        if (!timeSlotOptions.some((s) => s.value === timeSlot)) {
+          setTimeSlot(timeSlotOptions[0]?.value ?? '480');
+        }
+      }, [timeSlot, timeSlotOptions]);
+      useEffect(() => {
+        if (!preferredDate) return;
+        if (preferredDate < today) {
+          const next = nextAvailableOrderDateTime(today, new Date(), timeSlotOptions);
+          setPreferredDate(next.date);
+          setTimeSlot(next.slot);
+          return;
+        }
+        if (isPastPreferredDateTime(preferredDate, timeSlot)) {
+          const nextSlot = firstAvailableTimeSlotForDate(preferredDate, new Date(), timeSlotOptions);
+          if (nextSlot) {
+            setTimeSlot(nextSlot.value);
+          } else {
+            const next = nextAvailableOrderDateTime(preferredDate, new Date(), timeSlotOptions);
+            setPreferredDate(next.date);
+            setTimeSlot(next.slot);
+          }
+        }
+      }, [preferredDate, timeSlot, today, timeSlotOptions]);
       const canImportSchedule = Boolean(currentCustomer?.can_import_schedule);
       const canRequestMixDesign = Boolean(currentCustomer?.can_request_mix_design);
       const isCooperativeCustomer = currentCustomerRole === 'cooperative';
@@ -4576,7 +4582,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             setPreferredDate('');
             setTimeSlot('');
           } else {
-            const next = nextAvailableOrderDateTime(today);
+            const next = nextAvailableOrderDateTime(today, new Date(), timeSlotOptions);
             setPreferredDate(next.date);
             setTimeSlot(next.slot);
           }
@@ -5083,7 +5089,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
 
       const resetOrderForm = useCallback(() => {
-        const next = nextAvailableOrderDateTime(today);
+        const next = nextAvailableOrderDateTime(today, new Date(), timeSlotOptions);
         setPreferredDate(next.date);
         setTimeSlot(next.slot);
         setSelectedProjectId('');
@@ -5127,7 +5133,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         if (orderKind === 'spot') {
           applySpotOrderFieldDefaults();
         }
-      }, [today, isAgentOrCooperative, orderKind, applySpotOrderFieldDefaults]);
+      }, [today, isAgentOrCooperative, orderKind, applySpotOrderFieldDefaults, timeSlotOptions]);
 
       const handleAddToCart = useCallback(
         (e) => {
@@ -6440,12 +6446,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     value={preferredDate}
                     onChange={(e) => {
                       const nextDate = e.target.value;
-                      const nextSlot = firstAvailableTimeSlotForDate(nextDate);
+                      const nextSlot = firstAvailableTimeSlotForDate(nextDate, new Date(), timeSlotOptions);
                       if (nextSlot) {
                         setPreferredDate(nextDate);
                         if (isPastPreferredDateTime(nextDate, timeSlot)) setTimeSlot(nextSlot.value);
                       } else {
-                        const next = nextAvailableOrderDateTime(nextDate);
+                        const next = nextAvailableOrderDateTime(nextDate, new Date(), timeSlotOptions);
                         setPreferredDate(next.date);
                         setTimeSlot(next.slot);
                       }
@@ -6458,9 +6464,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </div>
 
               <div className="flex flex-col gap-3">
-                <Label htmlFor={orderFieldId('time-slot')}>希望時刻（8:00〜15:30・30分刻み）</Label>
+                <Label htmlFor={orderFieldId('time-slot')}>
+                  {isAgentOrCooperative
+                    ? '希望時刻（全日・15分刻み）'
+                    : '希望時刻（8:00〜15:30・30分刻み）'}
+                </Label>
                 <p className={'text-xs leading-relaxed text-slate-500' + (isGuestSiteOrder ? ' hidden' : '')}>
-                  到着・打設の目安時刻を、30分単位で指定します（最遅 15:30）。
+                  {isAgentOrCooperative
+                    ? '到着・打設の目安時刻を、15分単位で指定します（全日対応）。'
+                    : '到着・打設の目安時刻を、30分単位で指定します（最遅 15:30）。'}
                 </p>
                 <select
                   id={orderFieldId('time-slot')}
@@ -6480,7 +6492,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     backgroundSize: '1.25rem',
                   }}
                 >
-                  {TIME_SLOTS.map((s) => (
+                  {timeSlotOptions.map((s) => (
                     <option
                       key={s.value}
                       value={s.value}
@@ -7394,6 +7406,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 setCustomerReRequestContext(null);
               }}
               editorRole="customer"
+              useFullDayTimeSlots={isAgentOrCooperative && !isGuestSiteOrder}
               mode={customerEditMode === 'request' ? 'request' : 'edit'}
               requestNotice={
                 customerReRequestContext ? CUSTOMER_CHANGE_REQUEST_REREQUEST_NOTICE : undefined
@@ -7416,6 +7429,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               requireDate={changeProposeRequireDate}
               initialForm={changeProposeInitialForm}
               submitting={changeProposeSubmitting}
+              useFullDayTimeSlots={isAgentOrCooperative && !isGuestSiteOrder}
               onClose={() => {
                 if (changeProposeSubmitting) return;
                 setChangeProposeOrder(null);

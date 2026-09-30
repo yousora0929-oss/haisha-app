@@ -39,6 +39,22 @@ export function buildTimePointsHalfHour() {
 
 export const TIME_SLOTS = buildTimePointsHalfHour();
 
+/** 0:00, 0:15, … 23:45 まで15分刻み（全日） */
+export function buildTimePointsQuarterHour() {
+  const slots = [];
+  const fmt = (totalMin) => {
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    return `${h}:${pad2(m)}`;
+  };
+  for (let m = 0; m < 24 * 60; m += 15) {
+    slots.push({ value: String(m), label: fmt(m) });
+  }
+  return slots;
+}
+
+export const FULL_DAY_TIME_SLOTS = buildTimePointsQuarterHour();
+
 export function defaultEmptyDayBlocks() {
   const o = {};
   for (const id of SCHEDULE_BLOCK_IDS) {

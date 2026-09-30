@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as db from '../haishaDb.js';
-import { TIME_SLOTS } from '../haishaConstants.js';
+import { TIME_SLOTS, FULL_DAY_TIME_SLOTS } from '../haishaConstants.js';
 import BillingMark from './BillingMark.jsx';
 import { SiteOrderUrlActions } from './SiteOrderUrlActions.jsx';
 import { OrderPartyEditFields } from './OrderPartyEditFields.jsx';
@@ -36,7 +36,7 @@ function applyInitialPatchToEditData(base, patch) {
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'timeSlot') || Object.prototype.hasOwnProperty.call(patch, 'timeSlotMinutes')) {
     const ts = String(patch.timeSlot ?? patch.timeSlotMinutes ?? '').trim();
-    if (ts && TIME_SLOTS.some((s) => s.value === ts)) next.timeSlot = ts;
+    if (ts && FULL_DAY_TIME_SLOTS.some((s) => s.value === ts)) next.timeSlot = ts;
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'vehicleType')) {
     next.vehicleType = patch.vehicleType === 'small' ? 'small' : 'large';
@@ -398,12 +398,16 @@ export function OrderFullEditModal({
   organizations: organizationsProp,
   onSiteUrlCopied,
   editorRole = 'factory',
+  /** 顧客側で組合・商社代理発注のとき true（全日15分刻み） */
+  useFullDayTimeSlots = false,
   mode = 'edit',
   requestNotice = '',
   requestFocusKeys = null,
   initialPatch = null,
 }) {
   const isCustomer = editorRole === 'customer';
+  const timeSlotOptions =
+    editorRole === 'factory' || useFullDayTimeSlots ? FULL_DAY_TIME_SLOTS : TIME_SLOTS;
   const isRequestMode = isCustomer && mode === 'request';
   const focusKeyList = Array.isArray(requestFocusKeys)
     ? requestFocusKeys.map((key) => String(key)).filter(Boolean)
@@ -426,7 +430,11 @@ export function OrderFullEditModal({
 
   const [editData, setEditData] = useState({
     preferredDate: '',
-    timeSlot: String(TIME_SLOTS[0]?.value ?? '480'),
+    timeSlot: String(
+      (editorRole === 'factory' || useFullDayTimeSlots
+        ? FULL_DAY_TIME_SLOTS
+        : TIME_SLOTS)[0]?.value ?? '480',
+    ),
     vehicleType: 'large',
     quantityM3: '',
     unloadDuration: '30',
@@ -496,13 +504,13 @@ export function OrderFullEditModal({
   useEffect(() => {
     if (!order || !open) return;
     const ts = order.timeSlot != null ? String(order.timeSlot) : '';
-    const ok = TIME_SLOTS.some((s) => s.value === ts);
+    const ok = FULL_DAY_TIME_SLOTS.some((s) => s.value === ts);
     const q = order.confirmedQuantityM3 ?? order.quantityM3 ?? order.quantityCube;
     const mixInitial = String(order.confirmedMixText ?? order.mixText ?? '').trim();
     let next = {
       preferredDate:
         order.preferredDate && typeof order.preferredDate === 'string' ? order.preferredDate : '',
-      timeSlot: ok ? ts : String(TIME_SLOTS[0]?.value ?? '480'),
+      timeSlot: ok ? ts : String(timeSlotOptions[0]?.value ?? '480'),
       vehicleType: order.vehicleType === 'small' ? 'small' : 'large',
       quantityM3: q != null && String(q).trim() !== '' && String(q) !== 'null' ? String(q) : '',
       unloadDuration: String(
@@ -593,7 +601,9 @@ export function OrderFullEditModal({
   };
 
   const buildFormPatch = () => {
-    const slotMeta = TIME_SLOTS.find((s) => s.value === editData.timeSlot);
+    const slotMeta =
+      FULL_DAY_TIME_SLOTS.find((s) => s.value === editData.timeSlot) ||
+      TIME_SLOTS.find((s) => s.value === editData.timeSlot);
     const timeMinutes = parseInt(editData.timeSlot, 10);
     const slotLabel = slotMeta?.label ?? '';
     const partyPatch = buildOrderPartyPersistPatch(
@@ -855,7 +865,7 @@ export function OrderFullEditModal({
                   onChange={handleInputChange}
                   className={fieldInput}
                 >
-                  {TIME_SLOTS.map((s) => (
+                  {timeSlotOptions.map((s) => (
                     <option key={s.value} value={s.value}>
                       {s.label}
                     </option>

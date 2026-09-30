@@ -32,7 +32,7 @@ import {
   FACTORY_SITE_NAME,
   SCHEDULE_BLOCK_IDS,
   SCHEDULE_BLOCKS,
-  TIME_SLOTS,
+  FULL_DAY_TIME_SLOTS,
   pad2,
   todayLocalISODate,
   getScheduleDateBoundsISO,
@@ -242,7 +242,7 @@ function PhoneOrderRegisterModal({
     quantityM3: '',
     mixText: '',
     preferredDate: todayLocalISODate(),
-    timeSlot: String(TIME_SLOTS[0]?.value ?? '480'),
+    timeSlot: String(FULL_DAY_TIME_SLOTS[0]?.value ?? '0'),
     siteName: '',
     siteAddress: '',
     deliveryArea: '',
@@ -408,7 +408,7 @@ function PhoneOrderRegisterModal({
         mixText: form.mixText,
         preferredDate: form.preferredDate,
         timeSlot: form.timeSlot,
-        timeSlotLabel: TIME_SLOTS.find((s) => s.value === form.timeSlot)?.label || '',
+        timeSlotLabel: FULL_DAY_TIME_SLOTS.find((s) => s.value === form.timeSlot)?.label || '',
         siteName: sanitizeSiteNameValue(form.siteName || selectedProject?.name || ''),
         siteAddress: form.siteAddress || selectedProject?.site_address || '',
         deliveryArea: form.deliveryArea,
@@ -581,7 +581,7 @@ function PhoneOrderRegisterModal({
                   onChange={handleInputChange}
                   className={fieldInput}
                 >
-                  {TIME_SLOTS.map((s) => (
+                  {FULL_DAY_TIME_SLOTS.map((s) => (
                     <option key={s.value} value={s.value}>
                       {s.label}
                     </option>
