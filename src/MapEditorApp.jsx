@@ -24,7 +24,13 @@ import { MapEditorPrintSheet } from './components/MapEditorPrintSheet.jsx';
 import { resolvePrintMapViewport } from './utils/mapEditorPrintViewport.js';
 import { shouldShowBlueprintOverlay, stripSavedSnapshotOverlay } from './utils/mapEditorOverlay.js';
 import { setAutoReloadBlocked } from './hooks/useAppReleaseControl.js';
-import { DEFAULT_GSI_LAYER_ID } from './mapTiles.js';
+import {
+  normalizeMapBaseLayerId,
+  readStoredMapBaseLayerId,
+  resolveRasterLayerForExport,
+  writeStoredMapBaseLayerId,
+} from './mapTiles.js';
+import { MapBaseLayerSwitch } from './components/MapBaseLayerSwitch.jsx';
 
 const MAP_SOURCE_LABEL = {
   override: 'この打設日の専用マップ',
@@ -86,12 +92,18 @@ export function MapEditorApp() {
   }, []);
 
   const [flyTarget, setFlyTarget] = useState(null);
-  const [tileLayerId, setTileLayerId] = useState(DEFAULT_GSI_LAYER_ID);
+  const [tileLayerId, setTileLayerId] = useState(() => readStoredMapBaseLayerId());
   const [searchPanelOpen, setSearchPanelOpen] = useState(false);
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [printSession, setPrintSession] = useState(null);
   const printSheetRef = useRef(null);
   const printRunIdRef = useRef(0);
+
+  const handleTileLayerChange = useCallback((id) => {
+    const next = normalizeMapBaseLayerId(id);
+    setTileLayerId(next);
+    writeStoredMapBaseLayerId(next);
+  }, []);
 
   useEffect(() => {
     if (!searchPanelOpen) return undefined;
@@ -471,13 +483,17 @@ export function MapEditorApp() {
         // 保存 PNG の URL を imageOverlay に残すと再保存時に再焼き込みされるため除去
         setAnnotations(stripSavedSnapshotOverlay(result.map_annotations || payload, result.publicUrl || ''));
         setConfirmMode(null);
+        const exportNote =
+          resolveRasterLayerForExport(tileLayerId).usedFallback
+            ? '（保存画像は地理院地図で描画）'
+            : '';
         if (result.savedFully) {
-          showToast('変更を保存しました（物件の基本現場地図）');
+          showToast(`変更を保存しました（物件の基本現場地図）${exportNote}`);
           askReturnAfterSave();
         } else if (result.storageUploadFailed && result.storageWarning) {
           showToast(`注釈データは保存しました。${result.storageWarning}`);
         } else {
-          showToast('変更を保存しました（物件の基本現場地図）');
+          showToast(`変更を保存しました（物件の基本現場地図）${exportNote}`);
         }
       } else {
         const result = await saveOrderOverrideMap(targetOrderId, dataUrl, payload);
@@ -491,22 +507,26 @@ export function MapEditorApp() {
         // 保存 PNG の URL を imageOverlay に残すと再保存時に再焼き込みされるため除去
         setAnnotations(stripSavedSnapshotOverlay(result.map_annotations || payload, result.publicUrl || ''));
         setConfirmMode(null);
+        const exportNote =
+          resolveRasterLayerForExport(tileLayerId).usedFallback
+            ? '（保存画像は地理院地図で描画）'
+            : '';
         if (result.locationPendingCleared) {
           if (result.savedFully) {
-            showToast('変更を保存しました（地図待ちを解除しました）');
+            showToast(`変更を保存しました（地図待ちを解除しました）${exportNote}`);
             askReturnAfterSave();
           } else if (result.storageUploadFailed && result.storageWarning) {
             showToast(`地図待ちを解除しました。${result.storageWarning}`);
           } else {
-            showToast('地図待ちを解除しました');
+            showToast(`地図待ちを解除しました${exportNote}`);
           }
         } else if (result.savedFully) {
-          showToast('変更を保存しました');
+          showToast(`変更を保存しました${exportNote}`);
           askReturnAfterSave();
         } else if (result.storageUploadFailed && result.storageWarning) {
           showToast(`注釈データは保存しました。${result.storageWarning}`);
         } else {
-          showToast('変更を保存しました');
+          showToast(`変更を保存しました${exportNote}`);
         }
       }
     } catch (err) {
@@ -610,13 +630,23 @@ export function MapEditorApp() {
           defaultUnloadRadius={unloadRadius}
           flyTarget={flyTarget}
           tileLayerId={tileLayerId}
-          onTileLayerChange={setTileLayerId}
+          onTileLayerChange={handleTileLayerChange}
           disabled={saving}
           selected={selection}
           onSelectionChange={setSelection}
           blueprintOverlayUrl={blueprintOverlayUrl}
           className="h-full w-full"
         />
+      </div>
+
+      <div className="map-editor-no-print pointer-events-none absolute left-[5.25rem] top-[calc(env(safe-area-inset-top)+3.25rem)] z-30 md:left-[14rem] md:top-4">
+        <div className="pointer-events-auto max-w-[calc(100vw-6rem)]">
+          <MapBaseLayerSwitch
+            layerId={tileLayerId}
+            disabled={saving}
+            onChange={handleTileLayerChange}
+          />
+        </div>
       </div>
 
       <div className="map-editor-no-print pointer-events-none absolute inset-x-0 top-0 z-10 px-4 pt-[max(0.5rem,env(safe-area-inset-top))] md:hidden">

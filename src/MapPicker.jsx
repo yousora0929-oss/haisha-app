@@ -5,8 +5,17 @@ import 'leaflet/dist/leaflet.css';
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
-import { DEFAULT_GSI_LAYER_ID } from './mapTiles.js';
-import { GsiLayersControl, TileLoadErrorBanner } from './components/GsiMapLayers.jsx';
+import {
+  DEFAULT_MAP_BASE_LAYER_ID,
+  normalizeMapBaseLayerId,
+  readStoredMapBaseLayerId,
+  writeStoredMapBaseLayerId,
+} from './mapTiles.js';
+import {
+  MapBaseLayerController,
+  MapBaseLayerSwitch,
+  TileLoadErrorBanner,
+} from './components/MapBaseLayerSwitch.jsx';
 import { PlaceSearchBar } from './components/PlaceSearchBar.jsx';
 
 /** Leaflet デフォルトアイコンが Vite で壊れる問題の対策 */
@@ -91,16 +100,6 @@ function MapInstanceBinder({ mapRef }) {
 
 /**
  * 地図クリックで緯度・経度を選ぶピッカー
- * @param {{
- *   lat: string,
- *   lng: string,
- *   onPositionChange?: (lat: string, lng: string) => void,
- *   className?: string,
- *   interactive?: boolean,
- *   panTarget?: { lat: number, lng: number, key?: number|string } | null,
- *   onPanTargetChange?: (target: { lat: number, lng: number, key: number } | null) => void,
- *   showPlaceSearch?: boolean,
- * }} props
  */
 export function MapPicker({
   lat,
@@ -111,9 +110,26 @@ export function MapPicker({
   panTarget = null,
   onPanTargetChange,
   showPlaceSearch = true,
+  tileLayerId: tileLayerIdProp,
+  onTileLayerChange,
 }) {
   const mapRef = useRef(null);
   const [internalPanTarget, setInternalPanTarget] = useState(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [internalLayerId, setInternalLayerId] = useState(() => readStoredMapBaseLayerId());
+  const tileLayerId =
+    tileLayerIdProp != null ? normalizeMapBaseLayerId(tileLayerIdProp) : internalLayerId;
+
+  const handleLayerChange = (id) => {
+    const next = normalizeMapBaseLayerId(id);
+    writeStoredMapBaseLayerId(next);
+    if (typeof onTileLayerChange === 'function') {
+      onTileLayerChange(next);
+    } else {
+      setInternalLayerId(next);
+    }
+  };
+
   const effectivePanTarget = panTarget ?? internalPanTarget;
   const position = useMemo(() => parseCoordPair(lat, lng), [lat, lng]);
   const panPosition = useMemo(
@@ -142,18 +158,19 @@ export function MapPicker({
     } else {
       setInternalPanTarget(next);
     }
+    setSearchOpen(false);
   };
 
   return (
-    <div className={'rounded-lg border-2 border-slate-300 bg-slate-100 ' + className}>
-      <p className="border-b border-slate-200 bg-white px-2 py-1.5 text-[10px] font-bold text-slate-600">
+    <div className={'rounded-lg border-2 border-slate-300 bg-slate-100 dark:border-slate-600 dark:bg-slate-800 ' + className}>
+      <p className="border-b border-slate-200 bg-white px-2 py-1.5 text-[10px] font-bold text-slate-600 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
         {interactive
-          ? '地図をクリックして現場位置を指定（地理院地図）'
+          ? '地図をクリックして現場位置を指定'
           : '物件マスタの位置（確認用・変更不可）'}
       </p>
-      {showPlaceSearch && interactive ? (
-        <div className="border-b border-slate-200 bg-white px-2 py-2">
-          <PlaceSearchBar onSelect={handlePlaceSelect} />
+      {showPlaceSearch && interactive && searchOpen ? (
+        <div className="border-b border-slate-200 bg-white px-2 py-2 dark:border-slate-600 dark:bg-slate-900">
+          <PlaceSearchBar onSelect={handlePlaceSelect} autoFocus />
           <p className="mt-1 text-[10px] font-medium text-slate-500">
             検索は表示位置のみ移動します。確定座標は地図クリックで指定してください。
           </p>
@@ -163,23 +180,48 @@ export function MapPicker({
         <MapContainer
           center={center}
           zoom={zoom}
+          maxZoom={20}
           className="z-0 h-64 min-h-[300px] w-full overflow-hidden sm:h-72"
           style={{ height: '300px', minHeight: '300px', width: '100%' }}
           scrollWheelZoom
         >
           <MapInstanceBinder mapRef={mapRef} />
-          <GsiLayersControl defaultLayerId={DEFAULT_GSI_LAYER_ID} />
+          <MapBaseLayerController
+            layerId={tileLayerId || DEFAULT_MAP_BASE_LAYER_ID}
+            onFallbackToGsi={handleLayerChange}
+          />
           <TileLoadErrorBanner />
           {position ? <Marker position={position} /> : null}
           {interactive ? <MapClickHandler onPick={handlePick} /> : null}
           <MapViewSync position={position} />
           {effectivePanTarget ? <MapPanSync panTarget={effectivePanTarget} /> : null}
         </MapContainer>
+        <div className="map-editor-no-print pointer-events-none absolute left-2 top-2 z-[1100]">
+          <div className="pointer-events-auto flex flex-wrap items-start gap-1.5">
+            <MapBaseLayerSwitch layerId={tileLayerId} onChange={handleLayerChange} />
+            {showPlaceSearch && interactive ? (
+              <button
+                type="button"
+                aria-expanded={searchOpen}
+                aria-label="場所検索"
+                onClick={() => setSearchOpen((v) => !v)}
+                className={
+                  'inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl border-2 shadow-md ' +
+                  (searchOpen
+                    ? 'border-indigo-600 bg-indigo-600 text-white'
+                    : 'border-slate-300 bg-white/95 text-slate-800 dark:border-slate-600 dark:bg-slate-900/95 dark:text-slate-100')
+                }
+              >
+                <span aria-hidden="true">🔍</span>
+              </button>
+            ) : null}
+          </div>
+        </div>
         {position ? (
           <button
             type="button"
             onClick={handleResetToPosition}
-            className="absolute bottom-4 right-4 z-[1100] rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700 shadow-md hover:bg-gray-50 active:scale-[0.98]"
+            className="absolute bottom-4 right-4 z-[1100] rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700 shadow-md hover:bg-gray-50 active:scale-[0.98] dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
           >
             現場位置に戻る
           </button>

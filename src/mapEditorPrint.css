@@ -63,6 +63,10 @@
   display: none;
 }
 
+.map-editor-print-map-source {
+  display: none;
+}
+
 .map-editor-print-map-frame {
   width: 100%;
   overflow: hidden;
@@ -245,6 +249,14 @@
     font-size: 9pt !important;
     font-weight: 800;
     color: #334155;
+  }
+
+  .map-editor-print-map-source {
+    display: block !important;
+    margin: 0 0 1mm !important;
+    font-size: 7pt !important;
+    font-weight: 600;
+    color: #64748b;
   }
 
   .map-editor-print-map-slot {

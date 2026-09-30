@@ -25,8 +25,11 @@ import {
   createStampDivIcon,
   LEAFLET_DIV_ICON_CLASS,
 } from '../utils/mapEditorStampIcon.js';
-import { DEFAULT_GSI_LAYER_ID } from '../mapTiles.js';
-import { GsiLayersControl, TileLoadErrorBanner } from './GsiMapLayers.jsx';
+import { DEFAULT_MAP_BASE_LAYER_ID } from '../mapTiles.js';
+import {
+  MapBaseLayerController,
+  TileLoadErrorBanner,
+} from './MapBaseLayerSwitch.jsx';
 
 function MapInstanceBinder({ mapRef }) {
   const map = useMap();
@@ -299,7 +302,7 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
     selected = null,
     onSelectionChange,
     blueprintOverlayUrl = '',
-    tileLayerId = DEFAULT_GSI_LAYER_ID,
+    tileLayerId = DEFAULT_MAP_BASE_LAYER_ID,
     onTileLayerChange,
     className = '',
   },
@@ -476,11 +479,12 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
       const source = annotationsOverride || annotations;
       return renderAnnotationsSnapshot(source, {
         baseImageUrl: source?.imageOverlay?.url || '',
+        tileLayerId,
       });
     },
     getMap: () => mapRef.current,
     deleteSelected,
-  }));
+  }), [annotations, deleteSelected, tileLayerId]);
 
   const cursorClass =
     activeTool === MAP_EDITOR_TOOLS.PAN
@@ -505,6 +509,7 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
       <MapContainer
         center={mapCenter}
         zoom={mapZoom}
+        maxZoom={20}
         zoomControl={false}
         className={'map-editor-leaflet z-0 h-full w-full ' + cursorClass}
         style={{ height: '100%', width: '100%', minHeight: '280px' }}
@@ -514,10 +519,9 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
         <MapInstanceBinder mapRef={mapRef} />
         <MapResizeFix />
         <MapFlyTo target={flyTarget} />
-        <GsiLayersControl
-          defaultLayerId={tileLayerId || DEFAULT_GSI_LAYER_ID}
-          onLayerChange={onTileLayerChange}
-          crossOrigin="anonymous"
+        <MapBaseLayerController
+          layerId={tileLayerId || DEFAULT_MAP_BASE_LAYER_ID}
+          onFallbackToGsi={onTileLayerChange}
         />
         <TileLoadErrorBanner />
         {blueprintUrl && overlayBounds ? (

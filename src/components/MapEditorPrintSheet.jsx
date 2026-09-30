@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom';
 import { MapEditorPrintDetails } from './MapEditorPrintDetails.jsx';
 import { MapEditorViewportMap } from './MapEditorViewportMap.jsx';
 import { PRINT_MAP_HEIGHT_PX, PRINT_PAGE_HEIGHT_PX } from '../utils/mapEditorPrintLayout.js';
+import { resolveRasterLayerForExport } from '../mapTiles.js';
 
 /** 詳細+地図同時印刷時の地図枠フォールバック高さ（計測前・計測失敗時） */
 const PRINT_BOTH_MAP_FALLBACK_PX = Math.max(280, PRINT_PAGE_HEIGHT_PX - 420);
@@ -180,6 +181,11 @@ export const MapEditorPrintSheet = forwardRef(function MapEditorPrintSheet(
     height: mapHeightPx,
     minHeight: mapHeightPx,
   };
+  const exportLayer = resolveRasterLayerForExport(tileLayerId);
+  const sourceLabel = exportLayer.layer.attributionPlain || '地図';
+  const sourceNote = exportLayer.usedFallback
+    ? `出典: ${sourceLabel}（ストリートは印刷安定のため地理院に切替）`
+    : `出典: ${sourceLabel}`;
 
   return (
     <div className={shellClass}>
@@ -191,6 +197,7 @@ export const MapEditorPrintSheet = forwardRef(function MapEditorPrintSheet(
         {includeMap ? (
           <div className="map-editor-print-map-slot">
             <p className="map-editor-print-map-caption">現場周辺地図</p>
+            <p className="map-editor-print-map-source">{sourceNote}</p>
             <div ref={mapFrameRef} className="map-editor-print-map-frame" style={mapFrameStyle}>
               <MapEditorViewportMap
                 annotations={annotations}
@@ -200,7 +207,7 @@ export const MapEditorPrintSheet = forwardRef(function MapEditorPrintSheet(
                 onMapReady={(map) => {
                   leafletMapRef.current = map;
                 }}
-                mapKey={`print-${viewport?.lat}-${viewport?.lng}-${viewport?.zoom}-${includeBoth ? 'both' : 'map'}-${tileLayerId || 'std'}`}
+                mapKey={`print-${viewport?.lat}-${viewport?.lng}-${viewport?.zoom}-${includeBoth ? 'both' : 'map'}-${tileLayerId || 'gsi'}`}
                 className="h-full w-full"
               />
             </div>

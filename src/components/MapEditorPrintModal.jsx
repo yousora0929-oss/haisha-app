@@ -78,6 +78,11 @@ export function MapEditorPrintModal({
             <p className="mt-0.5 text-[10px] font-medium text-slate-500">
               ドラッグで移動・ホイールでズーム（荷下ろし地点＝赤い円）
             </p>
+            {String(tileLayerId || '') === 'street' ? (
+              <p className="mt-1 text-[10px] font-bold text-amber-800">
+                印刷・プレビューは安定のため地理院地図で描画します
+              </p>
+            ) : null}
             <div className="mt-2 h-52 overflow-hidden rounded-xl border-2 border-slate-300 shadow-inner sm:h-56">
               <MapEditorViewportMap
                 annotations={annotations}

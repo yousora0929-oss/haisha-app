@@ -8,8 +8,8 @@ import {
   DEFAULT_UNLOAD_RADIUS_M,
 } from '../utils/mapAnnotations.js';
 import { createCommentDivIcon, createStampDivIcon, LEAFLET_DIV_ICON_CLASS } from '../utils/mapEditorStampIcon.js';
-import { DEFAULT_GSI_LAYER_ID } from '../mapTiles.js';
-import { GsiSingleTileLayer } from './GsiMapLayers.jsx';
+import { DEFAULT_MAP_BASE_LAYER_ID } from '../mapTiles.js';
+import { MapBaseLayerController } from './MapBaseLayerSwitch.jsx';
 
 function MapZoomSync({ onZoomChange }) {
   const map = useMap();
@@ -137,7 +137,7 @@ export function MapEditorViewportMap({
   fixedHeightPx = 0,
   className = '',
   mapKey = 'default',
-  tileLayerId = DEFAULT_GSI_LAYER_ID,
+  tileLayerId = DEFAULT_MAP_BASE_LAYER_ID,
 }) {
   const displayCenter = useMemo(
     () => applyInitialViewCenter(annotations)?.center || DEFAULT_MAP_CENTER,
@@ -180,6 +180,7 @@ export function MapEditorViewportMap({
       <MapContainer
         center={mapCenter}
         zoom={mapZoom}
+        maxZoom={20}
         className="z-0 h-full w-full cursor-grab"
         style={
           heightPx
@@ -191,11 +192,8 @@ export function MapEditorViewportMap({
         <MapResizeFix fixedHeightPx={heightPx || 0} />
         {onMapReady ? <MapReadyBridge onMapReady={onMapReady} /> : null}
         <MapViewportSync viewport={viewport} onViewportChange={onViewportChange} syncKey={syncKey} />
-        <GsiSingleTileLayer
-          layerId={tileLayerId}
-          updateWhenIdle={false}
-          keepBuffer={heightPx ? 4 : 2}
-        />
+        {/* 印刷・プレビュー: street(WebGL) は地理院ラスターへ逃がす */}
+        <MapBaseLayerController layerId={tileLayerId} forceRaster />
         {(annotations?.unloadPoints || []).map((u) => (
           <Circle
             key={u.id}
