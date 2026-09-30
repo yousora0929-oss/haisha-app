@@ -25,6 +25,7 @@ import {
 import { factoryUnloadDurationLabel } from './utils/unloadDurationLabel.js';
 import BillingMark from './components/BillingMark.jsx';
 import { OrderFullEditModal } from './components/OrderFullEditModal.jsx';
+import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { ChangeRequestResolvePanel } from './components/ChangeRequestResolvePanel.jsx';
 import { isAwaitingCustomerChangeDecision } from './utils/changeRequestItems.js';
 import {
@@ -256,6 +257,7 @@ function PhoneOrderRegisterModal({
   const [customers, setCustomers] = useState([]);
   const [companyGroups, setCompanyGroups] = useState([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
+  const [companySearchText, setCompanySearchText] = useState('');
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [customerProjects, setCustomerProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState('');
@@ -270,6 +272,7 @@ function PhoneOrderRegisterModal({
       setSubmitting(false);
       setError('');
       setSelectedCompanyId('');
+      setCompanySearchText('');
       setSelectedCustomerId('');
       setSelectedProjectId('');
       setCustomerProjects([]);
@@ -472,24 +475,50 @@ function PhoneOrderRegisterModal({
 
             <section className="space-y-4 rounded-xl border-2 border-sky-300 bg-sky-50 p-3 shadow-inner">
               <div>
-                <label className={fieldLabel} htmlFor="por-company">
-                  会社（必須）
-                </label>
-                <select
-                  id="por-company"
-                  value={selectedCompanyId}
-                  onChange={(e) => handleCompanyChange(e.target.value)}
-                  className={fieldInput}
+                <MasterSuggestInput
+                  htmlFor="por-company"
+                  label="会社（必須）"
+                  name="phone_order_company"
+                  placeholder="会社名を入力して候補から選択"
+                  value={companySearchText}
                   required
-                >
-                  <option value="">選択してください</option>
-                  {companyGroups.map((g) => (
-                    <option key={g.companyId} value={g.companyId}>
-                      {g.companyName}
-                      {g.customers.length > 1 ? `（${g.customers.length}名）` : ''}
-                    </option>
-                  ))}
-                </select>
+                  items={companyGroups}
+                  getItemKey={(g) => String(g.companyId)}
+                  getItemLabel={(g) => String(g.companyName || '').trim()}
+                  getItemSubLabel={(g) =>
+                    g.customers.length > 1 ? `（${g.customers.length}名）` : ''
+                  }
+                  getSearchTexts={(g) => [
+                    g.companyName || '',
+                    g.sortKey || '',
+                    ...(Array.isArray(g.customers)
+                      ? g.customers.flatMap((c) => [
+                          c.manager_name || '',
+                          c.furigana || '',
+                          c.name || '',
+                        ])
+                      : []),
+                  ]}
+                  onValueChange={(text) => {
+                    setCompanySearchText(text);
+                    // 入力中は未確定（前回選択が残らないようにする）
+                    if (selectedCompanyId) {
+                      handleCompanyChange('');
+                    }
+                  }}
+                  onSelect={(g) => {
+                    setCompanySearchText(String(g.companyName || '').trim());
+                    handleCompanyChange(g.companyId);
+                  }}
+                  emptyHint="該当する会社が見つかりません（登録済み顧客のみ対象です）"
+                  labelClassName={fieldLabel}
+                  inputClassName={fieldInput}
+                />
+                {!selectedCompanyId && companySearchText ? (
+                  <p className="mt-1 text-xs font-bold text-amber-700">
+                    候補の中から会社を選択してください（一覧にない場合は登録済み顧客ではありません）
+                  </p>
+                ) : null}
               </div>
               {selectedCompanyGroup && selectedCompanyGroup.customers.length > 1 ? (
                 <div>
