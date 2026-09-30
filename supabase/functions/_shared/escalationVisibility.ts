@@ -94,7 +94,7 @@ function associationAssignedFactoryIds(order: OrderLike): string[] {
     .filter(Boolean);
 }
 
-function normalizeEscalationSteps(rows: unknown): EscalationStep[] {
+export function normalizeEscalationSteps(rows: unknown): EscalationStep[] {
   const list = asArray(rows)
     .map((row) => {
       const o = asObject(row);
@@ -211,7 +211,7 @@ function nextBusinessDayAtStart(from: Date, startMinutes: number, holidaySet: Se
   return next;
 }
 
-function getEffectiveStartTime(
+export function getEffectiveStartTime(
   createdAt: string,
   settings: EscalationPushContext['settings'],
   holidays: EscalationPushContext['holidays'],
@@ -282,7 +282,7 @@ function getEffectiveEscalationMinutes(order: OrderLike, ctx: EscalationPushCont
   return minutes;
 }
 
-function calculateDistance(
+export function calculateDistance(
   lat1: number,
   lng1: number,
   lat2: number | string | null | undefined,
@@ -305,7 +305,7 @@ function calculateDistance(
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function getOrderSiteCoords(order: OrderLike, projectById: Record<string, ProjectLike>) {
+export function getOrderSiteCoords(order: OrderLike, projectById: Record<string, ProjectLike>) {
   const od = orderData(order);
   const lat = Number(
     order.delivery_lat ?? od.delivery_lat ?? od.deliveryLat ?? od.site_lat ?? od.siteLat ?? od.lat,

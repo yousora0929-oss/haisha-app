@@ -8844,3 +8844,22 @@ export async function fetchOrderAuditLogs(orderId) {
   if (error) throw error;
   return Array.isArray(data) ? data : [];
 }
+
+/**
+ * 管理者向け: スポット注文の優先順位スナップショット（遅延取得）
+ * @param {string} orderId
+ * @returns {Promise<Array<object>>}
+ */
+export async function fetchOrderPrioritySnapshots(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id || !supabase?.from) return [];
+  const { data, error } = await supabase
+    .from('order_priority_snapshots')
+    .select(
+      'id, order_id, computed_at, reason, mode, site_lat, site_lng, coords_source, effective_start_at, near_pool_size, small_vehicle_filter, anchor_factory_id, steps, ranking, rejected_at_snapshot',
+    )
+    .eq('order_id', id)
+    .order('computed_at', { ascending: true });
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}

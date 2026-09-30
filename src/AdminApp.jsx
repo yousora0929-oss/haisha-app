@@ -3588,6 +3588,7 @@ function AdminOrderDetailModal({
           <AdminOrderAuditHistory
             orderId={order.id}
             open={open}
+            isSpot={Boolean(order.is_spot ?? order.isSpot)}
             factoryNameById={factoryNameById}
           />
         </div>

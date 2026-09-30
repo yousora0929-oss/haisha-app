@@ -6,3 +6,6 @@ verify_jwt = false
 
 [functions.dispatch-timeout-check]
 verify_jwt = false
+
+[functions.order-priority-snapshot]
+verify_jwt = false
