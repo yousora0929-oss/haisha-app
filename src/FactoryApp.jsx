@@ -26,6 +26,7 @@ import { factoryUnloadDurationLabel } from './utils/unloadDurationLabel.js';
 import BillingMark from './components/BillingMark.jsx';
 import { OrderFullEditModal } from './components/OrderFullEditModal.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
+import { organizationSuggestTexts } from './utils/masterSuggest.js';
 import { ChangeRequestResolvePanel } from './components/ChangeRequestResolvePanel.jsx';
 import { isAwaitingCustomerChangeDecision } from './utils/changeRequestItems.js';
 import {
@@ -253,6 +254,7 @@ function PhoneOrderRegisterModal({
     vehicleType: 'large',
     unloadDuration: '30',
     registeredByName: '',
+    traderName: '',
   };
   const [customers, setCustomers] = useState([]);
   const [companyGroups, setCompanyGroups] = useState([]);
@@ -261,6 +263,7 @@ function PhoneOrderRegisterModal({
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [customerProjects, setCustomerProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState('');
+  const [traderOrganizations, setTraderOrganizations] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -278,6 +281,7 @@ function PhoneOrderRegisterModal({
       setCustomerProjects([]);
       setCompanyGroups([]);
       setCustomers([]);
+      setTraderOrganizations([]);
       setForm(emptyForm);
       return;
     }
@@ -293,6 +297,15 @@ function PhoneOrderRegisterModal({
       .catch((e) => {
         console.error(e);
         if (!cancelled) setError('顧客一覧の取得に失敗しました');
+      });
+    db.fetchOrganizations()
+      .then((rows) => {
+        if (cancelled) return;
+        setTraderOrganizations((Array.isArray(rows) ? rows : []).filter((o) => o && o.id));
+      })
+      .catch((e) => {
+        console.warn('[PhoneOrderRegisterModal] organizations load failed', e);
+        if (!cancelled) setTraderOrganizations([]);
       });
     return () => {
       cancelled = true;
@@ -333,6 +346,17 @@ function PhoneOrderRegisterModal({
       deliveryArea: prev.deliveryArea || String(selectedProject.delivery_area || ''),
     }));
   }, [selectedProjectId, customerProjects]);
+
+  const traderCandidates = useMemo(
+    () =>
+      (traderOrganizations || [])
+        .filter((o) => o?.id && String(o.type || '').trim() === 'agent')
+        .slice()
+        .sort((a, b) =>
+          String(a.name || '').localeCompare(String(b.name || ''), 'ja'),
+        ),
+    [traderOrganizations],
+  );
 
   if (!open) return null;
 
@@ -421,6 +445,7 @@ function PhoneOrderRegisterModal({
         vehicleType: form.vehicleType,
         unloadDuration: form.unloadDuration,
         registeredByName: form.registeredByName,
+        traderName: form.traderName,
       });
       onRegistered?.(registered);
       onClose();
@@ -567,6 +592,29 @@ function PhoneOrderRegisterModal({
                     </option>
                   ))}
                 </select>
+              </div>
+              <div>
+                <MasterSuggestInput
+                  htmlFor="phone-order-trader"
+                  label="商社名（任意）"
+                  name="traderName"
+                  value={form.traderName}
+                  onValueChange={(text) => setForm((prev) => ({ ...prev, traderName: text }))}
+                  onSelect={(org) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      traderName: String(org?.name || org?.company_name || '').trim(),
+                    }))
+                  }
+                  items={traderCandidates}
+                  getItemKey={(o) => String(o.id)}
+                  getItemLabel={(o) => String(o.name || o.company_name || '').trim()}
+                  getSearchTexts={organizationSuggestTexts}
+                  placeholder="商社名を入力（空欄＝商社なし／自由入力可）"
+                  emptyHint="候補がありません（自由入力できます）"
+                  labelClassName={fieldLabel}
+                  inputClassName={fieldInput}
+                />
               </div>
               <div>
                 <label className={fieldLabel} htmlFor="por-registered-by">

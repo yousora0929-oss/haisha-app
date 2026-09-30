@@ -2710,6 +2710,7 @@ export async function registerPhoneOrderByFactory(params) {
     vehicleType,
     unloadDuration,
     registeredByName,
+    traderName,
   } = params || {};
   const fid = sanitizeRefId(factoryId);
   if (!fid) throw new Error('factoryId が必要です');
@@ -2736,6 +2737,7 @@ export async function registerPhoneOrderByFactory(params) {
     p_vehicle_type: vehicleType === 'small' ? 'small' : 'large',
     p_unload_duration: String(unloadDuration || '30').trim(),
     p_registered_by_name: String(registeredByName || '').trim() || null,
+    p_trader_name: String(traderName || '').trim() || null,
   });
   if (error) {
     console.error('registerPhoneOrderByFactory failed', error);
