@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Circle, MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
+import { Circle, MapContainer, Marker, useMap, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { MAP_STAMP_EMOJI } from '../mapEditorConstants.js';
 import {
@@ -8,6 +8,8 @@ import {
   DEFAULT_UNLOAD_RADIUS_M,
 } from '../utils/mapAnnotations.js';
 import { createCommentDivIcon, createStampDivIcon, LEAFLET_DIV_ICON_CLASS } from '../utils/mapEditorStampIcon.js';
+import { DEFAULT_GSI_LAYER_ID } from '../mapTiles.js';
+import { GsiSingleTileLayer } from './GsiMapLayers.jsx';
 
 function MapZoomSync({ onZoomChange }) {
   const map = useMap();
@@ -135,6 +137,7 @@ export function MapEditorViewportMap({
   fixedHeightPx = 0,
   className = '',
   mapKey = 'default',
+  tileLayerId = DEFAULT_GSI_LAYER_ID,
 }) {
   const displayCenter = useMemo(
     () => applyInitialViewCenter(annotations)?.center || DEFAULT_MAP_CENTER,
@@ -155,9 +158,9 @@ export function MapEditorViewportMap({
     return Number.isFinite(z) ? z : DEFAULT_MAP_CENTER.zoom;
   })();
 
-  // 印刷・プレビューは OSM タイル＋注釈のみ（保存済み合成 PNG は重ねない）
+  // 印刷・プレビューは地理院タイル＋注釈のみ（保存済み合成 PNG は重ねない）
 
-  const syncKey = `${mapKey}-${viewport?.lat}-${viewport?.lng}-${viewport?.zoom}`;
+  const syncKey = `${mapKey}-${viewport?.lat}-${viewport?.lng}-${viewport?.zoom}-${tileLayerId}`;
   const heightPx = Number(fixedHeightPx) > 0 ? Number(fixedHeightPx) : null;
   const rootStyle = heightPx
     ? { height: `${heightPx}px`, width: '100%', minHeight: `${heightPx}px` }
@@ -188,9 +191,8 @@ export function MapEditorViewportMap({
         <MapResizeFix fixedHeightPx={heightPx || 0} />
         {onMapReady ? <MapReadyBridge onMapReady={onMapReady} /> : null}
         <MapViewportSync viewport={viewport} onViewportChange={onViewportChange} syncKey={syncKey} />
-        <TileLayer
-          attribution='&copy; OpenStreetMap'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        <GsiSingleTileLayer
+          layerId={tileLayerId}
           updateWhenIdle={false}
           keepBuffer={heightPx ? 4 : 2}
         />

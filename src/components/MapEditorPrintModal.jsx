@@ -10,6 +10,7 @@ export function MapEditorPrintModal({
   initialIncludeDetails = true,
   initialViewport,
   annotations,
+  tileLayerId,
   onCancel,
   onConfirm,
 }) {
@@ -82,6 +83,7 @@ export function MapEditorPrintModal({
                 annotations={annotations}
                 viewport={viewport}
                 onViewportChange={setViewport}
+                tileLayerId={tileLayerId}
                 mapKey="modal-preview"
                 className="h-full w-full"
               />

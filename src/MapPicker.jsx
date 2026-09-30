@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, useMap, useMapEvents } from 'react-leaflet';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { MapContainer, Marker, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
+import { DEFAULT_GSI_LAYER_ID } from './mapTiles.js';
+import { GsiLayersControl, TileLoadErrorBanner } from './components/GsiMapLayers.jsx';
+import { PlaceSearchBar } from './components/PlaceSearchBar.jsx';
 
 /** Leaflet デフォルトアイコンが Vite で壊れる問題の対策 */
 delete L.Icon.Default.prototype._getIconUrl;
@@ -95,12 +98,28 @@ function MapInstanceBinder({ mapRef }) {
  *   className?: string,
  *   interactive?: boolean,
  *   panTarget?: { lat: number, lng: number, key?: number|string } | null,
+ *   onPanTargetChange?: (target: { lat: number, lng: number, key: number } | null) => void,
+ *   showPlaceSearch?: boolean,
  * }} props
  */
-export function MapPicker({ lat, lng, onPositionChange, className = '', interactive = true, panTarget = null }) {
+export function MapPicker({
+  lat,
+  lng,
+  onPositionChange,
+  className = '',
+  interactive = true,
+  panTarget = null,
+  onPanTargetChange,
+  showPlaceSearch = true,
+}) {
   const mapRef = useRef(null);
+  const [internalPanTarget, setInternalPanTarget] = useState(null);
+  const effectivePanTarget = panTarget ?? internalPanTarget;
   const position = useMemo(() => parseCoordPair(lat, lng), [lat, lng]);
-  const panPosition = useMemo(() => parseCoordPair(panTarget?.lat, panTarget?.lng), [panTarget]);
+  const panPosition = useMemo(
+    () => parseCoordPair(effectivePanTarget?.lat, effectivePanTarget?.lng),
+    [effectivePanTarget],
+  );
   const centerCandidate = position ?? panPosition ?? OITA_CENTER;
   const center = isValidCoordPair(centerCandidate) ? centerCandidate : OITA_CENTER;
   const zoom = position ? MARKER_ZOOM : DEFAULT_ZOOM;
@@ -116,13 +135,30 @@ export function MapPicker({ lat, lng, onPositionChange, className = '', interact
     mapRef.current.setView(position, Math.max(mapRef.current.getZoom(), MARKER_ZOOM));
   };
 
+  const handlePlaceSelect = (place) => {
+    const next = { lat: place.lat, lng: place.lng, key: Date.now() };
+    if (typeof onPanTargetChange === 'function') {
+      onPanTargetChange(next);
+    } else {
+      setInternalPanTarget(next);
+    }
+  };
+
   return (
     <div className={'rounded-lg border-2 border-slate-300 bg-slate-100 ' + className}>
       <p className="border-b border-slate-200 bg-white px-2 py-1.5 text-[10px] font-bold text-slate-600">
         {interactive
-          ? '地図をクリックして現場位置を指定（OpenStreetMap）'
+          ? '地図をクリックして現場位置を指定（地理院地図）'
           : '物件マスタの位置（確認用・変更不可）'}
       </p>
+      {showPlaceSearch && interactive ? (
+        <div className="border-b border-slate-200 bg-white px-2 py-2">
+          <PlaceSearchBar onSelect={handlePlaceSelect} />
+          <p className="mt-1 text-[10px] font-medium text-slate-500">
+            検索は表示位置のみ移動します。確定座標は地図クリックで指定してください。
+          </p>
+        </div>
+      ) : null}
       <div className="relative">
         <MapContainer
           center={center}
@@ -132,14 +168,12 @@ export function MapPicker({ lat, lng, onPositionChange, className = '', interact
           scrollWheelZoom
         >
           <MapInstanceBinder mapRef={mapRef} />
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
+          <GsiLayersControl defaultLayerId={DEFAULT_GSI_LAYER_ID} />
+          <TileLoadErrorBanner />
           {position ? <Marker position={position} /> : null}
           {interactive ? <MapClickHandler onPick={handlePick} /> : null}
           <MapViewSync position={position} />
-          {panTarget ? <MapPanSync panTarget={panTarget} /> : null}
+          {effectivePanTarget ? <MapPanSync panTarget={effectivePanTarget} /> : null}
         </MapContainer>
         {position ? (
           <button

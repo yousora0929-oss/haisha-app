@@ -7,7 +7,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { Circle, ImageOverlay, MapContainer, Marker, TileLayer, ZoomControl, useMap, useMapEvents } from 'react-leaflet';
+import { Circle, ImageOverlay, MapContainer, Marker, ZoomControl, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { MAP_EDITOR_TOOLS, MAP_STAMP_EMOJI } from '../mapEditorConstants.js';
@@ -25,6 +25,8 @@ import {
   createStampDivIcon,
   LEAFLET_DIV_ICON_CLASS,
 } from '../utils/mapEditorStampIcon.js';
+import { DEFAULT_GSI_LAYER_ID } from '../mapTiles.js';
+import { GsiLayersControl, TileLoadErrorBanner } from './GsiMapLayers.jsx';
 
 function MapInstanceBinder({ mapRef }) {
   const map = useMap();
@@ -297,6 +299,8 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
     selected = null,
     onSelectionChange,
     blueprintOverlayUrl = '',
+    tileLayerId = DEFAULT_GSI_LAYER_ID,
+    onTileLayerChange,
     className = '',
   },
   ref,
@@ -510,11 +514,12 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
         <MapInstanceBinder mapRef={mapRef} />
         <MapResizeFix />
         <MapFlyTo target={flyTarget} />
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        <GsiLayersControl
+          defaultLayerId={tileLayerId || DEFAULT_GSI_LAYER_ID}
+          onLayerChange={onTileLayerChange}
           crossOrigin="anonymous"
         />
+        <TileLoadErrorBanner />
         {blueprintUrl && overlayBounds ? (
           <ImageOverlay url={blueprintUrl} bounds={overlayBounds} opacity={0.85} />
         ) : null}

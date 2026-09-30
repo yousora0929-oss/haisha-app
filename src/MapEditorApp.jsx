@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MapEditorInteractive } from './components/MapEditorInteractive.jsx';
 import { MapEditorToolbar } from './components/MapEditorToolbar.jsx';
+import { PlaceSearchBar } from './components/PlaceSearchBar.jsx';
 import {
   fetchOrderForMapEditor,
   fetchProjectForMapEditor,
@@ -23,6 +24,7 @@ import { MapEditorPrintSheet } from './components/MapEditorPrintSheet.jsx';
 import { resolvePrintMapViewport } from './utils/mapEditorPrintViewport.js';
 import { shouldShowBlueprintOverlay, stripSavedSnapshotOverlay } from './utils/mapEditorOverlay.js';
 import { setAutoReloadBlocked } from './hooks/useAppReleaseControl.js';
+import { DEFAULT_GSI_LAYER_ID } from './mapTiles.js';
 
 const MAP_SOURCE_LABEL = {
   override: 'この打設日の専用マップ',
@@ -84,6 +86,7 @@ export function MapEditorApp() {
   }, []);
 
   const [flyTarget, setFlyTarget] = useState(null);
+  const [tileLayerId, setTileLayerId] = useState(DEFAULT_GSI_LAYER_ID);
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [printSession, setPrintSession] = useState(null);
   const printSheetRef = useRef(null);
@@ -570,6 +573,7 @@ export function MapEditorApp() {
         project={editorProject}
         siteTitle={siteSubtitle}
         annotations={annotations}
+        tileLayerId={tileLayerId}
       />
 
       <MapEditorPrintModal
@@ -578,6 +582,7 @@ export function MapEditorApp() {
         initialIncludeDetails
         initialViewport={initialPrintViewport}
         annotations={annotations}
+        tileLayerId={tileLayerId}
         onCancel={() => setPrintModalOpen(false)}
         onConfirm={handlePrintConfirm}
       />
@@ -591,6 +596,8 @@ export function MapEditorApp() {
           selectedStampType={selectedStampType}
           defaultUnloadRadius={unloadRadius}
           flyTarget={flyTarget}
+          tileLayerId={tileLayerId}
+          onTileLayerChange={setTileLayerId}
           disabled={saving}
           selected={selection}
           onSelectionChange={setSelection}
@@ -605,6 +612,23 @@ export function MapEditorApp() {
         </p>
         <p className="mt-0.5 truncate px-1 text-[9px] font-bold text-slate-500">
           {sourceLabel} · 注釈 {annCount}
+        </p>
+      </div>
+
+      <div className="map-editor-no-print pointer-events-auto absolute left-1/2 top-[calc(env(safe-area-inset-top)+3.75rem)] z-20 w-[min(92vw,22rem)] -translate-x-1/2 rounded-xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur md:left-auto md:right-4 md:top-20 md:translate-x-0 dark:border-slate-600 dark:bg-slate-900/95">
+        <PlaceSearchBar
+          disabled={saving}
+          onSelect={(place) => {
+            setFlyTarget({
+              lat: place.lat,
+              lng: place.lng,
+              zoom: 17,
+              key: Date.now(),
+            });
+          }}
+        />
+        <p className="mt-1 px-0.5 text-[10px] font-medium text-slate-500">
+          検索は表示位置のみ移動します（マーカー座標は変わりません）
         </p>
       </div>
 

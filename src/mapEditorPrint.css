@@ -82,6 +82,19 @@
   visibility: visible !important;
 }
 
+/* 印刷・スナップショット用シートでは LayersControl を出さない */
+.map-editor-print-sheet .leaflet-control-layers,
+.map-editor-print-sheet .map-tile-error-banner {
+  display: none !important;
+}
+
+@media print {
+  .leaflet-control-layers,
+  .map-tile-error-banner {
+    display: none !important;
+  }
+}
+
 @media print {
   @page {
     size: A4 portrait;

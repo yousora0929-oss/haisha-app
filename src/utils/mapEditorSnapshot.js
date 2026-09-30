@@ -5,6 +5,7 @@ import {
   latLngToRatio,
   snapshotBoundsForAnnotations,
 } from './mapAnnotations.js';
+import { buildGsiTileUrl } from '../mapTiles.js';
 
 const EXPORT_W = 800;
 const EXPORT_H = 600;
@@ -66,10 +67,9 @@ function geoToPixel(lat, lng, bounds, w, h) {
 }
 
 // ---------------------------------------------------------------------------
-// OSM タイル背景（Web Mercator）
-// エディタは OSM タイル + ライブマーカー表示のため、保存 PNG にも同じ背景を焼き込む。
-// tile.openstreetmap.org は CORS 許可 (Access-Control-Allow-Origin: *) なので
-// crossOrigin='anonymous' で canvas 汚染なしに描画できる。
+// 地理院タイル背景（Web Mercator）
+// エディタと同じ標準レイヤーを PNG に焼き込む。
+// cyberjapandata.gsi.go.jp は CORS 許可があるため crossOrigin='anonymous' で描画できる。
 // ---------------------------------------------------------------------------
 
 const MAX_SNAPSHOT_TILES = 32;
@@ -104,12 +104,12 @@ function geoToPixelUnclamped(lat, lng, bounds, w, h) {
   return { px: x, py: y };
 }
 
-async function drawOsmTileBackground(ctx, bounds, zoomHint, w, h) {
+async function drawGsiTileBackground(ctx, bounds, zoomHint, w, h) {
   const [[sLat, sLng], [nLat, nLng]] = bounds;
   if (![sLat, sLng, nLat, nLng].every(Number.isFinite)) return false;
 
   let z = Math.round(Number(zoomHint) || 17);
-  z = Math.max(3, Math.min(19, z));
+  z = Math.max(3, Math.min(18, z));
   let xMin;
   let xMax;
   let yMin;
@@ -138,7 +138,7 @@ async function drawOsmTileBackground(ctx, bounds, zoomHint, w, h) {
       if (idx >= coords.length) return;
       nextIndex += 1;
       const { x, y } = coords[idx];
-      const url = `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+      const url = buildGsiTileUrl(z, x, y);
       try {
         results[idx] = { x, y, img: await loadImage(url) };
       } catch {
@@ -169,13 +169,13 @@ async function drawOsmTileBackground(ctx, bounds, zoomHint, w, h) {
   }
   if (failedTiles.length) {
     console.warn(
-      `[renderAnnotationsSnapshot] OSMタイル ${failedTiles.length}/${coords.length} 枚の取得に失敗（該当領域は格子下地のまま）`,
+      `[renderAnnotationsSnapshot] 地理院タイル ${failedTiles.length}/${coords.length} 枚の取得に失敗（該当領域は格子下地のまま）`,
       failedTiles,
     );
   }
   if (!drawn) return false;
 
-  const attribution = '© OpenStreetMap contributors';
+  const attribution = '地理院タイル';
   ctx.font = '11px system-ui, sans-serif';
   const tw = ctx.measureText(attribution).width;
   ctx.fillStyle = 'rgba(255,255,255,0.75)';
@@ -199,7 +199,7 @@ export async function renderAnnotationsSnapshot(annotations, options = {}) {
   const imgUrl = String(annotations?.imageOverlay?.url || baseImageUrl || '').trim();
 
   // ベース画像を描く場合はその配置基準（imageOverlay.bounds）を、
-  // OSM タイル背景の場合は全マーカーが収まる 4:3 の bounds を使う。
+  // 地理院タイル背景の場合は全マーカーが収まる 4:3 の bounds を使う。
   // タイル・マーカーとも同じ bounds を共有するため位置ズレは起きない。
   const bounds =
     (imgUrl && annotations?.imageOverlay?.bounds) ||
@@ -212,9 +212,9 @@ export async function renderAnnotationsSnapshot(annotations, options = {}) {
     drawGrid(ctx, EXPORT_W, EXPORT_H);
     if (!bounds) return;
     try {
-      await drawOsmTileBackground(ctx, bounds, annotations?.center?.zoom, EXPORT_W, EXPORT_H);
+      await drawGsiTileBackground(ctx, bounds, annotations?.center?.zoom, EXPORT_W, EXPORT_H);
     } catch (err) {
-      console.warn('[renderAnnotationsSnapshot] OSMタイル背景の描画に失敗（格子にフォールバック）', err);
+      console.warn('[renderAnnotationsSnapshot] 地理院タイル背景の描画に失敗（格子にフォールバック）', err);
     }
   };
 

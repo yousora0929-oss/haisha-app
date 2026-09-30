@@ -81,7 +81,7 @@ function waitForFrameHeight(el, minPx = 80, timeoutMs = 1200) {
  * A4運行指示書 — 画面外に配置して印刷専用 DOM を描画
  */
 export const MapEditorPrintSheet = forwardRef(function MapEditorPrintSheet(
-  { session, order, project, siteTitle, annotations },
+  { session, order, project, siteTitle, annotations, tileLayerId },
   ref,
 ) {
   const leafletMapRef = useRef(null);
@@ -196,10 +196,11 @@ export const MapEditorPrintSheet = forwardRef(function MapEditorPrintSheet(
                 annotations={annotations}
                 viewport={viewport}
                 fixedHeightPx={mapHeightPx}
+                tileLayerId={tileLayerId}
                 onMapReady={(map) => {
                   leafletMapRef.current = map;
                 }}
-                mapKey={`print-${viewport?.lat}-${viewport?.lng}-${viewport?.zoom}-${includeBoth ? 'both' : 'map'}`}
+                mapKey={`print-${viewport?.lat}-${viewport?.lng}-${viewport?.zoom}-${includeBoth ? 'both' : 'map'}-${tileLayerId || 'std'}`}
                 className="h-full w-full"
               />
             </div>
