@@ -183,6 +183,43 @@ describe('buildOrderPartyPersistPatch', () => {
     expect(patch.contractorName).toBe('山田建設');
   });
 
+  it('persists free-typed traderName without organization id and keeps empty as 商社なし', () => {
+    const free = buildOrderPartyPersistPatch(
+      {
+        contractorCustomerId: '',
+        agentOrganizationId: '',
+        tradingAgentCustomerId: '',
+        contractorName: '自由業者',
+        traderName: '自由商社',
+      },
+      { customersById, organizationsById },
+    );
+    expect(free.contractor_customer_id).toBe(null);
+    expect(free.contractorName).toBe('自由業者');
+    expect(free.agent_organization_id).toBe(null);
+    expect(free.traderName).toBe('自由商社');
+
+    const cleared = buildOrderPartyPersistPatch(
+      {
+        contractorCustomerId: 'cust-contractor',
+        agentOrganizationId: '',
+        tradingAgentCustomerId: '',
+        traderName: '',
+      },
+      {
+        customersById,
+        organizationsById,
+        previousOrder: {
+          contractor_customer_id: 'cust-contractor',
+          agent_organization_id: 'org-taiho',
+          traderName: '大陽機材㈱',
+        },
+      },
+    );
+    expect(cleared.agent_organization_id).toBe(null);
+    expect(cleared.traderName).toBe('');
+  });
+
   it('does not blank existing trader/contractor snapshots when IDs are unchanged and lookups are missing', () => {
     const patch = buildOrderPartyPersistPatch(
       {

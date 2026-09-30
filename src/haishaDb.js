@@ -8824,3 +8824,23 @@ export async function fetchCharterRequestsByIds(requestIds) {
     return [];
   }
 }
+
+/**
+ * 管理者向け: 注文の監査ログ（order_audit_logs）を遅延取得。
+ * RLS により admin セッション以外は読めない想定。
+ * @param {string} orderId
+ * @returns {Promise<Array<object>>}
+ */
+export async function fetchOrderAuditLogs(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id || !supabase?.from) return [];
+  const { data, error } = await supabase
+    .from('order_audit_logs')
+    .select(
+      'id, order_id, occurred_at, event_type, factory_id, actor_role, actor_id, actor_name, changes, is_backfilled',
+    )
+    .eq('order_id', id)
+    .order('occurred_at', { ascending: false });
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}

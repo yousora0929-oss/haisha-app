@@ -136,12 +136,16 @@ export function resolveOrderTradingCompanyDisplayName(order, lookups) {
 
 /**
  * 選択した当事者 ID から、DB カラムと表示用スナップショットを同時に組み立てる。
+ * contractorName / traderName を渡した場合、ID 未選択時は自由入力文字列を保存する
+ * （空の traderName は商社なし＝直接請求としてそのまま空を保持。フォールバック文字は入れない）。
  */
 export function buildOrderPartyPersistPatch(
   {
     contractorCustomerId,
     agentOrganizationId,
     tradingAgentCustomerId,
+    contractorName: contractorNameInput,
+    traderName: traderNameInput,
   } = {},
   { customersById, organizationsById, previousOrder } = {},
 ) {
@@ -151,6 +155,10 @@ export function buildOrderPartyPersistPatch(
   const prevContractorId = orderContractorCustomerId(previousOrder);
   const prevAgentId = orderAgentOrganizationId(previousOrder);
   const prevTradingAgentId = orderTradingAgentCustomerId(previousOrder);
+  const typedContractorName =
+    contractorNameInput !== undefined ? String(contractorNameInput ?? '').trim() : undefined;
+  const typedTraderName =
+    traderNameInput !== undefined ? String(traderNameInput ?? '').trim() : undefined;
   const nextOrder = {
     ...(previousOrder && typeof previousOrder === 'object' ? previousOrder : {}),
     contractor_customer_id: nextContractorId || null,
@@ -172,19 +180,43 @@ export function buildOrderPartyPersistPatch(
     nextOrder.projectTradingCompanyName = '';
     nextOrder.displayTraderName = '';
   }
+  // 自由入力名をスナップショットへ載せてから resolve（ID 未選択時の表示名）
+  if (!nextContractorId && typedContractorName !== undefined) {
+    nextOrder.contractorName = typedContractorName;
+    nextOrder.contractor_name = typedContractorName;
+    nextOrder.displayContractorName = typedContractorName;
+  }
+  if (!nextAgentId && !nextTradingAgentId && typedTraderName !== undefined) {
+    nextOrder.traderName = typedTraderName;
+    nextOrder.trading_company_name = typedTraderName;
+    nextOrder.projectTradingCompanyName = typedTraderName;
+    nextOrder.displayTraderName = typedTraderName;
+  }
   const parties = resolveOrderParties(nextOrder, { customersById, organizationsById });
   const agentSync = buildAgentOrganizationSyncPatch(
     parties.agentOrganizationId || null,
     parties.agentOrganization || organizationsById || [],
   );
+  const contractorName =
+    nextContractorId
+      ? parties.contractorName || typedContractorName || ''
+      : typedContractorName !== undefined
+        ? typedContractorName
+        : parties.contractorName;
+  const traderName =
+    nextAgentId || nextTradingAgentId
+      ? parties.traderName || typedTraderName || ''
+      : typedTraderName !== undefined
+        ? typedTraderName
+        : parties.traderName;
   return {
     contractor_customer_id: parties.contractorCustomerId || null,
-    contractorName: parties.contractorName,
+    contractorName,
     trading_agent_customer_id: parties.tradingAgentCustomerId || null,
     ...agentSync,
-    trading_company_name: parties.traderName,
-    projectTradingCompanyName: parties.traderName,
-    traderName: parties.traderName,
+    trading_company_name: traderName,
+    projectTradingCompanyName: traderName,
+    traderName,
   };
 }
 

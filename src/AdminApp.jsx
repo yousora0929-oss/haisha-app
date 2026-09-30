@@ -37,6 +37,7 @@ import {
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
+import { AdminOrderAuditHistory } from './components/AdminOrderAuditHistory.jsx';
 import { externalUrlValidationMessage } from './utils/urlValidation.js';
 import { buildOrderVisibilityContext } from './utils/orderVisibilityScope.js';
 import { shouldShowCreditBadge } from './utils/creditEligibility.js';
@@ -3138,6 +3139,8 @@ function AdminOrderDetailModal({
   const [contractorCustomerId, setContractorCustomerId] = useState('');
   const [agentOrganizationId, setAgentOrganizationId] = useState('');
   const [tradingAgentCustomerId, setTradingAgentCustomerId] = useState('');
+  const [contractorName, setContractorName] = useState('');
+  const [traderName, setTraderName] = useState('');
   const [siteAddress, setSiteAddress] = useState('');
   const [sitePhone, setSitePhone] = useState('');
   const [managerName, setManagerName] = useState('');
@@ -3175,6 +3178,8 @@ function AdminOrderDetailModal({
     setContractorCustomerId(parties.contractorCustomerId);
     setAgentOrganizationId(parties.agentOrganizationId);
     setTradingAgentCustomerId(parties.tradingAgentCustomerId);
+    setContractorName(parties.contractorName || '');
+    setTraderName(parties.traderName || '');
     setSiteAddress(order.siteAddress != null ? String(order.siteAddress) : '');
     setSitePhone(order.sitePhone != null ? String(order.sitePhone) : '');
     setManagerName(order.manager_name != null ? String(order.manager_name) : '');
@@ -3217,6 +3222,8 @@ function AdminOrderDetailModal({
         contractorCustomerId,
         agentOrganizationId,
         tradingAgentCustomerId,
+        contractorName,
+        traderName,
       },
       { customersById, organizationsById, previousOrder: order },
     );
@@ -3494,10 +3501,18 @@ function AdminOrderDetailModal({
               contractorCustomerId={contractorCustomerId}
               agentOrganizationId={agentOrganizationId}
               tradingAgentCustomerId={tradingAgentCustomerId}
+              contractorName={contractorName}
+              traderName={traderName}
               onChange={(next) => {
                 setContractorCustomerId(String(next.contractorCustomerId || '').trim());
                 setAgentOrganizationId(String(next.agentOrganizationId || '').trim());
                 setTradingAgentCustomerId(String(next.tradingAgentCustomerId || '').trim());
+                if (next.contractorName !== undefined) {
+                  setContractorName(String(next.contractorName ?? ''));
+                }
+                if (next.traderName !== undefined) {
+                  setTraderName(String(next.traderName ?? ''));
+                }
               }}
               inputClassName={inputClass}
               labelClassName="text-xs font-black text-slate-600"
@@ -3569,6 +3584,12 @@ function AdminOrderDetailModal({
               ) : null}
             </div>
           </div>
+
+          <AdminOrderAuditHistory
+            orderId={order.id}
+            open={open}
+            factoryNameById={factoryNameById}
+          />
         </div>
         <div className="flex shrink-0 gap-2 border-t border-slate-200 bg-white p-4">
           <button type="button" onClick={onClose} disabled={saving} className="min-h-[44px] flex-1 rounded-lg border-2 border-slate-300 bg-white text-sm font-black text-slate-700">閉じる</button>

@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { MasterSuggestInput } from './MasterSuggestInput.jsx';
 import { customerSuggestTexts, organizationSuggestTexts } from '../utils/masterSuggest.js';
+import { dedupeCustomersByCompany } from '../utils/dedupeCustomersByCompany.js';
 import {
   orderAgentOrganizationId,
   orderContractorCustomerId,
@@ -17,7 +18,8 @@ function orgLabel(org) {
 }
 
 /**
- * 注文の業者・商社をマスタ選択する。表示用文字列は選択結果から自動生成する。
+ * 注文の業者・商社をマスタ候補から選ぶ（自由入力も可。候補は補助）。
+ * 親が contractorName / traderName を渡す場合はそれを表示値として使う。
  */
 export function OrderPartyEditFields({
   order,
@@ -26,6 +28,8 @@ export function OrderPartyEditFields({
   contractorCustomerId,
   agentOrganizationId,
   tradingAgentCustomerId,
+  contractorName: contractorNameProp,
+  traderName: traderNameProp,
   onChange,
   inputClassName = '',
   labelClassName = '',
@@ -57,16 +61,25 @@ export function OrderPartyEditFields({
       contractor_customer_id: nextContractorId,
       agent_organization_id: nextAgentId,
       trading_agent_customer_id: nextTradingAgentId,
+      ...(contractorNameProp !== undefined ? { contractorName: contractorNameProp } : {}),
+      ...(traderNameProp !== undefined ? { traderName: traderNameProp } : {}),
     },
     { customersById, organizationsById },
   );
 
   const contractorItems = useMemo(
-    () => (customers || []).filter((c) => c?.id && (c.role ?? 'contractor') === 'contractor'),
+    () =>
+      dedupeCustomersByCompany(
+        (customers || []).filter((c) => c?.id && (c.role ?? 'contractor') === 'contractor'),
+      ),
     [customers],
   );
   const agentOrgItems = useMemo(
-    () => (organizations || []).filter((o) => o?.id && String(o.type || '').trim() === 'agent'),
+    () =>
+      (organizations || [])
+        .filter((o) => o?.id && String(o.type || '').trim() === 'agent')
+        .slice()
+        .sort((a, b) => orgLabel(a).localeCompare(orgLabel(b), 'ja')),
     [organizations],
   );
   const tradingAgentItems = useMemo(
@@ -78,11 +91,32 @@ export function OrderPartyEditFields({
   const selectedOrg = organizationsById[nextAgentId] || null;
   const selectedTradingAgent = customersById[nextTradingAgentId] || null;
 
+  const contractorDisplay =
+    nextContractorId && selectedContractor
+      ? customerLabel(selectedContractor)
+      : contractorNameProp !== undefined
+        ? String(contractorNameProp ?? '')
+        : selectedContractor
+          ? customerLabel(selectedContractor)
+          : parties.contractorName;
+  const traderDisplay =
+    nextAgentId && selectedOrg
+      ? orgLabel(selectedOrg)
+      : traderNameProp !== undefined
+        ? String(traderNameProp ?? '')
+        : selectedOrg
+          ? orgLabel(selectedOrg)
+          : nextAgentId
+            ? parties.traderName
+            : '';
+
   const emit = (partial) => {
     onChange?.({
       contractorCustomerId: nextContractorId,
       agentOrganizationId: nextAgentId,
       tradingAgentCustomerId: nextTradingAgentId,
+      contractorName: contractorDisplay,
+      traderName: traderDisplay,
       ...partial,
     });
   };
@@ -90,81 +124,92 @@ export function OrderPartyEditFields({
   return (
     <div className="grid gap-3 sm:col-span-2">
       {showContractor ? (
-      <MasterSuggestInput
-        label="業者（元請）"
-        name="order-party-contractor"
-        value={selectedContractor ? customerLabel(selectedContractor) : parties.contractorName}
-        onValueChange={(value) => {
-          if (!String(value || '').trim()) {
-            emit({ contractorCustomerId: '' });
+        <MasterSuggestInput
+          label="業者名"
+          htmlFor="foe-contractor"
+          name="contractorName"
+          value={contractorDisplay}
+          onValueChange={(value) => {
+            // 自由入力時は ID を外し、表示文字列だけを親へ渡す（マスタ強制にしない）
+            emit({
+              contractorCustomerId: '',
+              contractorName: value,
+            });
+          }}
+          onSelect={(item) =>
+            emit({
+              contractorCustomerId: String(item?.id || '').trim(),
+              contractorName: customerLabel(item),
+            })
           }
-        }}
-        onSelect={(item) =>
-          emit({
-            contractorCustomerId: String(item?.id || '').trim(),
-          })
-        }
-        items={contractorItems}
-        getItemKey={(c) => String(c.id)}
-        getItemLabel={customerLabel}
-        getSearchTexts={customerSuggestTexts}
-        placeholder="業者マスタから選択"
-        emptyHint="該当する業者がありません"
-        inputClassName={inputClassName}
-        labelClassName={labelClassName}
-      />
+          items={contractorItems}
+          getItemKey={(c) => String(c.id)}
+          getItemLabel={customerLabel}
+          getSearchTexts={customerSuggestTexts}
+          placeholder="業者名を入力（候補から選択、または自由入力）"
+          emptyHint="該当する業者がありません（自由入力できます）"
+          inputClassName={inputClassName}
+          labelClassName={labelClassName}
+        />
       ) : null}
       {showTrader ? (
-      <MasterSuggestInput
-        label="商社（請求先組織）"
-        name="order-party-agent-org"
-        value={selectedOrg ? orgLabel(selectedOrg) : nextAgentId ? parties.traderName : ''}
-        onValueChange={(value) => {
-          if (!String(value || '').trim()) {
-            emit({ agentOrganizationId: '' });
+        <MasterSuggestInput
+          label="商社名"
+          htmlFor="foe-trader"
+          name="traderName"
+          value={traderDisplay}
+          onValueChange={(value) => {
+            // 空欄＝商社なし（直接請求）。フォールバック文字列は入れない
+            const trimmed = String(value || '');
+            emit({
+              agentOrganizationId: '',
+              traderName: trimmed,
+              ...(trimmed.trim() ? {} : { tradingAgentCustomerId: '' }),
+            });
+          }}
+          onSelect={(item) =>
+            emit({
+              agentOrganizationId: String(item?.id || '').trim(),
+              traderName: orgLabel(item),
+            })
           }
-        }}
-        onSelect={(item) =>
-          emit({
-            agentOrganizationId: String(item?.id || '').trim(),
-          })
-        }
-        items={agentOrgItems}
-        getItemKey={(o) => String(o.id)}
-        getItemLabel={orgLabel}
-        getSearchTexts={organizationSuggestTexts}
-        placeholder="商社なし（直接請求）のときは空欄"
-        emptyHint="該当する商社がありません"
-        inputClassName={inputClassName}
-        labelClassName={labelClassName}
-      />
+          items={agentOrgItems}
+          getItemKey={(o) => String(o.id)}
+          getItemLabel={orgLabel}
+          getSearchTexts={organizationSuggestTexts}
+          placeholder="商社名を入力（空欄＝商社なし／自由入力可）"
+          emptyHint="候補がありません（自由入力できます）"
+          inputClassName={inputClassName}
+          labelClassName={labelClassName}
+        />
       ) : null}
       {showTradingAgent ? (
-      <MasterSuggestInput
-        label="商社担当者（任意）"
-        name="order-party-trading-agent"
-        value={
-          selectedTradingAgent ? customerLabel(selectedTradingAgent) : parties.tradingAgentCompanyName
-        }
-        onValueChange={(value) => {
-          if (!String(value || '').trim()) {
-            emit({ tradingAgentCustomerId: '' });
+        <MasterSuggestInput
+          label="商社担当者（任意）"
+          htmlFor="foe-trading-agent"
+          name="order-party-trading-agent"
+          value={
+            selectedTradingAgent ? customerLabel(selectedTradingAgent) : parties.tradingAgentCompanyName
           }
-        }}
-        onSelect={(item) =>
-          emit({
-            tradingAgentCustomerId: String(item?.id || '').trim(),
-          })
-        }
-        items={tradingAgentItems}
-        getItemKey={(c) => String(c.id)}
-        getItemLabel={customerLabel}
-        getSearchTexts={customerSuggestTexts}
-        placeholder="通知先の商社担当者がいれば選択"
-        emptyHint="該当する商社担当者がありません"
-        inputClassName={inputClassName}
-        labelClassName={labelClassName}
-      />
+          onValueChange={(value) => {
+            if (!String(value || '').trim()) {
+              emit({ tradingAgentCustomerId: '' });
+            }
+          }}
+          onSelect={(item) =>
+            emit({
+              tradingAgentCustomerId: String(item?.id || '').trim(),
+            })
+          }
+          items={tradingAgentItems}
+          getItemKey={(c) => String(c.id)}
+          getItemLabel={customerLabel}
+          getSearchTexts={customerSuggestTexts}
+          placeholder="通知先の商社担当者がいれば選択"
+          emptyHint="該当する商社担当者がありません"
+          inputClassName={inputClassName}
+          labelClassName={labelClassName}
+        />
       ) : null}
     </div>
   );

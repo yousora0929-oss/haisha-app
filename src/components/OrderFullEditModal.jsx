@@ -78,6 +78,12 @@ function applyInitialPatchToEditData(base, patch) {
     next.tradingAgentCustomerId =
       patch.trading_agent_customer_id != null ? String(patch.trading_agent_customer_id).trim() : '';
   }
+  if (Object.prototype.hasOwnProperty.call(patch, 'contractorName')) {
+    next.contractorName = patch.contractorName != null ? String(patch.contractorName) : '';
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'traderName')) {
+    next.traderName = patch.traderName != null ? String(patch.traderName) : '';
+  }
   return next;
 }
 
@@ -427,6 +433,8 @@ export function OrderFullEditModal({
     contractorCustomerId: '',
     agentOrganizationId: '',
     tradingAgentCustomerId: '',
+    contractorName: '',
+    traderName: '',
     siteName: '',
     siteAddress: '',
     sitePhone: '',
@@ -503,6 +511,8 @@ export function OrderFullEditModal({
       contractorCustomerId: orderContractorCustomerId(order),
       agentOrganizationId: orderAgentOrganizationId(order),
       tradingAgentCustomerId: orderTradingAgentCustomerId(order),
+      contractorName: '',
+      traderName: '',
       siteName:
         sanitizeSiteNameValue(order.siteName) || sanitizeSiteNameValue(order.projectName) || '',
       siteAddress: order.siteAddress != null ? String(order.siteAddress) : '',
@@ -510,6 +520,17 @@ export function OrderFullEditModal({
       mixText: mixInitial,
       hasTest: Boolean(order.has_test),
     };
+    // マスタ解決後の表示名を自由入力欄の初期値にする（ID 未紐づけのスナップショットも含む）
+    {
+      const parties = resolveOrderParties(order, {
+        customersById: customerById || {},
+        organizationsById: Object.fromEntries(
+          (organizationsProp || []).filter((o) => o?.id).map((o) => [String(o.id), o]),
+        ),
+      });
+      next.contractorName = parties.contractorName || '';
+      next.traderName = parties.traderName || '';
+    }
     if (initialPatch && typeof initialPatch === 'object' && !Array.isArray(initialPatch)) {
       const seedPatch =
         focusKeyList.length > 0
@@ -547,6 +568,8 @@ export function OrderFullEditModal({
       contractor_customer_id: editData.contractorCustomerId,
       agent_organization_id: editData.agentOrganizationId,
       trading_agent_customer_id: editData.tradingAgentCustomerId,
+      contractorName: editData.contractorName,
+      traderName: editData.traderName,
     },
     { customersById, organizationsById },
   );
@@ -578,6 +601,8 @@ export function OrderFullEditModal({
         contractorCustomerId: editData.contractorCustomerId,
         agentOrganizationId: editData.agentOrganizationId,
         tradingAgentCustomerId: editData.tradingAgentCustomerId,
+        contractorName: editData.contractorName,
+        traderName: editData.traderName,
       },
       { customersById, organizationsById, previousOrder: order },
     );
@@ -967,6 +992,8 @@ export function OrderFullEditModal({
                 contractorCustomerId={editData.contractorCustomerId}
                 agentOrganizationId={editData.agentOrganizationId}
                 tradingAgentCustomerId={editData.tradingAgentCustomerId}
+                contractorName={editData.contractorName}
+                traderName={editData.traderName}
                 showContractor={showField('contractorCustomerId')}
                 showTrader={showField('agentOrganizationId')}
                 showTradingAgent={showField('tradingAgentCustomerId')}
@@ -976,6 +1003,14 @@ export function OrderFullEditModal({
                     contractorCustomerId: String(next.contractorCustomerId || '').trim(),
                     agentOrganizationId: String(next.agentOrganizationId || '').trim(),
                     tradingAgentCustomerId: String(next.tradingAgentCustomerId || '').trim(),
+                    contractorName:
+                      next.contractorName !== undefined
+                        ? String(next.contractorName ?? '')
+                        : prev.contractorName,
+                    traderName:
+                      next.traderName !== undefined
+                        ? String(next.traderName ?? '')
+                        : prev.traderName,
                   }));
                 }}
                 inputClassName={fieldInput}
