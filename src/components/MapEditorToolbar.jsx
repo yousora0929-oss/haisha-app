@@ -24,6 +24,7 @@ export function MapEditorToolbar({
   selectedCommentScale = 1,
   onCommentScaleChange,
   onDeleteSelection,
+  onPickBaseImage,
   disabled = false,
   className = '',
 }) {
@@ -193,6 +194,22 @@ export function MapEditorToolbar({
             </button>
           ))}
         </div>
+      ) : null}
+
+      {typeof onPickBaseImage === 'function' ? (
+        <button
+          type="button"
+          disabled={disabled}
+          className={
+            TOOL_BTN +
+            ' mt-auto border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'
+          }
+          onClick={() => onPickBaseImage()}
+          title="図面画像をアップロード"
+        >
+          <span className="text-lg">📷</span>
+          <span className="leading-tight">図面</span>
+        </button>
       ) : null}
     </aside>
   );

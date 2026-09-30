@@ -87,10 +87,23 @@ export function MapEditorApp() {
 
   const [flyTarget, setFlyTarget] = useState(null);
   const [tileLayerId, setTileLayerId] = useState(DEFAULT_GSI_LAYER_ID);
+  const [searchPanelOpen, setSearchPanelOpen] = useState(false);
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [printSession, setPrintSession] = useState(null);
   const printSheetRef = useRef(null);
   const printRunIdRef = useRef(0);
+
+  useEffect(() => {
+    if (!searchPanelOpen) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSearchPanelOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [searchPanelOpen]);
 
   const initialPrintViewport = useMemo(
     () => resolvePrintMapViewport(editorOrder, annotations),
@@ -615,22 +628,40 @@ export function MapEditorApp() {
         </p>
       </div>
 
-      <div className="map-editor-no-print pointer-events-auto absolute left-1/2 top-[calc(env(safe-area-inset-top)+3.75rem)] z-20 w-[min(92vw,22rem)] -translate-x-1/2 rounded-xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur md:left-auto md:right-4 md:top-20 md:translate-x-0 dark:border-slate-600 dark:bg-slate-900/95">
-        <PlaceSearchBar
-          disabled={saving}
-          onSelect={(place) => {
-            setFlyTarget({
-              lat: place.lat,
-              lng: place.lng,
-              zoom: 17,
-              key: Date.now(),
-            });
-          }}
-        />
-        <p className="mt-1 px-0.5 text-[10px] font-medium text-slate-500">
-          検索は表示位置のみ移動します（マーカー座標は変わりません）
-        </p>
-      </div>
+      {searchPanelOpen ? (
+        <div className="map-editor-no-print pointer-events-none absolute inset-x-0 top-[calc(env(safe-area-inset-top)+3.5rem)] z-[1200] px-3 md:inset-x-auto md:right-4 md:top-20 md:w-full md:max-w-md md:px-0">
+          <div className="pointer-events-auto rounded-xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur dark:border-slate-600 dark:bg-slate-900/95">
+            <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
+              <p className="text-[11px] font-black text-slate-700 dark:text-slate-200">場所を検索</p>
+              <button
+                type="button"
+                onClick={() => setSearchPanelOpen(false)}
+                className="inline-flex min-h-[32px] min-w-[32px] items-center justify-center rounded-lg border border-slate-200 bg-white text-sm font-black text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                aria-label="検索パネルを閉じる"
+              >
+                ✕
+              </button>
+            </div>
+            <PlaceSearchBar
+              key={searchPanelOpen ? 'open' : 'closed'}
+              autoFocus
+              disabled={saving}
+              onSelect={(place) => {
+                setFlyTarget({
+                  lat: place.lat,
+                  lng: place.lng,
+                  zoom: 17,
+                  key: Date.now(),
+                });
+                setSearchPanelOpen(false);
+              }}
+            />
+            <p className="mt-1 px-0.5 text-[10px] font-medium text-slate-500">
+              検索は表示位置のみ移動します（マーカー座標は変わりません）
+            </p>
+          </div>
+        </div>
+      ) : null}
 
       <input
         ref={baseUploadRef}
@@ -656,12 +687,13 @@ export function MapEditorApp() {
         selectedCommentScale={selectedComment?.scale ?? 1}
         onCommentScaleChange={handleCommentScaleChange}
         onDeleteSelection={handleDeleteSelection}
+        onPickBaseImage={() => baseUploadRef.current?.click()}
         disabled={saving}
         className="map-editor-no-print absolute left-4 top-[calc(env(safe-area-inset-top)+3.25rem)] z-10 max-h-[min(48vh,24rem)] overflow-y-auto rounded-2xl border border-slate-200 bg-white/95 shadow-lg backdrop-blur md:top-4 md:max-h-[calc(100dvh-6rem)] dark:border-slate-600 dark:bg-slate-900/95"
       />
 
       <div className="map-editor-no-print fixed inset-x-0 bottom-0 z-20 border-t border-slate-200/80 bg-white/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.12)] backdrop-blur md:absolute md:inset-x-auto md:bottom-auto md:left-auto md:right-4 md:top-4 md:max-w-md md:border-0 md:bg-transparent md:p-0 md:shadow-none md:backdrop-blur-none dark:border-slate-700 dark:bg-slate-900/95 md:dark:bg-transparent">
-        {/* スマホ: 閉じる | 図面 | 保存 を 1:1:2 で1列 */}
+        {/* スマホ: 閉じる | 検索 | 保存 を 1:1:2 で1列 */}
         <div className="grid w-full grid-cols-[1fr_1fr_2fr] gap-2 md:hidden">
           <button
             type="button"
@@ -675,11 +707,18 @@ export function MapEditorApp() {
           <button
             type="button"
             disabled={saving}
-            onClick={() => baseUploadRef.current?.click()}
-            className={mobileBarBtn + ' border border-slate-300 bg-white text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100'}
+            aria-expanded={searchPanelOpen}
+            aria-label="場所検索"
+            onClick={() => setSearchPanelOpen((v) => !v)}
+            className={
+              mobileBarBtn +
+              (searchPanelOpen
+                ? ' border-indigo-600 bg-indigo-600 text-white ring-2 ring-indigo-300/50'
+                : ' border border-slate-300 bg-white text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100')
+            }
           >
-            <span aria-hidden="true">📷</span>
-            <span> 図面</span>
+            <span aria-hidden="true">🔍</span>
+            <span> 検索</span>
           </button>
           <button
             type="button"
@@ -698,11 +737,18 @@ export function MapEditorApp() {
           <button
             type="button"
             disabled={saving}
-            onClick={() => baseUploadRef.current?.click()}
-            className={actionBtn + ' border border-slate-300 bg-white text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100'}
+            aria-expanded={searchPanelOpen}
+            aria-label="場所検索"
+            onClick={() => setSearchPanelOpen((v) => !v)}
+            className={
+              actionBtn +
+              (searchPanelOpen
+                ? ' border-indigo-600 bg-indigo-600 text-white ring-2 ring-indigo-300/40'
+                : ' border border-slate-300 bg-white text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100')
+            }
           >
-            <span aria-hidden="true">📷</span>
-            <span className="hidden sm:inline"> 図面</span>
+            <span aria-hidden="true">🔍</span>
+            <span className="hidden sm:inline"> 検索</span>
           </button>
           <button
             type="button"

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { searchPlaces } from '../utils/gsiGeocode.js';
 
 /**
@@ -9,6 +9,7 @@ import { searchPlaces } from '../utils/gsiGeocode.js';
  *   className?: string,
  *   inputClassName?: string,
  *   placeholder?: string,
+ *   autoFocus?: boolean,
  * }} props
  */
 export function PlaceSearchBar({
@@ -17,11 +18,21 @@ export function PlaceSearchBar({
   className = '',
   inputClassName = '',
   placeholder = '住所・地名で場所を検索',
+  autoFocus = false,
 }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [message, setMessage] = useState('');
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (!autoFocus) return undefined;
+    const t = window.setTimeout(() => {
+      inputRef.current?.focus?.();
+    }, 50);
+    return () => window.clearTimeout(t);
+  }, [autoFocus]);
 
   const runSearch = async () => {
     const q = String(query || '').trim();
@@ -48,6 +59,7 @@ export function PlaceSearchBar({
     <div className={'relative ' + className}>
       <div className="flex gap-1.5">
         <input
+          ref={inputRef}
           type="search"
           value={query}
           disabled={disabled || searching}
