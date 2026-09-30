@@ -6,3 +6,7 @@ dist
 *.log
 
 .vercel
+
+# maplibre worker（vite build 時に node_modules から public/dist へコピー）
+public/maplibre-gl-worker.mjs
+public/maplibre-gl-shared.mjs

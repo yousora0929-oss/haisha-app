@@ -1,9 +1,34 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { copyFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
+
+const MAPLIBRE_WORKER_FILES = ['maplibre-gl-worker.mjs', 'maplibre-gl-shared.mjs'];
+
+/** maplibre worker は shared を相対 import するため、両ファイルを同階層に置く */
+function copyMaplibreWorkersPlugin() {
+  const copyInto = (dir) => {
+    mkdirSync(dir, { recursive: true });
+    for (const name of MAPLIBRE_WORKER_FILES) {
+      copyFileSync(
+        resolve(__dirname, 'node_modules/maplibre-gl/dist', name),
+        resolve(dir, name),
+      );
+    }
+  };
+  return {
+    name: 'copy-maplibre-workers',
+    buildStart() {
+      copyInto(resolve(__dirname, 'public'));
+    },
+    closeBundle() {
+      copyInto(resolve(__dirname, 'dist'));
+    },
+  };
+}
 
 /** /map-editor/:id、/order/:token、/mix-design/accept/:token を各 HTML にフォールバック */
 function spaHtmlFallback() {
@@ -35,7 +60,10 @@ function spaHtmlFallback() {
 }
 
 export default defineConfig({
-  plugins: [react(), spaHtmlFallback()],
+  plugins: [react(), spaHtmlFallback(), copyMaplibreWorkersPlugin()],
+  resolve: {
+    dedupe: ['maplibre-gl'],
+  },
   define: {
     __APP_VERSION__: JSON.stringify(String(Date.now())),
   },

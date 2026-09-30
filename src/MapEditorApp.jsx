@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import './maplibreSetup.js';
 import { MapEditorInteractive } from './components/MapEditorInteractive.jsx';
 import { MapEditorToolbar } from './components/MapEditorToolbar.jsx';
 import { PlaceSearchBar } from './components/PlaceSearchBar.jsx';

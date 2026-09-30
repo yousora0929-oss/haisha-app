@@ -2,14 +2,18 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMap } from 'react-leaflet';
 import L from 'leaflet';
+import { ensureMaplibreWorker } from '../maplibreSetup.js';
 import { maplibreGL } from '@maplibre/maplibre-gl-leaflet';
-import 'maplibre-gl/dist/maplibre-gl.css';
 import {
   DEFAULT_MAP_BASE_LAYER_ID,
   MAP_BASE_LAYERS,
   getMapBaseLayer,
   normalizeMapBaseLayerId,
 } from '../mapTiles.js';
+
+ensureMaplibreWorker();
+
+const STREET_LOAD_TIMEOUT_MS = 8000;
 
 function supportsWebGL() {
   try {
@@ -41,7 +45,7 @@ function createStreetLayer(def) {
 }
 
 /**
- * ストリート／写真／地理院のセグメント切替 UI（地図外に置く）
+ * ストリート／写真／地理院／淡色のセグメント切替 UI
  */
 export function MapBaseLayerSwitch({
   layerId = DEFAULT_MAP_BASE_LAYER_ID,
@@ -53,7 +57,7 @@ export function MapBaseLayerSwitch({
   return (
     <div
       className={
-        'map-editor-no-print map-base-layer-switch pointer-events-auto inline-flex max-w-full overflow-hidden rounded-xl border-2 border-slate-300 bg-white/95 shadow-md backdrop-blur dark:border-slate-600 dark:bg-slate-900/95 ' +
+        'map-editor-no-print map-base-layer-switch pointer-events-auto inline-flex max-w-full flex-wrap overflow-hidden rounded-xl border-2 border-slate-300 bg-white/95 shadow-md backdrop-blur dark:border-slate-600 dark:bg-slate-900/95 ' +
         className
       }
       role="group"
@@ -69,7 +73,7 @@ export function MapBaseLayerSwitch({
             aria-pressed={pressed}
             onClick={() => onChange?.(layer.id)}
             className={
-              'min-h-[40px] min-w-[4.5rem] flex-1 px-2.5 text-[11px] font-black transition active:scale-[0.98] disabled:opacity-50 sm:min-w-[5.5rem] sm:text-xs ' +
+              'min-h-[40px] min-w-[3.75rem] flex-1 basis-[calc(50%-1px)] px-2 text-[11px] font-black transition active:scale-[0.98] disabled:opacity-50 sm:min-w-[4.75rem] sm:basis-auto sm:text-xs ' +
               (pressed
                 ? 'bg-indigo-600 text-white'
                 : 'bg-transparent text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800')
@@ -103,8 +107,20 @@ export function MapBaseLayerController({
     let cancelled = false;
     const gen = ++generatingRef.current;
     setNotice('');
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let loadTimer = null;
+    /** @type {(() => void) | null} */
+    let detachGlListeners = null;
 
     const removeCurrent = () => {
+      if (detachGlListeners) {
+        try {
+          detachGlListeners();
+        } catch {
+          /* ignore */
+        }
+        detachGlListeners = null;
+      }
       if (layerRef.current) {
         try {
           map.removeLayer(layerRef.current);
@@ -126,6 +142,63 @@ export function MapBaseLayerController({
       onFallbackRef.current?.('gsi');
     };
 
+    const waitForStreetReady = (glMap) =>
+      new Promise((resolve, reject) => {
+        if (!glMap) {
+          reject(new Error('maplibre-map-missing'));
+          return;
+        }
+        if (glMap.loaded?.()) {
+          resolve();
+          return;
+        }
+
+        let settled = false;
+        const finishOk = () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve();
+        };
+        const finishErr = (err) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(err instanceof Error ? err : new Error(String(err?.message || err || 'maplibre-error')));
+        };
+
+        const onLoad = () => finishOk();
+        const onIdle = () => finishOk();
+        const onError = (ev) => {
+          const err = ev?.error || ev;
+          const msg = String(err?.message || err || '');
+          finishErr(err || new Error(msg || 'maplibre-error'));
+        };
+
+        const cleanup = () => {
+          try {
+            glMap.off('load', onLoad);
+            glMap.off('idle', onIdle);
+            glMap.off('error', onError);
+          } catch {
+            /* ignore */
+          }
+          if (loadTimer) {
+            window.clearTimeout(loadTimer);
+            loadTimer = null;
+          }
+        };
+
+        glMap.on('load', onLoad);
+        glMap.on('idle', onIdle);
+        glMap.on('error', onError);
+        detachGlListeners = cleanup;
+
+        loadTimer = window.setTimeout(() => {
+          finishErr(new Error('style-load-timeout'));
+        }, STREET_LOAD_TIMEOUT_MS);
+      });
+
     const apply = async () => {
       removeCurrent();
       const id = normalizeMapBaseLayerId(layerId);
@@ -138,37 +211,46 @@ export function MapBaseLayerController({
             addGsiFallback('webgl-unavailable');
             return;
           }
+          ensureMaplibreWorker();
           const glLayer = createStreetLayer(def);
           glLayer.addTo(map);
           layerRef.current = glLayer;
 
           const glMap = glLayer.getMaplibreMap?.();
-          if (glMap) {
-            await new Promise((resolve, reject) => {
-              const timer = window.setTimeout(() => reject(new Error('style-load-timeout')), 15000);
-              const onLoad = () => {
-                window.clearTimeout(timer);
-                resolve();
-              };
-              const onError = (ev) => {
-                window.clearTimeout(timer);
-                reject(ev?.error || new Error('maplibre-error'));
-              };
-              if (glMap.loaded?.()) {
-                window.clearTimeout(timer);
-                resolve();
-                return;
-              }
-              glMap.once('load', onLoad);
-              glMap.once('error', onError);
-            });
+          try {
+            await waitForStreetReady(glMap);
+          } catch (err) {
+            if (cancelled || gen !== generatingRef.current) return;
+            addGsiFallback(err);
+            return;
           }
+
           if (cancelled || gen !== generatingRef.current) {
             try {
               map.removeLayer(glLayer);
             } catch {
               /* ignore */
             }
+            return;
+          }
+
+          // 以降の非同期エラー（タイル／スタイル後続失敗）もフォールバック
+          if (glMap) {
+            const onLateError = (ev) => {
+              if (cancelled || gen !== generatingRef.current) return;
+              console.warn('[MapBaseLayerController] late maplibre error', ev?.error || ev);
+              addGsiFallback(ev?.error || ev || new Error('late-maplibre-error'));
+            };
+            glMap.on('error', onLateError);
+            const prevDetach = detachGlListeners;
+            detachGlListeners = () => {
+              try {
+                glMap.off('error', onLateError);
+              } catch {
+                /* ignore */
+              }
+              prevDetach?.();
+            };
           }
         } else {
           const raster = createRasterLayer(def);
@@ -177,9 +259,7 @@ export function MapBaseLayerController({
         }
       } catch (err) {
         if (cancelled || gen !== generatingRef.current) return;
-        if (normalizeMapBaseLayerId(layerId) === 'street' && !forceRaster) {
-          addGsiFallback(err);
-        } else if (normalizeMapBaseLayerId(layerId) === 'street' && forceRaster) {
+        if (normalizeMapBaseLayerId(layerId) === 'street') {
           addGsiFallback(err);
         } else {
           console.warn('[MapBaseLayerController] layer failed', err);
@@ -192,6 +272,7 @@ export function MapBaseLayerController({
 
     return () => {
       cancelled = true;
+      if (loadTimer) window.clearTimeout(loadTimer);
       removeCurrent();
     };
   }, [map, layerId, forceRaster]);

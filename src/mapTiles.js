@@ -1,4 +1,4 @@
-/** 地図ベースレイヤー定義（ストリート / 写真 / 地理院） */
+/** 地図ベースレイヤー定義（ストリート / 写真 / 地理院 / 淡色） */
 
 export const MAP_BASE_LAYER_STORAGE_KEY = 'haisha_map_base_layer_v1';
 
@@ -34,6 +34,17 @@ export const MAP_BASE_LAYERS = {
       '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener noreferrer">地理院タイル</a>',
     attributionPlain: '地理院タイル',
   },
+  pale: {
+    id: 'pale',
+    label: '淡色',
+    type: 'raster',
+    url: 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',
+    maxNativeZoom: 18,
+    maxZoom: 20,
+    attribution:
+      '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener noreferrer">地理院タイル</a>',
+    attributionPlain: '地理院タイル（淡色）',
+  },
 };
 
 /** 既定はストリート（保存・印刷は raster フォールバック） */
@@ -43,12 +54,12 @@ export const DEFAULT_MAP_BASE_LAYER_ID = 'street';
 export const DEFAULT_GSI_LAYER_ID = DEFAULT_MAP_BASE_LAYER_ID;
 
 /**
- * 旧 ID（std / pale / seamlessphoto）も正規化する
+ * 旧 ID（std / seamlessphoto）も正規化する
  * @param {unknown} id
  */
 export function normalizeMapBaseLayerId(id) {
   const raw = String(id || '').trim();
-  if (raw === 'std' || raw === 'pale') return 'gsi';
+  if (raw === 'std') return 'gsi';
   if (raw === 'seamlessphoto') return 'photo';
   if (MAP_BASE_LAYERS[raw]) return raw;
   return DEFAULT_MAP_BASE_LAYER_ID;
@@ -78,6 +89,7 @@ export function writeStoredMapBaseLayerId(layerId) {
 
 /**
  * 保存PNG・印刷用: street(WebGL) は安定のため地理院ラスターへ逃がす
+ * photo / gsi / pale はそのまま
  * @returns {{ layer: typeof MAP_BASE_LAYERS[string], usedFallback: boolean }}
  */
 export function resolveRasterLayerForExport(layerId) {
@@ -85,9 +97,13 @@ export function resolveRasterLayerForExport(layerId) {
   if (id === 'photo') {
     return { layer: MAP_BASE_LAYERS.photo, usedFallback: false };
   }
+  if (id === 'pale') {
+    return { layer: MAP_BASE_LAYERS.pale, usedFallback: false };
+  }
   if (id === 'gsi') {
     return { layer: MAP_BASE_LAYERS.gsi, usedFallback: false };
   }
+  // street → gsi
   return { layer: MAP_BASE_LAYERS.gsi, usedFallback: true };
 }
 
@@ -122,6 +138,6 @@ export function buildGsiTileUrl(z, x, y, layerId) {
 export const GSI_ATTRIBUTION = MAP_BASE_LAYERS.gsi.attribution;
 export const GSI_TILE_LAYERS = {
   std: getGsiTileLayer('gsi'),
-  pale: getGsiTileLayer('gsi'),
+  pale: getGsiTileLayer('pale'),
   seamlessphoto: getGsiTileLayer('photo'),
 };
