@@ -15,15 +15,69 @@ ensureMaplibreWorker();
 
 const STREET_LOAD_TIMEOUT_MS = 8000;
 
+/** @typedef {'webgl_unsupported' | 'worker_load_failed' | 'style_load_failed' | 'timeout' | 'unknown'} StreetFallbackReason */
+
 function supportsWebGL() {
   try {
     const canvas = document.createElement('canvas');
     return Boolean(
-      canvas.getContext('webgl') || canvas.getContext('experimental-webgl'),
+      canvas.getContext('webgl2') ||
+        canvas.getContext('webgl') ||
+        canvas.getContext('experimental-webgl'),
     );
   } catch {
     return false;
   }
+}
+
+/**
+ * @param {unknown} err
+ * @returns {{ reason: StreetFallbackReason, detail: string }}
+ */
+export function classifyStreetFallbackReason(err) {
+  if (err === 'webgl_unsupported' || err === 'webgl-unavailable') {
+    return { reason: 'webgl_unsupported', detail: '' };
+  }
+  const detail = String(
+    (err && typeof err === 'object' && 'message' in err && err.message) || err || '',
+  ).trim();
+  const lower = detail.toLowerCase();
+
+  if (
+    lower.includes('worker failed to load') ||
+    (lower.includes('worker') && (lower.includes('failed') || lower.includes('load'))) ||
+    lower.includes('invalid base url') ||
+    lower.includes('maplibre-gl-worker') ||
+    lower.includes('maplibre-gl-shared')
+  ) {
+    return { reason: 'worker_load_failed', detail };
+  }
+  if (lower.includes('style-load-timeout') || lower === 'timeout') {
+    return { reason: 'timeout', detail };
+  }
+  if (
+    lower.includes('openfreemap') ||
+    lower.includes('styles/liberty') ||
+    lower.includes('failed to fetch') ||
+    lower.includes('networkerror') ||
+    (lower.includes('style') &&
+      (lower.includes('fetch') || lower.includes('http') || lower.includes('ajax')))
+  ) {
+    return { reason: 'style_load_failed', detail };
+  }
+  return { reason: 'unknown', detail };
+}
+
+/**
+ * @param {StreetFallbackReason} reason
+ * @param {string} detail
+ */
+function formatStreetFallbackNotice(reason, detail) {
+  if (reason === 'unknown' && detail) {
+    const clipped = detail.slice(0, 80);
+    return `ストリート地図を表示できないため地理院に切り替えました（理由: unknown: ${clipped}）`;
+  }
+  return `ストリート地図を表示できないため地理院に切り替えました（理由: ${reason}）`;
 }
 
 function createRasterLayer(def) {
@@ -89,7 +143,7 @@ export function MapBaseLayerSwitch({
 
 /**
  * Leaflet 地図上にベースレイヤーを載せる（useMap）
- * forceRaster: 印刷・プレビュー用。street は地理院ラスターへ逃がす
+ * forceRaster: 印刷・プレビュー用。street は地理院ラスターへ逃がす（診断メッセージは出さない）
  */
 export function MapBaseLayerController({
   layerId = DEFAULT_MAP_BASE_LAYER_ID,
@@ -131,14 +185,26 @@ export function MapBaseLayerController({
       }
     };
 
-    const addGsiFallback = (reason) => {
+    /**
+     * @param {unknown} errOrCode
+     */
+    const addGsiFallback = (errOrCode) => {
       if (cancelled || gen !== generatingRef.current) return;
+      // 印刷・保存プレビュー（forceRaster）は診断用メッセージを出さない
+      if (forceRaster) {
+        removeCurrent();
+        const gsi = createRasterLayer(MAP_BASE_LAYERS.gsi);
+        gsi.addTo(map);
+        layerRef.current = gsi;
+        return;
+      }
+      const { reason, detail } = classifyStreetFallbackReason(errOrCode);
       removeCurrent();
       const gsi = createRasterLayer(MAP_BASE_LAYERS.gsi);
       gsi.addTo(map);
       layerRef.current = gsi;
-      setNotice('ストリート地図を表示できないため地理院に切り替えました');
-      console.warn('[MapBaseLayerController] fallback to gsi', reason);
+      setNotice(formatStreetFallbackNotice(reason, detail));
+      console.warn('[map] street fallback', { reason, error: errOrCode });
       onFallbackRef.current?.('gsi');
     };
 
@@ -202,13 +268,14 @@ export function MapBaseLayerController({
     const apply = async () => {
       removeCurrent();
       const id = normalizeMapBaseLayerId(layerId);
+      // 印刷・プレビュー: street は静かに地理院へ（診断バナーなし）
       const effectiveId = forceRaster && id === 'street' ? 'gsi' : id;
       const def = getMapBaseLayer(effectiveId);
 
       try {
         if (def.type === 'maplibre') {
           if (!supportsWebGL()) {
-            addGsiFallback('webgl-unavailable');
+            addGsiFallback('webgl_unsupported');
             return;
           }
           ensureMaplibreWorker();
@@ -238,7 +305,6 @@ export function MapBaseLayerController({
           if (glMap) {
             const onLateError = (ev) => {
               if (cancelled || gen !== generatingRef.current) return;
-              console.warn('[MapBaseLayerController] late maplibre error', ev?.error || ev);
               addGsiFallback(ev?.error || ev || new Error('late-maplibre-error'));
             };
             glMap.on('error', onLateError);
