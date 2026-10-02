@@ -23,6 +23,8 @@ export function chatMessageKey(message) {
 }
 
 export function isUnreadChatForCustomer(messages, readKey) {
+  // チャット履歴が無い／空配列の注文は未読にしない（order_data に chatMessages が無い場合も含む）
+  if (!Array.isArray(messages) || messages.length === 0) return false;
   const latest = latestChatMessage(messages);
   if (!latest || !isIncomingChatForCustomer(latest)) return false;
   return chatMessageKey(latest) !== String(readKey || '');

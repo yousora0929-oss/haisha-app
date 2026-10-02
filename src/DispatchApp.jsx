@@ -142,7 +142,7 @@ import {
 import {
   detectCustomerChatNotifications,
   analyzeCustomerChatRealtimePayload,
-  isFactoryAcceptedSystemMessage,
+  isUnreadChatForCustomer,
 } from './utils/customerChatRealtime.js';
 import {
   customerChatDisplayName,
@@ -384,12 +384,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
     }
 
     function isUnreadForDispatch(messages, readKey) {
-      const latest = latestChatMessage(messages);
-      if (!latest) return false;
-      if (isFactoryAcceptedSystemMessage(latest)) return false;
-      const from = String(latest.from || '');
-      if (from !== 'factory' && from !== 'admin' && from !== 'system') return false;
-      return chatMessageReadKey(latest) !== readKey;
+      // 空配列・非配列は未読にしない（shared util と同一）。sticky map 単体では判定しない。
+      return isUnreadChatForCustomer(messages, readKey);
     }
 
     // 業者表示は utils/orderPartyInfo（ID 優先。fetch 時に displayContractorName / displayTraderName を付与）
@@ -1560,6 +1556,18 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   {timeSummary}
                 </p>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
+                  {hasUnreadChat ? (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-red-500 px-2 py-0.5 text-[11px] font-black text-white shadow-sm"
+                      aria-label="未読チャットあり"
+                    >
+                      <span className="relative inline-flex h-2 w-2" aria-hidden="true">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-75" />
+                        <span className="relative inline-flex h-2 w-2 rounded-full bg-white" />
+                      </span>
+                      未読
+                    </span>
+                  ) : null}
                   <OrderStatusBadges
                     order={order}
                     escalationCtx={escalationCtx}
@@ -2200,6 +2208,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [chatThreads, setChatThreads] = useState({});
       const [readChatKeys, setReadChatKeys] = useState({});
       const [unreadChatsByOrder, setUnreadChatsByOrder] = useState({});
+      const activeUnreadCycleIndexRef = useRef(0);
+      const activeUnreadCycleKeyRef = useRef('');
+      const activeTabUnreadCycleTargetsRef = useRef([]);
+      const customerOrderTabRef = useRef('new');
+      const selectCustomerTabRef = useRef(() => {});
       const [activeChatOrderId, setActiveChatOrderId] = useState('');
       const [adminNotice, setAdminNotice] = useState('');
       const [customerOrderTab, setCustomerOrderTab] = useState('active');
@@ -2222,6 +2235,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       });
       const [inProgressSearchQuery, setInProgressSearchQuery] = useState('');
       const [inProgressSortMode, setInProgressSortMode] = useState('deliveryDate');
+      /** 進行中一覧を未読チャットの注文だけに絞る */
+      const [inProgressUnreadOnly, setInProgressUnreadOnly] = useState(false);
       // 業者ログインの表示範囲。false = 自分の担当分のみ（従来動作）、true = 会社全体
       const [companyScopeEnabled, setCompanyScopeEnabled] = useState(false);
       const [companyScopeOrders, setCompanyScopeOrders] = useState([]);
@@ -3180,6 +3195,32 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           setRepeatDraftBanner(false);
         }
       }, [canImportSchedule, isGuestSiteOrder]);
+      selectCustomerTabRef.current = selectCustomerTab;
+      customerOrderTabRef.current = customerOrderTab;
+      // 進行中タブ再タップで未読へジャンプ（工場画面の注文タブと同パターン）
+      const handleCustomerTabPress = useCallback((tabId) => {
+        const id = String(tabId || '').trim();
+        if (!id) return;
+
+        if (id === 'active' && customerOrderTabRef.current === 'active') {
+          const targets = activeTabUnreadCycleTargetsRef.current || [];
+          if (!targets.length) return;
+          const idx =
+            ((activeUnreadCycleIndexRef.current % targets.length) + targets.length) % targets.length;
+          const orderId = String(targets[idx] || '').trim();
+          activeUnreadCycleIndexRef.current = (idx + 1) % targets.length;
+          if (!orderId) return;
+          setHighlightedOrderId(orderId);
+          // 同一 ID の再フォーカスでも useEffect が再実行されるよう一度クリアする
+          setPushFocusOrderId('');
+          window.setTimeout(() => {
+            setPushFocusOrderId(orderId);
+          }, 80);
+          return;
+        }
+
+        selectCustomerTabRef.current(id);
+      }, []);
 
       useEffect(() => {
         if (customerOrderTab !== 'scheduleImport' && customerOrderTab !== 'import') return;
@@ -4031,15 +4072,43 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         [inProgressSourceOrders, today],
       );
       const filteredInProgressOrders = useMemo(() => {
-        const filtered = (scopedInProgressOrders || []).filter((o) =>
-          orderMatchesMasterSearch(o, inProgressSearchQuery),
-        );
+        const matchesSearch = (o) => orderMatchesMasterSearch(o, inProgressSearchQuery);
+        const isUnread = (order) =>
+          Boolean(order?.id) && isUnreadForDispatch(chatThreads[order.id], readChatKeys[order.id]);
+
+        let filtered = (scopedInProgressOrders || []).filter((o) => o && matchesSearch(o));
+        if (inProgressUnreadOnly) {
+          filtered = filtered.filter(isUnread);
+        }
         const compare =
           inProgressSortMode === 'createdAt'
             ? compareInProgressOrdersByCreatedAtDesc
             : compareInProgressOrdersByDeliveryDate;
-        return [...filtered].sort(compare).slice(0, companyScopeActive ? 45 : 15);
-      }, [scopedInProgressOrders, inProgressSearchQuery, inProgressSortMode, companyScopeActive]);
+        const sorted = [...filtered].sort(compare);
+        if (inProgressUnreadOnly) {
+          // 未読のみ: 件数上限で落とさない（ジャンプ先が DOM に無い問題を避ける）
+          return sorted;
+        }
+        const limit = companyScopeActive ? 45 : 15;
+        const capped = sorted.slice(0, limit);
+        const seen = new Set(capped.map((o) => String(o?.id || '')).filter(Boolean));
+        // 15件上限外の未読も一覧に残し、バッジ／再タップジャンプの対象 DOM を確保する
+        for (const order of sorted) {
+          const id = String(order?.id || '').trim();
+          if (!id || seen.has(id) || !isUnread(order)) continue;
+          capped.push(order);
+          seen.add(id);
+        }
+        return capped;
+      }, [
+        scopedInProgressOrders,
+        inProgressSearchQuery,
+        inProgressSortMode,
+        companyScopeActive,
+        inProgressUnreadOnly,
+        chatThreads,
+        readChatKeys,
+      ]);
       // 進行中一覧も割当物件は現場名でグルーピング（検索フィルタ適用後の一覧をグループ化する）
       const inProgressOrderEntries = useMemo(
         () =>
@@ -4107,20 +4176,38 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           window.clearTimeout(scrollTimer);
           window.clearTimeout(clearTimer);
         };
-      }, [pushFocusOrderId]);
+      }, [pushFocusOrderId, inProgressOrderEntries, currentCustomerId]);
       const activeOrders = useMemo(
         () => (dashboardOrders || []).filter((o) => o && isOrderInProgressView(o, today)),
         [dashboardOrders, today],
       );
-      const unreadChatCount = useMemo(
+      const unreadActiveOrders = useMemo(
         () =>
-          (activeOrders || []).filter((order) =>
-            order?.id &&
-            (unreadChatsByOrder[order.id] ||
-              isUnreadForDispatch(chatThreads[order.id], readChatKeys[order.id])),
-          ).length,
-        [activeOrders, chatThreads, readChatKeys, unreadChatsByOrder],
+          (activeOrders || []).filter(
+            (order) => order?.id && isUnreadForDispatch(chatThreads[order.id], readChatKeys[order.id]),
+          ),
+        [activeOrders, chatThreads, readChatKeys],
       );
+      const unreadChatCount = unreadActiveOrders.length;
+      /** 進行中タブ再タップ時の巡回対象（表示ソートと同じ順） */
+      const activeTabUnreadCycleTargets = useMemo(() => {
+        const compare =
+          inProgressSortMode === 'createdAt'
+            ? compareInProgressOrdersByCreatedAtDesc
+            : compareInProgressOrdersByDeliveryDate;
+        return [...unreadActiveOrders].sort(compare).map((o) => String(o.id));
+      }, [unreadActiveOrders, inProgressSortMode]);
+      useEffect(() => {
+        activeTabUnreadCycleTargetsRef.current = activeTabUnreadCycleTargets;
+        const key = activeTabUnreadCycleTargets.join('|');
+        if (key !== activeUnreadCycleKeyRef.current) {
+          activeUnreadCycleKeyRef.current = key;
+          activeUnreadCycleIndexRef.current = 0;
+        }
+      }, [activeTabUnreadCycleTargets]);
+      useEffect(() => {
+        if (unreadChatCount === 0 && inProgressUnreadOnly) setInProgressUnreadOnly(false);
+      }, [unreadChatCount, inProgressUnreadOnly]);
       const activeChatOrder = useMemo(
         () => (dashboardOrders || []).find((order) => String(order?.id || '') === String(activeChatOrderId || '')) || null,
         [dashboardOrders, activeChatOrderId],
@@ -5562,7 +5649,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         <button
                           key={id}
                           type="button"
-                          onClick={() => selectCustomerTab(id)}
+                          onClick={() => handleCustomerTabPress(id)}
+                          title={
+                            id === 'active' && active && unreadChatCount > 0
+                              ? 'もう一度タップで未読チャットの注文へ移動'
+                              : undefined
+                          }
                           className={
                             'flex min-h-[48px] items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-black transition ' +
                             (active ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900')
@@ -5574,7 +5666,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           {id === 'active' && unreadChatCount > 0 ? (
                             <span
                               className="ml-1 inline-flex min-h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-black leading-none text-white"
-                              aria-label={`未読チャット ${unreadChatCount}件`}
+                              aria-label={`未読チャット ${unreadChatCount}件。もう一度タップで未読へ移動`}
                             >
                               {unreadChatCount > 9 ? '9+' : unreadChatCount}
                             </span>
@@ -5691,6 +5783,26 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                             );
                           })}
                         </div>
+                        <button
+                          type="button"
+                          aria-pressed={inProgressUnreadOnly}
+                          disabled={unreadChatCount === 0 && !inProgressUnreadOnly}
+                          onClick={() => setInProgressUnreadOnly((v) => !v)}
+                          title={
+                            unreadChatCount > 0
+                              ? '未読チャットがある注文だけ表示'
+                              : '未読チャットはありません'
+                          }
+                          className={
+                            'min-h-[40px] w-full shrink-0 whitespace-nowrap rounded-xl border-2 px-3 py-1.5 text-[11px] font-black transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto sm:text-xs ' +
+                            (inProgressUnreadOnly
+                              ? 'border-red-500 bg-red-500 text-white shadow-sm'
+                              : 'border-slate-200 bg-white text-slate-600 hover:border-red-300 hover:bg-red-50 hover:text-red-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300')
+                          }
+                        >
+                          未読のみ
+                          {unreadChatCount > 0 ? ` ${unreadChatCount}` : ''}
+                        </button>
                       </div>
                     ) : null}
                   </div>
@@ -6872,7 +6984,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       <>
                         {filteredInProgressOrders.length === 0 ? (
                           <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm font-bold text-slate-500 dark:border-slate-600 dark:bg-slate-900/50 dark:text-gray-300">
-                            該当する注文がありません
+                            {inProgressUnreadOnly
+                              ? '未読チャットの注文はありません'
+                              : '該当する注文がありません'}
                           </p>
                         ) : (
                           <div className="grid grid-cols-1 gap-6">
@@ -6901,9 +7015,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                 order={ord}
                                 project={resolveOrderLinkedProject(ord, projectById)}
                                 customerById={customerById}
-                                hasUnreadChat={Boolean(
-                                  unreadChatsByOrder[ord.id] ||
-                                    isUnreadForDispatch(chatThreads[ord.id], readChatKeys[ord.id]),
+                                hasUnreadChat={isUnreadForDispatch(
+                                  chatThreads[ord.id],
+                                  readChatKeys[ord.id],
                                 )}
                                 onOpenChat={isViewOnly ? null : handleOpenChat}
                                 onAllowStatusReset={isViewOnly ? null : handleAllowStatusReset}
@@ -7467,7 +7581,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         <button
                           key={id}
                           type="button"
-                          onClick={() => selectCustomerTab(id)}
+                          onClick={() => handleCustomerTabPress(id)}
+                          title={
+                            id === 'active' && active && unreadChatCount > 0
+                              ? 'もう一度タップで未読チャットの注文へ移動'
+                              : undefined
+                          }
                           className={
                             'flex min-h-[58px] flex-col items-center justify-center rounded-2xl px-1 text-[11px] font-black transition active:scale-[0.98] ' +
                             (active ? 'bg-indigo-600 text-white shadow-md ring-2 ring-indigo-200' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900')
@@ -7480,7 +7599,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                             {id === 'active' && unreadChatCount > 0 ? (
                               <span
                                 className="ml-0.5 inline-flex min-h-[16px] min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-black leading-none text-white"
-                                aria-label={`未読チャット ${unreadChatCount}件`}
+                                aria-label={`未読チャット ${unreadChatCount}件。もう一度タップで未読へ移動`}
                               >
                                 {unreadChatCount > 9 ? '9+' : unreadChatCount}
                               </span>
