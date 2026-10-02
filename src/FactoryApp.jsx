@@ -35,7 +35,6 @@ import {
   getScheduleBlockIdForMinutes,
   getOrderVehicleScheduleKey,
   getOrderMinutesForScheduleScan,
-  computeScheduleAutoRejectReason,
 } from './haishaConstants.js';
 import { registerOneSignalUser, unregisterOneSignalUser, buildFactoryOneSignalExternalId, setAppBadge } from './utils/notification.js';
 import {
@@ -104,17 +103,11 @@ import {
 } from './utils/chatNotificationDedup.js';
 import { normalizeFactoryRefId } from './utils/escalationUtils.js';
 
-const FACTORY_SPLIT_STORAGE_KEY = 'haisha_factory_split_left_pct_v1';
-
 /** 依頼一覧 1 行目：希望日 | 希望時刻 | 荷卸し | 車種 | 数量 | 試験（最小幅を確保し、狭いときは横スクロール） */
 const ORDER_GRID_TOP =
   'grid w-full min-w-[760px] grid-cols-6 grid-rows-1 items-end gap-x-2 gap-y-0 sm:gap-x-3';
 /** 依頼カード要約：商社・業者／現場名・現場住所を2行×2列で揃える */
 const ORDER_GRID_META_2X2 = 'grid w-full min-w-0 grid-cols-2 gap-x-2 gap-y-0';
-
-const SPLIT_MIN_LEFT_PX = 260;
-const SPLIT_MIN_RIGHT_PX = 300;
-const SPLIT_GRIP_PX = 12;
 
 function resolveSiteUrlToken(order, projectById, customerById) {
   const pid = String(order?.project_id ?? order?.projectId ?? '').trim();
@@ -177,98 +170,6 @@ function orderContactPersonName(order, fallback = '担当者') {
       fallback ??
       '',
   ).trim() || '担当者';
-}
-
-function FactoryResizablePanels({ defaultLeftPercent = 48, children }) {
-  const parts = React.Children.toArray(children);
-  const leftEl = parts[0];
-  const rightEl = parts[1];
-  const containerRef = useRef(null);
-  const [leftPct, setLeftPct] = useState(() => {
-    try {
-      const v = Number(sessionStorage.getItem(FACTORY_SPLIT_STORAGE_KEY));
-      if (Number.isFinite(v) && v >= 20 && v <= 80) return v;
-    } catch {
-      /* ignore */
-    }
-    return defaultLeftPercent;
-  });
-
-  useEffect(() => {
-    try {
-      sessionStorage.setItem(FACTORY_SPLIT_STORAGE_KEY, String(Math.round(leftPct * 10) / 10));
-    } catch {
-      /* ignore */
-    }
-  }, [leftPct]);
-
-  return (
-    <div ref={containerRef} className="flex h-full min-h-0 w-full flex-1 items-stretch">
-      <div
-        className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
-        style={{ flex: `0 0 ${leftPct}%`, minWidth: `${SPLIT_MIN_LEFT_PX}px`, maxWidth: '100%' }}
-      >
-        {leftEl}
-      </div>
-      <button
-        type="button"
-        aria-label="スケジュールと依頼一覧の幅を変更（ドラッグ）"
-        aria-orientation="vertical"
-        aria-valuemin={20}
-        aria-valuemax={80}
-        aria-valuenow={Math.round(leftPct)}
-        className="group relative z-[5] w-2.5 shrink-0 cursor-col-resize touch-none border-x border-slate-300/90 bg-slate-200/90 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.35)] hover:bg-indigo-200/70 active:bg-indigo-300/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1"
-        onPointerDown={(e) => {
-          e.preventDefault();
-          try {
-            e.currentTarget.setPointerCapture(e.pointerId);
-          } catch {
-            /* ignore */
-          }
-        }}
-        onPointerMove={(e) => {
-          if (!containerRef.current) return;
-          if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
-          const r = containerRef.current.getBoundingClientRect();
-          const total = Math.max(r.width, SPLIT_GRIP_PX + SPLIT_MIN_LEFT_PX + SPLIT_MIN_RIGHT_PX + 1);
-          const x = e.clientX - r.left;
-          const maxLeftPx = total - SPLIT_GRIP_PX - SPLIT_MIN_RIGHT_PX;
-          const leftPx = Math.min(maxLeftPx, Math.max(SPLIT_MIN_LEFT_PX, x));
-          const next = (leftPx / total) * 100;
-          setLeftPct(next);
-        }}
-        onPointerUp={(e) => {
-          try {
-            if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-              e.currentTarget.releasePointerCapture(e.pointerId);
-            }
-          } catch {
-            /* ignore */
-          }
-        }}
-        onPointerCancel={(e) => {
-          try {
-            if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-              e.currentTarget.releasePointerCapture(e.pointerId);
-            }
-          } catch {
-            /* ignore */
-          }
-        }}
-      >
-        <span
-          className="pointer-events-none absolute left-1/2 top-1/2 h-12 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-600/50 shadow-sm group-hover:bg-indigo-700/80"
-          aria-hidden="true"
-        />
-      </button>
-      <div
-        className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
-        style={{ minWidth: `${SPLIT_MIN_RIGHT_PX}px`, minHeight: 0 }}
-      >
-        {rightEl}
-      </div>
-    </div>
-  );
 }
 
 function getFactoryIdFromUrl() {

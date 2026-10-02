@@ -298,11 +298,6 @@ export async function unregisterOneSignalUser() {
   }
 }
 
-/** @deprecated unregisterOneSignalUser を使用 */
-export async function logoutOneSignalUser() {
-  return unregisterOneSignalUser();
-}
-
 export function clearAppBadge() {
   if (typeof navigator === 'undefined' || typeof navigator.clearAppBadge !== 'function') return;
   navigator.clearAppBadge().catch((error) => {

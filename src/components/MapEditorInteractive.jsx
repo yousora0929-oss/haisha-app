@@ -274,15 +274,6 @@ export const MapEditorInteractive = forwardRef(function MapEditorInteractive(
     [annotations.stamps, patchAnnotations],
   );
 
-  const updateUnload = useCallback(
-    (id, patch) => {
-      patchAnnotations({
-        unloadPoints: (annotations.unloadPoints || []).map((u) => (u.id === id ? { ...u, ...patch } : u)),
-      });
-    },
-    [annotations.unloadPoints, patchAnnotations],
-  );
-
   const updateComment = useCallback(
     (id, patch) => {
       patchAnnotations({

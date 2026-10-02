@@ -168,12 +168,6 @@ export async function fetchTownLocationsForMunicipality(
   return towns;
 }
 
-/** @deprecated fetchTownLocationsForMunicipality を使用 */
-export async function fetchTownsForMunicipality(municipality, prefecture = DEFAULT_DELIVERY_PREFECTURE) {
-  const rows = await fetchTownLocationsForMunicipality(municipality, prefecture);
-  return rows.map((row) => row.town);
-}
-
 /** 町名リストから入力値に一致する代表地点を検索（完全一致 → 前方一致） */
 export function findTownLocation(townList, townInput) {
   const needle = normalizeTownName(townInput);

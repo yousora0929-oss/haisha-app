@@ -50,7 +50,7 @@ import {
 import { customerSuggestTexts, organizationSuggestTexts } from './utils/masterSuggest.js';
 import { fetchTownLocationsForMunicipality, resolveDeliveryPrefecture } from './utils/heartrailsGeo.js';
 import { SCHEDULE_BLOCK_IDS, normalizeDayBlockSchedule, todayLocalISODate } from './haishaConstants.js';
-import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
+import { resolveOrderSiteDisplayName } from './utils/siteNameDisplay.js';
 import { orderPartyInfo } from './utils/orderPartyInfo.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
@@ -272,47 +272,6 @@ const FACTORY_AREA_BY_NAME = {
 
 function factoryAreaOf(factoryName) {
   return FACTORY_AREA_BY_NAME[String(factoryName || '').trim()] || 'その他';
-}
-
-function CompactFactoryStatusBar({ factories, schedulesByFactoryId, scheduleDate, onScheduleDateChange }) {
-  const rows = (factories || []).map((f) => ({
-    factoryId: f.id,
-    factoryName: f.name || f.id,
-    status: getFactoryDayStatus(schedulesByFactoryId, f.id, scheduleDate, f),
-  }));
-  return (
-    <div className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="shrink-0 text-xs font-black text-slate-500">工場稼働</span>
-        <input
-          type="date"
-          value={scheduleDate}
-          onChange={(e) => onScheduleDateChange(e.target.value || todayLocalISODate())}
-          className="min-h-[32px] rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-bold text-slate-900"
-          aria-label="工場稼働ステータスの対象日"
-        />
-        <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
-          {rows.length === 0 ? (
-            <span className="text-xs font-bold text-slate-400">工場未登録</span>
-          ) : (
-            rows.map((f) => (
-              <span
-                key={f.factoryId}
-                className={
-                  'inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-black ' +
-                  (f.status.allFull ? 'border-red-300 bg-red-50 text-red-800' : 'border-slate-200 bg-slate-50 text-slate-800')
-                }
-                title={`${f.factoryName}: ${f.status.allFull ? '終日満車' : '稼働枠あり'} / ${f.status.largeFull ? '大型満車' : '大型空き'} / ${f.status.smallFull ? '小型満車' : '小型空き'}`}
-              >
-                <span>{f.factoryName}</span>
-                <span>{f.status.allFull ? '満車' : `${f.status.largeFull ? '大満' : '大空'}/${f.status.smallFull ? '小満' : '小空'}`}</span>
-              </span>
-            ))
-          )}
-        </div>
-      </div>
-    </div>
-  );
 }
 
 function FactoryAvailabilitySection({ factories, schedulesByFactoryId, scheduleDate, onScheduleDateChange }) {
