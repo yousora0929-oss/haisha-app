@@ -13,7 +13,6 @@ import {
   clearCustomerPanelSession,
   hasCustomerPanelSession,
   setGuestSiteOrderSession,
-  clearGuestSiteOrderSession,
   hasGuestSiteOrderSession,
   ensurePanelRealtimeAuth,
   CUSTOMER_PANEL_PHONE_KEY,
@@ -61,7 +60,6 @@ import {
   fetchTownLocationsForMunicipality,
   findTownLocation,
   resolveDeliveryPrefecture,
-  townNamesFromLocationList,
 } from './utils/heartrailsGeo.js';
 import { isLocationPendingOrder, resolveInitialOrderStatus, resolveOrderDisplayStatus, sumOrderVolumesM3 } from './utils/orderWorkflow.js';
 import {
@@ -159,10 +157,6 @@ const CUSTOMER_ORDER_TABS = [
 
 const CUSTOMER_FIELD_CLASS =
   'min-h-[52px] w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-base font-medium text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-300 lg:min-h-[48px] lg:py-2.5';
-
-function unloadDurationLabel(value) {
-  return UNLOAD_DURATION_OPTIONS.find((o) => o.value === String(value || ''))?.label || '30分（標準）';
-}
 
 /** ゲスト専用発注: 確定済み情報の読み取り専用表示 */
 function GuestLockedField({ label, value, emptyLabel = '—' }) {
@@ -3118,12 +3112,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setSiteContactName('');
         setHasTest(false);
         setVehicleType('large');
-        if (isAgentOrCooperative) {
-          // agent/cooperativeは業者選択を保持する（発注ごとにリセットしない）
-          // 必要ならコメントアウトを外す:
-          // setContractorCustomerId('');
-          // setContractorSearchText('');
-        }
+        // agent/cooperativeは業者選択を保持する（発注ごとにリセットしない）
         if (orderKind === 'spot') {
           applySpotOrderFieldDefaults();
         }

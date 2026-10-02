@@ -162,13 +162,6 @@ function resolveEffectiveTown(deliveryArea, addressDetail, addressText, globalAl
   return normalizeAreaText(split.addressDetail);
 }
 
-/** 工場エリア文字列が市町村名のみか（町名指定注文には不適合） */
-function isMunicipalityOnlyFactoryArea(factoryArea, deliveryArea) {
-  const fa = normalizeTownNameForMatch(factoryArea);
-  const city = normalizeTownNameForMatch(deliveryArea);
-  return Boolean(city && fa === city);
-}
-
 /** 工場エリアが指定町名をカバーするか（部分一致・正規化対応） */
 function factoryAreaMatchesTown(factoryArea, deliveryArea, town, debugSink = null) {
   const fa = normalizeAreaText(factoryArea);

@@ -155,11 +155,6 @@ export function buildTownSuggestPool(townSuggestions, deliveryArea) {
   return out;
 }
 
-/** @deprecated buildTownSuggestPool を使用 */
-export function buildTownDatalistOptions(townSuggestions, deliveryArea) {
-  return buildTownSuggestPool(townSuggestions, deliveryArea);
-}
-
 /**
  * 入力文字列で絞り込み＋前方一致優先ソート（スクロール削減）
  */

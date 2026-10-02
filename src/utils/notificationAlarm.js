@@ -297,7 +297,6 @@ export function primeChatNotificationSound() {
 
 const FACTORY_CHAT_NOTE1_HZ = 523;
 const FACTORY_CHAT_NOTE2_HZ = 698;
-const FACTORY_CHAT_PEAK_GAIN = 0.68;
 
 /** 工場向けチャット着信 — 中音2音（注文アラーム・カスタマー着信音と区別） */
 export function playFactoryChatNotificationSound() {
