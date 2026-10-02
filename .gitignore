@@ -7,6 +7,9 @@ dist
 
 .vercel
 
-# maplibre worker（vite build 時に node_modules から public/dist へコピー）
+# maplibre worker files copied from node_modules at build time
 public/maplibre-gl-worker.mjs
 public/maplibre-gl-shared.mjs
+
+# Supabase CLI cache
+supabase/.temp

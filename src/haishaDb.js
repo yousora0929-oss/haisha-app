@@ -63,7 +63,6 @@ import {
   DISPATCH_DEFAULT_FACTORY_SITE_ID,
   DISPATCH_DEFAULT_FACTORY_SITE_NAME,
   computeScheduleAutoRejectReason,
-  getOrderMinutesForScheduleScan,
   normalizeDayBlockSchedule,
   normalizeFullSchedule,
 } from './haishaConstants.js';
