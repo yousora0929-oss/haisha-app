@@ -203,6 +203,20 @@ function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, onDuplic
             <option value="BB">BB（高炉B種）</option>
           </select>
         </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-bold text-transparent" aria-hidden="true">
+            &nbsp;
+          </span>
+          <span className="flex min-h-[48px] items-center gap-2 text-base text-slate-900">
+            <input
+              type="checkbox"
+              className="h-5 w-5 shrink-0"
+              checked={Boolean(item.aeAdmixture)}
+              onChange={(e) => onChange({ aeAdmixture: e.target.checked })}
+            />
+            高性能AE減水剤あり
+          </span>
+        </label>
         <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
           数量（m³）
           <NonNegNumberInput
@@ -212,8 +226,7 @@ function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, onDuplic
             className={FIELD}
           />
         </label>
-        <div className="col-span-2 flex flex-wrap items-end gap-x-4 gap-y-2">
-        <label className="flex min-w-[12rem] flex-1 flex-col gap-1 text-xs font-bold text-slate-600">
+        <label className="flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-2">
           打設日
           <div className="flex flex-wrap items-center gap-1.5">
             <NonNegNumberInput
@@ -260,16 +273,6 @@ function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, onDuplic
             ) : null}
           </div>
         </label>
-        <label className="mb-2 flex items-center gap-2 text-xs font-black text-slate-800">
-          <input
-            type="checkbox"
-            className="h-5 w-5"
-            checked={Boolean(item.aeAdmixture)}
-            onChange={(e) => onChange({ aeAdmixture: e.target.checked })}
-          />
-          高性能AE減水剤あり
-        </label>
-        </div>
         <label className="col-span-2 flex flex-col gap-1 text-xs font-bold text-slate-600">
           施工箇所
           <input

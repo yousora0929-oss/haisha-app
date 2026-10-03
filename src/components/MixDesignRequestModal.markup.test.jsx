@@ -20,7 +20,13 @@ describe('MixDesignRequestModal markup', () => {
     expect(shipmentAt).toBeGreaterThan(volumeAt);
     expect(html).toContain('現場担当者<br/>連絡先');
     expect(html).toContain('依頼先工場におまかせ');
-    expect(html).toContain('高性能AE減水剤あり');
+    const strengthAt = html.indexOf('設計基準強度');
+    const aeAt = html.indexOf('高性能AE減水剤あり');
+    const quantityAt = html.indexOf('数量（m³）', strengthAt);
+    expect(strengthAt).toBeGreaterThan(-1);
+    expect(aeAt).toBeGreaterThan(strengthAt);
+    expect(quantityAt).toBeGreaterThan(aeAt);
+    expect(html).toContain('min-h-[48px] items-center gap-2 text-base text-slate-900');
     expect(html).toContain('65%以下');
     expect(html).toContain('20mm');
     expect(html).toContain('40mm');
