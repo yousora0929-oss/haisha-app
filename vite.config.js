@@ -87,4 +87,12 @@ export default defineConfig({
       },
     },
   },
+  /** Vitest 用。本番と同じ日本時間で日付整形を検証し、Supabase は接続しないダミー値で初期化する */
+  test: {
+    env: {
+      TZ: 'Asia/Tokyo',
+      VITE_SUPABASE_URL: 'http://127.0.0.1:54321',
+      VITE_SUPABASE_ANON_KEY: 'vitest-dummy-anon-key',
+    },
+  },
 });
