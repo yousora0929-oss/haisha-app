@@ -164,7 +164,11 @@ export function MixDesignRequestPrint({
             </td>
           </tr>
           <tr>
-            <th style={LABEL_CELL}>現場担当者連絡先</th>
+            <th style={LABEL_CELL}>
+              現場担当者
+              <br />
+              連絡先
+            </th>
             <td>
               <PrintField
                 editable={editable}
@@ -185,7 +189,7 @@ export function MixDesignRequestPrint({
           </tr>
           <tr>
             <th style={LABEL_CELL}>工期</th>
-            <td>
+            <td colSpan={3}>
               {editable ? (
                 <div className="mix-design-print-period">
                   <input
@@ -206,8 +210,6 @@ export function MixDesignRequestPrint({
                 periodText || '—'
               )}
             </td>
-            <th style={LABEL_CELL}>初打設日</th>
-            <td>{formatDate(header?.firstPourDate)}</td>
           </tr>
           <tr>
             <th style={LABEL_CELL}>車両</th>
@@ -237,6 +239,18 @@ export function MixDesignRequestPrint({
             </td>
             <th style={LABEL_CELL}>全体数量</th>
             <td>{total != null && total !== '' ? `${total} m³` : '—'}</td>
+          </tr>
+          <tr>
+            <th style={LABEL_CELL}>出荷開始時期</th>
+            <td colSpan={3}>
+              <PrintField
+                editable={editable}
+                value={header?.shipmentStartPeriod}
+                display={header?.shipmentStartPeriod || '—'}
+                onChange={(v) => patchHeader({ shipmentStartPeriod: v })}
+                placeholder="例：10月上旬"
+              />
+            </td>
           </tr>
         </tbody>
       </table>

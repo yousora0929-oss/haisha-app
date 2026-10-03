@@ -7,6 +7,7 @@ import { MixDesignStatusButtons } from './MixDesignStatusButtons.jsx';
 import {
   formatMixDesignChangeLine,
   formatMixDesignFactoryNames,
+  MIX_DESIGN_FACTORY_OMAKASE_LABEL,
   mixDesignLastChangedAt,
   mixDesignPrintPropsFromDb,
   mixDesignStatusLabel,
@@ -422,6 +423,7 @@ export function MixDesignRequestHistorySection({
                     ? [row.requested_to_factory_id]
                     : [],
                 factoryNameById,
+                { emptyLabel: MIX_DESIGN_FACTORY_OMAKASE_LABEL },
               );
               const lastChanged = mixDesignLastChangedAt(row);
               return (

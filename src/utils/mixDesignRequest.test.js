@@ -254,6 +254,23 @@ describe('buildMixDesignRequestInsertRow', () => {
     expect(row.total_volume_m3).toBe(80);
     expect(row.requested_by).toBe('佐藤（協同組合事務局）');
   });
+
+  it('saves a free-text shipment start and clears factories when おまかせ is selected', () => {
+    const row = buildMixDesignRequestInsertRow({
+      projectId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      draft: {
+        factoryOmakase: true,
+        requestedToFactoryIds: ['FACTORY_01'],
+        shipmentStartPeriod: '10月上旬',
+        items: [],
+      },
+      requestedBy: '依頼者',
+      preferredFactoryId: 'FACTORY_01',
+    });
+    expect(row.shipment_start_period).toBe('10月上旬');
+    expect(row.requested_to_factory_id).toBeNull();
+    expect(row.requested_to_factory_ids).toEqual([]);
+  });
 });
 
 describe('mixDesignPrintPropsFromDb', () => {
@@ -306,6 +323,7 @@ describe('mixDesignPrintPropsFromDb', () => {
     expect(props.items[0].quantityM3).toBe('12.5');
     expect(props.items[0].constructionLocation).toBe('1階スラブ');
     expect(props.items[0].pourDate).toBe('2026-09-15');
+    expect(props.header.shipmentStartPeriod).toBe('2026/9/15');
     expect(props.items[0].memo).toBe('スラブ注意');
     expect(props.request.memo).toBe('メモ');
     expect(mixCodeForItem(props.items[0])).toContain('18');
@@ -331,6 +349,16 @@ describe('mixDesignPrintPropsFromDb', () => {
     expect(props.header.contractorName).toBe('依頼時の業者');
     expect(props.header.siteAddress).toBe('依頼時住所');
     expect(props.header.traderName).toBe('依頼時商社');
+  });
+
+  it('prefers the stored shipment start text over the earliest pour date', () => {
+    const props = mixDesignPrintPropsFromDb(
+      { shipment_start_period: '10月上旬' },
+      [{ pour_date: '2026-09-15', base_strength: 24, slump: 15, aggregate_size: 20, cement_type: 'N' }],
+      null,
+    );
+    expect(props.header.shipmentStartPeriod).toBe('10月上旬');
+    expect(props.header.factoryNames).toBe('依頼先工場におまかせ');
   });
 });
 
@@ -392,6 +420,14 @@ describe('buildMixDesignAnchorProjectPayload', () => {
     expect(payload).not.toHaveProperty('requestedBy');
     expect(payload.name).toBe('テスト工事');
     expect(payload.tradingCompanyName).toBe('商社A');
+  });
+
+  it('does not copy the order factory when おまかせ is selected', () => {
+    const payload = buildMixDesignAnchorProjectPayload(
+      { preferred_factory_id: 'FACTORY_01' },
+      { factoryOmakase: true, requestedToFactoryIds: [], projectName: '工事' },
+    );
+    expect(payload.mainFactoryId).toBeNull();
   });
 });
 
@@ -523,6 +559,12 @@ describe('applyAutoCorrection', () => {
   });
 });
 
+describe('createEmptyMixDesignItem', () => {
+  it('starts structural correction in manual mode', () => {
+    expect(createEmptyMixDesignItem().correctionIsAuto).toBe(false);
+  });
+});
+
 describe('duplicateMixDesignItem', () => {
   it('copies fields onto a new card with a new localId', () => {
     const source = {
@@ -550,6 +592,11 @@ describe('duplicateMixDesignItem', () => {
     expect(copy.memo).toBe('基礎注意');
     expect(copy.aeAdmixture).toBe(true);
     expect(copy.correctionValue).toBe('6');
+    expect(copy.slump).toBe('15');
+    expect(copy.aggregateSize).toBe('20');
+    expect(copy.waterCementRatio).toBe('50');
+    expect(copy.unitWaterContent).toBe('175');
+    expect(copy.correctionIsAuto).toBe(true);
   });
 });
 

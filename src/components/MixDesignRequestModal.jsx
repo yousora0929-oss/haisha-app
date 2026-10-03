@@ -6,9 +6,12 @@ import { MixDesignRequestPrint } from './MixDesignRequestPrint.jsx';
 import { MixDesignEmailActions } from './MixDesignEmailActions.jsx';
 import { MixDesignStatusButtons } from './MixDesignStatusButtons.jsx';
 import {
-  AGGREGATE_SIZE_CANDIDATES,
-  BASE_STRENGTH_CANDIDATES,
-  SLUMP_CANDIDATES,
+  AGGREGATE_SIZE_OPTIONS,
+  BASE_STRENGTH_OPTIONS,
+  CORRECTION_VALUE_OPTIONS,
+  SLUMP_OPTIONS,
+  UNIT_WATER_CONTENT_OPTIONS,
+  WATER_CEMENT_RATIO_OPTIONS,
 } from '../utils/mixDesignCalc.js';
 import { dedupeCustomersByCompany } from '../utils/dedupeCustomersByCompany.js';
 import { customerSuggestTexts, organizationSuggestTexts } from '../utils/masterSuggest.js';
@@ -20,9 +23,9 @@ import {
   applyPourDateResolution,
   createEmptyMixDesignItem,
   duplicateMixDesignItem,
-  earliestPourDate,
   formatConstructionPeriod,
   formatMixDesignFactoryNames,
+  MIX_DESIGN_FACTORY_OMAKASE_LABEL,
   formatRequesterDisplay,
   handleMixDesignNavKeyDown,
   mixCodeForItem,
@@ -36,7 +39,6 @@ import {
   regionFromDeliveryArea,
   sanitizeNonNegativeInput,
   selectAllOnFocus,
-  stepCandidateValue,
   toggleMixDesignFactoryId,
   toggleMixDesignVehicle,
   validateMixDesignDraft,
@@ -67,37 +69,73 @@ function NonNegNumberInput({ value, onChange, className, inputMode = 'decimal', 
   );
 }
 
-function MixNumericSuggestInput({
-  label,
-  value,
-  onChange,
-  candidates,
-  nav,
-  placeholder = '',
-}) {
-  const items = (Array.isArray(candidates) ? candidates : []).map(String);
+const MIX_OTHER_VALUE = '__other__';
+
+function candidateMatches(stored, optionValue) {
+  const raw = String(stored ?? '').trim();
+  if (raw === String(optionValue)) return true;
+  const left = Number(raw);
+  const right = Number(optionValue);
+  return raw !== '' && Number.isFinite(left) && Number.isFinite(right) && left === right;
+}
+
+function MixCandidateSelect({ label, value, onChange, options, nav, disabled = false, className = '' }) {
+  const stored = value == null ? '' : String(value).trim();
+  const list = Array.isArray(options) ? options : [];
+  const matched = list.find((option) => candidateMatches(stored, option.value)) || null;
+  const [otherSelected, setOtherSelected] = useState(false);
+  const [trackedStored, setTrackedStored] = useState(stored);
+  if (stored !== trackedStored) {
+    setTrackedStored(stored);
+    if (matched) setOtherSelected(false);
+  }
+  const isCustom = stored !== '' && !matched;
+  const showOther = isCustom || (!disabled && otherSelected);
+  const selectValue = showOther ? MIX_OTHER_VALUE : matched ? String(matched.value) : '';
+
   return (
-    <MasterSuggestInput
-      label={label}
-      value={value == null ? '' : String(value)}
-      onValueChange={onChange}
-      onSelect={(item) => onChange(String(item))}
-      items={items}
-      getItemKey={(item) => String(item)}
-      getItemLabel={(item) => String(item)}
-      placeholder={placeholder}
-      emptyHint="候補にない値も直接入力できます"
-      compact
-      labelClassName="text-xs font-bold text-slate-600"
-      inputClassName={FIELD}
-      inputProps={{ 'data-mix-nav': nav, inputMode: 'numeric' }}
-      onInputKeyDown={(event) => {
-        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
-        event.preventDefault();
-        event.stopPropagation();
-        onChange(stepCandidateValue(value, candidates, event.key === 'ArrowUp' ? 'up' : 'down'));
-      }}
-    />
+    <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
+      {label}
+      <select
+        data-mix-nav={nav}
+        value={selectValue}
+        disabled={disabled}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowUp' || event.key === 'ArrowDown') event.stopPropagation();
+        }}
+        onChange={(event) => {
+          const next = event.target.value;
+          if (next === MIX_OTHER_VALUE) {
+            setOtherSelected(true);
+            if (matched) onChange('');
+            return;
+          }
+          setOtherSelected(false);
+          onChange(next);
+        }}
+        className={(className || FIELD) + (disabled ? ' bg-slate-100 text-slate-500' : '')}
+      >
+        <option value="">選択</option>
+        {list.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+        <option value={MIX_OTHER_VALUE}>その他（自由入力）</option>
+      </select>
+      {showOther ? (
+        <input
+          type="text"
+          inputMode="decimal"
+          value={matched ? '' : stored}
+          disabled={disabled}
+          placeholder="数値を入力"
+          onKeyDown={preventMinusKey}
+          onChange={(event) => onChange(sanitizeNonNegativeInput(event.target.value))}
+          className={FIELD + (disabled ? ' bg-slate-100 text-slate-500' : '')}
+        />
+      ) : null}
+    </label>
   );
 }
 
@@ -132,29 +170,26 @@ function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, onDuplic
         <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-sm font-bold text-slate-800">{code}</p>
       ) : null}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <MixNumericSuggestInput
+        <MixCandidateSelect
           label="設計基準強度"
           nav={nav(0)}
           value={item.baseStrength}
-          candidates={BASE_STRENGTH_CANDIDATES}
+          options={BASE_STRENGTH_OPTIONS}
           onChange={(value) => onChange({ baseStrength: value })}
-          placeholder="例：30"
         />
-        <MixNumericSuggestInput
+        <MixCandidateSelect
           label="スランプ"
           nav={nav(1)}
           value={item.slump}
-          candidates={SLUMP_CANDIDATES}
+          options={SLUMP_OPTIONS}
           onChange={(value) => onChange({ slump: value })}
-          placeholder="例：15"
         />
-        <MixNumericSuggestInput
+        <MixCandidateSelect
           label="骨材"
           nav={nav(2)}
           value={item.aggregateSize}
-          candidates={AGGREGATE_SIZE_CANDIDATES}
+          options={AGGREGATE_SIZE_OPTIONS}
           onChange={(value) => onChange({ aggregateSize: value })}
-          placeholder="例：20"
         />
         <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
           セメント
@@ -177,7 +212,8 @@ function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, onDuplic
             className={FIELD}
           />
         </label>
-        <label className="flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-2">
+        <div className="col-span-2 flex flex-wrap items-end gap-x-4 gap-y-2">
+        <label className="flex min-w-[12rem] flex-1 flex-col gap-1 text-xs font-bold text-slate-600">
           打設日
           <div className="flex flex-wrap items-center gap-1.5">
             <NonNegNumberInput
@@ -224,6 +260,16 @@ function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, onDuplic
             ) : null}
           </div>
         </label>
+        <label className="mb-2 flex items-center gap-2 text-xs font-black text-slate-800">
+          <input
+            type="checkbox"
+            className="h-5 w-5"
+            checked={Boolean(item.aeAdmixture)}
+            onChange={(e) => onChange({ aeAdmixture: e.target.checked })}
+          />
+          高性能AE減水剤あり
+        </label>
+        </div>
         <label className="col-span-2 flex flex-col gap-1 text-xs font-bold text-slate-600">
           施工箇所
           <input
@@ -234,35 +280,28 @@ function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, onDuplic
             className={FIELD}
           />
         </label>
-        <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-          W/C比（%）
-          <NonNegNumberInput
-            data-mix-nav={nav(8)}
-            value={item.waterCementRatio}
-            onChange={(value) => onChange({ waterCementRatio: value })}
-            className={FIELD}
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-          単位水量
-          <NonNegNumberInput
-            data-mix-nav={nav(9)}
-            value={item.unitWaterContent}
-            onChange={(value) => onChange({ unitWaterContent: value })}
-            className={FIELD}
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-          構造体補正値
-          <NonNegNumberInput
-            data-mix-nav={nav(10)}
-            inputMode="numeric"
-            value={item.correctionValue}
-            disabled={item.correctionIsAuto}
-            onChange={(value) => onChange({ correctionValue: value, correctionIsAuto: false })}
-            className={FIELD + (item.correctionIsAuto ? ' bg-slate-100 text-slate-500' : '')}
-          />
-        </label>
+        <MixCandidateSelect
+          label="W/C（水セメント比）"
+          nav={nav(8)}
+          value={item.waterCementRatio}
+          options={WATER_CEMENT_RATIO_OPTIONS}
+          onChange={(value) => onChange({ waterCementRatio: value })}
+        />
+        <MixCandidateSelect
+          label="単位水量"
+          nav={nav(9)}
+          value={item.unitWaterContent}
+          options={UNIT_WATER_CONTENT_OPTIONS}
+          onChange={(value) => onChange({ unitWaterContent: value })}
+        />
+        <MixCandidateSelect
+          label="構造体補正値"
+          nav={nav(10)}
+          value={item.correctionValue}
+          options={CORRECTION_VALUE_OPTIONS}
+          disabled={Boolean(item.correctionIsAuto)}
+          onChange={(value) => onChange({ correctionValue: value, correctionIsAuto: false })}
+        />
         <label className="col-span-2 flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-4">
           備考
           <input
@@ -285,15 +324,6 @@ function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, onDuplic
           {item.correctionIsAuto && item.correctionLabel ? (
             <span className="font-medium text-slate-500">（{item.correctionLabel}）</span>
           ) : null}
-        </label>
-        <label className="flex items-center gap-2 text-xs font-bold text-slate-700 sm:col-span-2">
-          <input
-            type="checkbox"
-            className="h-4 w-4"
-            checked={Boolean(item.aeAdmixture)}
-            onChange={(e) => onChange({ aeAdmixture: e.target.checked })}
-          />
-          高性能AE減水剤あり
         </label>
       </div>
       <p className="sr-only">
@@ -571,12 +601,14 @@ export function MixDesignRequestModal({
       siteManagerName: draft.siteManagerName,
       siteManagerContact: draft.siteManagerContact,
       siteContact: [draft.siteManagerName, draft.siteManagerContact].filter(Boolean).join(' / '),
-      firstPourDate: earliestPourDate(draft),
+      shipmentStartPeriod: draft.shipmentStartPeriod,
       totalVolumeM3: draft.totalVolumeM3,
       requestedBy: formatRequesterDisplay(draft.requestedBy, draft.requestedByAffiliation),
       requestedByAffiliation: draft.requestedByAffiliation,
       requestedToFactoryIds: draft.requestedToFactoryIds,
-      factoryNames: formatMixDesignFactoryNames(draft.requestedToFactoryIds, factoryNameById),
+      factoryNames: draft.factoryOmakase
+        ? MIX_DESIGN_FACTORY_OMAKASE_LABEL
+        : formatMixDesignFactoryNames(draft.requestedToFactoryIds, factoryNameById),
     }),
     [draft, headerContext, factoryNameById],
   );
@@ -589,7 +621,9 @@ export function MixDesignRequestModal({
       submissionMethod: draft.submissionMethod,
       submissionEmail: draft.submissionEmail,
       memo: draft.memo,
-      factoryNames: formatMixDesignFactoryNames(draft.requestedToFactoryIds, factoryNameById),
+      factoryNames: draft.factoryOmakase
+        ? MIX_DESIGN_FACTORY_OMAKASE_LABEL
+        : formatMixDesignFactoryNames(draft.requestedToFactoryIds, factoryNameById),
     }),
     [draft, factoryNameById],
   );
@@ -919,7 +953,11 @@ export function MixDesignRequestModal({
               inputClassName={FIELD}
             />
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-              現場担当者連絡先
+              <span className="leading-tight">
+                現場担当者
+                <br />
+                連絡先
+              </span>
               <input
                 type="text"
                 value={draft.siteManagerContact}
@@ -945,10 +983,29 @@ export function MixDesignRequestModal({
             <fieldset className="flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-2">
               <legend className="mb-1">依頼先工場（複数選択可）</legend>
               <div className="flex flex-col gap-2 rounded-xl border-2 border-slate-200 bg-white px-3 py-2">
+                <label className="flex items-center gap-2 text-sm font-black text-indigo-800">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={Boolean(draft.factoryOmakase)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        patchDraft({ factoryOmakase: true, requestedToFactoryIds: [] });
+                        return;
+                      }
+                      patchDraft({ factoryOmakase: false });
+                    }}
+                  />
+                  {MIX_DESIGN_FACTORY_OMAKASE_LABEL}
+                </label>
+                <p className="text-[11px] font-medium text-slate-500">
+                  選ぶと工場は指定せずに依頼します。自動で工場を割り当てる処理はまだありません。
+                </p>
                 {factoryOptions.length ? (
                   factoryOptions.map((factory) => {
                     const fid = String(factory.id);
-                    const checked = (draft.requestedToFactoryIds || []).includes(fid);
+                    const checked =
+                      !draft.factoryOmakase && (draft.requestedToFactoryIds || []).includes(fid);
                     return (
                       <label key={fid} className="flex items-center gap-2 text-sm font-bold text-slate-700">
                         <input
@@ -957,8 +1014,9 @@ export function MixDesignRequestModal({
                           checked={checked}
                           onChange={() =>
                             patchDraft({
+                              factoryOmakase: false,
                               requestedToFactoryIds: toggleMixDesignFactoryId(
-                                draft.requestedToFactoryIds,
+                                draft.factoryOmakase ? [] : draft.requestedToFactoryIds,
                                 fid,
                               ),
                             })
@@ -1060,6 +1118,19 @@ export function MixDesignRequestModal({
               />
               <span className="text-[11px] font-medium text-slate-500">
                 配合パターンごとの数量とは別に、物件全体のおおよその数量を入力します。
+              </span>
+            </label>
+            <label className="flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-2">
+              出荷開始時期
+              <input
+                type="text"
+                value={draft.shipmentStartPeriod || ''}
+                onChange={(e) => patchDraft({ shipmentStartPeriod: e.target.value })}
+                className={FIELD}
+                placeholder="例：10月上旬"
+              />
+              <span className="text-[11px] font-medium text-slate-500">
+                日付が未定のときは「10月上旬」のように入力できます。
               </span>
             </label>
           </div>

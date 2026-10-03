@@ -4,6 +4,31 @@ export const BASE_STRENGTH_CANDIDATES = [18, 21, 24, 27, 30, 33, 36, 40, 42, 45]
 export const SLUMP_CANDIDATES = [8, 12, 15, 18, 21];
 export const AGGREGATE_SIZE_CANDIDATES = [20, 40];
 
+function candidateOptions(candidates, labelFor = (n) => String(n)) {
+  return candidates.map((n) => ({ value: String(n), label: labelFor(n) }));
+}
+
+/** プルダウンの表示ラベル。保存値は value（数値文字列） */
+export const BASE_STRENGTH_OPTIONS = candidateOptions(BASE_STRENGTH_CANDIDATES);
+export const SLUMP_OPTIONS = candidateOptions(SLUMP_CANDIDATES);
+export const AGGREGATE_SIZE_OPTIONS = candidateOptions(AGGREGATE_SIZE_CANDIDATES, (n) => `${n}mm`);
+export const WATER_CEMENT_RATIO_OPTIONS = [
+  { value: '65', label: '65%以下' },
+  { value: '60', label: '60%以下' },
+  { value: '55', label: '55%以下' },
+  { value: '50', label: '50%以下' },
+];
+export const UNIT_WATER_CONTENT_OPTIONS = [
+  { value: '200', label: '200kg/㎥' },
+  { value: '185', label: '185kg/㎥' },
+  { value: '175', label: '175kg/㎥' },
+  { value: '170', label: '170kg/㎥' },
+];
+export const CORRECTION_VALUE_OPTIONS = [
+  { value: '3', label: '3' },
+  { value: '6', label: '6' },
+];
+
 /** DB 取得前・失敗時の 2026 年度フォールバック（migration と同値） */
 export const FALLBACK_CORRECTION_VALUE_RULES = [
   { fiscal_year: 2026, region: '大分市・挟間町', cement_type: 'N', category_label: '8℃以上', date_start_month: 2, date_start_day: 8, date_end_month: 6, date_end_day: 28, correction_value: 3 },
