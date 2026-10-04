@@ -3148,6 +3148,10 @@ function AdminOrderDetailModal({
   const [deliveryLng, setDeliveryLng] = useState('');
   const [locationOpen, setLocationOpen] = useState(false);
   const [editingFactories, setEditingFactories] = useState(false);
+  const [sessionOrder, setSessionOrder] = useState(null);
+  const [updateConflict, setUpdateConflict] = useState(false);
+  const [reloadingOrder, setReloadingOrder] = useState(false);
+  const openedUpdatedAtRef = useRef('');
 
   const customersById = useMemo(
     () => Object.fromEntries((customers || []).filter((c) => c?.id).map((c) => [String(c.id), c])),
@@ -3158,56 +3162,82 @@ function AdminOrderDetailModal({
     [organizations],
   );
 
-  useEffect(() => {
-    if (!open || !order) return;
-    setEditingFactories(false);
-    setLocationOpen(false);
-    setPreferredDate(orderDeliveryDate(order));
-    const t = formatOrderTime(order);
+  const applyAdminOrderToForm = (source) => {
+    if (!source) return;
+    setSessionOrder(source);
+    setUpdateConflict(false);
+    openedUpdatedAtRef.current = String(source.updated_at ?? source.updatedAt ?? '').trim();
+    setPreferredDate(orderDeliveryDate(source));
+    const t = formatOrderTime(source);
     setTimeValue(t === '—' ? '' : t);
-    const q = order.quantityM3 ?? order.quantityCube ?? order.confirmedQuantityM3 ?? '';
+    const q = source.quantityM3 ?? source.quantityCube ?? source.confirmedQuantityM3 ?? '';
     setQuantityM3(q != null ? String(q) : '');
-    setMixText(order.mixText != null ? String(order.mixText) : '');
-    setSiteName(orderSiteName(order) === '（現場名未入力）' ? '' : orderSiteName(order));
-    setVehicleType(order.vehicleType === 'small' ? 'small' : 'large');
+    setMixText(source.mixText != null ? String(source.mixText) : '');
+    setSiteName(orderSiteName(source) === '（現場名未入力）' ? '' : orderSiteName(source));
+    setVehicleType(source.vehicleType === 'small' ? 'small' : 'large');
     setUnloadDuration(
-      String(order.unloadDurationMinutes || order.unloadDuration || order.unloadingTime || '30'),
+      String(source.unloadDurationMinutes || source.unloadDuration || source.unloadingTime || '30'),
     );
-    setHasTest(Boolean(order.has_test));
-    const parties = resolveOrderParties(order, { customersById, organizationsById });
+    setHasTest(Boolean(source.has_test));
+    const parties = resolveOrderParties(source, { customersById, organizationsById });
     setContractorCustomerId(parties.contractorCustomerId);
     setAgentOrganizationId(parties.agentOrganizationId);
     setTradingAgentCustomerId(parties.tradingAgentCustomerId);
     setContractorName(parties.contractorName || '');
     setTraderName(parties.traderName || '');
-    setSiteAddress(order.siteAddress != null ? String(order.siteAddress) : '');
-    setSitePhone(order.sitePhone != null ? String(order.sitePhone) : '');
-    setManagerName(order.manager_name != null ? String(order.manager_name) : '');
-    setDeliveryLat(order.delivery_lat != null ? String(order.delivery_lat) : '');
-    setDeliveryLng(order.delivery_lng != null ? String(order.delivery_lng) : '');
+    setSiteAddress(source.siteAddress != null ? String(source.siteAddress) : '');
+    setSitePhone(source.sitePhone != null ? String(source.sitePhone) : '');
+    setManagerName(source.manager_name != null ? String(source.manager_name) : '');
+    setDeliveryLat(source.delivery_lat != null ? String(source.delivery_lat) : '');
+    setDeliveryLng(source.delivery_lng != null ? String(source.delivery_lng) : '');
+  };
+
+  useEffect(() => {
+    if (!open || !order) return;
+    setEditingFactories(false);
+    setLocationOpen(false);
+    applyAdminOrderToForm(order);
+    // order 本体は依存に入れない。同じ注文の更新で編集中の入力を消さない。
   }, [open, order?.id, customersById, organizationsById]);
 
   if (!open || !order) return null;
 
-  const party = orderPartyInfo(order, {
+  const viewOrder = sessionOrder || order;
+  const party = orderPartyInfo(viewOrder, {
     preferSiteContact: true,
     customersById,
     organizationsById,
   });
-  const st = orderStatus(order);
-  const assignedIds = associationAssignedFactoryIds(order);
-  const preferredId = String(order.preferred_factory_id || order.preferredFactoryId || '').trim();
+  const st = orderStatus(viewOrder);
+  const assignedIds = associationAssignedFactoryIds(viewOrder);
+  const preferredId = String(viewOrder.preferred_factory_id || viewOrder.preferredFactoryId || '').trim();
   const displayAssigned =
     assignedIds.length > 0
       ? formatFactoryAssignmentSummary(assignedIds, factoryNameById)
       : preferredId
         ? factoryNameById[preferredId] || preferredId
         : '—';
-  const canReassign = canAdminReassignOrderFactories(order);
-  const willResetOnReassign = shouldResetOrderStatusOnFactoryReassign(order);
+  const canReassign = canAdminReassignOrderFactories(viewOrder);
+  const willResetOnReassign = shouldResetOrderStatusOnFactoryReassign(viewOrder);
 
-  const submit = (e) => {
+  const reloadLatestOrder = async () => {
+    const id = String(viewOrder?.id || '').trim();
+    if (!id) return;
+    setReloadingOrder(true);
+    try {
+      const latest = await db.fetchOrderById(id);
+      if (!latest) return;
+      applyAdminOrderToForm(latest);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setReloadingOrder(false);
+    }
+  };
+
+  const submit = async (e) => {
     e.preventDefault();
+    if (updateConflict || reloadingOrder) return;
     const qtyRaw = String(quantityM3 || '').trim();
     if (qtyRaw !== '') {
       const qtyNum = Number(qtyRaw);
@@ -3225,16 +3255,17 @@ function AdminOrderDetailModal({
         contractorName,
         traderName,
       },
-      { customersById, organizationsById, previousOrder: order },
+      { customersById, organizationsById, previousOrder: viewOrder },
     );
     const latRaw = String(deliveryLat || '').trim();
     const lngRaw = String(deliveryLng || '').trim();
     const latNum = latRaw !== '' ? Number(latRaw) : NaN;
     const lngNum = lngRaw !== '' ? Number(lngRaw) : NaN;
-    onSave(order.id, {
+    try {
+      await onSave(viewOrder.id, {
       preferredDate,
       delivery_date: preferredDate,
-      timeSlot: minutes != null ? String(minutes) : order.timeSlot,
+      timeSlot: minutes != null ? String(minutes) : viewOrder.timeSlot,
       timeSlotMinutes: minutes,
       timeSlotLabel: timeValue,
       timePointLabel: timeValue,
@@ -3255,7 +3286,11 @@ function AdminOrderDetailModal({
       manager_name: managerName.trim() || null,
       ...(Number.isFinite(latNum) ? { delivery_lat: latNum, deliveryLat: latNum } : {}),
       ...(Number.isFinite(lngNum) ? { delivery_lng: lngNum, deliveryLng: lngNum } : {}),
-    });
+    }, { expectedUpdatedAt: openedUpdatedAtRef.current });
+    } catch (err) {
+      if (!db.isOrderUpdateConflict(err)) console.error(err);
+      if (db.isOrderUpdateConflict(err)) setUpdateConflict(true);
+    }
   };
 
   const inputClass = 'mt-1 min-h-[42px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-bold text-slate-900';
@@ -3404,7 +3439,7 @@ function AdminOrderDetailModal({
             </div>
             <div>
               <dt className="text-xs font-bold text-slate-500">数量</dt>
-              <dd className="font-black text-slate-900">{order.quantityM3 ?? order.quantityCube ?? '—'} m³</dd>
+              <dd className="font-black text-slate-900">{viewOrder.quantityM3 ?? viewOrder.quantityCube ?? '—'} m³</dd>
             </div>
             <div>
               <dt className="text-xs font-bold text-slate-500">受注確定工場</dt>
@@ -3592,9 +3627,22 @@ function AdminOrderDetailModal({
             factoryNameById={factoryNameById}
           />
         </div>
+        {updateConflict ? (
+          <div className="mx-4 mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2" role="alert">
+            <p className="text-sm font-bold text-amber-950">他のユーザーがこの注文を更新しました。最新の内容を読み込んでから、もう一度編集してください</p>
+            <button
+              type="button"
+              onClick={() => void reloadLatestOrder()}
+              disabled={reloadingOrder}
+              className="mt-2 min-h-[40px] rounded-lg border-2 border-amber-700 bg-white px-3 text-sm font-black text-amber-950 disabled:opacity-60"
+            >
+              {reloadingOrder ? '読み込み中…' : '最新の内容を読み込む'}
+            </button>
+          </div>
+        ) : null}
         <div className="flex shrink-0 gap-2 border-t border-slate-200 bg-white p-4">
-          <button type="button" onClick={onClose} disabled={saving} className="min-h-[44px] flex-1 rounded-lg border-2 border-slate-300 bg-white text-sm font-black text-slate-700">閉じる</button>
-          <button type="submit" disabled={saving} className="min-h-[44px] flex-1 rounded-lg border-2 border-indigo-700 bg-indigo-600 text-sm font-black text-white">{saving ? '保存中…' : '保存'}</button>
+          <button type="button" onClick={onClose} disabled={saving || reloadingOrder} className="min-h-[44px] flex-1 rounded-lg border-2 border-slate-300 bg-white text-sm font-black text-slate-700">閉じる</button>
+          <button type="submit" disabled={saving || updateConflict || reloadingOrder} className="min-h-[44px] flex-1 rounded-lg border-2 border-indigo-700 bg-indigo-600 text-sm font-black text-white disabled:opacity-50">{saving ? '保存中…' : '保存'}</button>
         </div>
       </form>
     </div>
@@ -4137,14 +4185,17 @@ function OrdersMonitorSection({
     );
   }, []);
 
-  const handleSaveEdit = async (orderId, patch) => {
+  const handleSaveEdit = async (orderId, patch, options) => {
     setSavingEdit(true);
     setError('');
     try {
-      const updated = await db.adminUpdateOrder(orderId, patch);
+      const updated = await db.adminUpdateOrder(orderId, patch, {
+        expectedUpdatedAt: options?.expectedUpdatedAt,
+      });
       if (updated) applyOrderUpdate(updated);
       setDetailOrder(null);
     } catch (e) {
+      if (db.isOrderUpdateConflict(e)) throw e;
       console.error(e);
       setError('注文の編集に失敗しました。');
     } finally {

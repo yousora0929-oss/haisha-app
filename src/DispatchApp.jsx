@@ -4014,8 +4014,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               ? await db.confirmCustomerChangeRequestReRequest(orderId, {
                   message,
                   structuredPatch,
+                  expectedUpdatedAt: meta?.expectedUpdatedAt,
                 })
-              : await db.submitOrderChangeRequest(orderId, message, structuredPatch);
+              : await db.submitOrderChangeRequest(orderId, message, structuredPatch, {
+                  expectedUpdatedAt: meta?.expectedUpdatedAt,
+                });
             setDashboardOrders((prev) =>
               (Array.isArray(prev) ? prev : []).map((o) =>
                 o?.id === orderId
@@ -4043,7 +4046,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             await refreshDashboard({ skipChatSound: true });
             return true;
           }
-          const updated = await db.customerUpdateOrder(orderId, patch);
+          const updated = await db.customerUpdateOrder(orderId, patch, {
+            expectedUpdatedAt: meta?.expectedUpdatedAt,
+          });
           setDashboardOrders((prev) =>
             (Array.isArray(prev) ? prev : []).map((o) =>
               o?.id === orderId ? { ...o, ...updated } : o,

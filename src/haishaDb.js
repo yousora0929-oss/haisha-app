@@ -1883,10 +1883,41 @@ export async function fetchMixDesignRequestWithItems(requestId) {
   };
 }
 
-export async function updateOrderDetails(orderId, updatedData) {
+export const ORDER_UPDATE_CONFLICT_MESSAGE =
+  '他のユーザーがこの注文を更新しました。最新の内容を読み込んでから、もう一度編集してください';
+
+export class OrderUpdateConflictError extends Error {
+  constructor() {
+    super(ORDER_UPDATE_CONFLICT_MESSAGE);
+    this.name = 'OrderUpdateConflictError';
+    this.code = 'ORDER_UPDATE_CONFLICT';
+  }
+}
+
+export function isOrderUpdateConflict(error) {
+  return error?.code === 'ORDER_UPDATE_CONFLICT' || error?.name === 'OrderUpdateConflictError';
+}
+
+function readOrderUpdatedAt(order) {
+  return String(order?.updated_at ?? order?.updatedAt ?? '').trim();
+}
+
+/** 保持した updated_at と、いま読んだ値が同じ更新時点か */
+function orderUpdatedAtMatches(expected, actual) {
+  const left = String(expected ?? '').trim();
+  const right = String(actual ?? '').trim();
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const leftMs = Date.parse(left);
+  const rightMs = Date.parse(right);
+  return Number.isFinite(leftMs) && Number.isFinite(rightMs) && leftMs === rightMs;
+}
+
+export async function updateOrderDetails(orderId, updatedData, options = {}) {
   const id = String(orderId || '').trim();
   if (!id) throw new Error('orderId が必要です');
   const patch = updatedData && typeof updatedData === 'object' && !Array.isArray(updatedData) ? updatedData : {};
+  const expectedUpdatedAt = readOrderUpdatedAt({ updated_at: options?.expectedUpdatedAt });
 
   const { data: row, error: selErr } = await supabase
     .from('orders')
@@ -2138,6 +2169,30 @@ export async function updateOrderDetails(orderId, updatedData) {
     const n = raw == null || raw === '' ? NaN : Number(raw);
     updateRow.delivery_lng = Number.isFinite(n) ? n : null;
   }
+  // updated_at は trg_orders_updated_at が更新する。フロントからは書き込まない。
+  delete updateRow.updated_at;
+
+  if (expectedUpdatedAt) {
+    const actualUpdatedAt = readOrderUpdatedAt(row);
+    if (!orderUpdatedAtMatches(expectedUpdatedAt, actualUpdatedAt)) {
+      throw new OrderUpdateConflictError();
+    }
+    const { data: updatedIds, error: upErr } = await supabase
+      .from('orders')
+      .update(updateRow)
+      .eq('id', id)
+      .eq('updated_at', row.updated_at)
+      .select('id');
+    if (upErr) {
+      console.error('updateOrderDetails update failed', upErr);
+      throw upErr;
+    }
+    if (!Array.isArray(updatedIds) || updatedIds.length === 0) {
+      throw new OrderUpdateConflictError();
+    }
+    return fetchOrderById(id);
+  }
+
   const { data: updated, error: upErr } = await supabase
     .from('orders')
     .update(updateRow)
@@ -2151,15 +2206,15 @@ export async function updateOrderDetails(orderId, updatedData) {
   return normalizeOrderRow(updated);
 }
 
-export async function adminUpdateOrder(orderId, updatedData) {
+export async function adminUpdateOrder(orderId, updatedData, options) {
   const id = String(orderId || '').trim();
   if (!id) throw new Error('orderId が必要です');
   const patch = updatedData && typeof updatedData === 'object' && !Array.isArray(updatedData) ? updatedData : {};
-  return updateOrderDetails(id, { ...patch, is_admin_modified: true });
+  return updateOrderDetails(id, { ...patch, is_admin_modified: true }, options);
 }
 
 /** 工場未受注（pending 等）のうち、顧客が注文内容を編集するときの更新（is_customer_modified を自動付与） */
-export async function customerUpdateOrder(orderId, updatedData) {
+export async function customerUpdateOrder(orderId, updatedData, options) {
   const id = String(orderId || '').trim();
   if (!id) throw new Error('orderId が必要です');
   const patch = updatedData && typeof updatedData === 'object' && !Array.isArray(updatedData) ? updatedData : {};
@@ -2174,10 +2229,14 @@ export async function customerUpdateOrder(orderId, updatedData) {
 
   const status = String(row.status || 'pending').trim();
   const isPreAccept = status === 'pending' || status === 'pending_association';
-  return updateOrderDetails(id, {
-    ...patch,
-    ...(isPreAccept ? { is_customer_modified: true } : {}),
-  });
+  return updateOrderDetails(
+    id,
+    {
+      ...patch,
+      ...(isPreAccept ? { is_customer_modified: true } : {}),
+    },
+    options,
+  );
 }
 
 /** 注文1件を最新状態で取得（受注鮮度ガード等） */
@@ -2239,11 +2298,12 @@ export async function clearOrderCustomerModifiedFlag(orderId) {
  * @param {string} messageBody
  * @param {object} [structuredPatch] 変更フィールドのみのマップ
  */
-export async function submitOrderChangeRequest(orderId, messageBody, structuredPatch) {
+export async function submitOrderChangeRequest(orderId, messageBody, structuredPatch, options = {}) {
   const id = String(orderId || '').trim();
   const body = String(messageBody || '').trim();
   if (!id) throw new Error('orderId が必要です');
   if (!body) throw new Error('変更依頼の内容が空です');
+  const expectedUpdatedAt = readOrderUpdatedAt({ updated_at: options?.expectedUpdatedAt });
 
   const patchObj =
     structuredPatch && typeof structuredPatch === 'object' && !Array.isArray(structuredPatch)
@@ -2257,22 +2317,36 @@ export async function submitOrderChangeRequest(orderId, messageBody, structuredP
     throw new Error('Supabase client is not ready');
   }
 
+  let lockedUpdatedAt = null;
+  if (expectedUpdatedAt) {
+    const latest = await fetchOrderById(id);
+    if (!latest) throw new Error('注文が見つかりません');
+    if (!orderUpdatedAtMatches(expectedUpdatedAt, readOrderUpdatedAt(latest))) {
+      throw new OrderUpdateConflictError();
+    }
+    lockedUpdatedAt = latest.updated_at;
+  }
+
   // フラグ／パッチを先に確定してからチャット投稿する。
   // 逆順だとチャットだけ残り has_pending_change_request が立たない事故が起きる。
-  const { data, error } = await supabase
-    .from('orders')
-    .update({
-      has_pending_change_request: true,
-      pending_change_request_patch: patchObj,
-      change_request_customer_decision_status: null,
-      change_request_resolution: null,
-    })
-    .eq('id', id)
-    .select(ORDER_SELECT)
+  // updated_at はトリガー任せ。一致しない行は更新しない。
+  const changeRequestPatch = {
+    has_pending_change_request: true,
+    pending_change_request_patch: patchObj,
+    change_request_customer_decision_status: null,
+    change_request_resolution: null,
+  };
+  let updateQuery = supabase.from('orders').update(changeRequestPatch).eq('id', id);
+  if (lockedUpdatedAt) updateQuery = updateQuery.eq('updated_at', lockedUpdatedAt);
+  const { data, error } = await updateQuery
+    .select(lockedUpdatedAt ? 'id' : ORDER_SELECT)
     .maybeSingle();
   if (error) {
     console.error('[haisha] has_pending_change_request 更新失敗', error);
     throw error;
+  }
+  if (lockedUpdatedAt && !data?.id) {
+    throw new OrderUpdateConflictError();
   }
   if (!data?.id) {
     const denied = new Error(
@@ -2290,6 +2364,7 @@ export async function submitOrderChangeRequest(orderId, messageBody, structuredP
     console.warn('[haisha] 変更依頼チャット投稿失敗（パッチは保存済み）', chatErr);
   }
 
+  if (lockedUpdatedAt) return fetchOrderById(id);
   return normalizeOrderRow(data);
 }
 
@@ -2474,6 +2549,10 @@ export async function confirmCustomerChangeRequestReRequest(orderId, opts = {}) 
   const id = String(orderId || '').trim();
   if (!id) throw new Error('orderId が必要です');
   const latest = await fetchOrderById(id);
+  const expectedUpdatedAt = readOrderUpdatedAt({ updated_at: opts?.expectedUpdatedAt });
+  if (expectedUpdatedAt && !orderUpdatedAtMatches(expectedUpdatedAt, readOrderUpdatedAt(latest))) {
+    throw new OrderUpdateConflictError();
+  }
   const { originalPatch, acceptedKeys, declinedKeys } = assertAwaitingCustomerChangeDecision(latest);
 
   const providedPatch =
@@ -2506,14 +2585,18 @@ export async function confirmCustomerChangeRequestReRequest(orderId, opts = {}) 
       itemLines.length ? `（${itemLines.join('、')}）` : ''
     }`;
 
-  const updated = await updateOrderDetails(id, {
-    ...(Object.keys(applyPatch).length > 0 ? applyPatch : {}),
-    is_customer_modified: false,
-    has_pending_change_request: true,
-    pending_change_request_patch: reRequestPatch,
-    change_request_customer_decision_status: null,
-    change_request_resolution: null,
-  });
+  const updated = await updateOrderDetails(
+    id,
+    {
+      ...(Object.keys(applyPatch).length > 0 ? applyPatch : {}),
+      is_customer_modified: false,
+      has_pending_change_request: true,
+      pending_change_request_patch: reRequestPatch,
+      change_request_customer_decision_status: null,
+      change_request_resolution: null,
+    },
+    expectedUpdatedAt ? { expectedUpdatedAt } : undefined,
+  );
 
   try {
     await appendChatMessage(id, 'customer', chatBody);

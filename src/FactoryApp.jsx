@@ -2906,8 +2906,8 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
               customerById={customerById}
               organizations={Object.values(organizationById || {})}
               onSiteUrlCopied={onSiteUrlCopied}
-              onSave={async (id, patch) => {
-                const ok = await onOrderFullPatch(id, patch);
+              onSave={async (id, patch, meta) => {
+                const ok = await onOrderFullPatch(id, patch, meta);
                 if (ok !== false) setEditOpen(false);
               }}
             />
@@ -5792,7 +5792,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
       );
 
       const handleOrderFullPatch = useCallback(
-        async (orderId, patch) => {
+        async (orderId, patch, meta) => {
           if (!orderId || !patch || typeof patch !== 'object') return false;
           const target =
             (rawOrders || []).find((o) => o?.id === orderId) ||
@@ -5814,7 +5814,9 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
               nextPatch.confirmedMixText = patch.mixText;
             }
 
-            const updated = await db.updateOrderDetails(orderId, nextPatch);
+            const updated = await db.updateOrderDetails(orderId, nextPatch, {
+              expectedUpdatedAt: meta?.expectedUpdatedAt,
+            });
             if (!updated) return false;
 
             const changeParts = buildOrderChangeDiffLines(target, updated);
@@ -5838,6 +5840,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
             window.setTimeout(() => setActionNotice(''), 3500);
             return true;
           } catch (e) {
+            if (db.isOrderUpdateConflict(e)) throw e;
             console.error('handleOrderFullPatch failed', e);
             window.alert('注文の更新に失敗しました。通信状態を確認してください。');
             return false;

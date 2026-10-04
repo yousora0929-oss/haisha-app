@@ -456,7 +456,12 @@ export function OrderFullEditModal({
   const [requestStep, setRequestStep] = useState('edit');
   const [confirmDiffRows, setConfirmDiffRows] = useState([]);
   const [confirmPayload, setConfirmPayload] = useState(null);
+  const [baselineOrder, setBaselineOrder] = useState(null);
+  const [updateConflict, setUpdateConflict] = useState(false);
+  const [reloadingOrder, setReloadingOrder] = useState(false);
   const submittingRef = useRef(false);
+  const openedUpdatedAtRef = useRef('');
+  const partyNameTouchedRef = useRef({ contractorName: false, traderName: false });
 
   const customers = useMemo(
     () => Object.values(customerById || {}).filter((c) => c?.id),
@@ -501,36 +506,36 @@ export function OrderFullEditModal({
     };
   }, [open]);
 
-  useEffect(() => {
-    if (!order || !open) return;
-    const ts = order.timeSlot != null ? String(order.timeSlot) : '';
+  const applyOrderSnapshot = (source) => {
+    if (!source) return;
+    const ts = source.timeSlot != null ? String(source.timeSlot) : '';
     const ok = FULL_DAY_TIME_SLOTS.some((s) => s.value === ts);
-    const q = order.confirmedQuantityM3 ?? order.quantityM3 ?? order.quantityCube;
-    const mixInitial = String(order.confirmedMixText ?? order.mixText ?? '').trim();
+    const q = source.confirmedQuantityM3 ?? source.quantityM3 ?? source.quantityCube;
+    const mixInitial = String(source.confirmedMixText ?? source.mixText ?? '').trim();
     let next = {
       preferredDate:
-        order.preferredDate && typeof order.preferredDate === 'string' ? order.preferredDate : '',
+        source.preferredDate && typeof source.preferredDate === 'string' ? source.preferredDate : '',
       timeSlot: ok ? ts : String(timeSlotOptions[0]?.value ?? '480'),
-      vehicleType: order.vehicleType === 'small' ? 'small' : 'large',
+      vehicleType: source.vehicleType === 'small' ? 'small' : 'large',
       quantityM3: q != null && String(q).trim() !== '' && String(q) !== 'null' ? String(q) : '',
       unloadDuration: String(
-        order.unloadDurationMinutes || order.unloadDuration || order.unloadingTime || '30',
+        source.unloadDurationMinutes || source.unloadDuration || source.unloadingTime || '30',
       ),
-      contractorCustomerId: orderContractorCustomerId(order),
-      agentOrganizationId: orderAgentOrganizationId(order),
-      tradingAgentCustomerId: orderTradingAgentCustomerId(order),
+      contractorCustomerId: orderContractorCustomerId(source),
+      agentOrganizationId: orderAgentOrganizationId(source),
+      tradingAgentCustomerId: orderTradingAgentCustomerId(source),
       contractorName: '',
       traderName: '',
       siteName:
-        sanitizeSiteNameValue(order.siteName) || sanitizeSiteNameValue(order.projectName) || '',
-      siteAddress: order.siteAddress != null ? String(order.siteAddress) : '',
-      sitePhone: order.sitePhone != null ? String(order.sitePhone) : '',
+        sanitizeSiteNameValue(source.siteName) || sanitizeSiteNameValue(source.projectName) || '',
+      siteAddress: source.siteAddress != null ? String(source.siteAddress) : '',
+      sitePhone: source.sitePhone != null ? String(source.sitePhone) : '',
       mixText: mixInitial,
-      hasTest: Boolean(order.has_test),
+      hasTest: Boolean(source.has_test),
     };
     // マスタ解決後の表示名を自由入力欄の初期値にする（ID 未紐づけのスナップショットも含む）
     {
-      const parties = resolveOrderParties(order, {
+      const parties = resolveOrderParties(source, {
         customersById: customerById || {},
         organizationsById: Object.fromEntries(
           (organizationsProp || []).filter((o) => o?.id).map((o) => [String(o.id), o]),
@@ -547,11 +552,55 @@ export function OrderFullEditModal({
       next = applyInitialPatchToEditData(next, seedPatch);
     }
     setEditData(next);
+    setBaselineOrder(source);
+    openedUpdatedAtRef.current = String(source.updated_at ?? source.updatedAt ?? '').trim();
+    partyNameTouchedRef.current = { contractorName: false, traderName: false };
+    setUpdateConflict(false);
     setSaveError('');
     setRequestStep('edit');
     setConfirmDiffRows([]);
     setConfirmPayload(null);
+  };
+
+  useEffect(() => {
+    if (!order || !open) return;
+    applyOrderSnapshot(order);
+    // order 本体は依存に入れない。同じ注文の更新で編集中の入力を消さない。
   }, [order?.id, open, projectById, customerById, focusKeyList.join('|'), initialPatch]);
+
+  useEffect(() => {
+    if (!open || !order) return;
+    const list = Array.isArray(organizationsProp) ? organizationsProp.filter((item) => item?.id) : [];
+    if (!list.length) return;
+    const source = baselineOrder || order;
+    const parties = resolveOrderParties(source, {
+      customersById: customerById || {},
+      organizationsById: Object.fromEntries(list.map((item) => [String(item.id), item])),
+    });
+    setEditData((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      if (
+        !partyNameTouchedRef.current.contractorName &&
+        !String(prev.contractorName || '').trim() &&
+        parties.contractorName
+      ) {
+        next.contractorName = parties.contractorName;
+        changed = true;
+      }
+      if (
+        !partyNameTouchedRef.current.traderName &&
+        !String(prev.traderName || '').trim() &&
+        parties.traderName
+      ) {
+        next.traderName = parties.traderName;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [open, order?.id, organizationsProp, customerById, baselineOrder]);
+
+  const activeOrder = baselineOrder || order;
 
   if (!open || !order) return null;
 
@@ -614,7 +663,7 @@ export function OrderFullEditModal({
         contractorName: editData.contractorName,
         traderName: editData.traderName,
       },
-      { customersById, organizationsById, previousOrder: order },
+      { customersById, organizationsById, previousOrder: activeOrder },
     );
     return {
       preferredDate: editData.preferredDate,
@@ -647,15 +696,35 @@ export function OrderFullEditModal({
     setConfirmPayload(null);
   };
 
+  const reloadLatestOrder = async () => {
+    const id = String(activeOrder?.id || '').trim();
+    if (!id) return;
+    setReloadingOrder(true);
+    setSaveError('');
+    try {
+      const latest = await db.fetchOrderById(id);
+      if (!latest) {
+        setSaveError('最新の注文を読み込めませんでした。');
+        return;
+      }
+      applyOrderSnapshot(latest);
+    } catch (err) {
+      console.error('[OrderFullEditModal] reload failed', err);
+      setSaveError(err?.message || '最新の注文を読み込めませんでした。');
+    } finally {
+      setReloadingOrder(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (submittingRef.current) return;
+    if (submittingRef.current || updateConflict || reloadingOrder) return;
     setSaveError('');
 
     // 依頼モード・入力画面: 送信せず確認画面へ
     if (isRequestMode && requestStep === 'edit') {
       const patch = buildFormPatch();
-      let structuredPatch = buildChangeRequestPatch(order, patch);
+      let structuredPatch = buildChangeRequestPatch(activeOrder, patch);
       if (isFocusedRequest) {
         structuredPatch = filterPatchToChangeRequestKeys(structuredPatch, focusKeyList);
         const previousDeclined = filterPatchToChangeRequestKeys(initialPatch || {}, focusKeyList);
@@ -667,7 +736,7 @@ export function OrderFullEditModal({
           return;
         }
       }
-      const diffRows = buildChangeRequestDiffRows(order, patch).filter((row) => {
+      const diffRows = buildChangeRequestDiffRows(activeOrder, patch).filter((row) => {
         if (!isFocusedRequest) return true;
         // フォーカス外の差分行は確認画面に出さない
         const labelToFields = {
@@ -715,11 +784,17 @@ export function OrderFullEditModal({
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      const ok = await onSave(order.id, patch);
+      const ok = await onSave(activeOrder.id, patch, {
+        expectedUpdatedAt: openedUpdatedAtRef.current,
+      });
       if (ok === false) {
         setSaveError('保存に失敗しました。内容を確認して再度お試しください。');
       }
     } catch (err) {
+      if (db.isOrderUpdateConflict(err)) {
+        setUpdateConflict(true);
+        return;
+      }
       console.error('[OrderFullEditModal] save failed', err);
       setSaveError(err?.message || '保存に失敗しました。通信状態を確認してください。');
     } finally {
@@ -730,7 +805,7 @@ export function OrderFullEditModal({
 
   const handleConfirmSend = async () => {
     if (!isRequestMode || requestStep !== 'confirm') return;
-    if (submittingRef.current) return;
+    if (submittingRef.current || updateConflict || reloadingOrder) return;
     if (!confirmPayload?.structuredPatch || !confirmPayload?.message) {
       setSaveError('変更点がありません。戻って内容を確認してください。');
       return;
@@ -739,15 +814,20 @@ export function OrderFullEditModal({
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      const ok = await onSave(order.id, confirmPayload.patch, {
+      const ok = await onSave(activeOrder.id, confirmPayload.patch, {
         mode: 'request',
         message: confirmPayload.message,
         structuredPatch: confirmPayload.structuredPatch,
+        expectedUpdatedAt: openedUpdatedAtRef.current,
       });
       if (ok === false) {
         setSaveError('変更依頼の送信に失敗しました。通信状態を確認してください。');
       }
     } catch (err) {
+      if (db.isOrderUpdateConflict(err)) {
+        setUpdateConflict(true);
+        return;
+      }
       console.error('[OrderFullEditModal] change request send failed', err);
       setSaveError(
         err?.message || '変更依頼の送信に失敗しました。通信状態を確認してください。',
@@ -1008,20 +1088,30 @@ export function OrderFullEditModal({
                 showTrader={showField('agentOrganizationId')}
                 showTradingAgent={showField('tradingAgentCustomerId')}
                 onChange={(next) => {
-                  setEditData((prev) => ({
-                    ...prev,
-                    contractorCustomerId: String(next.contractorCustomerId || '').trim(),
-                    agentOrganizationId: String(next.agentOrganizationId || '').trim(),
-                    tradingAgentCustomerId: String(next.tradingAgentCustomerId || '').trim(),
-                    contractorName:
+                  setEditData((prev) => {
+                    const contractorName =
                       next.contractorName !== undefined
                         ? String(next.contractorName ?? '')
-                        : prev.contractorName,
-                    traderName:
+                        : prev.contractorName;
+                    const traderName =
                       next.traderName !== undefined
                         ? String(next.traderName ?? '')
-                        : prev.traderName,
-                  }));
+                        : prev.traderName;
+                    if (contractorName !== prev.contractorName) {
+                      partyNameTouchedRef.current.contractorName = true;
+                    }
+                    if (traderName !== prev.traderName) {
+                      partyNameTouchedRef.current.traderName = true;
+                    }
+                    return {
+                      ...prev,
+                      contractorCustomerId: String(next.contractorCustomerId || '').trim(),
+                      agentOrganizationId: String(next.agentOrganizationId || '').trim(),
+                      tradingAgentCustomerId: String(next.tradingAgentCustomerId || '').trim(),
+                      contractorName,
+                      traderName,
+                    };
+                  });
                 }}
                 inputClassName={fieldInput}
                 labelClassName={fieldLabel}
@@ -1117,6 +1207,21 @@ export function OrderFullEditModal({
               </>
             )}
           </div>
+          {updateConflict ? (
+            <div className="mx-4 mb-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2" role="alert">
+              <p className="text-sm font-bold text-amber-950">
+                他のユーザーがこの注文を更新しました。最新の内容を読み込んでから、もう一度編集してください
+              </p>
+              <button
+                type="button"
+                onClick={() => void reloadLatestOrder()}
+                disabled={reloadingOrder}
+                className="mt-2 min-h-[40px] rounded-lg border-2 border-amber-700 bg-white px-3 text-sm font-black text-amber-950 disabled:opacity-60"
+              >
+                {reloadingOrder ? '読み込み中…' : '最新の内容を読み込む'}
+              </button>
+            </div>
+          ) : null}
           {saveError ? (
             <p
               className="mx-4 mb-1 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-bold text-red-800"
@@ -1131,7 +1236,7 @@ export function OrderFullEditModal({
                 <button
                   type="button"
                   onClick={handleBackToEdit}
-                  disabled={submitting}
+                  disabled={submitting || reloadingOrder}
                   className="min-h-[52px] flex-1 rounded-xl border-2 border-slate-300 bg-white text-base font-black text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg"
                 >
                   戻る
@@ -1139,7 +1244,7 @@ export function OrderFullEditModal({
                 <button
                   type="button"
                   onClick={() => void handleConfirmSend()}
-                  disabled={submitting}
+                  disabled={submitting || updateConflict || reloadingOrder}
                   aria-busy={submitting}
                   className="min-h-[52px] flex-1 rounded-xl border-2 border-indigo-700 bg-indigo-600 text-base font-black text-white shadow hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg"
                 >
@@ -1158,7 +1263,7 @@ export function OrderFullEditModal({
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting}
+                  disabled={submitting || updateConflict || reloadingOrder}
                   aria-busy={submitting}
                   className="min-h-[52px] flex-1 rounded-xl border-2 border-indigo-700 bg-indigo-600 text-base font-black text-white shadow hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg"
                 >
