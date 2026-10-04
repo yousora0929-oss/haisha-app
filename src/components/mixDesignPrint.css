@@ -221,6 +221,34 @@
   color: #475569;
 }
 
+.mix-design-print-candidate {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 9pt;
+  font-weight: 700;
+  color: #334155;
+}
+
+.mix-design-print-candidate-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 8px;
+  margin-top: 4px;
+}
+
+.mix-design-print-candidate-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.mix-design-print-print-only {
+  display: none;
+}
+
 .mix-design-print-preview {
   margin-top: 12px;
   overflow: auto;
@@ -333,5 +361,10 @@
 
   body.mix-design-printing .mix-design-print-vehicles input {
     display: none;
+  }
+
+  body.mix-design-printing > .mix-design-print-portal .mix-design-print-editor-only,
+  body.mix-design-printing > .mix-design-print-portal .mix-design-print-editor-only * {
+    display: none !important;
   }
 }

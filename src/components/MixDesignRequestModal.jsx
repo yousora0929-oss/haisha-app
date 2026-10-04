@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as db from '../haishaDb.js';
 import { MasterSuggestInput } from './MasterSuggestInput.jsx';
 import { DeliveryAreaAddressField } from './DeliveryAreaAddressField.jsx';
+import { MixCandidateSelect } from './MixCandidateSelect.jsx';
 import { MixDesignRequestPrint } from './MixDesignRequestPrint.jsx';
 import { MixDesignEmailActions } from './MixDesignEmailActions.jsx';
 import { MixDesignStatusButtons } from './MixDesignStatusButtons.jsx';
@@ -35,8 +36,14 @@ import {
   prefillMixDesignDraftFromRequest,
   preventMinusKey,
   pourYearChoices,
+  buildMixDesignPdfTitle,
+  clearMixDesignDraft,
+  loadMixDesignDraft,
+  mixDesignDraftStorageKey,
+  mixDesignDraftsEqual,
   printMixDesignSheet,
   regionFromDeliveryArea,
+  saveMixDesignDraft,
   sanitizeNonNegativeInput,
   selectAllOnFocus,
   toggleMixDesignFactoryId,
@@ -66,76 +73,6 @@ function NonNegNumberInput({ value, onChange, className, inputMode = 'decimal', 
       className={className}
       {...rest}
     />
-  );
-}
-
-const MIX_OTHER_VALUE = '__other__';
-
-function candidateMatches(stored, optionValue) {
-  const raw = String(stored ?? '').trim();
-  if (raw === String(optionValue)) return true;
-  const left = Number(raw);
-  const right = Number(optionValue);
-  return raw !== '' && Number.isFinite(left) && Number.isFinite(right) && left === right;
-}
-
-function MixCandidateSelect({ label, value, onChange, options, nav, disabled = false, className = '' }) {
-  const stored = value == null ? '' : String(value).trim();
-  const list = Array.isArray(options) ? options : [];
-  const matched = list.find((option) => candidateMatches(stored, option.value)) || null;
-  const [otherSelected, setOtherSelected] = useState(false);
-  const [trackedStored, setTrackedStored] = useState(stored);
-  if (stored !== trackedStored) {
-    setTrackedStored(stored);
-    if (matched) setOtherSelected(false);
-  }
-  const isCustom = stored !== '' && !matched;
-  const showOther = isCustom || (!disabled && otherSelected);
-  const selectValue = showOther ? MIX_OTHER_VALUE : matched ? String(matched.value) : '';
-
-  return (
-    <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-      {label}
-      <select
-        data-mix-nav={nav}
-        value={selectValue}
-        disabled={disabled}
-        onKeyDown={(event) => {
-          if (event.key === 'ArrowUp' || event.key === 'ArrowDown') event.stopPropagation();
-        }}
-        onChange={(event) => {
-          const next = event.target.value;
-          if (next === MIX_OTHER_VALUE) {
-            setOtherSelected(true);
-            if (matched) onChange('');
-            return;
-          }
-          setOtherSelected(false);
-          onChange(next);
-        }}
-        className={(className || FIELD) + (disabled ? ' bg-slate-100 text-slate-500' : '')}
-      >
-        <option value="">選択</option>
-        {list.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-        <option value={MIX_OTHER_VALUE}>その他（自由入力）</option>
-      </select>
-      {showOther ? (
-        <input
-          type="text"
-          inputMode="decimal"
-          value={matched ? '' : stored}
-          disabled={disabled}
-          placeholder="数値を入力"
-          onKeyDown={preventMinusKey}
-          onChange={(event) => onChange(sanitizeNonNegativeInput(event.target.value))}
-          className={FIELD + (disabled ? ' bg-slate-100 text-slate-500' : '')}
-        />
-      ) : null}
-    </label>
   );
 }
 
@@ -203,11 +140,11 @@ function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, onDuplic
             <option value="BB">BB（高炉B種）</option>
           </select>
         </label>
-        <label className="flex flex-col gap-1">
+        <label className="col-span-2 flex flex-col gap-1">
           <span className="text-xs font-bold text-transparent" aria-hidden="true">
             &nbsp;
           </span>
-          <span className="flex min-h-[48px] items-center gap-2 text-base text-slate-900">
+          <span className="flex min-h-[48px] items-center gap-2 whitespace-nowrap text-base text-slate-900">
             <input
               type="checkbox"
               className="h-5 w-5 shrink-0"
@@ -373,8 +310,18 @@ export function MixDesignRequestModal({
   const [townList, setTownList] = useState([]);
   const [townOptionsLoading, setTownOptionsLoading] = useState(false);
   const [townOptionsError, setTownOptionsError] = useState('');
+  const [draftOffer, setDraftOffer] = useState(null);
+  const [closePrompt, setClosePrompt] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const prevOpenRef = useRef(false);
   const printRootRef = useRef(null);
+  const formScrollRef = useRef(null);
+  const skipDraftSaveRef = useRef(false);
+  const draftCustomerId = String(order?.customer_id || order?.customerId || '').trim();
+  const draftStorageKey = mixDesignDraftStorageKey(draftCustomerId, {
+    mode: isEdit ? 'edit' : 'create',
+    requestId: editRequestId,
+  });
 
   useEffect(() => {
     if (!open) {
@@ -405,6 +352,11 @@ export function MixDesignRequestModal({
     setRequestStatus(isEdit ? String(initialRequest?.status || 'requested') : 'requested');
     setShowPreview(false);
     setError('');
+    setDirty(false);
+    setClosePrompt(false);
+    skipDraftSaveRef.current = false;
+    const stored = loadMixDesignDraft(draftStorageKey);
+    setDraftOffer(stored && !mixDesignDraftsEqual(stored, nextDraft) ? stored : null);
     return undefined;
   }, [
     open,
@@ -417,7 +369,16 @@ export function MixDesignRequestModal({
     initialItems,
     initialFactoryIds,
     allowedDeliveryAreas,
+    draftStorageKey,
   ]);
+
+  useEffect(() => {
+    if (!open || !dirty || draftOffer || skipDraftSaveRef.current) return undefined;
+    const timer = window.setTimeout(() => {
+      saveMixDesignDraft(draftStorageKey, draft);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [open, dirty, draftOffer, draft, draftStorageKey]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -529,6 +490,7 @@ export function MixDesignRequestModal({
 
   const updateItem = useCallback(
     (index, patch) => {
+      setDirty(true);
       setDraft((prev) => {
         const items = prev.items.map((item, i) => {
           if (i !== index) return item;
@@ -542,6 +504,7 @@ export function MixDesignRequestModal({
   );
 
   const patchDraft = useCallback((patch) => {
+    setDirty(true);
     setDraft((prev) => {
       const next = { ...prev, ...patch };
       if ('periodStart' in patch || 'periodEnd' in patch || 'region' in patch) {
@@ -559,6 +522,7 @@ export function MixDesignRequestModal({
 
   const setRegion = useCallback(
     (region) => {
+      setDirty(true);
       setDraft((prev) => ({
         ...prev,
         region,
@@ -659,6 +623,8 @@ export function MixDesignRequestModal({
           requestedBy: by,
         });
       }
+      skipDraftSaveRef.current = true;
+      clearMixDesignDraft(draftStorageKey);
       onSubmitted?.();
       onClose?.();
     } catch (err) {
@@ -695,11 +661,51 @@ export function MixDesignRequestModal({
     }
   };
 
+  const returnToForm = () => {
+    setShowPreview(false);
+    formScrollRef.current?.scrollTo?.({ top: 0 });
+  };
+
+  const requestClose = () => {
+    if (submitting) return;
+    if (!dirty) {
+      onClose?.();
+      return;
+    }
+    setClosePrompt(true);
+  };
+
+  const restoreOfferedDraft = () => {
+    if (!draftOffer) return;
+    setDraft(draftOffer);
+    setDirty(true);
+    setDraftOffer(null);
+  };
+
+  const discardOfferedDraft = () => {
+    clearMixDesignDraft(draftStorageKey);
+    setDraftOffer(null);
+  };
+
+  const saveDraftAndClose = () => {
+    saveMixDesignDraft(draftStorageKey, draft);
+    setClosePrompt(false);
+    onClose?.();
+  };
+
+  const discardDraftAndClose = () => {
+    skipDraftSaveRef.current = true;
+    clearMixDesignDraft(draftStorageKey);
+    setDraftOffer(null);
+    setClosePrompt(false);
+    onClose?.();
+  };
+
   if (!open || (!order && !isEdit)) return null;
 
   return (
     <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-900/50 p-0 sm:items-center sm:p-4">
-      <div className="flex max-h-[100dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-h-[92dvh] sm:rounded-2xl">
+      <div className="relative flex max-h-[100dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-h-[92dvh] sm:rounded-2xl">
         <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
           <div>
             <h2 className="text-base font-black text-slate-900">
@@ -712,7 +718,7 @@ export function MixDesignRequestModal({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             className="rounded-lg px-3 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100"
           >
             閉じる
@@ -731,6 +737,7 @@ export function MixDesignRequestModal({
         ) : null}
 
         <div
+          ref={formScrollRef}
           className="min-h-0 flex-1 overflow-y-auto p-4"
           onKeyDown={(e) =>
             handleMixDesignNavKeyDown(e, {
@@ -739,6 +746,30 @@ export function MixDesignRequestModal({
             })
           }
         >
+          {draftOffer ? (
+            <div className="mb-4 rounded-xl border-2 border-amber-300 bg-amber-50 px-3 py-3" role="status">
+              <p className="text-sm font-black text-amber-950">下書きがあります</p>
+              <p className="mt-1 text-xs font-medium text-amber-900">
+                この端末に保存した入力内容を復元できます。
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={restoreOfferedDraft}
+                  className="min-h-[44px] rounded-xl bg-amber-600 px-4 text-sm font-black text-white"
+                >
+                  復元する
+                </button>
+                <button
+                  type="button"
+                  onClick={discardOfferedDraft}
+                  className="min-h-[44px] rounded-xl border-2 border-amber-400 bg-white px-4 text-sm font-black text-amber-900"
+                >
+                  破棄する
+                </button>
+              </div>
+            </div>
+          ) : null}
           <div className="mb-4 grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-2">
               工事名
@@ -1038,7 +1069,7 @@ export function MixDesignRequestModal({
               提出方法
               <select
                 value={draft.submissionMethod}
-                onChange={(e) => setDraft((prev) => ({ ...prev, submissionMethod: e.target.value }))}
+                onChange={(e) => patchDraft({ submissionMethod: e.target.value })}
                 className={FIELD}
               >
                 <option value="">未指定</option>
@@ -1051,7 +1082,7 @@ export function MixDesignRequestModal({
               <input
                 type="email"
                 value={draft.submissionEmail}
-                onChange={(e) => setDraft((prev) => ({ ...prev, submissionEmail: e.target.value }))}
+                onChange={(e) => patchDraft({ submissionEmail: e.target.value })}
                 className={FIELD}
               />
             </label>
@@ -1060,7 +1091,7 @@ export function MixDesignRequestModal({
                 type="checkbox"
                 className="h-4 w-4"
                 checked={Boolean(draft.creationDateSpecified)}
-                onChange={(e) => setDraft((prev) => ({ ...prev, creationDateSpecified: e.target.checked }))}
+                onChange={(e) => patchDraft({ creationDateSpecified: e.target.checked })}
               />
               作成日を指定する
             </label>
@@ -1070,7 +1101,7 @@ export function MixDesignRequestModal({
                 <input
                   type="date"
                   value={draft.creationDate}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, creationDate: e.target.value }))}
+                  onChange={(e) => patchDraft({ creationDate: e.target.value })}
                   className={FIELD}
                 />
               </label>
@@ -1149,30 +1180,33 @@ export function MixDesignRequestModal({
                 periodEnd={draft.periodEnd}
                 canRemove={draft.items.length > 1}
                 onChange={(patch) => updateItem(index, patch)}
-                onRemove={() =>
+                onRemove={() => {
+                  setDirty(true);
                   setDraft((prev) => ({
                     ...prev,
                     items: prev.items.filter((_, i) => i !== index),
-                  }))
-                }
-                onDuplicate={() =>
+                  }));
+                }}
+                onDuplicate={() => {
+                  setDirty(true);
                   setDraft((prev) => {
                     const copy = duplicateMixDesignItem(prev.items[index]);
                     const items = [...prev.items];
                     items.splice(index + 1, 0, copy);
                     return { ...prev, items };
-                  })
-                }
+                  });
+                }}
               />
             ))}
             <button
               type="button"
-              onClick={() =>
+              onClick={() => {
+                setDirty(true);
                 setDraft((prev) => ({
                   ...prev,
                   items: [...prev.items, createEmptyMixDesignItem()],
-                }))
-              }
+                }));
+              }}
               className="min-h-[48px] rounded-xl border-2 border-dashed border-indigo-300 bg-white px-4 text-sm font-bold text-indigo-800 hover:bg-indigo-50"
             >
               ＋ 配合パターンを追加
@@ -1184,7 +1218,7 @@ export function MixDesignRequestModal({
               全体備考
               <textarea
                 value={draft.memo}
-                onChange={(e) => setDraft((prev) => ({ ...prev, memo: e.target.value }))}
+                onChange={(e) => patchDraft({ memo: e.target.value })}
                 rows={2}
                 className={FIELD}
                 placeholder="依頼全体への連絡事項（配合パターンごとの備考・施工箇所とは別）"
@@ -1207,15 +1241,22 @@ export function MixDesignRequestModal({
           <div className="mt-4 flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => setShowPreview((v) => !v)}
+              onClick={() => (showPreview ? returnToForm() : setShowPreview(true))}
               className="min-h-[44px] rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-bold text-slate-800"
             >
-              {showPreview ? '帳票プレビューを閉じる' : '帳票プレビュー'}
+              {showPreview ? '編集に戻る' : '帳票プレビュー'}
             </button>
             {showPreview ? (
               <button
                 type="button"
-                onClick={() => printMixDesignSheet(printRootRef.current)}
+                onClick={() =>
+                  printMixDesignSheet(printRootRef.current, {
+                    fileTitle: buildMixDesignPdfTitle({
+                      contractorName: draft.contractorName,
+                      projectName: draft.projectName,
+                    }),
+                  })
+                }
                 className="min-h-[44px] rounded-xl bg-slate-900 px-4 text-sm font-bold text-white"
               >
                 印刷 / PDF
@@ -1225,6 +1266,18 @@ export function MixDesignRequestModal({
 
           {showPreview ? (
             <>
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border-2 border-indigo-200 bg-indigo-50 px-3 py-3">
+                <p className="text-xs font-bold text-indigo-900">
+                  プレビュー上の修正は入力内容に反映されます。画面を閉じるのは下の「キャンセル」です。
+                </p>
+                <button
+                  type="button"
+                  onClick={returnToForm}
+                  className="min-h-[44px] rounded-xl border-2 border-indigo-600 bg-white px-4 text-sm font-black text-indigo-800"
+                >
+                  編集に戻る
+                </button>
+              </div>
               <div ref={printRootRef} className="mix-design-print-root">
                 <div className="mix-design-print-preview">
                   <MixDesignRequestPrint
@@ -1254,7 +1307,7 @@ export function MixDesignRequestModal({
         <div className="flex gap-2 border-t border-slate-200 px-4 py-3">
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             className="min-h-[48px] flex-1 rounded-xl border-2 border-slate-300 bg-white text-sm font-black text-slate-700"
           >
             キャンセル
@@ -1268,6 +1321,46 @@ export function MixDesignRequestModal({
             {submitting ? (isEdit ? '保存中…' : '送信中…') : isEdit ? '変更を保存' : '依頼を送信'}
           </button>
         </div>
+        {closePrompt ? (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-900/40 p-4">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="mix-draft-close-title"
+              className="w-full max-w-sm rounded-2xl bg-white p-4 shadow-2xl"
+            >
+              <h3 id="mix-draft-close-title" className="text-base font-black text-slate-900">
+                入力内容が残っています
+              </h3>
+              <p className="mt-2 text-sm font-medium text-slate-600">
+                閉じる前に、この端末の下書きとして残すか選んでください。
+              </p>
+              <div className="mt-4 flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={saveDraftAndClose}
+                  className="min-h-[48px] rounded-xl bg-indigo-600 text-sm font-black text-white"
+                >
+                  下書き保存して閉じる
+                </button>
+                <button
+                  type="button"
+                  onClick={discardDraftAndClose}
+                  className="min-h-[48px] rounded-xl border-2 border-red-200 bg-white text-sm font-black text-red-700"
+                >
+                  破棄して閉じる
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setClosePrompt(false)}
+                  className="min-h-[48px] rounded-xl border-2 border-slate-300 bg-white text-sm font-black text-slate-700"
+                >
+                  編集に戻る
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

@@ -33,8 +33,95 @@ export const MIX_DESIGN_VEHICLE_OPTIONS = [
   { id: 'partial_small', label: '一部小型車' },
 ];
 
-/** 依頼先工場の「おまかせ」。工場マスタのIDにはせず、工場未指定の依頼として保存する */
-export const MIX_DESIGN_FACTORY_OMAKASE_LABEL = '依頼先工場におまかせ';
+/** 依頼先工場の「指定なし」。工場マスタのIDにはせず、工場未指定の依頼として保存する */
+export const MIX_DESIGN_FACTORY_OMAKASE_LABEL = '指定なし';
+
+const MIX_DESIGN_DRAFT_STORAGE_PREFIX = 'concretelink.mixDesignDraft.v1';
+const MIX_DESIGN_FILE_PART_MAX = 30;
+
+/** ログイン中の customer id と、新規作成／依頼編集を分けた localStorage キー */
+export function mixDesignDraftStorageKey(customerId, { mode = 'create', requestId = '' } = {}) {
+  const customer = String(customerId || '').trim() || 'unknown';
+  const request = String(requestId || '').trim();
+  if (mode === 'edit' && request) {
+    return `${MIX_DESIGN_DRAFT_STORAGE_PREFIX}.${customer}.edit.${request}`;
+  }
+  return `${MIX_DESIGN_DRAFT_STORAGE_PREFIX}.${customer}.create`;
+}
+
+export function loadMixDesignDraft(key, storage = defaultDraftStorage()) {
+  if (!key || !storage) return null;
+  try {
+    const raw = storage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || !parsed.draft || typeof parsed.draft !== 'object') return null;
+    return parsed.draft;
+  } catch {
+    return null;
+  }
+}
+
+export function saveMixDesignDraft(key, draft, storage = defaultDraftStorage()) {
+  if (!key || !storage || !draft || typeof draft !== 'object') return false;
+  try {
+    storage.setItem(key, JSON.stringify({ version: 1, savedAt: new Date().toISOString(), draft }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function clearMixDesignDraft(key, storage = defaultDraftStorage()) {
+  if (!key || !storage) return;
+  try {
+    storage.removeItem(key);
+  } catch {
+    /* ignore quota / private-mode failures */
+  }
+}
+
+function defaultDraftStorage() {
+  if (typeof localStorage === 'undefined') return null;
+  return localStorage;
+}
+
+function stableStringify(value) {
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+export function mixDesignDraftsEqual(left, right) {
+  return stableStringify(left) === stableStringify(right);
+}
+
+/** PDF保存ダイアログの初期名（拡張子なし）。使えない文字は除き、空欄は「未入力」にする */
+export function buildMixDesignPdfTitle({ contractorName = '', projectName = '', createdOn = new Date() } = {}) {
+  const contractor = sanitizeMixDesignFilePart(contractorName) || '未入力';
+  const site = sanitizeMixDesignFilePart(projectName) || '未入力';
+  const date = createdOn instanceof Date && !Number.isNaN(createdOn.getTime()) ? createdOn : new Date();
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${contractor}_${site}_${y}${m}${d}`;
+}
+
+export function sanitizeMixDesignFilePart(value, maxLength = MIX_DESIGN_FILE_PART_MAX) {
+  const cleaned = String(value || '')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+  if (!cleaned) return '';
+  return Array.from(cleaned).slice(0, maxLength).join('');
+}
 
 export const MIX_DESIGN_GRID_COLS = [
   'baseStrength',
@@ -473,12 +560,20 @@ export function applySiteAddressParts(draft, allowedAreas = []) {
 }
 
 /** 帳票を body 直下へ複製して印刷する（モーダル内印刷の白紙化対策） */
-export function printMixDesignSheet(rootEl) {
+export function printMixDesignSheet(rootEl, options = {}) {
   if (typeof document === 'undefined' || typeof window === 'undefined') return;
+  const previousTitle = document.title;
+  const nextTitle = String(options?.fileTitle || '').trim();
+  if (nextTitle) document.title = nextTitle;
+  const restoreTitle = () => {
+    if (nextTitle) document.title = previousTitle;
+  };
   const source = rootEl || document.querySelector('.mix-design-print-root');
   const sheet = source?.querySelector?.('.mix-design-print-sheet') || source;
   if (!sheet) {
+    window.addEventListener('afterprint', restoreTitle, { once: true });
     window.print();
+    window.setTimeout(restoreTitle, 1500);
     return;
   }
   document.querySelectorAll('.mix-design-print-portal').forEach((el) => el.remove());
@@ -493,6 +588,7 @@ export function printMixDesignSheet(rootEl) {
     cleaned = true;
     document.body.classList.remove('mix-design-printing');
     holder.remove();
+    restoreTitle();
     window.removeEventListener('afterprint', cleanup);
   };
   window.addEventListener('afterprint', cleanup);

@@ -1,5 +1,14 @@
 import React from 'react';
 import { APP_BRAND_NAME } from '../constants/brand.js';
+import { MixCandidateSelect, candidateOptionLabel } from './MixCandidateSelect.jsx';
+import {
+  AGGREGATE_SIZE_OPTIONS,
+  BASE_STRENGTH_OPTIONS,
+  CORRECTION_VALUE_OPTIONS,
+  SLUMP_OPTIONS,
+  UNIT_WATER_CONTENT_OPTIONS,
+  WATER_CEMENT_RATIO_OPTIONS,
+} from '../utils/mixDesignCalc.js';
 import {
   MIX_DESIGN_VEHICLE_OPTIONS,
   factoryNamesText,
@@ -36,6 +45,25 @@ function submissionLabel(request) {
   if (request?.submissionMethod === 'electronic') return '電子';
   if (request?.submissionMethod === 'original') return '原本';
   return '—';
+}
+
+function PrintCandidate({ label, value, options, onChange, disabled = false }) {
+  return (
+    <>
+      <span className="mix-design-print-print-only">{candidateOptionLabel(options, value)}</span>
+      <div className="mix-design-print-editor-only">
+        <MixCandidateSelect
+          label={label}
+          value={value}
+          options={options}
+          disabled={disabled}
+          onChange={onChange}
+          className="mix-design-print-candidate"
+          inputClassName="mix-design-print-input"
+        />
+      </div>
+    </>
+  );
 }
 
 function PrintField({ editable, value, display, onChange, type = 'text', className = '', placeholder = '—' }) {
@@ -285,7 +313,71 @@ export function MixDesignRequestPrint({
                   {index + 1}
                 </td>
                 <td className="mix-design-print-code" colSpan={3}>
-                  {mixCodeForItem(item) || '—'}
+                  <div>{mixCodeForItem(item) || '—'}</div>
+                  {editable ? (
+                    <div className="mix-design-print-editor-only mix-design-print-candidate-grid">
+                      <MixCandidateSelect
+                        label="設計基準強度"
+                        value={item.baseStrength}
+                        options={BASE_STRENGTH_OPTIONS}
+                        onChange={(value) => onItemChange?.(index, { baseStrength: value })}
+                        className="mix-design-print-candidate"
+                        inputClassName="mix-design-print-input"
+                      />
+                      <MixCandidateSelect
+                        label="スランプ"
+                        value={item.slump}
+                        options={SLUMP_OPTIONS}
+                        onChange={(value) => onItemChange?.(index, { slump: value })}
+                        className="mix-design-print-candidate"
+                        inputClassName="mix-design-print-input"
+                      />
+                      <MixCandidateSelect
+                        label="骨材"
+                        value={item.aggregateSize}
+                        options={AGGREGATE_SIZE_OPTIONS}
+                        onChange={(value) => onItemChange?.(index, { aggregateSize: value })}
+                        className="mix-design-print-candidate"
+                        inputClassName="mix-design-print-input"
+                      />
+                      <label className="mix-design-print-candidate">
+                        <span>セメント</span>
+                        <select
+                          value={item.cementType || 'N'}
+                          onChange={(e) => onItemChange?.(index, { cementType: e.target.value })}
+                          className="mix-design-print-input"
+                        >
+                          <option value="N">N（普通）</option>
+                          <option value="BB">BB（高炉B種）</option>
+                        </select>
+                      </label>
+                      <MixCandidateSelect
+                        label="構造体補正値"
+                        value={item.correctionValue}
+                        options={CORRECTION_VALUE_OPTIONS}
+                        disabled={Boolean(item.correctionIsAuto)}
+                        onChange={(value) => onItemChange?.(index, { correctionValue: value, correctionIsAuto: false })}
+                        className="mix-design-print-candidate"
+                        inputClassName="mix-design-print-input"
+                      />
+                      <label className="mix-design-print-candidate mix-design-print-candidate-check">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(item.correctionIsAuto)}
+                          onChange={(e) => onItemChange?.(index, { correctionIsAuto: e.target.checked })}
+                        />
+                        <span className="whitespace-nowrap">補正値を自動計算</span>
+                      </label>
+                      <label className="mix-design-print-candidate mix-design-print-candidate-check">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(item.aeAdmixture)}
+                          onChange={(e) => onItemChange?.(index, { aeAdmixture: e.target.checked })}
+                        />
+                        <span className="whitespace-nowrap">高性能AE減水剤あり</span>
+                      </label>
+                    </div>
+                  ) : null}
                 </td>
                 <td className="mix-design-print-item-memo" colSpan={2}>
                   {editable ? (
@@ -304,23 +396,29 @@ export function MixDesignRequestPrint({
               <tr className="mix-design-print-item-sub">
                 <td className="mix-design-print-sub-cell">
                   <span className="mix-design-print-sub-label">W/C</span>
-                  <PrintField
-                    editable={editable}
-                    type="number"
-                    value={item.waterCementRatio}
-                    display={item.waterCementRatio != null && item.waterCementRatio !== '' ? item.waterCementRatio : '—'}
-                    onChange={(v) => onItemChange?.(index, { waterCementRatio: v })}
-                  />
+                  {editable ? (
+                    <PrintCandidate
+                      label=""
+                      value={item.waterCementRatio}
+                      options={WATER_CEMENT_RATIO_OPTIONS}
+                      onChange={(v) => onItemChange?.(index, { waterCementRatio: v })}
+                    />
+                  ) : (
+                    candidateOptionLabel(WATER_CEMENT_RATIO_OPTIONS, item.waterCementRatio)
+                  )}
                 </td>
                 <td className="mix-design-print-sub-cell">
                   <span className="mix-design-print-sub-label">単位水量</span>
-                  <PrintField
-                    editable={editable}
-                    type="number"
-                    value={item.unitWaterContent}
-                    display={item.unitWaterContent != null && item.unitWaterContent !== '' ? item.unitWaterContent : '—'}
-                    onChange={(v) => onItemChange?.(index, { unitWaterContent: v })}
-                  />
+                  {editable ? (
+                    <PrintCandidate
+                      label=""
+                      value={item.unitWaterContent}
+                      options={UNIT_WATER_CONTENT_OPTIONS}
+                      onChange={(v) => onItemChange?.(index, { unitWaterContent: v })}
+                    />
+                  ) : (
+                    candidateOptionLabel(UNIT_WATER_CONTENT_OPTIONS, item.unitWaterContent)
+                  )}
                 </td>
                 <td className="mix-design-print-sub-cell">
                   <span className="mix-design-print-sub-label">数量</span>

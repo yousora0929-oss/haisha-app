@@ -8,6 +8,7 @@ import {
   formatMixDesignChangeLine,
   formatMixDesignFactoryNames,
   MIX_DESIGN_FACTORY_OMAKASE_LABEL,
+  buildMixDesignPdfTitle,
   mixDesignLastChangedAt,
   mixDesignPrintPropsFromDb,
   mixDesignStatusLabel,
@@ -209,7 +210,12 @@ export function MixDesignRequestHistorySection({
   };
 
   const runPrint = () => {
-    printMixDesignSheet(printRootRef.current);
+    printMixDesignSheet(printRootRef.current, {
+      fileTitle: buildMixDesignPdfTitle({
+        contractorName: printBundle?.header?.contractorName,
+        projectName: printBundle?.header?.projectName,
+      }),
+    });
   };
 
   const selectedProject =

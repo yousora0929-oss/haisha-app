@@ -10,6 +10,12 @@ import {
   duplicateMixDesignItem,
   factoryNamesText,
   formatRequesterDisplay,
+  buildMixDesignPdfTitle,
+  clearMixDesignDraft,
+  loadMixDesignDraft,
+  mixDesignDraftStorageKey,
+  mixDesignDraftsEqual,
+  saveMixDesignDraft,
   mixCodeForItem,
   mixCodeLinesForPrint,
   mixDesignItemFromDbRow,
@@ -358,7 +364,7 @@ describe('mixDesignPrintPropsFromDb', () => {
       null,
     );
     expect(props.header.shipmentStartPeriod).toBe('10月上旬');
-    expect(props.header.factoryNames).toBe('依頼先工場におまかせ');
+    expect(props.header.factoryNames).toBe('指定なし');
   });
 });
 
@@ -692,5 +698,65 @@ describe('formatMixDesignChangeLine status', () => {
         new: 'completed',
       }),
     ).toBe('ステータス: 作成中 → 完成');
+  });
+});
+
+function memoryStorage() {
+  const map = new Map();
+  return {
+    getItem: (key) => (map.has(key) ? map.get(key) : null),
+    setItem: (key, value) => map.set(key, String(value)),
+    removeItem: (key) => map.delete(key),
+  };
+}
+
+describe('mix design draft storage', () => {
+  it('keeps create and edit drafts in separate keys', () => {
+    const storage = memoryStorage();
+    const createKey = mixDesignDraftStorageKey('customer-1', { mode: 'create' });
+    const editKey = mixDesignDraftStorageKey('customer-1', { mode: 'edit', requestId: 'req-9' });
+    const otherCustomer = mixDesignDraftStorageKey('customer-2', { mode: 'create' });
+    expect(createKey).not.toBe(editKey);
+    expect(createKey).not.toBe(otherCustomer);
+    saveMixDesignDraft(createKey, { projectName: '新規現場' }, storage);
+    saveMixDesignDraft(editKey, { projectName: '既存依頼' }, storage);
+    expect(loadMixDesignDraft(createKey, storage).projectName).toBe('新規現場');
+    expect(loadMixDesignDraft(editKey, storage).projectName).toBe('既存依頼');
+    clearMixDesignDraft(createKey, storage);
+    expect(loadMixDesignDraft(createKey, storage)).toBeNull();
+    expect(loadMixDesignDraft(editKey, storage).projectName).toBe('既存依頼');
+  });
+
+  it('treats the same draft content as equal regardless of key order', () => {
+    expect(mixDesignDraftsEqual({ b: 1, a: 'x' }, { a: 'x', b: 1 })).toBe(true);
+    expect(mixDesignDraftsEqual({ a: 'x' }, { a: 'y' })).toBe(false);
+  });
+});
+
+describe('buildMixDesignPdfTitle', () => {
+  const createdOn = new Date(2026, 9, 4);
+
+  it('joins contractor, site, and the creation date', () => {
+    expect(
+      buildMixDesignPdfTitle({
+        contractorName: '株式会社大分生コンクリート',
+        projectName: '令和8年度棚林川災害復旧工事',
+        createdOn,
+      }),
+    ).toBe('株式会社大分生コンクリート_令和8年度棚林川災害復旧工事_20261004');
+  });
+
+  it('replaces illegal characters, drops empty parts into 未入力, and truncates long names', () => {
+    expect(
+      buildMixDesignPdfTitle({
+        contractorName: '業者/名:A',
+        projectName: '',
+        createdOn,
+      }),
+    ).toBe('業者_名_A_未入力_20261004');
+    const longName = 'あ'.repeat(40);
+    const title = buildMixDesignPdfTitle({ contractorName: longName, projectName: '現場', createdOn });
+    expect(title.startsWith(`${'あ'.repeat(30)}_現場_20261004`)).toBe(true);
+    expect(title).not.toContain('__');
   });
 });
