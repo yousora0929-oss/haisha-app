@@ -6152,43 +6152,61 @@ function isMissingRpcSignatureError(error) {
 
 function mapReservationGroupFactoryResponseRow(row) {
   if (!row || typeof row !== 'object') return null;
-  const reservation_group_id = String(
-    row.reservation_group_id || row.group_id || row.groupId || '',
-  ).trim();
-  const factory_id = String(row.factory_id || row.factory_site_id || row.factoryId || '').trim();
+  const reservation_group_id = String(row.reservation_group_id || '').trim();
+  const factory_id = String(row.factory_id || '').trim();
   if (!reservation_group_id) return null;
   return {
     reservation_group_id,
     factory_id,
     available: row.available === true,
-    created_at: row.created_at || row.responded_at || null,
+    responded_at: row.responded_at != null ? String(row.responded_at) : null,
   };
+}
+
+const RESERVATION_GROUP_FACTORY_RESPONSE_SELECT =
+  'reservation_group_id, factory_id, available, responded_at';
+const reservationGroupFactoryResponseClientErrorFactories = new Set();
+let reservationGroupFactoryResponseClientErrorLogged = false;
+
+function isReservationGroupFactoryResponseClientError(error) {
+  const status = Number(error?.status ?? error?.statusCode ?? error?.status_code);
+  if (Number.isFinite(status) && status >= 400 && status < 500) return true;
+  const code = String(error?.code || '').trim();
+  if (
+    code === '42703' ||
+    code === '42P01' ||
+    code === 'PGRST100' ||
+    code === 'PGRST102' ||
+    code === 'PGRST103' ||
+    code === 'PGRST204' ||
+    code === 'PGRST205'
+  ) {
+    return true;
+  }
+  const message = String(error?.message || '').toLowerCase();
+  return message.includes('does not exist') || message.includes('could not find');
 }
 
 export async function fetchReservationGroupFactoryResponses(factoryId) {
   const fid = sanitizeRefId(factoryId);
   if (!fid) return [];
-  const attempts = [
-    { select: 'reservation_group_id, factory_id, available, created_at', column: 'factory_id' },
-    { select: 'group_id, factory_id, available, created_at', column: 'factory_id' },
-    { select: 'reservation_group_id, factory_site_id, available, created_at', column: 'factory_site_id' },
-  ];
-  let lastError = null;
-  for (const attempt of attempts) {
-    const { data, error } = await supabase
-      .from('reservation_group_factory_responses')
-      .select(attempt.select)
-      .eq(attempt.column, fid);
-    if (!error) {
-      return (data || []).map(mapReservationGroupFactoryResponseRow).filter(Boolean);
+  if (reservationGroupFactoryResponseClientErrorFactories.has(fid)) return [];
+  const { data, error } = await supabase
+    .from('reservation_group_factory_responses')
+    .select(RESERVATION_GROUP_FACTORY_RESPONSE_SELECT)
+    .eq('factory_id', fid);
+  if (!error) {
+    return (data || []).map(mapReservationGroupFactoryResponseRow).filter(Boolean);
+  }
+  if (isReservationGroupFactoryResponseClientError(error)) {
+    reservationGroupFactoryResponseClientErrorFactories.add(fid);
+    if (!reservationGroupFactoryResponseClientErrorLogged) {
+      reservationGroupFactoryResponseClientErrorLogged = true;
+      console.warn('[fetchReservationGroupFactoryResponses] skipped', error);
     }
-    lastError = error;
-    if (!isMissingRelationOrColumnError(error)) break;
+    return [];
   }
-  if (lastError) {
-    console.warn('[fetchReservationGroupFactoryResponses] skipped', lastError);
-  }
-  return [];
+  throw error;
 }
 
 /**
