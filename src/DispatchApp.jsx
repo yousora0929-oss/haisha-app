@@ -1892,6 +1892,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       onEditOrder = null,
       onRequestChange = null,
       isAgentForeignViewOrder: isAgentForeignViewOrderProp = null,
+      showOrderContractorName = false,
     }) {
       const isAgentForeignViewOrder =
         typeof isAgentForeignViewOrderProp === 'function'
@@ -1990,7 +1991,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   <div className="mt-1 space-y-0.5">
                     {list.slice(0, 3).map((order) => {
                       const party = orderPartyInfo(order);
-                      return <span key={order.id} className={'block truncate rounded-md px-1.5 py-0.5 text-[10px] font-black ' + statusClass(order)}>{party.site || '現場未設定'}</span>;
+                      const contractorName = showOrderContractorName
+                        ? String(order?.contractorName ?? '').trim()
+                        : '';
+                      return (
+                        <span key={order.id} className="block min-w-0">
+                          <span className={'block truncate rounded-md px-1.5 py-0.5 text-[10px] font-black ' + statusClass(order)}>{party.site || '現場未設定'}</span>
+                          {contractorName ? (
+                            <span className="block truncate px-1.5 text-[10px] font-bold text-slate-600">{contractorName}</span>
+                          ) : null}
+                        </span>
+                      );
                     })}
                     {list.length > 3 ? <span className="block text-[10px] font-black text-indigo-700">+{list.length - 3}件</span> : null}
                   </div>
@@ -2015,6 +2026,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     const foreignParty = isForeign
                       ? resolveAgentForeignOrderPartyLabels(order)
                       : null;
+                    const contractorName = String(order?.contractorName ?? '').trim();
+                    const showContractorLine =
+                      showOrderContractorName &&
+                      Boolean(contractorName) &&
+                      !foreignParty?.contractorDisplay;
                     const canEditPending =
                       !isForeign &&
                       isPreAcceptOrderEditable(order) &&
@@ -2066,6 +2082,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         </div>
                         {showSite ? (
                           <p className="mt-2 text-sm font-black text-slate-900">{party.site || '現場未設定'}</p>
+                        ) : null}
+                        {showContractorLine ? (
+                          <p className="mt-0.5 min-w-0 truncate text-xs font-bold text-slate-600">{contractorName}</p>
                         ) : null}
                         <p className="mt-1 text-xs font-bold text-slate-500">{order.timePointLabel || order.timeSlotLabel || '時刻未設定'} / {order.confirmedQuantityM3 ?? order.quantityM3 ?? '—'}m³ / {order.confirmedMixText || order.mixText || '配合未入力'}</p>
                         {foreignParty ? (
@@ -7398,6 +7417,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 projectById={projectById}
                 customerById={customerById}
                 isAgentForeignViewOrder={isAgentForeignViewOrder}
+                showOrderContractorName={isAgentOrCooperative && !isGuestSiteOrder}
                 onEditOrder={handleOpenCustomerOrderEdit}
                 onRequestChange={handleOpenCustomerChangeRequest}
                 onMonthChange={(nextMonth) => {
