@@ -38,6 +38,10 @@ import { mapMixDesignFactoryLinks } from './utils/mixDesignAccept.js';
 import { buildAgentOrganizationSyncPatch } from './utils/orderAgentOrganization.js';
 import { resolveOrderParties } from './utils/orderPartyInfo.js';
 import {
+  agentContractorLinkScopeForRow,
+  contractorIdsForAgentLinks,
+} from './utils/agentContractorLinks.js';
+import {
   formatChangeRequestItemLine,
   formatChangeRequestResolveChatBody,
   filterPatchToChangeRequestKeys,
@@ -5458,8 +5462,80 @@ export async function updateOrgMember(
   if (error) throw error;
 }
 
+/**
+ * scope=company のリンクが指す代表窓口行を消す前に、同じ組織の別行へ付け替える。
+ * 付け替え先が無いときは何もしない（削除時の cascade でリンクも消える）。
+ */
+async function reanchorCompanyScopeAgentLinks(customerId) {
+  const id = String(customerId || '').trim();
+  if (!id || !supabase?.from) return;
+
+  const { data: row, error: rowError } = await supabase
+    .from('customers')
+    .select('id, organization_id')
+    .eq('id', id)
+    .maybeSingle();
+  if (rowError) throw rowError;
+  const orgId = String(row?.organization_id || '').trim();
+  if (!orgId) return;
+
+  const { data: links, error: linkError } = await supabase
+    .from('agent_contractor_links')
+    .select('id, agent_customer_id')
+    .eq('contractor_customer_id', id)
+    .eq('scope', 'company');
+  if (linkError) throw linkError;
+  if (!links?.length) return;
+
+  const { data: siblings, error: siblingError } = await supabase
+    .from('customers')
+    .select('id, manager_name, phone_number, created_at')
+    .eq('organization_id', orgId)
+    .neq('id', id)
+    .order('created_at', { ascending: true })
+    .order('id', { ascending: true });
+  if (siblingError) throw siblingError;
+  const next = (siblings || [])
+    .slice()
+    .sort((a, b) => {
+      const aDesk =
+        String(a?.manager_name ?? '').trim() === '' && String(a?.phone_number ?? '').trim() === ''
+          ? 0
+          : 1;
+      const bDesk =
+        String(b?.manager_name ?? '').trim() === '' && String(b?.phone_number ?? '').trim() === ''
+          ? 0
+          : 1;
+      return aDesk - bDesk;
+    })[0];
+  const nextId = String(next?.id || '').trim();
+  if (!nextId) return;
+
+  for (const link of links) {
+    const { error: updateError } = await supabase
+      .from('agent_contractor_links')
+      .update({ contractor_customer_id: nextId })
+      .eq('id', link.id);
+    if (!updateError) continue;
+    if (updateError.code !== '23505') throw updateError;
+    const { error: dropError } = await supabase
+      .from('agent_contractor_links')
+      .delete()
+      .eq('agent_customer_id', link.agent_customer_id)
+      .eq('contractor_customer_id', nextId)
+      .neq('id', link.id);
+    if (dropError) throw dropError;
+    const { error: retryError } = await supabase
+      .from('agent_contractor_links')
+      .update({ contractor_customer_id: nextId })
+      .eq('id', link.id);
+    if (retryError) throw retryError;
+  }
+}
+
 /** 担当者を削除 */
 export async function deleteOrgMember(id) {
+  await reanchorCompanyScopeAgentLinks(id);
   const { error } = await supabase.from('customers').delete().eq('id', id);
   if (error) throw error;
 }
@@ -5474,7 +5550,9 @@ export async function fetchAgentContractorLinksByAgentIds(agentCustomerIds) {
     (chunk) =>
       supabase
         .from('agent_contractor_links')
-        .select('id, agent_customer_id, contractor_customer_id, created_at')
+        .select(
+          'id, agent_customer_id, contractor_customer_id, scope, created_at, contractor:customers!agent_contractor_links_contractor_customer_id_fkey(organization_id)',
+        )
         .in('agent_customer_id', chunk),
     ids,
   );
@@ -5482,6 +5560,9 @@ export async function fetchAgentContractorLinksByAgentIds(agentCustomerIds) {
     id: String(row.id),
     agent_customer_id: String(row.agent_customer_id),
     contractor_customer_id: String(row.contractor_customer_id),
+    contractor_organization_id:
+      row?.contractor?.organization_id != null ? String(row.contractor.organization_id) : '',
+    scope: row.scope === 'company' ? 'company' : 'person',
     created_at: row.created_at,
   }));
 }
@@ -5492,13 +5573,14 @@ export async function insertAgentContractorLinks(links) {
     .map((link) => ({
       agent_customer_id: String(link?.agent_customer_id || '').trim(),
       contractor_customer_id: String(link?.contractor_customer_id || '').trim(),
+      scope: link?.scope === 'company' ? 'company' : 'person',
     }))
     .filter((r) => r.agent_customer_id && r.contractor_customer_id);
   if (!rows.length || !supabase?.from) return [];
   const { data, error } = await supabase
     .from('agent_contractor_links')
     .insert(rows)
-    .select('id, agent_customer_id, contractor_customer_id');
+    .select('id, agent_customer_id, contractor_customer_id, scope');
   if (error) throw error;
   return data || [];
 }
@@ -5521,40 +5603,81 @@ export async function deleteAgentContractorLinks(agentCustomerId, contractorCust
   }
 }
 
+async function loadContractorRowsForLinkScope(contractorIds, contractors) {
+  const byId = new Map();
+  for (const row of contractors || []) {
+    const id = String(row?.id || '').trim();
+    if (id) byId.set(id, row);
+  }
+  const missing = (contractorIds || []).filter((id) => !byId.has(id));
+  if (!missing.length || !supabase?.from) return byId;
+  const data = await fetchRowsByIdsInChunks(
+    (chunk) =>
+      supabase
+        .from('customers')
+        .select('id, organization_id, manager_name, phone_number, role')
+        .in('id', chunk),
+    missing,
+  );
+  for (const row of data || []) {
+    const id = String(row?.id || '').trim();
+    if (id) byId.set(id, row);
+  }
+  return byId;
+}
+
 /**
  * 取引業者リンクを差分同期。
+ * 代表窓口行（担当者名・電話が空）は scope=company。それ以外は person。
+ * company と同じ組織の個別行は新たにリンクしない。
  * @returns {{ inserted: number, deleted: number }}
  */
-export async function syncAgentContractorLinks(agentCustomerId, nextContractorIds) {
+export async function syncAgentContractorLinks(agentCustomerId, nextContractorIds, contractors = []) {
   const agentId = String(agentCustomerId || '').trim();
   if (!agentId) throw new Error('agent_customer_id が必要です');
-  const nextIds = [
+  const requestedIds = [
     ...new Set((nextContractorIds || []).map((id) => String(id || '').trim()).filter(Boolean)),
   ];
+  const byId = await loadContractorRowsForLinkScope(requestedIds, contractors);
+  const nextIds = contractorIdsForAgentLinks(requestedIds, [...byId.values()]);
+  const scopeFor = (contractorId) =>
+    agentContractorLinkScopeForRow(byId.get(String(contractorId)));
   const existing = await fetchAgentContractorLinksByAgentIds([agentId]);
-  const existingIds = new Set(existing.map((r) => r.contractor_customer_id));
+  const existingByContractor = new Map(existing.map((row) => [row.contractor_customer_id, row]));
   const nextSet = new Set(nextIds);
-  const toInsert = nextIds.filter((id) => !existingIds.has(id));
-  const toDelete = [...existingIds].filter((id) => !nextSet.has(id));
+  const toInsert = nextIds.filter((id) => !existingByContractor.has(id));
+  const toDelete = [...existingByContractor.keys()].filter((id) => !nextSet.has(id));
+  const toUpdateScope = nextIds.filter((id) => {
+    const row = existingByContractor.get(id);
+    return row && row.scope !== scopeFor(id);
+  });
   if (toInsert.length) {
+    const insertRows = toInsert.map((contractor_customer_id) => ({
+      agent_customer_id: agentId,
+      contractor_customer_id,
+      scope: scopeFor(contractor_customer_id),
+    }));
     try {
-      await insertAgentContractorLinks(
-        toInsert.map((contractor_customer_id) => ({
-          agent_customer_id: agentId,
-          contractor_customer_id,
-        })),
-      );
+      await insertAgentContractorLinks(insertRows);
     } catch (err) {
       // unique 制約（23505）: バッチ失敗時は1件ずつ入れて既存分をスキップ
       if (err?.code !== '23505') throw err;
-      for (const contractor_customer_id of toInsert) {
+      for (const row of insertRows) {
         try {
-          await insertAgentContractorLinks([{ agent_customer_id: agentId, contractor_customer_id }]);
+          await insertAgentContractorLinks([row]);
         } catch (oneErr) {
           if (oneErr?.code !== '23505') throw oneErr;
         }
       }
     }
+  }
+  for (const contractorId of toUpdateScope) {
+    const row = existingByContractor.get(contractorId);
+    const { error } = await supabase
+      .from('agent_contractor_links')
+      .update({ scope: scopeFor(contractorId) })
+      .eq('id', row.id);
+    if (error) throw error;
   }
   if (toDelete.length) {
     await deleteAgentContractorLinks(agentId, toDelete);
@@ -5916,6 +6039,7 @@ export async function loginCustomer(phoneNumber, password) {
 export async function deleteCustomer(id) {
   const customerId = sanitizeRefId(id);
   if (!customerId) throw new Error('業者IDが必要です');
+  await reanchorCompanyScopeAgentLinks(customerId);
   const { error } = await supabase.from('customers').delete().eq('id', customerId);
   if (error) throw error;
 }

@@ -61,6 +61,10 @@ import { ReservationGroupStatusBadge } from './components/ReservationGroupMonito
 import { AdminScheduleImportSection } from './components/AdminScheduleImportSection.jsx';
 import { customerSuggestTexts, organizationSuggestTexts, projectSuggestTexts, sortCustomersByUsageFrequency } from './utils/masterSuggest.js';
 import { dedupeCustomersByCompany } from './utils/dedupeCustomersByCompany.js';
+import {
+  describeAgentContractorLinks,
+  expandContractorIdsForAgentLinks,
+} from './utils/agentContractorLinks.js';
 import { resolveEffectiveContractorCustomerId } from './utils/resolveEffectiveContractorCustomerId.js';
 import {
   buildDispatchOrderForDate,
@@ -2292,7 +2296,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [contractorSearchText, setContractorSearchText] = useState('');
       const [tradingAgentCustomerId, setTradingAgentCustomerId] = useState('');
       const [tradingAgentSearchText, setTradingAgentSearchText] = useState('');
-      const [linkedContractorIds, setLinkedContractorIds] = useState([]);
+      const [agentContractorLinks, setAgentContractorLinks] = useState([]);
+      const linkedContractorIds = useMemo(
+        () => expandContractorIdsForAgentLinks(agentContractorLinks, customers),
+        [agentContractorLinks, customers],
+      );
       const [contractorUsageCounts, setContractorUsageCounts] = useState({});
       const [tradingAgentUsageCounts, setTradingAgentUsageCounts] = useState({});
       const [representativeOverviewLinks, setRepresentativeOverviewLinks] = useState([]);
@@ -2581,11 +2589,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [customerOrderTab, currentCustomer?.is_representative, representativeOrgAgentIdsKey]);
 
       const representativeOverviewRows = useMemo(() => {
-        const contractorById = new Map(
-          (customers || [])
-            .filter((c) => c?.id)
-            .map((c) => [String(c.id), c]),
-        );
         const projectsByContractor = new Map();
         for (const project of projects || []) {
           const cid = String(project?.customer_id || '').trim();
@@ -2595,21 +2598,27 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         }
         return representativeOrgAgents.map((agent) => {
           const agentId = String(agent.id || '').trim();
-          const linkedContractorIdsForAgent = [
-            ...new Set(
-              (representativeOverviewLinks || [])
-                .filter((l) => String(l.agent_customer_id || '').trim() === agentId)
-                .map((l) => String(l.contractor_customer_id || '').trim())
-                .filter(Boolean),
-            ),
-          ];
-          const contractors = linkedContractorIdsForAgent
-            .map((id) => contractorById.get(id))
-            .filter(Boolean)
-            .map((contractor) => ({
-              contractor,
-              projects: projectsByContractor.get(String(contractor.id)) || [],
-            }));
+          const linksForAgent = (representativeOverviewLinks || []).filter(
+            (link) => String(link.agent_customer_id || '').trim() === agentId,
+          );
+          const contractors = describeAgentContractorLinks(linksForAgent, customers).map((row) => {
+            const projectIds = new Set();
+            const contractorProjects = [];
+            for (const memberId of row.memberIds) {
+              for (const project of projectsByContractor.get(memberId) || []) {
+                const projectId = String(project?.id || '');
+                if (projectId && projectIds.has(projectId)) continue;
+                if (projectId) projectIds.add(projectId);
+                contractorProjects.push(project);
+              }
+            }
+            return {
+              contractor: row.contractor,
+              projects: contractorProjects,
+              scope: row.scope,
+              included: row.included,
+            };
+          });
           return { agent, contractors };
         });
       }, [representativeOrgAgents, representativeOverviewLinks, customers, projects]);
@@ -2644,24 +2653,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         let cancelled = false;
         const agentId = contractorLinkAgentId;
         if (!agentId) {
-          setLinkedContractorIds([]);
+          setAgentContractorLinks([]);
           return undefined;
         }
         void (async () => {
           try {
             const links = await db.fetchAgentContractorLinksByAgentIds([agentId]);
             if (cancelled) return;
-            const ids = [
-              ...new Set(
-                (links || [])
-                  .map((l) => String(l.contractor_customer_id || '').trim())
-                  .filter(Boolean),
-              ),
-            ];
-            setLinkedContractorIds(ids);
+            setAgentContractorLinks(Array.isArray(links) ? links : []);
           } catch (err) {
             console.warn('[DispatchApp] agent_contractor_links fetch failed', err);
-            if (!cancelled) setLinkedContractorIds([]);
+            if (!cancelled) setAgentContractorLinks([]);
           }
         })();
         return () => {
@@ -4618,7 +4620,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setContractorSearchText('');
         setTradingAgentCustomerId('');
         setTradingAgentSearchText('');
-        setLinkedContractorIds([]);
+        setAgentContractorLinks([]);
         setCustomers([]);
         setSelectedProjectId('');
         setPreferredFactoryId('');
@@ -5231,7 +5233,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setVehicleType('large');
         setTradingAgentCustomerId('');
         setTradingAgentSearchText('');
-        setLinkedContractorIds([]);
+        setAgentContractorLinks([]);
         setRepeatDraftBanner(false);
         setRepeatMapAnnotations(null);
         setRepeatOverrideMapImageUrl('');
@@ -7467,13 +7469,35 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                             <p className="mt-2 text-xs font-bold text-slate-500">取引業者の登録はありません</p>
                           ) : (
                             <ul className="mt-2 grid gap-2">
-                              {contractors.map(({ contractor, projects: contractorProjects }) => (
+                              {contractors.map(({ contractor, projects: contractorProjects, scope, included }) => (
                                 <li
                                   key={`${agent.id}-${contractor.id}`}
-                                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900"
+                                  className={
+                                    'rounded-lg border px-3 py-2 ' +
+                                    (included
+                                      ? 'border-slate-200 bg-slate-100 text-slate-400 dark:border-slate-700 dark:bg-slate-800/40'
+                                      : 'border-slate-200 bg-white dark:border-slate-600 dark:bg-slate-900')
+                                  }
                                 >
-                                  <p className="text-xs font-black text-indigo-700 dark:text-indigo-300">
+                                  <p
+                                    className={
+                                      'text-xs font-black ' +
+                                      (included
+                                        ? 'text-slate-400'
+                                        : 'text-indigo-700 dark:text-indigo-300')
+                                    }
+                                  >
                                     取引業者: {contractor.company_name || contractor.name || '—'}
+                                    {scope === 'company' && !included ? (
+                                      <span className="ml-1.5 inline-flex rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-800">
+                                        全担当者
+                                      </span>
+                                    ) : null}
+                                    {included ? (
+                                      <span className="ml-1.5 text-[10px] font-bold text-slate-400">
+                                        全担当者に含まれる
+                                      </span>
+                                    ) : null}
                                   </p>
                                   {contractorProjects.length === 0 ? (
                                     <p className="mt-1 text-[11px] font-bold text-slate-500">紐づく物件はありません</p>

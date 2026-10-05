@@ -4,6 +4,11 @@ import { downloadOrgMembersExportCsv } from '../utils/adminCsvImport.js';
 import { generateInitialMemberPassword } from '../utils/generatePassword.js';
 import { formatPhoneNumberJP } from '../utils/phoneFormat.js';
 import { normalizeSuggestSearchText } from '../utils/normalizeSuggestSearchText.js';
+import {
+  agentContractorLinkScopeForRow,
+  contractorIdsForAgentLinks,
+  isCompanyScopeContractorRow,
+} from '../utils/agentContractorLinks.js';
 
 const emptyMember = () => ({
   companyName: '',
@@ -26,11 +31,14 @@ const newMemberWithGeneratedPassword = () => ({
 function formatContractorLabel(customer) {
   const company = String(customer?.company_name || customer?.name || '').trim();
   const manager = String(customer?.manager_name || '').trim();
+  if (isCompanyScopeContractorRow(customer)) {
+    return company ? `${company}（代表窓口）＝全担当者` : '（代表窓口）＝全担当者';
+  }
   if (company && manager) return `${company}（${manager}）`;
   return company || manager || '—';
 }
 
-function ContractorLinksChecklist({
+export function ContractorLinksChecklist({
   contractors,
   selectedIds,
   onToggle,
@@ -38,7 +46,17 @@ function ContractorLinksChecklist({
   onFilterChange,
   inputClass,
 }) {
-  const selectedCount = selectedIds.size;
+  const selectedCount = contractorIdsForAgentLinks([...selectedIds], contractors).length;
+  const coveredOrgIds = useMemo(() => {
+    const orgs = new Set();
+    for (const row of contractors || []) {
+      if (!selectedIds.has(String(row?.id || ''))) continue;
+      if (agentContractorLinkScopeForRow(row) !== 'company') continue;
+      const orgId = String(row?.organization_id || '').trim();
+      if (orgId) orgs.add(orgId);
+    }
+    return orgs;
+  }, [contractors, selectedIds]);
   const filtered = useMemo(() => {
     const q = normalizeSuggestSearchText(filterText);
     const list = Array.isArray(contractors) ? contractors : [];
@@ -68,17 +86,44 @@ function ContractorLinksChecklist({
           filtered.map((c) => {
             const id = String(c.id);
             const checked = selectedIds.has(id);
+            const companyScope = agentContractorLinkScopeForRow(c) === 'company';
+            const orgId = String(c.organization_id || '').trim();
+            const covered = !companyScope && Boolean(orgId) && coveredOrgIds.has(orgId);
             const label = formatContractorLabel(c);
             return (
               <li key={id}>
-                <label className="flex cursor-pointer items-start gap-2 rounded px-1 py-1 hover:bg-white">
+                <label
+                  className={
+                    'flex items-start gap-2 rounded px-1 py-1 ' +
+                    (covered ? 'cursor-default' : 'cursor-pointer hover:bg-white')
+                  }
+                >
                   <input
                     type="checkbox"
-                    checked={checked}
-                    onChange={() => onToggle(id)}
-                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600"
+                    checked={covered || checked}
+                    disabled={covered}
+                    onChange={() => {
+                      if (!covered) onToggle(id);
+                    }}
+                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 disabled:opacity-60"
                   />
-                  <span className="text-xs font-medium text-slate-800">{label}</span>
+                  <span
+                    className={
+                      'min-w-0 text-xs font-medium ' + (covered ? 'text-slate-400' : 'text-slate-800')
+                    }
+                  >
+                    <span className="break-all">{label}</span>
+                    {companyScope && checked ? (
+                      <span className="ml-1.5 inline-flex rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-800">
+                        全担当者
+                      </span>
+                    ) : null}
+                    {covered ? (
+                      <span className="ml-1.5 text-[10px] font-bold text-slate-400">
+                        全担当者に含まれる
+                      </span>
+                    ) : null}
+                  </span>
                 </label>
               </li>
             );
@@ -329,11 +374,25 @@ export function AdminOrgSection({ orgType, label }) {
     if (!id) return;
     setSelectedLinkContractorIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+        return next;
+      }
+      next.add(id);
+      const row = (contractors || []).find((c) => String(c.id) === id);
+      if (row && agentContractorLinkScopeForRow(row) === 'company') {
+        const orgId = String(row.organization_id || '').trim();
+        if (orgId) {
+          for (const other of contractors) {
+            if (String(other.id) === id) continue;
+            if (String(other.organization_id || '').trim() !== orgId) continue;
+            if (agentContractorLinkScopeForRow(other) !== 'company') next.delete(String(other.id));
+          }
+        }
+      }
       return next;
     });
-  }, []);
+  }, [contractors]);
 
   const resetMemberLinkState = useCallback(() => {
     setSelectedLinkContractorIds(new Set());
@@ -482,10 +541,14 @@ export function AdminOrgSection({ orgType, label }) {
       let linkError = null;
       if (isAgentOrg && selectedLinkContractorIds.size > 0) {
         try {
-          await db.syncAgentContractorLinks(created.id, [...selectedLinkContractorIds]);
+          const persistedIds = contractorIdsForAgentLinks(
+            [...selectedLinkContractorIds],
+            contractors,
+          );
+          await db.syncAgentContractorLinks(created.id, persistedIds, contractors);
           setLinkCountByAgentId((prev) => ({
             ...prev,
-            [String(created.id)]: selectedLinkContractorIds.size,
+            [String(created.id)]: persistedIds.length,
           }));
         } catch (e) {
           linkError = e;
@@ -552,10 +615,11 @@ export function AdminOrgSection({ orgType, label }) {
           nextIds.length !== prevIds.size || nextIds.some((id) => !prevIds.has(id));
         if (changed) {
           try {
-            await db.syncAgentContractorLinks(editingMember.id, nextIds);
+            const persistedIds = contractorIdsForAgentLinks(nextIds, contractors);
+            await db.syncAgentContractorLinks(editingMember.id, persistedIds, contractors);
             setLinkCountByAgentId((prev) => ({
               ...prev,
-              [String(editingMember.id)]: nextIds.length,
+              [String(editingMember.id)]: persistedIds.length,
             }));
           } catch (e) {
             linkError = e;
