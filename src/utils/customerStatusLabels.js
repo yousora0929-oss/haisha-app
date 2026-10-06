@@ -1,6 +1,12 @@
 /** 顧客画面・顧客向け通知用の表示文言（DB ステータス値は変更しない） */
 
-import { getVisibleFactoryIdsForOrder, isUserSpecifiedPreferredFactory } from './escalationUtils.js';
+import {
+  getVisibleFactoryIdsForOrder,
+  isFullCompanyRejectionForCustomer,
+  isUserSpecifiedPreferredFactory,
+  needsPreferredCustomerChoice,
+} from './escalationUtils.js';
+import { resolveOrderDisplayStatus } from './orderWorkflow.js';
 
 /** 第一希望工場を指定したときのステータス */
 export const CUSTOMER_ORDER_DISPATCH_WAITING_LABEL = '配車待ち';
@@ -72,6 +78,31 @@ export function customerScheduleAutoRejectChatBody(reasonLine, factoryName) {
 /**
  * 顧客ダッシュボード通知（全社対応不可）
  */
+/**
+ * 進行中カードのステータスバッジと同じ主ラベル。
+ * 工場名など副表示は含まない。
+ */
+export function resolveInProgressStatusBadgeLabel(order, escalationCtx = null) {
+  const st = resolveOrderDisplayStatus(order);
+  const needsChoice = needsPreferredCustomerChoice(order);
+  const isFullReject = isFullCompanyRejectionForCustomer(order, escalationCtx || {});
+  const dispatchLabel = needsChoice
+    ? CUSTOMER_ACTION_REQUIRED_LABEL
+    : isFullReject
+      ? CUSTOMER_ORDER_REJECTED_LABEL
+      : resolveCustomerDispatchWaitingLabel(order, escalationCtx);
+  if (st === 'customer_cancelled') return 'お客様都合キャンセル';
+  if (st === 'accepted') return '工場受注';
+  if (st === 'rejected' || (st === 'pending' && isFullReject)) return CUSTOMER_ORDER_REJECTED_LABEL;
+  if (st === 'pending') {
+    if (needsChoice) return CUSTOMER_ACTION_REQUIRED_LABEL;
+    if (isFactoryHoldPending(order)) return CUSTOMER_FACTORY_HOLD_LABEL;
+    return dispatchLabel;
+  }
+  if (st === 'pending_association') return '組合承認待ち';
+  return dispatchLabel;
+}
+
 export function customerFullRejectionDashboardNotice(siteLabel) {
   const site = String(siteLabel || '').trim();
   if (site) {

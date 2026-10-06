@@ -1,4 +1,12 @@
-import { orderPartyInfo } from './orderPartyInfo.js';
+import { isAwaitingCustomerChangeDecision } from './changeRequestItems.js';
+import { needsPreferredCustomerChoice } from './escalationUtils.js';
+import { normalizeCompanyName } from './csvImport.js';
+import {
+  orderPartyInfo,
+  resolveOrderContractorDisplayName,
+  resolveOrderTradingCompanyDisplayName,
+} from './orderPartyInfo.js';
+import { resolveOrderSiteDisplayName } from './siteNameDisplay.js';
 
 /** 実際の時刻値（分）で並べるためのキー。表示ラベルの文字列比較はしない */
 export function resolveOrderTimeMinutes(order) {
@@ -280,4 +288,177 @@ export function resolveNearestUpcomingOrder(orders, nowMs = Date.now()) {
     .filter((row) => Number.isFinite(row.ts))
     .sort((a, b) => b.ts - a.ts);
   return pastOrUnknown[0]?.order || list[0];
+}
+
+/** 現場名のゆれを吸収する。空白除去と括弧の統一のみ。 */
+export function normalizeSiteText(value) {
+  let text = String(value ?? '').normalize('NFKC');
+  text = text.replace(/[\s\u3000]+/g, '');
+  text = text.replace(/[（［【〔]/g, '(').replace(/[）］】〕]/g, ')');
+  return text;
+}
+
+function lookupCustomer(customersById, id) {
+  const key = String(id || '').trim();
+  if (!key || customersById == null) return null;
+  if (typeof customersById.get === 'function') return customersById.get(key) || null;
+  if (typeof customersById === 'object') return customersById[key] || null;
+  return null;
+}
+
+/**
+ * グルーピング用の業者名。
+ * 取得時に付く displayContractorName は contractor_customer_id 由来なので使わない。
+ * resolveOrderContractorDisplayName は空文字を通すので、こちらで未設定にする。
+ */
+function contractorNameForGroup(order) {
+  const source =
+    order && typeof order === 'object' ? { ...order, displayContractorName: '' } : order;
+  const name = String(resolveOrderContractorDisplayName(source) ?? '').trim();
+  return name || null;
+}
+
+function contractorKeyForOrder(order, customersById) {
+  const name = contractorNameForGroup(order);
+  if (name) {
+    const normalized = normalizeCompanyName(name);
+    if (normalized) return normalized;
+  }
+  const customerId = String(order?.contractor_customer_id ?? order?.contractorCustomerId ?? '').trim();
+  const customer = lookupCustomer(customersById, customerId) || order?.contractorCustomer || null;
+  const orgId = String(customer?.organization_id ?? customer?.organizationId ?? '').trim();
+  if (orgId) return `org:${orgId}`;
+  return 'unknown';
+}
+
+function projectIdOf(order) {
+  return String(order?.project_id ?? order?.projectId ?? '').trim();
+}
+
+function siteKeyForOrder(order) {
+  const projectId = projectIdOf(order);
+  if (projectId) return `project:${projectId}`;
+  return `site:${normalizeSiteText(resolveOrderSiteDisplayName(order))}`;
+}
+
+function deliveryDateISO(order) {
+  const day = String(order?.preferredDate || order?.preferred_date || order?.scheduleMatchDate || '').slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : '';
+}
+
+function deliveryInstant(order) {
+  const day = deliveryDateISO(order);
+  if (!day) return null;
+  const parsed = Date.parse(`${day}T00:00:00`);
+  if (!Number.isFinite(parsed)) return null;
+  const minutes = resolveOrderTimeMinutes(order);
+  if (!Number.isFinite(minutes) || minutes === Number.POSITIVE_INFINITY) return parsed;
+  return parsed + minutes * 60 * 1000;
+}
+
+function localTodayISO(now = new Date()) {
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
+function orderCreatedAtMs(order) {
+  const parsed = Date.parse(String(order?.createdAt ?? order?.created_at ?? ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function compareInProgressGroups(a, b, sortMode) {
+  const priority = Number(Boolean(b.needsAttention)) - Number(Boolean(a.needsAttention));
+  if (priority !== 0) return priority;
+  if (sortMode === 'createdAt') {
+    if (a.latestCreatedAt !== b.latestCreatedAt) return b.latestCreatedAt - a.latestCreatedAt;
+    return String(a.title || '').localeCompare(String(b.title || ''), 'ja');
+  }
+  const aUpcoming = a.nearestUpcomingAt != null;
+  const bUpcoming = b.nearestUpcomingAt != null;
+  if (aUpcoming !== bUpcoming) return aUpcoming ? -1 : 1;
+  if (aUpcoming && a.nearestUpcomingAt !== b.nearestUpcomingAt) {
+    return a.nearestUpcomingAt - b.nearestUpcomingAt;
+  }
+  const aLatest = a.latestAt ?? Number.NEGATIVE_INFINITY;
+  const bLatest = b.latestAt ?? Number.NEGATIVE_INFINITY;
+  if (aLatest !== bLatest) return bLatest - aLatest;
+  return String(a.title || '').localeCompare(String(b.title || ''), 'ja');
+}
+
+function orderNeedsCustomerAction(order) {
+  return isAwaitingCustomerChangeDecision(order) || needsPreferredCustomerChoice(order);
+}
+
+/**
+ * 進行中注文を「業者 × 現場」でまとめる。
+ * project_id がある現場は現場名の文字列では分けない。
+ *
+ * @param {object[]} orders
+ * @param {{ projectById?: Record<string, object>, customersById?: Record<string, object>|Map, hasUnread?: (order: object) => boolean, today?: string, sortMode?: 'deliveryDate' | 'createdAt' }} [ctx]
+ */
+export function groupInProgressOrders(
+  orders,
+  { projectById = {}, customersById, hasUnread, today, sortMode = 'deliveryDate' } = {},
+) {
+  const todayISO = /^\d{4}-\d{2}-\d{2}$/.test(String(today || '').slice(0, 10))
+    ? String(today).slice(0, 10)
+    : localTodayISO();
+  const list = (Array.isArray(orders) ? orders : []).filter(Boolean);
+  const buckets = new Map();
+  for (const order of list) {
+    const key = `${contractorKeyForOrder(order, customersById)}|${siteKeyForOrder(order)}`;
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = { key, orders: [] };
+      buckets.set(key, bucket);
+    }
+    bucket.orders.push(order);
+  }
+
+  const groups = [];
+  for (const bucket of buckets.values()) {
+    const sorted = [...bucket.orders].sort(
+      (a, b) => resolveOrderDateTimeSortValue(a) - resolveOrderDateTimeSortValue(b),
+    );
+    const first = sorted[0];
+    const projectId = projectIdOf(first);
+    const project = projectId ? projectById?.[projectId] || null : null;
+    const title =
+      String(project?.name || '').trim() ||
+      resolveOrderSiteDisplayName(first, project) ||
+      '現場未設定';
+    const party = orderPartyInfo({ ...first, displayContractorName: '' });
+    const dates = sorted.map(deliveryDateISO).filter(Boolean).sort();
+    let earliestAt = null;
+    let latestAt = null;
+    let nearestUpcomingAt = null;
+    for (const order of sorted) {
+      const instant = deliveryInstant(order);
+      if (instant == null) continue;
+      if (earliestAt == null || instant < earliestAt) earliestAt = instant;
+      if (latestAt == null || instant > latestAt) latestAt = instant;
+      if (deliveryDateISO(order) >= todayISO && (nearestUpcomingAt == null || instant < nearestUpcomingAt)) {
+        nearestUpcomingAt = instant;
+      }
+    }
+    const unread = typeof hasUnread === 'function' ? hasUnread : () => false;
+    groups.push({
+      key: bucket.key,
+      title,
+      contractorLabel: party.contractorName || '',
+      tradingCompanyLabel: resolveOrderTradingCompanyDisplayName(first) || '',
+      orders: sorted,
+      earliestAt,
+      nearestUpcomingAt,
+      latestAt,
+      latestCreatedAt: sorted.reduce((max, order) => Math.max(max, orderCreatedAtMs(order)), 0),
+      earliestDate: dates[0] || '',
+      latestDate: dates.length ? dates[dates.length - 1] : '',
+      needsAttention: sorted.some((order) => orderNeedsCustomerAction(order) || unread(order)),
+    });
+  }
+
+  groups.sort((a, b) => compareInProgressGroups(a, b, sortMode));
+  return groups;
 }

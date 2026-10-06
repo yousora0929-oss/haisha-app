@@ -3,6 +3,7 @@ import {
   attachAvailabilityGroupsToSiteEntries,
   compareOrdersForFactoryInbox,
   formatOrderDateTimeSummary,
+  groupInProgressOrders,
   groupOrdersBySiteForAssignedProjects,
   reservationGroupIdsFromOrders,
   resolveInProgressGroupStorageId,
@@ -206,5 +207,177 @@ describe('factory inbox site grouping + sort', () => {
       'asc',
     );
     expect(sorted.map((e) => e.order.id)).toEqual(['b', 'a']);
+  });
+});
+
+describe('groupInProgressOrders', () => {
+  const projectById = {
+    'proj-tunnel': { id: 'proj-tunnel', name: '令和6年度東九州道　九六位トンネル工事' },
+  };
+
+  it('groups the same project_id even when siteName text differs', () => {
+    const groups = groupInProgressOrders(
+      [
+        { id: '1', project_id: 'proj-tunnel', siteName: '九六位トンネル', contractorName: '三井住友建設㈱', preferredDate: '2026-07-02', timeSlotMinutes: 480 },
+        { id: '2', project_id: 'proj-tunnel', siteName: '令和6年度東九州道　九六位トンネル工事', contractorName: '三井住友建設㈱', preferredDate: '2026-07-01', timeSlotMinutes: 540 },
+      ],
+      { projectById },
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0].title).toBe('令和6年度東九州道　九六位トンネル工事');
+    expect(groups[0].orders.map((order) => order.id)).toEqual(['2', '1']);
+  });
+
+  it('merges company-name variants of the same contractor', () => {
+    const groups = groupInProgressOrders(
+      [
+        { id: '1', siteName: '河川改良工事', contractorName: '高聖建設工業㈱', contractor_customer_id: 'prime', preferredDate: '2026-07-01' },
+        { id: '2', siteName: '河川改良工事', contractorName: '高聖建設工業株式会社', contractor_customer_id: 'sub', preferredDate: '2026-07-02' },
+      ],
+      {
+        projectById: {},
+        customersById: {
+          prime: { organization_id: 'org-miura', company_name: '三浦国土建設㈱' },
+          sub: { organization_id: 'org-kosei', company_name: '高聖建設工業㈱' },
+        },
+      },
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0].orders).toHaveLength(2);
+  });
+
+  it('keeps different contractors at the same site in separate groups', () => {
+    const groups = groupInProgressOrders(
+      [
+        { id: '1', siteName: 'こまわり商會（有）様アパート新築工事', contractorName: '東建コーポレーション株式会社' },
+        { id: '2', siteName: 'こまわり商會（有）様アパート新築工事', contractorName: '株式会社廣亜' },
+      ],
+      { projectById: {} },
+    );
+    expect(groups).toHaveLength(2);
+  });
+
+  it('does not collapse proxy orders onto the cooperative customer_id', () => {
+    const groups = groupInProgressOrders(
+      [
+        { id: '1', customer_id: 'coop', siteName: 'スポット現場', contractorName: '株式会社S' },
+        { id: '2', customer_id: 'coop', siteName: 'スポット現場', contractorName: '別の建設' },
+      ],
+      { projectById: {} },
+    );
+    expect(groups).toHaveLength(2);
+  });
+
+  it('merges spot sites that differ only by spaces', () => {
+    const groups = groupInProgressOrders(
+      [
+        { id: '1', siteName: '大分市 下郡', contractorName: '㈱菅組' },
+        { id: '2', siteName: '大分市　下郡', contractorName: '㈱菅組' },
+      ],
+      { projectById: {} },
+    );
+    expect(groups).toHaveLength(1);
+  });
+
+  const today = '2026-10-06';
+
+  it('puts groups that include a delivery on or after today ahead of past-only groups', () => {
+    const groups = groupInProgressOrders(
+      [
+        { id: 'past', siteName: '過去現場', contractorName: 'A社', preferredDate: '2026-07-13', timeSlotMinutes: 480 },
+        { id: 'future', siteName: '今後現場', contractorName: 'B社', preferredDate: '2026-10-08', timeSlotMinutes: 540 },
+      ],
+      { projectById: {}, today },
+    );
+    expect(groups.map((group) => group.orders[0].id)).toEqual(['future', 'past']);
+  });
+
+  it('sorts upcoming groups by the nearest delivery from today, not the oldest order', () => {
+    const groups = groupInProgressOrders(
+      [
+        { id: 'a-old', siteName: '現場A', contractorName: 'A社', preferredDate: '2026-07-13', timeSlotMinutes: 480 },
+        { id: 'a-later', siteName: '現場A', contractorName: 'A社', preferredDate: '2026-10-20', timeSlotMinutes: 600 },
+        { id: 'b-soon', siteName: '現場B', contractorName: 'B社', preferredDate: '2026-10-07', timeSlotMinutes: 480 },
+      ],
+      { projectById: {}, today },
+    );
+    expect(groups.map((group) => group.title)).toEqual(['現場B', '現場A']);
+    expect(groups[1].orders.map((order) => order.id)).toEqual(['a-old', 'a-later']);
+  });
+
+  it('uses timeSlotMinutes for deliveries on the same day', () => {
+    const groups = groupInProgressOrders(
+      [
+        { id: 'late', siteName: '午後', contractorName: 'A社', preferredDate: '2026-10-06', timeSlotMinutes: 900 },
+        { id: 'early', siteName: '午前', contractorName: 'B社', preferredDate: '2026-10-06', timeSlotMinutes: 480 },
+      ],
+      { projectById: {}, today },
+    );
+    expect(groups.map((group) => group.title)).toEqual(['午前', '午後']);
+  });
+
+  it('sorts past-only groups by the latest delivery descending', () => {
+    const groups = groupInProgressOrders(
+      [
+        { id: 'old', siteName: '古い', contractorName: 'A社', preferredDate: '2026-07-13', timeSlotMinutes: 480 },
+        { id: 'mid', siteName: '新しい', contractorName: 'B社', preferredDate: '2026-08-01', timeSlotMinutes: 480 },
+        { id: 'late', siteName: '新しい', contractorName: 'B社', preferredDate: '2026-09-01', timeSlotMinutes: 600 },
+      ],
+      { projectById: {}, today },
+    );
+    expect(groups.map((group) => group.title)).toEqual(['新しい', '古い']);
+  });
+
+  it('breaks equal upcoming times by the latest delivery, then title', () => {
+    const sameLatest = groupInProgressOrders(
+      [
+        { id: 'i', siteName: 'い現場', contractorName: 'B社', preferredDate: '2026-10-07', timeSlotMinutes: 480 },
+        { id: 'a', siteName: 'あ現場', contractorName: 'A社', preferredDate: '2026-10-07', timeSlotMinutes: 480 },
+      ],
+      { projectById: {}, today },
+    );
+    expect(sameLatest.map((group) => group.title)).toEqual(['あ現場', 'い現場']);
+
+    const laterLast = groupInProgressOrders(
+      [
+        { id: 'a1', siteName: 'い現場', contractorName: 'A社', preferredDate: '2026-10-07', timeSlotMinutes: 480 },
+        { id: 'a2', siteName: 'い現場', contractorName: 'A社', preferredDate: '2026-10-09', timeSlotMinutes: 480 },
+        { id: 'b1', siteName: 'あ現場', contractorName: 'B社', preferredDate: '2026-10-07', timeSlotMinutes: 480 },
+        { id: 'b2', siteName: 'あ現場', contractorName: 'B社', preferredDate: '2026-10-08', timeSlotMinutes: 480 },
+      ],
+      { projectById: {}, today },
+    );
+    expect(laterLast.map((group) => group.title)).toEqual(['い現場', 'あ現場']);
+  });
+
+  it('keeps groups that need attention ahead of other groups', () => {
+    const groups = groupInProgressOrders(
+      [
+        { id: 'future', siteName: '今後', contractorName: 'A社', preferredDate: '2026-10-08', timeSlotMinutes: 480 },
+        { id: 'past-unread', siteName: '過去未読', contractorName: 'B社', preferredDate: '2026-07-13', timeSlotMinutes: 480 },
+      ],
+      { projectById: {}, today, hasUnread: (order) => order.id === 'past-unread' },
+    );
+    expect(groups[0].orders[0].id).toBe('past-unread');
+  });
+
+  it('sorts groups by the newest createdAt when sortMode is createdAt', () => {
+    const groups = groupInProgressOrders(
+      [
+        { id: 'old-reg', siteName: '古い登録', contractorName: 'A社', preferredDate: '2026-10-08', createdAt: '2026-09-01T00:00:00' },
+        { id: 'new-reg', siteName: '新しい登録', contractorName: 'B社', preferredDate: '2026-07-13', createdAt: '2026-10-01T00:00:00' },
+      ],
+      { projectById: {}, today, sortMode: 'createdAt' },
+    );
+    expect(groups.map((group) => group.title)).toEqual(['新しい登録', '古い登録']);
+  });
+
+  it('puts orders with no contractor name and no contractor id into unknown', () => {
+    const groups = groupInProgressOrders(
+      [{ id: '1', siteName: '現場A', contractorName: '   ' }],
+      { projectById: {} },
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0].key.startsWith('unknown|')).toBe(true);
   });
 });

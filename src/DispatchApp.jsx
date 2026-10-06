@@ -108,15 +108,14 @@ import {
   customerFullRejectionDashboardNotice,
   isFactoryHoldPending,
   resolveCustomerDispatchWaitingLabel,
+  resolveInProgressStatusBadgeLabel,
 } from './utils/customerStatusLabels.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { orderPartyInfo as buildOrderPartyInfo } from './utils/orderPartyInfo.js';
 import {
-  groupOrdersBySiteForAssignedProjects,
-  resolveOrderDateTimeSortValue,
-  resolveInProgressGroupStorageId,
-  resolveNearestUpcomingOrder,
   formatOrderDateTimeSummary,
+  groupInProgressOrders,
+  groupOrdersBySiteForAssignedProjects,
   reservationGroupIdsFromOrders,
 } from './utils/orderGrouping.js';
 import {
@@ -214,9 +213,10 @@ const ASSIGNED_PROJECTS_TAB = ['assignedProjects', '担当物件', '🏗'];
 const REPEAT_ORDER_DRAFT_NOTICE =
   '履歴から複製した内容です。打設日時を入力し、必要な項目を修正してください';
 
-/** 進行中タブの物件グループ折りたたみ（true = 折りたたみ）。物件ID単位で保持。 */
-const INPROGRESS_GROUP_COLLAPSED_STORAGE_PREFIX = 'haisha_dispatch_inprogress_group_collapsed_v1';
 const DISPATCH_PUSH_HIGHLIGHT_MS = 3200;
+/** 進行中タブで最初に出すグループ数。検索中はかけない。 */
+const IN_PROGRESS_VISIBLE_GROUP_LIMIT = 10;
+const IN_PROGRESS_VISIBLE_GROUP_LIMIT_COMPANY_SCOPE = 30;
 const DISPATCH_FACTORY_NAME_BLINK_MS = 25000;
 
 function dispatchOrderElementId(orderId) {
@@ -272,31 +272,17 @@ function resolveAgentForeignOrderPartyLabels(order) {
   };
 }
 
-function inProgressGroupCollapsedStorageKey(customerId) {
-  const cid = String(customerId || '').trim() || 'anon';
-  return `${INPROGRESS_GROUP_COLLAPSED_STORAGE_PREFIX}_${cid}`;
-}
-
-function readInProgressGroupCollapsedMap(customerId) {
-  try {
-    const raw = window.localStorage.getItem(inProgressGroupCollapsedStorageKey(customerId));
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeInProgressGroupCollapsedMap(customerId, map) {
-  try {
-    window.localStorage.setItem(
-      inProgressGroupCollapsedStorageKey(customerId),
-      JSON.stringify(map && typeof map === 'object' ? map : {}),
-    );
-  } catch {
-    /* ignore */
-  }
+function formatInProgressGroupDateRange(group) {
+  const formatMd = (iso) => {
+    const match = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return '';
+    return `${Number(match[2])}/${Number(match[3])}`;
+  };
+  const start = formatMd(group?.earliestDate);
+  const end = formatMd(group?.latestDate);
+  if (!start && !end) return '';
+  if (!start || !end || start === end) return start || end;
+  return `${start}〜${end}`;
 }
 
 const CUSTOMER_FIELD_CLASS =
@@ -643,15 +629,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const displayName = getDefaultFactoryDisplayName(order, factoryNameById);
       const needsChoice = needsPreferredCustomerChoice(order);
       const isFullReject = isFullCompanyRejectionForCustomer(order, escalationCtx || {});
-      const dispatchLabel = needsChoice
-        ? CUSTOMER_ACTION_REQUIRED_LABEL
-        : isFullReject
-          ? CUSTOMER_ORDER_REJECTED_LABEL
-          : resolveCustomerDispatchWaitingLabel(order, escalationCtx);
+      const dispatchLabel = resolveInProgressStatusBadgeLabel(order, escalationCtx);
       if (st === 'customer_cancelled') {
         return (
           <span className="inline-flex rounded-full border-2 border-red-600 bg-red-50 px-3 py-1 text-xs font-black text-red-700 shadow-sm">
-            お客様都合キャンセル
+            {dispatchLabel}
           </span>
         );
       }
@@ -659,7 +641,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return (
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-black text-white shadow-sm">
-              工場受注
+              {dispatchLabel}
             </span>
             <span
               className={
@@ -676,7 +658,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return (
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex rounded-full bg-red-600 px-3 py-1 text-xs font-black text-white shadow-sm">
-              {CUSTOMER_ORDER_REJECTED_LABEL}
+              {dispatchLabel}
             </span>
             <span className="rounded-full border border-red-200 bg-white px-3 py-1 text-xs font-black text-red-900 shadow-sm dark:border-red-800 dark:bg-red-950/40 dark:text-red-100">
               {CUSTOMER_FULL_REJECTION_MESSAGE}
@@ -693,7 +675,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         if (needsChoice) {
           return (
             <span className="inline-flex rounded-full border-2 border-amber-500 bg-amber-100 px-3 py-1 text-xs font-black text-amber-950 shadow-sm dark:bg-amber-950/40 dark:text-amber-100">
-              {CUSTOMER_ACTION_REQUIRED_LABEL}
+              {dispatchLabel}
             </span>
           );
         }
@@ -702,7 +684,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           return (
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex rounded-full bg-amber-500 px-3 py-1 text-xs font-black text-amber-950 shadow-sm">
-                {CUSTOMER_FACTORY_HOLD_LABEL}
+                {dispatchLabel}
               </span>
               <span className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-black text-amber-950 shadow-sm">
                 {who}
@@ -719,7 +701,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       if (st === 'pending_association') {
         return (
           <span className="inline-flex rounded-full border-2 border-violet-600 bg-violet-100 px-3 py-1 text-xs font-black text-violet-900 shadow-sm">
-            組合承認待ち
+            {dispatchLabel}
           </span>
         );
       }
@@ -1453,6 +1435,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       onEditOrder = null,
       onRequestChange = null,
       readOnly = false,
+      hideSiteName = false,
       accountLabel = '',
       placerLabel = '',
       contractorLabel = '',
@@ -1623,6 +1606,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               <div className="mt-2 min-w-0 md:mt-0 2xl:flex-[1.1] 2xl:pl-5">
                 <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 dark:text-gray-500">現場 / 連絡先</p>
                 <div className="mt-0.5 grid min-w-0 gap-1">
+                  {hideSiteName ? null : (
                   <p
                     className="min-w-0 truncate text-base font-black text-gray-900 dark:text-gray-100"
                     title={party.site || ''}
@@ -1632,6 +1616,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     </span>
                     {party.site || '—'}
                   </p>
+                  )}
                   <p className="min-w-0 truncate text-sm font-bold text-gray-600 dark:text-gray-300">
                     <span className="mr-1 text-gray-400 dark:text-gray-500" aria-hidden>
                       ☎
@@ -2263,7 +2248,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       // 業者ログインの表示範囲。false = 自分の担当分のみ（従来動作）、true = 会社全体
       const [companyScopeEnabled, setCompanyScopeEnabled] = useState(false);
       const [companyScopeOrders, setCompanyScopeOrders] = useState([]);
-      const [collapsedInProgressGroups, setCollapsedInProgressGroups] = useState({});
+      const [openInProgressGroupKeys, setOpenInProgressGroupKeys] = useState(() => new Set());
+      const inProgressGroupInitRef = useRef(new Set());
       const [highlightedOrderId, setHighlightedOrderId] = useState('');
       const [pushFocusOrderId, setPushFocusOrderId] = useState('');
       const [blinkFactoryOrderIds, setBlinkFactoryOrderIds] = useState(() => new Set());
@@ -4110,83 +4096,133 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           inProgressSortMode === 'createdAt'
             ? compareInProgressOrdersByCreatedAtDesc
             : compareInProgressOrdersByDeliveryDate;
-        const sorted = [...filtered].sort(compare);
-        if (inProgressUnreadOnly) {
-          // 未読のみ: 件数上限で落とさない（ジャンプ先が DOM に無い問題を避ける）
-          return sorted;
-        }
-        const limit = companyScopeActive ? 45 : 15;
-        const capped = sorted.slice(0, limit);
-        const seen = new Set(capped.map((o) => String(o?.id || '')).filter(Boolean));
-        // 15件上限外の未読も一覧に残し、バッジ／再タップジャンプの対象 DOM を確保する
-        for (const order of sorted) {
-          const id = String(order?.id || '').trim();
-          if (!id || seen.has(id) || !isUnread(order)) continue;
-          capped.push(order);
-          seen.add(id);
-        }
-        return capped;
+        return [...filtered].sort(compare);
       }, [
         scopedInProgressOrders,
         inProgressSearchQuery,
         inProgressSortMode,
-        companyScopeActive,
         inProgressUnreadOnly,
         chatThreads,
         readChatKeys,
       ]);
-      // 進行中一覧も割当物件は現場名でグルーピング（検索フィルタ適用後の一覧をグループ化する）
-      const inProgressOrderEntries = useMemo(
+      const inProgressOrderGroups = useMemo(
         () =>
-          groupOrdersBySiteForAssignedProjects(filteredInProgressOrders, projectById, {
-            sortValue: resolveOrderDateTimeSortValue,
-            includeReservationGroups: true,
+          groupInProgressOrders(filteredInProgressOrders, {
+            projectById,
+            customersById: customerById,
+            today,
+            sortMode: inProgressSortMode === 'createdAt' ? 'createdAt' : 'deliveryDate',
+            hasUnread: (order) =>
+              Boolean(order?.id) && isUnreadForDispatch(chatThreads[order.id], readChatKeys[order.id]),
           }),
-        [filteredInProgressOrders, projectById],
+        [filteredInProgressOrders, projectById, customerById, chatThreads, readChatKeys, today, inProgressSortMode],
       );
 
-      useEffect(() => {
-        setCollapsedInProgressGroups(readInProgressGroupCollapsedMap(currentCustomerId));
-      }, [currentCustomerId]);
+      const inProgressSearchActive = String(inProgressSearchQuery || '').trim() !== '';
+      const inProgressGroupsUncapped = inProgressSearchActive || inProgressUnreadOnly;
+      const inProgressGroupLimit = companyScopeActive
+        ? IN_PROGRESS_VISIBLE_GROUP_LIMIT_COMPANY_SCOPE
+        : IN_PROGRESS_VISIBLE_GROUP_LIMIT;
+      const [inProgressGroupRevealCount, setInProgressGroupRevealCount] = useState(0);
 
-      const toggleInProgressGroupCollapsed = useCallback(
-        (groupStorageId) => {
-          const id = String(groupStorageId || '').trim();
-          if (!id) return;
-          setCollapsedInProgressGroups((prev) => {
-            const next = { ...(prev && typeof prev === 'object' ? prev : {}) };
-            if (next[id]) delete next[id];
-            else next[id] = true;
-            writeInProgressGroupCollapsedMap(currentCustomerId, next);
+      useEffect(() => {
+        setInProgressGroupRevealCount(0);
+      }, [inProgressSearchQuery, companyScopeActive, inProgressUnreadOnly]);
+
+      const visibleInProgressOrderGroups = useMemo(() => {
+        if (inProgressGroupsUncapped) return inProgressOrderGroups;
+        return inProgressOrderGroups.slice(0, inProgressGroupLimit + inProgressGroupRevealCount);
+      }, [
+        inProgressOrderGroups,
+        inProgressGroupsUncapped,
+        inProgressGroupLimit,
+        inProgressGroupRevealCount,
+      ]);
+      const hiddenInProgressGroupCount = inProgressGroupsUncapped
+        ? 0
+        : Math.max(0, inProgressOrderGroups.length - visibleInProgressOrderGroups.length);
+
+      useEffect(() => {
+        if (inProgressSearchActive) return;
+        setOpenInProgressGroupKeys((prev) => {
+          const next = new Set(prev);
+          let changed = false;
+          for (const group of inProgressOrderGroups) {
+            if (inProgressGroupInitRef.current.has(group.key)) continue;
+            inProgressGroupInitRef.current.add(group.key);
+            const openByDefault = group.orders.length <= 3 || group.needsAttention;
+            if (openByDefault) {
+              next.add(group.key);
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+      }, [inProgressOrderGroups, inProgressSearchActive]);
+
+      const isInProgressGroupOpen = useCallback(
+        (group) => {
+          if (inProgressSearchActive) return true;
+          if (openInProgressGroupKeys.has(group.key)) return true;
+          if (!inProgressGroupInitRef.current.has(group.key)) {
+            return group.orders.length <= 3 || group.needsAttention;
+          }
+          return false;
+        },
+        [inProgressSearchActive, openInProgressGroupKeys],
+      );
+
+      const toggleInProgressGroupOpen = useCallback((groupKey) => {
+        const key = String(groupKey || '').trim();
+        if (!key) return;
+        inProgressGroupInitRef.current.add(key);
+        setOpenInProgressGroupKeys((prev) => {
+          const next = new Set(prev);
+          if (next.has(key)) next.delete(key);
+          else next.add(key);
+          return next;
+        });
+      }, []);
+
+      const setAllInProgressGroupsOpen = useCallback(
+        (open) => {
+          setOpenInProgressGroupKeys(() => {
+            const next = new Set();
+            for (const group of visibleInProgressOrderGroups) {
+              inProgressGroupInitRef.current.add(group.key);
+              if (open) next.add(group.key);
+            }
             return next;
           });
         },
-        [currentCustomerId],
+        [visibleInProgressOrderGroups],
       );
 
       useEffect(() => {
         const orderId = String(pushFocusOrderId || '').trim();
         if (!orderId) return undefined;
 
-        const groupEntry = (inProgressOrderEntries || []).find(
+        const groupIndex = (inProgressOrderGroups || []).findIndex(
           (entry) =>
-            entry?.type === 'group' &&
             Array.isArray(entry.orders) &&
             entry.orders.some((order) => String(order?.id || '') === orderId),
         );
+        const groupEntry = groupIndex >= 0 ? inProgressOrderGroups[groupIndex] : null;
         let waitMs = 80;
-        if (groupEntry) {
-          const groupStorageId = resolveInProgressGroupStorageId(groupEntry);
-          if (groupStorageId) {
-            setCollapsedInProgressGroups((prev) => {
-              if (!prev?.[groupStorageId]) return prev;
-              const next = { ...prev };
-              delete next[groupStorageId];
-              writeInProgressGroupCollapsedMap(currentCustomerId, next);
-              return next;
-            });
-            waitMs = 340;
+        if (groupEntry?.key) {
+          if (!inProgressGroupsUncapped && groupIndex >= inProgressGroupLimit) {
+            setInProgressGroupRevealCount((current) =>
+              Math.max(current, groupIndex + 1 - inProgressGroupLimit),
+            );
           }
+          inProgressGroupInitRef.current.add(groupEntry.key);
+          setOpenInProgressGroupKeys((prev) => {
+            if (prev.has(groupEntry.key)) return prev;
+            const next = new Set(prev);
+            next.add(groupEntry.key);
+            return next;
+          });
+          waitMs = 340;
         }
 
         const scrollTimer = window.setTimeout(() => {
@@ -4202,7 +4238,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           window.clearTimeout(scrollTimer);
           window.clearTimeout(clearTimer);
         };
-      }, [pushFocusOrderId, inProgressOrderEntries, currentCustomerId]);
+      }, [pushFocusOrderId, inProgressOrderGroups, inProgressGroupsUncapped, inProgressGroupLimit]);
       const activeOrders = useMemo(
         () => (dashboardOrders || []).filter((o) => o && isOrderInProgressView(o, today)),
         [dashboardOrders, today],
@@ -7016,7 +7052,23 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           </p>
                         ) : (
                           <div className="grid grid-cols-1 gap-6">
-                          {inProgressOrderEntries.map((entry) => {
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setAllInProgressGroupsOpen(true)}
+                              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                            >
+                              すべて開く
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setAllInProgressGroupsOpen(false)}
+                              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                            >
+                              すべて閉じる
+                            </button>
+                          </div>
+                          {visibleInProgressOrderGroups.map((entry) => {
                             const renderReservationPanels = (orders) =>
                               reservationGroupIdsFromOrders(orders).map((groupId) => (
                                 <ReservationGroupStatusPanel
@@ -7061,6 +7113,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                 onEditOrder={isViewOnly ? null : handleOpenCustomerOrderEdit}
                                 onRequestChange={isViewOnly ? null : handleOpenCustomerChangeRequest}
                                 readOnly={isViewOnly}
+                                hideSiteName
                                 accountLabel={
                                   companyScopeActive
                                     ? formatProjectAccountLabel(customerById[ownerId])
@@ -7074,74 +7127,114 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                               />
                               );
                             };
-                            if (entry.type === 'group') {
-                              const groupStorageId = resolveInProgressGroupStorageId(entry);
-                              const collapsed = Boolean(
-                                groupStorageId && collapsedInProgressGroups?.[groupStorageId],
-                              );
-                              const nextOrder = resolveNearestUpcomingOrder(entry.orders);
-                              const nextLabel = nextOrder ? formatOrderDateTimeSummary(nextOrder) : '';
-                              return (
-                                <section
-                                  key={entry.key}
-                                  className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-3 dark:border-indigo-800 dark:bg-indigo-950/20"
-                                  aria-label={`現場「${entry.site}」の注文`}
-                                >
-                                  <button
-                                    type="button"
-                                    className="flex w-full flex-col gap-1 rounded-xl px-1 py-1 text-left transition hover:bg-indigo-100/60 sm:flex-row sm:items-center sm:gap-2 dark:hover:bg-indigo-900/30"
-                                    onClick={() => toggleInProgressGroupCollapsed(groupStorageId)}
-                                    aria-expanded={!collapsed}
-                                  >
-                                    <div className="flex min-w-0 w-full items-center gap-2 sm:flex-1">
-                                      <span
-                                        className="inline-flex h-6 w-6 shrink-0 items-center justify-center text-sm font-black text-indigo-700 dark:text-indigo-300"
-                                        aria-hidden="true"
-                                      >
-                                        {collapsed ? '▶' : '▼'}
-                                      </span>
-                                      <p
-                                        className="min-w-0 flex-1 truncate text-sm font-black text-slate-900 dark:text-gray-100"
-                                        title={entry.site}
-                                      >
-                                        📍 {entry.site}
-                                      </p>
-                                    </div>
-                                    <div className="flex shrink-0 items-center gap-2 pl-8 sm:ml-auto sm:pl-0">
-                                      {collapsed && nextLabel ? (
-                                        <span
-                                          className="whitespace-nowrap rounded-lg bg-white/80 px-2 py-0.5 text-xs font-black tabular-nums text-indigo-800 dark:bg-slate-900/60 dark:text-indigo-200"
-                                          title={`次回：${nextLabel}`}
-                                        >
-                                          次回：{nextLabel}
-                                        </span>
-                                      ) : null}
-                                      <span className="whitespace-nowrap rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-black text-white">
-                                        {entry.orders.length}便
-                                      </span>
-                                    </div>
-                                  </button>
-                                  <div
-                                    className="grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none"
-                                    style={{ gridTemplateRows: collapsed ? '0fr' : '1fr' }}
-                                  >
-                                    <div className="min-h-0 overflow-hidden">
-                                      <div className="mt-2 grid grid-cols-1 gap-4">
-                                        {renderReservationPanels(entry.orders)}
-                                        {entry.orders.map((ord) => renderCard(ord))}
-                                      </div>
-                                    </div>
-                                  </div>
-                                </section>
-                              );
+                            const expanded = isInProgressGroupOpen(entry);
+                            const dateRange = formatInProgressGroupDateRange(entry);
+                            const trader = String(entry.tradingCompanyLabel || '').trim();
+                            const contractorText = String(entry.contractorLabel || '').trim();
+                            const statusCounts = new Map();
+                            let hasChangeDecision = false;
+                            let hasPreferredChoice = false;
+                            let hasUnread = false;
+                            for (const order of entry.orders) {
+                              const label = resolveInProgressStatusBadgeLabel(order, customerEscalationCtx);
+                              statusCounts.set(label, (statusCounts.get(label) || 0) + 1);
+                              if (isAwaitingCustomerChangeDecision(order)) hasChangeDecision = true;
+                              if (needsPreferredCustomerChoice(order)) hasPreferredChoice = true;
+                              if (isUnreadForDispatch(chatThreads[order.id], readChatKeys[order.id])) hasUnread = true;
                             }
                             return (
-                              <React.Fragment key={entry.key}>
-                                {renderReservationPanels([entry.order])}
-                                {renderCard(entry.order)}
-                              </React.Fragment>
+                              <section
+                                key={entry.key}
+                                className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-3 dark:border-indigo-800 dark:bg-indigo-950/20"
+                                aria-label={`現場「${entry.title}」の注文`}
+                              >
+                                <button
+                                  type="button"
+                                  className="flex w-full flex-col gap-2 rounded-xl px-1 py-1 text-left transition hover:bg-indigo-100/60 dark:hover:bg-indigo-900/30"
+                                  onClick={() => toggleInProgressGroupOpen(entry.key)}
+                                  aria-expanded={expanded}
+                                >
+                                  <div className="flex min-w-0 items-start gap-2">
+                                    <span
+                                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center text-sm font-black text-indigo-700 dark:text-indigo-300"
+                                      aria-hidden="true"
+                                    >
+                                      {expanded ? '▼' : '▶'}
+                                    </span>
+                                    <div className="min-w-0 flex-1">
+                                      <p
+                                        className="truncate text-base font-black text-slate-900 dark:text-gray-100"
+                                        title={entry.title}
+                                      >
+                                        {entry.title}
+                                      </p>
+                                      <p className="mt-0.5 truncate text-xs font-bold text-slate-600 dark:text-slate-300">
+                                        {contractorText || '—'}
+                                        {trader ? ` (商社: ${trader})` : ''}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-1.5 pl-8">
+                                    <span className="whitespace-nowrap rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-black text-white">
+                                      全{entry.orders.length}件
+                                    </span>
+                                    {dateRange ? (
+                                      <span className="whitespace-nowrap rounded-lg bg-white/80 px-2 py-0.5 text-xs font-black tabular-nums text-indigo-800 dark:bg-slate-900/60 dark:text-indigo-200">
+                                        {dateRange}
+                                      </span>
+                                    ) : null}
+                                    {[...statusCounts.entries()].map(([label, count]) => (
+                                      <span
+                                        key={label}
+                                        className="whitespace-nowrap rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-black text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                                      >
+                                        {label} {count}
+                                      </span>
+                                    ))}
+                                    {hasChangeDecision ? (
+                                      <span className="whitespace-nowrap rounded-full border border-orange-400 bg-orange-50 px-2 py-0.5 text-[10px] font-black text-orange-950">
+                                        客確認待ち
+                                      </span>
+                                    ) : null}
+                                    {hasPreferredChoice ? (
+                                      <span className="whitespace-nowrap rounded-full border-2 border-amber-500 bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-950">
+                                        {CUSTOMER_ACTION_REQUIRED_LABEL}
+                                      </span>
+                                    ) : null}
+                                    {hasUnread ? (
+                                      <span className="whitespace-nowrap rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-black text-white">
+                                        未読
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </button>
+                                <div
+                                  className="grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none"
+                                  style={{ gridTemplateRows: expanded ? '1fr' : '0fr' }}
+                                >
+                                  <div className="min-h-0 overflow-hidden">
+                                    <div className="mt-2 grid grid-cols-1 gap-4">
+                                      {renderReservationPanels(entry.orders)}
+                                      {entry.orders.map((ord) => renderCard(ord))}
+                                    </div>
+                                  </div>
+                                </div>
+                              </section>
                             );
                           })}
+                          {hiddenInProgressGroupCount > 0 ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setInProgressGroupRevealCount(
+                                  (current) => current + hiddenInProgressGroupCount,
+                                )
+                              }
+                              className="rounded-xl border-2 border-indigo-300 bg-white px-4 py-3 text-sm font-black text-indigo-800 hover:bg-indigo-50 dark:border-indigo-700 dark:bg-slate-900 dark:text-indigo-200"
+                            >
+                              さらに表示（残り{hiddenInProgressGroupCount}グループ）
+                            </button>
+                          ) : null}
                           </div>
                         )}
                       </>
