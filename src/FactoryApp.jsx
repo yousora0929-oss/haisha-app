@@ -26,7 +26,7 @@ import { factoryUnloadDurationLabel } from './utils/unloadDurationLabel.js';
 import BillingMark from './components/BillingMark.jsx';
 import { OrderFullEditModal } from './components/OrderFullEditModal.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
-import { organizationSuggestTexts } from './utils/masterSuggest.js';
+import { DIRECT_TRADE_SUGGEST_ITEM, organizationSuggestTexts } from './utils/masterSuggest.js';
 import { ChangeRequestResolvePanel } from './components/ChangeRequestResolvePanel.jsx';
 import { isAwaitingCustomerChangeDecision } from './utils/changeRequestItems.js';
 import {
@@ -538,6 +538,7 @@ function PhoneOrderRegisterModal({
                   emptyHint="該当する会社が見つかりません（登録済み顧客のみ対象です）"
                   labelClassName={fieldLabel}
                   inputClassName={fieldInput}
+                  summarizeSelection
                 />
                 {!selectedCompanyId && companySearchText ? (
                   <p className="mt-1 text-xs font-bold text-amber-700">
@@ -603,10 +604,14 @@ function PhoneOrderRegisterModal({
                   onSelect={(org) =>
                     setForm((prev) => ({
                       ...prev,
-                      traderName: String(org?.name || org?.company_name || '').trim(),
+                      traderName: org?.directTrade
+                        ? ''
+                        : String(org?.name || org?.company_name || '').trim(),
                     }))
                   }
                   items={traderCandidates}
+                  leadingItems={[DIRECT_TRADE_SUGGEST_ITEM]}
+                  summarizeSelection
                   getItemKey={(o) => String(o.id)}
                   getItemLabel={(o) => String(o.name || o.company_name || '').trim()}
                   getSearchTexts={organizationSuggestTexts}

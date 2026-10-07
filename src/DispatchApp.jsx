@@ -60,7 +60,7 @@ import {
 import { ReservationGroupStatusPanel } from './components/ReservationGroupStatusPanel.jsx';
 import { ReservationGroupStatusBadge } from './components/ReservationGroupMonitorBadge.jsx';
 import { AdminScheduleImportSection } from './components/AdminScheduleImportSection.jsx';
-import { customerSuggestTexts, organizationSuggestTexts, projectSuggestTexts, sortCustomersByUsageFrequency } from './utils/masterSuggest.js';
+import { customerSuggestTexts, DIRECT_TRADE_SUGGEST_ITEM, organizationSuggestTexts, projectSuggestTexts, sortCustomersByUsageFrequency } from './utils/masterSuggest.js';
 import { dedupeCustomersByCompany } from './utils/dedupeCustomersByCompany.js';
 import {
   describeAgentContractorLinks,
@@ -6277,6 +6277,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         onValueChange={handleTradingAgentCustomerChange}
                         onSelect={handleTradingAgentCustomerSelect}
                         emptyHint="該当する商社担当者がありません"
+                        summarizeSelection
                       />
                       </div>
                     ) : null}
@@ -6318,6 +6319,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           }
                           setSubmitError('');
                         }}
+                        summarizeSelection
                         onSelect={(c) => {
                           const name = String(c.company_name || c.name || '').trim();
                           setContractorCustomerId(String(c.id));
@@ -6440,6 +6442,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         setCurrentCustomerId(String(hit.id));
                       }
                     }}
+                    summarizeSelection
                     onSelect={(c) => {
                       setCurrentCustomerId(String(c.id));
                       setCustomerSearchText(String(c.company_name || c.name || '').trim());
@@ -6739,10 +6742,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         value={traderName}
                         onValueChange={handleTraderNameChange}
                         items={agentOrganizations}
+                        leadingItems={[DIRECT_TRADE_SUGGEST_ITEM]}
+                        summarizeSelection
                         getItemKey={(o) => String(o.id)}
                         getItemLabel={(o) => String(o.name || '').trim()}
                         getSearchTexts={organizationSuggestTexts}
                         onSelect={(org) => {
+                          if (org?.directTrade) {
+                            handleTraderNameChange('');
+                            return;
+                          }
                           handleTraderNameChange(String(org?.name || '').trim());
                         }}
                         placeholder="商社名を入力（登録商社から選択、または自由入力）"
@@ -6938,9 +6947,19 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   value={traderName}
                   onValueChange={handleTraderNameChange}
                   items={MASTER_TRADER_SUGGESTIONS}
-                  getItemKey={(item) => String(item || '')}
-                  getItemLabel={(item) => String(item || '')}
+                  leadingItems={[DIRECT_TRADE_SUGGEST_ITEM]}
+                  summarizeSelection
+                  getItemKey={(item) =>
+                    item?.directTrade ? DIRECT_TRADE_SUGGEST_ITEM.id : String(item || '')
+                  }
+                  getItemLabel={(item) =>
+                    item?.directTrade ? DIRECT_TRADE_SUGGEST_ITEM.name : String(item || '')
+                  }
                   onSelect={(item) => {
+                    if (item?.directTrade) {
+                      handleTraderNameChange('');
+                      return;
+                    }
                     handleTraderNameChange(String(item || ''));
                   }}
                   placeholder="例：梅田建材（入力すると候補が表示されます）"

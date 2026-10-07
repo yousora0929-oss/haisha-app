@@ -64,6 +64,17 @@ export function sortCustomersByUsageFrequency(items, usageCounts) {
   });
 }
 
+/** 商社リストの先頭に固定する「商社なし」。保存値にはせず、選択時は空文字にする。 */
+export const DIRECT_TRADE_SUGGEST_ITEM = {
+  id: '__direct_trade__',
+  directTrade: true,
+  name: '商社なし（直接取引）',
+};
+
+export function isDirectTradeSuggestItem(item) {
+  return Boolean(item && item.directTrade);
+}
+
 export function organizationSuggestTexts(organization) {
   return [organization?.name, organization?.furigana, organization?.id];
 }
