@@ -2287,7 +2287,18 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [customerSearchText, setCustomerSearchText] = useState('');
       const [contractorCustomerId, setContractorCustomerId] = useState('');
       const [contractorSearchText, setContractorSearchText] = useState('');
+      const [spotContractorCustomerId, setSpotContractorCustomerId] = useState('');
+      const [spotSelectedContractorName, setSpotSelectedContractorName] = useState('');
+      useEffect(() => {
+        const typed = String(contractorSearchText || '').trim();
+        const selected = String(spotSelectedContractorName || '').trim();
+        if (!selected || typed !== selected) {
+          setSpotContractorCustomerId((current) => (current ? '' : current));
+        }
+      }, [contractorSearchText, spotSelectedContractorName]);
       const [tradingAgentCustomerId, setTradingAgentCustomerId] = useState('');
+      const [tradingAgentChipOrgId, setTradingAgentChipOrgId] = useState('');
+      const tradingAgentFieldRef = useRef(null);
       const [tradingAgentSearchText, setTradingAgentSearchText] = useState('');
       const [agentContractorLinks, setAgentContractorLinks] = useState([]);
       const linkedContractorIds = useMemo(
@@ -2820,6 +2831,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
       const tradingAgentItems = useMemo(() => {
         const agents = (customers || []).filter((c) => (c.role ?? 'contractor') === 'agent');
+        const chipOrgId = String(tradingAgentChipOrgId || '').trim();
+        if (chipOrgId) {
+          const narrowed = agents.filter((c) => String(c.organization_id || '').trim() === chipOrgId);
+          return sortCustomersByUsageFrequency(narrowed, tradingAgentUsageCounts);
+        }
         const projectOrgId = String(selectedProject?.trading_company_organization_id || '').trim();
         const scoped = projectOrgId
           ? agents.filter((c) => String(c.organization_id || '').trim() === projectOrgId)
@@ -2827,7 +2843,40 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         // 絞り込んだ結果0件なら、取りこぼし防止のため全件表示にフォールバック
         const finalList = scoped.length > 0 ? scoped : agents;
         return sortCustomersByUsageFrequency(finalList, tradingAgentUsageCounts);
-      }, [customers, tradingAgentUsageCounts, selectedProject]);
+      }, [customers, tradingAgentUsageCounts, selectedProject, tradingAgentChipOrgId]);
+
+      const handleTradingAgentCustomerChange = useCallback(
+        (text) => {
+          setTradingAgentChipOrgId('');
+          setTradingAgentSearchText(text);
+          const hit = tradingAgentItems.find(
+            (c) => formatTradingAgentLabel(c).toLowerCase() === String(text || '').trim().toLowerCase(),
+          );
+          if (hit) setTradingAgentCustomerId(String(hit.id));
+          else setTradingAgentCustomerId('');
+          setSubmitError('');
+        },
+        [tradingAgentItems, formatTradingAgentLabel],
+      );
+      const handleTradingAgentCustomerSelect = useCallback(
+        (customer) => {
+          setTradingAgentChipOrgId('');
+          setTradingAgentCustomerId(String(customer.id));
+          setTradingAgentSearchText(formatTradingAgentLabel(customer));
+          setSubmitError('');
+        },
+        [formatTradingAgentLabel],
+      );
+      const scrollTradingAgentFieldIntoView = useCallback(() => {
+        window.requestAnimationFrame(() => {
+          tradingAgentFieldRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+        });
+      }, []);
+      const selectedTradingAgent = useMemo(
+        () =>
+          (customers || []).find((c) => String(c.id) === String(tradingAgentCustomerId || '')) || null,
+        [customers, tradingAgentCustomerId],
+      );
 
       const tradingAgentFilterHint = useMemo(() => {
         if (!contractorLinkAgentId || linkedContractorIds.length === 0) return '';
@@ -5341,6 +5390,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         spotFieldDefaultsKeyRef.current = '';
         setTraderName('');
         setContractorName('');
+        setSpotContractorCustomerId('');
+        setSpotSelectedContractorName('');
         setContractorDisplayMode('prime');
         setContractorDisplayCustomText('');
         setMixText('');
@@ -5360,6 +5411,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setVehicleType('large');
         setTradingAgentCustomerId('');
         setTradingAgentSearchText('');
+        setTradingAgentChipOrgId('');
         setAgentContractorLinks([]);
         setRepeatDraftBanner(false);
         setRepeatMapAnnotations(null);
@@ -6206,6 +6258,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   </p>
                   <div className="mt-3 space-y-3">
                     {currentCustomerRole === 'cooperative' ? (
+                      <div ref={tradingAgentFieldRef}>
                       <MasterSuggestInput
                         label="経由商社担当者（任意）"
                         htmlFor="trading-agent-customer-select"
@@ -6221,23 +6274,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           c.manager_name || '',
                           '代表窓口',
                         ]}
-                        onValueChange={(text) => {
-                          setTradingAgentSearchText(text);
-                          const hit = tradingAgentItems.find(
-                            (c) =>
-                              formatTradingAgentLabel(c).toLowerCase() === text.trim().toLowerCase(),
-                          );
-                          if (hit) setTradingAgentCustomerId(String(hit.id));
-                          else setTradingAgentCustomerId('');
-                          setSubmitError('');
-                        }}
-                        onSelect={(c) => {
-                          setTradingAgentCustomerId(String(c.id));
-                          setTradingAgentSearchText(formatTradingAgentLabel(c));
-                          setSubmitError('');
-                        }}
+                        onValueChange={handleTradingAgentCustomerChange}
+                        onSelect={handleTradingAgentCustomerSelect}
                         emptyHint="該当する商社担当者がありません"
                       />
+                      </div>
                     ) : null}
                     <div>
                       <MasterSuggestInput
@@ -6283,6 +6324,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           setContractorSearchText(name);
                           if (orderKind === 'spot') {
                             setContractorName(name);
+                            setSpotContractorCustomerId(String(c.id));
+                            setSpotSelectedContractorName(name);
                             resetSpotContractorSiteContact();
                           } else {
                             setSelectedProjectId('');
@@ -6303,6 +6346,26 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                             const name = String(project?.name || project?.id || '').trim();
                             return getProjectMatch(project)?.role === 'sub' ? `${name}（下請）` : name;
                           }}
+                          reloadToken={contractorHistoryReloadToken}
+                        />
+                      ) : null}
+                      {orderKind === 'spot' && String(contractorSearchText || '').trim() ? (
+                        <ContractorHistoryPanel
+                          mode="spot"
+                          contractorCustomerId={spotContractorCustomerId}
+                          companyName={contractorSearchText}
+                          currentCustomerRole={currentCustomerRole}
+                          agentCustomers={customers}
+                          selectedTradingAgent={selectedTradingAgent}
+                          onSelectTradingAgent={handleTradingAgentCustomerSelect}
+                          onClearTradingAgent={() => handleTradingAgentCustomerChange('')}
+                          onAmbiguousTradingAgents={(people) => {
+                            setTradingAgentChipOrgId(String(people?.[0]?.organization_id || '').trim());
+                            setTradingAgentSearchText('');
+                            setTradingAgentCustomerId('');
+                            setSubmitError('');
+                          }}
+                          onScrollToTradingAgent={scrollTradingAgentFieldIntoView}
                           reloadToken={contractorHistoryReloadToken}
                         />
                       ) : null}

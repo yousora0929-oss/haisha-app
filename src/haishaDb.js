@@ -5835,15 +5835,19 @@ export async function adminGetCustomerCredentials(customerIds) {
 
 /**
  * 代理発注の発注先業者について、請求先ベースの商社実績と直近物件を返す。
+ * スポットは顧客IDがなくても会社名だけで照会できる。両方空なら null。
  * 権限がないロールでは null。集計は RPC 側で済んでいる。
  */
-export async function fetchContractorOrderHistory(contractorCustomerId, days = 90) {
+export async function fetchContractorOrderHistory(contractorCustomerId, days = 90, options = {}) {
   const id = String(contractorCustomerId || '').trim();
-  if (!id) return null;
-  const { data, error } = await supabase.rpc('get_contractor_order_history', {
-    p_contractor_customer_id: id,
+  const companyName = String(options?.companyName ?? '').trim();
+  if (!id && !companyName) return null;
+  const args = {
+    p_contractor_customer_id: id || null,
     p_days: Number.isFinite(Number(days)) ? Number(days) : 90,
-  });
+  };
+  if (companyName) args.p_company_name = companyName;
+  const { data, error } = await supabase.rpc('get_contractor_order_history', args);
   if (error) throw error;
   if (data == null) return null;
   if (typeof data === 'string') {
