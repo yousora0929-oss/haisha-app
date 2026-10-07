@@ -8,6 +8,7 @@ import { looksLikeUrlText, sanitizeSiteNameValue } from './siteNameDisplay.js';
 import { resolveEffectiveContractorCustomerId } from './resolveEffectiveContractorCustomerId.js';
 import { normalizeFactoryRefId } from './escalationUtils.js';
 import { resolveProjectTradingCompanyName } from './projectTradingCompany.js';
+import { applyCarryOverMapToOrder } from './repeatOrderMap.js';
 import {
   COOPERATIVE_OWN_ORG_TRADER_ERROR,
   isCooperativeOwnOrgTraderName,
@@ -536,7 +537,7 @@ export function buildDispatchOrderForDate(preferredDate, context) {
       : String(traderName || '').trim();
   const resolvedTraderName = projectTraderName || payloadTraderName;
 
-  return {
+  const order = {
     createdAt: new Date().toISOString(),
     is_spot: isSpot,
     customer_id: currentCustomerId || null,
@@ -610,6 +611,9 @@ export function buildDispatchOrderForDate(preferredDate, context) {
       ? { override_map_image_url: String(overrideMapImageUrl).trim() }
       : {}),
   };
+  const carry = context?.repeatMapCarry?.carry ?? null;
+  if (!carry) return order;
+  return applyCarryOverMapToOrder(order, carry);
 }
 
 function validateDeliveryArea(context) {

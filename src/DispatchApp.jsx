@@ -71,6 +71,10 @@ import {
   validateCartLineForm,
   buildRepeatOrderDraft,
 } from './utils/dispatchBulkOrder.js';
+import {
+  buildRepeatMapCarryAnchorKey,
+  extractCarryOverMap,
+} from './utils/repeatOrderMap.js';
 import { MixDesignRequestHistorySection } from './components/MixDesignRequestHistorySection.jsx';
 import {
   COOPERATIVE_OWN_ORG_TRADER_ERROR,
@@ -2230,6 +2234,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [repeatDraftBanner, setRepeatDraftBanner] = useState(false);
       const [repeatMapAnnotations, setRepeatMapAnnotations] = useState(null);
       const [repeatOverrideMapImageUrl, setRepeatOverrideMapImageUrl] = useState('');
+      const [repeatMapCarry, setRepeatMapCarry] = useState(null);
 
       useEffect(() => {
         const blocking = newOrderMode === 'form' || cartItems.length > 0 || showCashPriceModal;
@@ -2364,6 +2369,32 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         () => combineDeliveryAddress(deliveryArea, siteAddressDetail),
         [deliveryArea, siteAddressDetail],
       );
+
+      useEffect(() => {
+        if (!repeatMapCarry?.anchorKey) return;
+        const currentKey = buildRepeatMapCarryAnchorKey({
+          orderKind,
+          projectId: selectedProjectId,
+          deliveryLat,
+          deliveryLng,
+          deliveryArea,
+          siteAddressDetail,
+          siteAddress,
+        });
+        if (currentKey === repeatMapCarry.anchorKey) return;
+        setRepeatMapCarry(null);
+        setRepeatMapAnnotations(null);
+        setRepeatOverrideMapImageUrl('');
+      }, [
+        repeatMapCarry,
+        orderKind,
+        selectedProjectId,
+        deliveryLat,
+        deliveryLng,
+        deliveryArea,
+        siteAddressDetail,
+        siteAddress,
+      ]);
       const guestLockedFields = useMemo(() => {
         if (!isGuestSiteOrder || !guestSiteOrderCtx) return null;
         return resolveGuestOrderLockedFields(guestSiteOrderCtx, allowedDeliveryAreas);
@@ -4762,6 +4793,42 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         [applyProjectSelection, currentCustomer, customers, projects, today],
       );
 
+      const stageRepeatMapCarry = useCallback((row, draft) => {
+        const source = row?.source && typeof row.source === 'object' ? row.source : row;
+        const carry = extractCarryOverMap(source);
+        if (!carry) {
+          setRepeatMapCarry(null);
+          return;
+        }
+        const site = String(row?.site || source?.siteName || source?.projectName || '').trim();
+        const date = String(row?.dateLabel || source?.preferredDate || source?.scheduleMatchDate || '').trim();
+        setRepeatMapCarry({
+          carry,
+          sourceOrderId: carry.sourceOrderId,
+          anchorKey: buildRepeatMapCarryAnchorKey({
+            orderKind: draft?.orderKind,
+            projectId: draft?.selectedProjectId,
+            deliveryLat: draft?.deliveryLat,
+            deliveryLng: draft?.deliveryLng,
+            deliveryArea: draft?.deliveryArea,
+            siteAddressDetail: draft?.siteAddressDetail,
+            siteAddress: combineDeliveryAddress(draft?.deliveryArea, draft?.siteAddressDetail),
+          }),
+          sourceLabel: [site, date].filter(Boolean).join(' '),
+        });
+        setIsLocationPending(false);
+      }, []);
+
+      const declineRepeatMapCarry = useCallback(() => {
+        setRepeatMapCarry(null);
+        setRepeatMapAnnotations(null);
+        setRepeatOverrideMapImageUrl('');
+        if (orderKind === 'spot') {
+          setIsLocationPending(true);
+          setSpotMapFlowMode('later');
+        }
+      }, [orderKind]);
+
       const applyHistoryOrderToNewForm = useCallback(
         (row, options = {}) => {
           if (!row?.id && !row?.source?.id) {
@@ -4776,11 +4843,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 ? options.notice
                 : '履歴の内容を新規発注フォームに反映しました。数量・配合を変更して発注できます。',
           });
+          stageRepeatMapCarry(row, draft);
           if (options.emptyDates !== true) {
             setRepeatDraftBanner(false);
           }
         },
-        [applyOrderDraftToForm, currentCustomer, factories],
+        [applyOrderDraftToForm, currentCustomer, factories, stageRepeatMapCarry],
       );
 
       const openRepeatOrderDraft = useCallback(
@@ -4794,8 +4862,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             emptyDates: true,
             notice: REPEAT_ORDER_DRAFT_NOTICE,
           });
+          stageRepeatMapCarry(row, draft);
         },
-        [applyOrderDraftToForm, currentCustomer, factories],
+        [applyOrderDraftToForm, currentCustomer, factories, stageRepeatMapCarry],
       );
 
       const pendingChangeProposalOrderIds = useMemo(() => {
@@ -5180,6 +5249,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           mixText,
           mapAnnotations: repeatMapAnnotations,
           overrideMapImageUrl: repeatOverrideMapImageUrl,
+          repeatMapCarry,
         }),
         [
           isGuestSiteOrder,
@@ -5220,6 +5290,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           mixText,
           repeatMapAnnotations,
           repeatOverrideMapImageUrl,
+          repeatMapCarry,
         ],
       );
 
@@ -5273,6 +5344,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setRepeatDraftBanner(false);
         setRepeatMapAnnotations(null);
         setRepeatOverrideMapImageUrl('');
+        setRepeatMapCarry(null);
         if (isAgentOrCooperative) {
           // agent/cooperativeは業者選択を保持する（発注ごとにリセットしない）
           // 必要ならコメントアウトを外す:
@@ -5306,12 +5378,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           const addedAt = Date.now();
           setCartItems((prev) => [
             ...prev,
-            { cartId, order, addedAt, mapEditorFlowMode: spotMapFlowMode },
+            { cartId, order, addedAt, mapEditorFlowMode: repeatMapCarry ? 'carried' : spotMapFlowMode },
           ]);
           setSubmitNotice('リストに追加しました。日付や配合を変えて続けて追加できます。');
           window.setTimeout(() => setSubmitNotice(null), 2500);
         },
-        [preferredDate, orderFormContext, today, isGuestSiteOrder, spotMapFlowMode],
+        [preferredDate, orderFormContext, today, isGuestSiteOrder, spotMapFlowMode, repeatMapCarry],
       );
 
       const handleRemoveFromCart = useCallback((cartId) => {
@@ -5979,7 +6051,12 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   </div>
                   <button
                     type="button"
-                    onClick={() => setNewOrderMode('')}
+                    onClick={() => {
+                      setNewOrderMode('');
+                      setRepeatMapCarry(null);
+                      setRepeatMapAnnotations(null);
+                      setRepeatOverrideMapImageUrl('');
+                    }}
                     className="rounded-xl border-2 border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
                   >
                     発注スタイル選択へ戻る
@@ -6003,7 +6080,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </p>
                   </div>
                   {!isGuestSiteOrder ? (
-                    <button type="button" onClick={() => { setNewOrderMode(''); setRepeatDraftBanner(false); }} className="rounded-xl border-2 border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+                    <button type="button" onClick={() => { setNewOrderMode(''); setRepeatDraftBanner(false); setRepeatMapCarry(null); setRepeatMapAnnotations(null); setRepeatOverrideMapImageUrl(''); }} className="rounded-xl border-2 border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
                       発注スタイル選択へ戻る
                     </button>
                   ) : null}
@@ -6011,6 +6088,20 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 {repeatDraftBanner ? (
                   <div className="mt-4 rounded-xl border-2 border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900" role="status">
                     {REPEAT_ORDER_DRAFT_NOTICE}
+                  </div>
+                ) : null}
+                {repeatMapCarry ? (
+                  <div className="mt-4 rounded-xl border-2 border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-950" role="status">
+                    <p>
+                      前回の地図を引き継ぎます（元注文: {repeatMapCarry.sourceLabel || '前回の注文'}）。コメントなど日付限定の内容は、発注後に地図で確認してください。
+                    </p>
+                    <button
+                      type="button"
+                      onClick={declineRepeatMapCarry}
+                      className="mt-3 rounded-lg border-2 border-emerald-700 bg-white px-3 py-2 text-xs font-black text-emerald-900 hover:bg-emerald-100"
+                    >
+                      引き継がない
+                    </button>
                   </div>
                 ) : null}
                 <form
@@ -6493,6 +6584,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     townSuggestionsLoading={townOptionsLoading}
                     townSuggestionsError={townOptionsError}
                   />
+                  {repeatMapCarry ? null : (
                   <div className="flex flex-col gap-2">
                     <span className="text-sm font-semibold text-slate-700">現場地図の扱い</span>
                     <div className="grid gap-2 sm:grid-cols-2">
@@ -6543,6 +6635,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       </label>
                     </div>
                   </div>
+                  )}
 
                   {!isGuestSiteOrder && !isAgentOrCooperative ? (
                     <>
@@ -7249,7 +7342,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 <div>
                   <h2 className="text-base font-black text-slate-900">注文履歴</h2>
                   <p className="mt-2 text-xs leading-relaxed text-slate-500">
-                    完了・キャンセル済みの注文です。「この内容で再発注」でフォームへ反映するか、カードを展開して日時だけ変えて即時再発注できます。
+                    完了・キャンセル済みの注文です。「この内容で注文」で新規発注フォームへ反映できます。
                   </p>
                 </div>
                 <div className="grid gap-2">

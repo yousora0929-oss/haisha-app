@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { LocationPendingBadge } from './LocationPendingBadge.jsx';
+import { hasCarriedMap } from '../utils/repeatOrderMap.js';
 import { TIME_SLOTS } from '../haishaConstants.js';
 
 function formatOrderDateLabel(order) {
@@ -157,6 +158,11 @@ export function OrderCartPreview({
                 <p className="flex flex-wrap items-center gap-2 text-sm font-black text-slate-900">
                   注文 {index + 1}
                   <LocationPendingBadge order={o} />
+                  {item.mapEditorFlowMode === 'carried' || hasCarriedMap(o) ? (
+                    <span className="inline-flex items-center rounded-full border-2 border-emerald-600 bg-emerald-50 px-2 py-0.5 text-[10px] font-black text-emerald-900 sm:text-[11px]">
+                      前回から引き継ぎ
+                    </span>
+                  ) : null}
                 </p>
                 {!isEditing ? (
                   <button

@@ -23,6 +23,7 @@ import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/site
 import { normalizeAssociationFactorySelection } from './utils/associationFactoryAssignment.js';
 import { shouldResetOrderStatusOnFactoryReassign } from './utils/orderFactoryReassign.js';
 import { ensureOrderPreferredFactoryForInsert } from './utils/dispatchBulkOrder.js';
+import { attachColumnMapAnnotations } from './utils/repeatOrderMap.js';
 import { resolveProjectTradingCompanyName } from './utils/projectTradingCompany.js';
 import {
   buildMixDesignAnchorProjectPayload,
@@ -1016,6 +1017,7 @@ export async function fetchOrdersWithChat(options = {}) {
         order.reservation_group_id = attached.reservation_group_id;
         order.reservation_group = attached.reservation_group;
       }
+      attachColumnMapAnnotations(order, row);
       orders.push(order);
     }
     chatThreads[row.id] = normalizeChatMessages(row.chat_messages);
@@ -1330,7 +1332,7 @@ function buildOrderInsertRow(order) {
     deliveryLat,
     deliveryLng,
   });
-  return {
+  const row = {
     id,
     has_test: hasTest,
     order_data: nextOrder,
@@ -1352,6 +1354,18 @@ function buildOrderInsertRow(order) {
     site_history_contractor_id: sanitizeRefId(order.site_history_contractor_id) || null,
     trading_agent_customer_id: sanitizeRefId(order.trading_agent_customer_id) || null,
   };
+  const mapUrl = String(order.override_map_image_url ?? '').trim();
+  if (mapUrl) row.override_map_image_url = mapUrl;
+  const mapAnnotations = order.map_annotations;
+  if (
+    mapAnnotations &&
+    typeof mapAnnotations === 'object' &&
+    !Array.isArray(mapAnnotations) &&
+    Object.keys(mapAnnotations).length > 0
+  ) {
+    row.map_annotations = mapAnnotations;
+  }
+  return row;
 }
 
 export async function insertOrder(order) {
