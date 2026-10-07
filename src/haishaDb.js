@@ -5834,36 +5834,23 @@ export async function adminGetCustomerCredentials(customerIds) {
 }
 
 /**
- * 指定した業者(customer_id)が過去に利用した商社の実績を取得
- * @param {string} customerId
- * @returns {Promise<Array<{ tradingCompanyName: string, count: number, latestProjectName: string, latestDate: string }>>}
+ * 代理発注の発注先業者について、請求先ベースの商社実績と直近物件を返す。
+ * 権限がないロールでは null。集計は RPC 側で済んでいる。
  */
-export async function fetchTradingCompanyHistoryByCustomer(customerId) {
-  const cid = String(customerId || '').trim();
-  if (!cid) return [];
-  const { data, error } = await supabase
-    .from('projects')
-    .select('name, trading_company_name, created_at')
-    .eq('customer_id', cid)
-    .not('trading_company_name', 'is', null)
-    .order('created_at', { ascending: false });
+export async function fetchContractorOrderHistory(contractorCustomerId, days = 90) {
+  const id = String(contractorCustomerId || '').trim();
+  if (!id) return null;
+  const { data, error } = await supabase.rpc('get_contractor_order_history', {
+    p_contractor_customer_id: id,
+    p_days: Number.isFinite(Number(days)) ? Number(days) : 90,
+  });
   if (error) throw error;
-
-  const grouped = {};
-  for (const row of data || []) {
-    const key = String(row.trading_company_name || '').trim();
-    if (!key) continue;
-    if (!grouped[key]) {
-      grouped[key] = {
-        tradingCompanyName: key,
-        count: 0,
-        latestProjectName: String(row.name || '').trim(),
-        latestDate: row.created_at != null ? String(row.created_at) : '',
-      };
-    }
-    grouped[key].count += 1;
+  if (data == null) return null;
+  if (typeof data === 'string') {
+    const parsed = JSON.parse(data);
+    return parsed ?? null;
   }
-  return Object.values(grouped).sort((a, b) => b.count - a.count);
+  return data;
 }
 
 const BULK_INSERT_CHUNK = 100;

@@ -25,6 +25,7 @@ import {
   removeAuthValue,
 } from './supabaseClient.js';
 import { CashPriceCalculator } from './components/CashPriceCalculator.jsx';
+import { ContractorHistoryPanel } from './components/ContractorHistoryPanel.jsx';
 import {
   clearAppBadge,
   registerOneSignalUser,
@@ -75,6 +76,7 @@ import {
   buildRepeatMapCarryAnchorKey,
   extractCarryOverMap,
 } from './utils/repeatOrderMap.js';
+import { invalidateContractorOrderHistoryCache } from './utils/contractorHistoryDisplay.js';
 import { MixDesignRequestHistorySection } from './components/MixDesignRequestHistorySection.jsx';
 import {
   COOPERATIVE_OWN_ORG_TRADER_ERROR,
@@ -2425,6 +2427,24 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         },
         [allowedDeliveryAreas],
       );
+
+      const projectSelectAnchorRef = useRef(null);
+      const [contractorHistoryReloadToken, setContractorHistoryReloadToken] = useState(0);
+      const handleSelectProject = useCallback((p) => {
+        const pid = String(p.id);
+        setSelectedProjectId(pid);
+        setProjectSearchText(String(p.name || '').trim());
+        applyProjectSelection(p);
+        const factoryId = resolveProjectMainFactoryId(p);
+        if (factoryId) setPreferredFactoryId(factoryId);
+        setSubmitError('');
+      }, [applyProjectSelection]);
+      const handleSelectHistoryProject = useCallback((p) => {
+        handleSelectProject(p);
+        window.requestAnimationFrame(() => {
+          projectSelectAnchorRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+        });
+      }, [handleSelectProject]);
 
       /** 市町村選択に応じて HeartRails から町名候補（代表地点付き）を取得 */
       useEffect(() => {
@@ -5546,6 +5566,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               isGuestSiteOrder ? guestOrderToken : '',
             );
             await refreshDashboard();
+            invalidateContractorOrderHistoryCache();
+            setContractorHistoryReloadToken((token) => token + 1);
             setCartItems([]);
             setSameFactoryRequired(false);
             resetOrderForm();
@@ -5567,6 +5589,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             const insertedOrders = await db.insertOrdersBulk(orders, { factories, projects });
             openMapEditorsForInserted(insertedOrders, '');
             await refreshDashboard();
+            invalidateContractorOrderHistoryCache();
+            setContractorHistoryReloadToken((token) => token + 1);
             setCustomerOrderTab(count > 1 ? 'calendar' : 'active');
           }
           setCartItems([]);
@@ -6269,6 +6293,19 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         }}
                         emptyHint="該当する業者がありません"
                       />
+                      {orderKind === 'project' && contractorCustomerId ? (
+                        <ContractorHistoryPanel
+                          contractorCustomerId={contractorCustomerId}
+                          selectableProjects={filteredProjects}
+                          selectedProjectId={selectedProjectId}
+                          onSelectProject={handleSelectHistoryProject}
+                          getProjectLabel={(project) => {
+                            const name = String(project?.name || project?.id || '').trim();
+                            return getProjectMatch(project)?.role === 'sub' ? `${name}（下請）` : name;
+                          }}
+                          reloadToken={contractorHistoryReloadToken}
+                        />
+                      ) : null}
                       {tradingAgentFilterHint ? (
                         <p className="mt-1 text-[11px] font-bold text-amber-800">
                           {tradingAgentFilterHint}
@@ -6351,6 +6388,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     emptyHint="該当する業者がありません"
                   />
                   ) : null}
+                  <div ref={projectSelectAnchorRef}>
                   <MasterSuggestInput
                     label="物件を選択"
                     htmlFor={orderFieldId('dispatch-project')}
@@ -6396,17 +6434,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         }
                       }
                     }}
-                    onSelect={(p) => {
-                      const pid = String(p.id);
-                      setSelectedProjectId(pid);
-                      setProjectSearchText(String(p.name || '').trim());
-                      applyProjectSelection(p);
-                      const factoryId = resolveProjectMainFactoryId(p);
-                      if (factoryId) setPreferredFactoryId(factoryId);
-                      setSubmitError('');
-                    }}
+                    onSelect={(p) => handleSelectProject(p)}
                     emptyHint="該当する物件がありません"
                   />
+                  </div>
                   {!hasCurrentCustomer ? (
                     <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
                       ログイン中の業者情報を確認できません。再ログインするか、上の欄で業者を選択してください。

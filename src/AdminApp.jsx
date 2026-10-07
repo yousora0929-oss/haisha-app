@@ -16,6 +16,7 @@ import { CashPriceListEditor } from './components/admin/CashPriceListEditor.jsx'
 import { ProjectMapEditorUrlActions } from './components/ProjectMapEditorUrlActions.jsx';
 import { DeliveryAreaAddressField } from './components/DeliveryAreaAddressField.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
+import { TradingHistoryChips } from './components/TradingHistoryChips.jsx';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { PhoneOrderBadge } from './components/PhoneOrderBadge.jsx';
 import { CounterCashBadge } from './components/CounterCashBadge.jsx';
@@ -109,6 +110,10 @@ import {
   resolveProjectTradingCompanyName,
 } from './utils/projectTradingCompany.js';
 import { resolveOrdererLabel, resolveProjectPartyDisplay } from './utils/projectPartyDisplay.js';
+import {
+  buildTradingHistoryForParty,
+  tradingCompanyDraftFromHistoryLabel,
+} from './utils/tradingHistory.js';
 
 function timeToInputValue(t) {
   const s = t != null ? String(t) : '';
@@ -589,8 +594,8 @@ function ProjectForm({
       : [{ name: '', phone: '', registerAsStaff: false }];
   });
   const [siteContactCandidates, setSiteContactCandidates] = useState([]);
-  const [tradingCompanyHistory, setTradingCompanyHistory] = useState([]);
-  const [tradingCompanyHistoryLoading, setTradingCompanyHistoryLoading] = useState(false);
+  const [historyProjects, setHistoryProjects] = useState([]);
+  const [historyProjectsLoading, setHistoryProjectsLoading] = useState(true);
   const [subContractor, setSubContractor] = useState(
     initial?.sub_contractor_name ?? initial?.contractor ?? '',
   );
@@ -799,45 +804,48 @@ function ProjectForm({
     };
   }, [customerId]);
 
-  // 選択業者の過去商社利用実績
+  // 全物件はフォームを開いたときだけ取る。請求先の入力のたびに問い合わせない。
   useEffect(() => {
-    const cid = String(customerId || '').trim();
-    if (!cid) {
-      setTradingCompanyHistory([]);
-      setTradingCompanyHistoryLoading(false);
-      return undefined;
-    }
     let cancelled = false;
-    setTradingCompanyHistoryLoading(true);
+    setHistoryProjectsLoading(true);
     void db
-      .fetchTradingCompanyHistoryByCustomer(cid)
+      .fetchProjects()
       .then((rows) => {
-        if (cancelled) return;
-        setTradingCompanyHistory(Array.isArray(rows) ? rows : []);
+        if (!cancelled) setHistoryProjects(Array.isArray(rows) ? rows : []);
       })
       .catch((err) => {
-        console.warn('[ProjectForm] trading company history fetch failed', err);
-        if (!cancelled) setTradingCompanyHistory([]);
+        console.warn('[ProjectForm] trading history projects fetch failed', err);
+        if (!cancelled) setHistoryProjects([]);
       })
       .finally(() => {
-        if (!cancelled) setTradingCompanyHistoryLoading(false);
+        if (!cancelled) setHistoryProjectsLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [customerId]);
+  }, []);
 
-  const applyTradingCompanyFromHistory = useCallback(
-    (companyName) => {
-      const name = String(companyName || '').trim();
-      if (!name) return;
-      setTradingCompany(name);
-      const hit = (agentOrganizations || []).find(
-        (o) => String(o?.name || '').trim() === name,
-      );
-      setTradingCompanyOrganizationId(hit?.id ? String(hit.id) : '');
-    },
-    [agentOrganizations],
+  const historyCustomerById = useMemo(() => {
+    const map = new Map();
+    for (const customer of customers || []) {
+      if (customer?.id != null) map.set(String(customer.id), customer);
+    }
+    return map;
+  }, [customers]);
+
+  const historyPartyName = billingTarget === 'sub'
+    ? String(subContractor || '').trim()
+    : linkedCustomer
+      ? String(linkedCustomer.company_name || linkedCustomer.name || '').trim()
+      : String(contractorName || '').trim();
+
+  const tradingCompanyHistory = useMemo(
+    () =>
+      buildTradingHistoryForParty(historyProjects, historyPartyName, {
+        customerById: historyCustomerById,
+        excludeProjectId: initial?.id,
+      }),
+    [historyProjects, historyPartyName, historyCustomerById, initial?.id],
   );
 
   useEffect(() => {
@@ -935,6 +943,22 @@ function ProjectForm({
       setTradingCompanyOrganizationId(hit?.id ? String(hit.id) : '');
     },
     [agentOrganizations],
+  );
+
+  const applyTradingCompanyFromHistory = useCallback(
+    (companyName) => {
+      const name = tradingCompanyDraftFromHistoryLabel(companyName);
+      if (!name) {
+        handleTradingCompanyChange('');
+        return;
+      }
+      setTradingCompany(name);
+      const hit = (agentOrganizations || []).find(
+        (o) => String(o?.name || '').trim() === name,
+      );
+      setTradingCompanyOrganizationId(hit?.id ? String(hit.id) : '');
+    },
+    [agentOrganizations, handleTradingCompanyChange],
   );
 
   const handleTradingCompanySelect = useCallback((org) => {
@@ -1236,43 +1260,23 @@ function ProjectForm({
             </span>
           </p>
         ) : null}
-        {tradingCompanyHistoryLoading ? (
+        {historyPartyName ? (
+          <p className="mt-2 text-[11px] font-medium text-slate-500">
+            {billingTarget === 'sub'
+              ? `請求先（下請: ${historyPartyName}）の実績`
+              : `請求先（元請: ${historyPartyName}）の実績`}
+          </p>
+        ) : billingTarget === 'sub' ? (
+          <p className="mt-2 text-[11px] font-medium text-slate-500">下請業者を入力すると実績を表示します</p>
+        ) : null}
+        {historyProjectsLoading ? (
           <p className="mt-2 text-[11px] font-medium text-slate-400">商社実績を読み込み中…</p>
         ) : null}
-        {!tradingCompanyHistoryLoading && tradingCompanyHistory.length > 0 ? (
-          <div className="mt-2 rounded-lg border border-slate-200 bg-white/80 px-3 py-2">
-            <p className="text-[11px] font-black text-slate-700">過去の商社利用実績:</p>
-            <ul className="mt-1 space-y-1">
-              {tradingCompanyHistory.map((row) => {
-                const ym = (() => {
-                  const d = new Date(row.latestDate);
-                  if (Number.isNaN(d.getTime())) return '';
-                  return `${d.getFullYear()}/${d.getMonth() + 1}`;
-                })();
-                return (
-                  <li key={row.tradingCompanyName} className="text-[11px] font-medium text-slate-700">
-                    ・
-                    <button
-                      type="button"
-                      onClick={() => applyTradingCompanyFromHistory(row.tradingCompanyName)}
-                      className="font-black text-indigo-700 underline-offset-2 hover:underline"
-                      title="商社名欄に入力"
-                    >
-                      {row.tradingCompanyName}
-                    </button>
-                    （{row.count}件）
-                    {row.latestProjectName ? (
-                      <span className="text-slate-500">
-                        {' '}
-                        最新: {row.latestProjectName}
-                        {ym ? `（${ym}）` : ''}
-                      </span>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
+        {!historyProjectsLoading && historyPartyName && tradingCompanyHistory.length > 0 ? (
+          <TradingHistoryChips
+            rows={tradingCompanyHistory}
+            onSelectName={applyTradingCompanyFromHistory}
+          />
         ) : null}
         {isUnmatchedContractor ? (
           <div className="mt-2 space-y-2">
