@@ -14,7 +14,35 @@ import {
   mixDesignStatusLabel,
   printMixDesignSheet,
 } from '../utils/mixDesignRequest.js';
+import {
+  MIX_DESIGN_HISTORY_TABS,
+  filterMixDesignHistoryRows,
+  groupActiveMixDesignHistory,
+  isMixDesignHistoryDone,
+  mixDesignHistoryTabCounts,
+  mixDesignStatusBadgeClass,
+} from '../utils/mixDesignHistoryView.js';
 import './mixDesignPrint.css';
+
+const MIX_DESIGN_HISTORY_TAB_STORAGE_KEY = 'haisha.mixDesignHistoryStatusTab';
+
+function readMixDesignHistoryTab() {
+  try {
+    const raw = window.localStorage.getItem(MIX_DESIGN_HISTORY_TAB_STORAGE_KEY);
+    if (raw === 'active' || raw === 'done' || raw === 'all') return raw;
+  } catch {
+    /* 取得できないときは進行中 */
+  }
+  return 'active';
+}
+
+function writeMixDesignHistoryTab(tab) {
+  try {
+    window.localStorage.setItem(MIX_DESIGN_HISTORY_TAB_STORAGE_KEY, tab);
+  } catch {
+    /* 保存できなくても表示は続ける */
+  }
+}
 
 function formatRequestedAt(value) {
   const raw = String(value || '').trim();
@@ -64,7 +92,23 @@ export function MixDesignRequestHistorySection({
   const [editBundle, setEditBundle] = useState(null);
   const [editLoadingId, setEditLoadingId] = useState('');
   const [statusSavingId, setStatusSavingId] = useState('');
+  const [historyTab, setHistoryTab] = useState(readMixDesignHistoryTab);
   const printRootRef = useRef(null);
+
+  const historyCounts = useMemo(() => mixDesignHistoryTabCounts(rows), [rows]);
+  const visibleHistoryRows = useMemo(
+    () => filterMixDesignHistoryRows(rows, historyTab),
+    [rows, historyTab],
+  );
+  const activeHistorySections = useMemo(
+    () => (historyTab === 'active' ? groupActiveMixDesignHistory(rows) : []),
+    [rows, historyTab],
+  );
+
+  const selectHistoryTab = (tab) => {
+    setHistoryTab(tab);
+    writeMixDesignHistoryTab(tab);
+  };
 
   const factoryNameById = useMemo(() => {
     const map = new Map();
@@ -222,6 +266,106 @@ export function MixDesignRequestHistorySection({
     mixDesignMode === 'selectProject'
       ? (projects || []).find((p) => String(p?.id) === String(mixDesignProjectId)) || null
       : null;
+
+  const renderHistoryCard = (row, { muted = false } = {}) => {
+    const factoryName = formatMixDesignFactoryNames(
+      row.requested_to_factory_ids?.length
+        ? row.requested_to_factory_ids
+        : row.requested_to_factory_id
+          ? [row.requested_to_factory_id]
+          : [],
+      factoryNameById,
+      { emptyLabel: MIX_DESIGN_FACTORY_OMAKASE_LABEL },
+    );
+    const lastChanged = mixDesignLastChangedAt(row);
+    const titleClass = muted ? 'text-sm font-black text-slate-500' : 'text-sm font-black text-slate-900';
+    const bodyClass = muted ? 'text-slate-500' : 'text-slate-800';
+    return (
+      <article
+        className={
+          muted
+            ? 'rounded-2xl border-2 border-slate-200 bg-slate-100/70 p-4 shadow-sm'
+            : 'rounded-2xl border-2 border-slate-200 bg-slate-50 p-4 shadow-sm'
+        }
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1">
+            <p className={titleClass}>{row.project_name || '（現場名なし）'}</p>
+            <dl className="mt-2 grid gap-1 text-xs font-bold text-slate-600 sm:grid-cols-2">
+              <div>
+                <dt className="inline text-slate-400">業者名 </dt>
+                <dd className={`inline ${bodyClass}`}>{row.contractor_name || '—'}</dd>
+              </div>
+              <div>
+                <dt className="inline text-slate-400">依頼先工場 </dt>
+                <dd className={`inline ${bodyClass}`}>{factoryName}</dd>
+              </div>
+              <div>
+                <dt className="inline text-slate-400">依頼日 </dt>
+                <dd className={`inline ${bodyClass}`}>{formatRequestedAt(row.created_at)}</dd>
+              </div>
+              <div>
+                <dt className="inline text-slate-400">最終変更 </dt>
+                <dd className={`inline ${bodyClass}`}>{formatRequestedAt(lastChanged)}</dd>
+              </div>
+              <div>
+                <dt className="inline text-slate-400">ステータス </dt>
+                <dd className="inline">
+                  {readOnly ? (
+                    <span className={bodyClass}>{mixDesignStatusLabel(row.status)}</span>
+                  ) : (
+                    <span
+                      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-black ${mixDesignStatusBadgeClass(row.status)}`}
+                    >
+                      {mixDesignStatusLabel(row.status)}
+                    </span>
+                  )}
+                </dd>
+              </div>
+              {row.trading_company_name ? (
+                <div className="sm:col-span-2">
+                  <dt className="inline text-slate-400">商社名 </dt>
+                  <dd className={`inline ${bodyClass}`}>{row.trading_company_name}</dd>
+                </div>
+              ) : null}
+              {row.requested_by ? (
+                <div className="sm:col-span-2">
+                  <dt className="inline text-slate-400">依頼者 </dt>
+                  <dd className={`inline ${bodyClass}`}>{row.requested_by}</dd>
+                </div>
+              ) : null}
+              {row.site_address ? (
+                <div className="sm:col-span-2">
+                  <dt className="inline text-slate-400">現場住所 </dt>
+                  <dd className={`inline break-words ${bodyClass}`}>{row.site_address}</dd>
+                </div>
+              ) : null}
+            </dl>
+          </div>
+          <div className="flex shrink-0 flex-col gap-2 sm:items-stretch">
+            {!readOnly ? (
+              <button
+                type="button"
+                onClick={() => void openEdit(row.id)}
+                disabled={editLoadingId === String(row.id)}
+                className="min-h-[44px] rounded-xl border-2 border-indigo-600 bg-white px-4 text-sm font-black text-indigo-700 disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
+              >
+                {editLoadingId === String(row.id) ? '読込中…' : '編集'}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void openPrint(row.id)}
+              disabled={printLoadingId === String(row.id)}
+              className="min-h-[44px] rounded-xl border-2 border-slate-800 bg-slate-900 px-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300"
+            >
+              {printLoadingId === String(row.id) ? '読込中…' : '印刷'}
+            </button>
+          </div>
+        </div>
+      </article>
+    );
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -407,6 +551,40 @@ export function MixDesignRequestHistorySection({
           </button>
         </form>
 
+        {!readOnly ? (
+          <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="依頼履歴の進捗">
+            {MIX_DESIGN_HISTORY_TABS.map((tab) => {
+              const selected = historyTab === tab.id;
+              const count = historyCounts[tab.id] ?? 0;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  onClick={() => selectHistoryTab(tab.id)}
+                  className={
+                    'inline-flex min-h-[44px] items-center gap-2 rounded-xl border-2 px-4 text-sm font-black ' +
+                    (selected
+                      ? 'border-indigo-600 bg-indigo-600 text-white'
+                      : 'border-slate-200 bg-white text-slate-700 hover:border-slate-400')
+                  }
+                >
+                  {tab.label}
+                  <span
+                    className={
+                      'inline-flex min-w-[1.5rem] justify-center rounded-full px-1.5 text-xs ' +
+                      (selected ? 'bg-white text-indigo-700' : 'bg-slate-100 text-slate-700')
+                    }
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+
         {error ? (
           <p className="mt-3 text-sm font-bold text-red-700" role="alert">
             {error}
@@ -415,97 +593,51 @@ export function MixDesignRequestHistorySection({
 
         {loading ? (
           <p className="mt-5 text-center text-sm font-bold text-slate-400">読み込み中…</p>
-        ) : error ? null : rows.length === 0 ? (
+        ) : error ? null : (readOnly ? rows.length === 0 : visibleHistoryRows.length === 0) ? (
           <p className="mt-5 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm font-bold text-slate-500">
-            {submittedKeyword ? '条件に一致する依頼はありません。' : 'まだ配合計画書の依頼がありません。'}
+            {readOnly
+              ? submittedKeyword
+                ? '条件に一致する依頼はありません。'
+                : 'まだ配合計画書の依頼がありません。'
+              : submittedKeyword && rows.length === 0
+                ? '条件に一致する依頼はありません。'
+                : 'このステータスの依頼はありません'}
           </p>
+        ) : readOnly ? (
+          <ul className="mt-5 grid grid-cols-1 gap-3">
+            {rows.map((row) => (
+              <li key={row.id}>{renderHistoryCard(row)}</li>
+            ))}
+          </ul>
+        ) : historyTab === 'active' ? (
+          <div className="mt-5 space-y-5">
+            {activeHistorySections.map((section) => (
+              <section key={section.status}>
+                <h3
+                  className={
+                    section.attention
+                      ? 'rounded-xl border-2 border-amber-400 bg-amber-50 px-3 py-2 text-sm font-black text-amber-950'
+                      : 'border-b border-slate-200 px-1 py-2 text-sm font-black text-slate-700'
+                  }
+                >
+                  {section.label}
+                  <span className="ml-2">{section.count}</span>
+                </h3>
+                <ul className="mt-3 grid grid-cols-1 gap-3">
+                  {section.rows.map((row) => (
+                    <li key={row.id}>{renderHistoryCard(row)}</li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
         ) : (
           <ul className="mt-5 grid grid-cols-1 gap-3">
-            {rows.map((row) => {
-              const factoryName = formatMixDesignFactoryNames(
-                row.requested_to_factory_ids?.length
-                  ? row.requested_to_factory_ids
-                  : row.requested_to_factory_id
-                    ? [row.requested_to_factory_id]
-                    : [],
-                factoryNameById,
-                { emptyLabel: MIX_DESIGN_FACTORY_OMAKASE_LABEL },
-              );
-              const lastChanged = mixDesignLastChangedAt(row);
-              return (
-                <li key={row.id}>
-                  <article className="rounded-2xl border-2 border-slate-200 bg-slate-50 p-4 shadow-sm">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-black text-slate-900">
-                          {row.project_name || '（現場名なし）'}
-                        </p>
-                        <dl className="mt-2 grid gap-1 text-xs font-bold text-slate-600 sm:grid-cols-2">
-                          <div>
-                            <dt className="inline text-slate-400">業者名 </dt>
-                            <dd className="inline text-slate-800">{row.contractor_name || '—'}</dd>
-                          </div>
-                          <div>
-                            <dt className="inline text-slate-400">依頼先工場 </dt>
-                            <dd className="inline text-slate-800">{factoryName}</dd>
-                          </div>
-                          <div>
-                            <dt className="inline text-slate-400">依頼日 </dt>
-                            <dd className="inline text-slate-800">{formatRequestedAt(row.created_at)}</dd>
-                          </div>
-                          <div>
-                            <dt className="inline text-slate-400">最終変更 </dt>
-                            <dd className="inline text-slate-800">{formatRequestedAt(lastChanged)}</dd>
-                          </div>
-                          <div>
-                            <dt className="inline text-slate-400">ステータス </dt>
-                            <dd className="inline text-slate-800">{mixDesignStatusLabel(row.status)}</dd>
-                          </div>
-                          {row.trading_company_name ? (
-                            <div className="sm:col-span-2">
-                              <dt className="inline text-slate-400">商社名 </dt>
-                              <dd className="inline text-slate-800">{row.trading_company_name}</dd>
-                            </div>
-                          ) : null}
-                          {row.requested_by ? (
-                            <div className="sm:col-span-2">
-                              <dt className="inline text-slate-400">依頼者 </dt>
-                              <dd className="inline text-slate-800">{row.requested_by}</dd>
-                            </div>
-                          ) : null}
-                          {row.site_address ? (
-                            <div className="sm:col-span-2">
-                              <dt className="inline text-slate-400">現場住所 </dt>
-                              <dd className="inline break-words text-slate-800">{row.site_address}</dd>
-                            </div>
-                          ) : null}
-                        </dl>
-                      </div>
-                      <div className="flex shrink-0 flex-col gap-2 sm:items-stretch">
-                        {!readOnly ? (
-                        <button
-                          type="button"
-                          onClick={() => void openEdit(row.id)}
-                          disabled={editLoadingId === String(row.id)}
-                          className="min-h-[44px] rounded-xl border-2 border-indigo-600 bg-white px-4 text-sm font-black text-indigo-700 disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
-                        >
-                          {editLoadingId === String(row.id) ? '読込中…' : '編集'}
-                        </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          onClick={() => void openPrint(row.id)}
-                          disabled={printLoadingId === String(row.id)}
-                          className="min-h-[44px] rounded-xl border-2 border-slate-800 bg-slate-900 px-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300"
-                        >
-                          {printLoadingId === String(row.id) ? '読込中…' : '印刷'}
-                        </button>
-                      </div>
-                    </div>
-                  </article>
-                </li>
-              );
-            })}
+            {visibleHistoryRows.map((row) => (
+              <li key={row.id}>
+                {renderHistoryCard(row, { muted: isMixDesignHistoryDone(row.status) })}
+              </li>
+            ))}
           </ul>
         )}
       </section>
