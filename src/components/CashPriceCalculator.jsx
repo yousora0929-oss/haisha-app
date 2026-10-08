@@ -6,6 +6,7 @@ import {
   getSlumpOptions,
   getStrengthOptions,
   normalizePriceList,
+  taxRoundingLabel,
 } from '../lib/cashPriceCalc.js';
 
 function yen(n) {
@@ -413,7 +414,7 @@ export function CashPriceCalculator({ supabase, onClose, refreshKey = 0 }) {
               <p className="text-[11px] leading-relaxed text-slate-500">
                 {priceList.name}
                 {priceList.effective_from ? `（${priceList.effective_from}〜）` : ''}
-                に基づく概算・税込。時間外・休日割増等は含みません
+                に基づく概算・税込。時間外・休日割増等は含みません。税額は{taxRoundingLabel(priceList.tax_rounding)}
               </p>
             ) : null}
           </>

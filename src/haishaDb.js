@@ -5857,6 +5857,29 @@ export async function fetchContractorOrderHistory(contractorCustomerId, days = 9
   return data;
 }
 
+/**
+ * 工場・管理者・組合向け。業者名の部分一致候補（最大20件）。
+ * 自由入力の社名では履歴を引かない。候補の customer_id を履歴 RPC に渡す。
+ */
+export async function searchContractorsForHistory(query, limit = 20) {
+  const q = String(query ?? '').trim();
+  if (!q) return [];
+  const take = Math.min(Math.max(Number(limit) || 20, 1), 20);
+  const { data, error } = await supabase.rpc('search_contractors_for_history', {
+    p_query: q,
+    p_limit: take,
+  });
+  if (error) throw error;
+  const rows = Array.isArray(data) ? data : [];
+  return rows
+    .map((row) => ({
+      customer_id: row?.customer_id != null ? String(row.customer_id) : '',
+      company_name: String(row?.company_name ?? '').trim(),
+      organization_id: row?.organization_id != null ? String(row.organization_id) : '',
+    }))
+    .filter((row) => row.customer_id && row.company_name);
+}
+
 const BULK_INSERT_CHUNK = 100;
 
 /** 商社マスタ（trading_companies） */

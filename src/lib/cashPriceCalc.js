@@ -25,6 +25,15 @@ function slumpSortKey(slump) {
   return m ? Number(m[1]) : Number.POSITIVE_INFINITY;
 }
 
+/** 未定義・不正値は切り捨て。 */
+export function normalizeTaxRounding(value) {
+  return String(value ?? '').trim() === 'round' ? 'round' : 'floor';
+}
+
+export function taxRoundingLabel(value) {
+  return normalizeTaxRounding(value) === 'round' ? '四捨五入' : '切り捨て';
+}
+
 /**
  * DB行の numeric 文字列・jsonb を計算用に整える
  * @param {object|null|undefined} row
@@ -67,6 +76,7 @@ export function normalizePriceList(row) {
     small_base_load: toNumber(row.small_base_load, 1.5),
     empty_load_rate: toInt(row.empty_load_rate, 1000),
     tax_rate: toNumber(row.tax_rate, 0.1),
+    tax_rounding: normalizeTaxRounding(row.tax_rounding),
   };
 }
 
@@ -171,8 +181,11 @@ export function calcCashPrice(params = {}) {
 
   const materialAmount = Math.floor((unitPrice * qtyCenti) / 100);
   const subtotal = materialAmount + emptyLoadAmount;
-  const taxMilli = Math.round(toNumber(priceList.tax_rate) * 1000);
-  const tax = Math.floor((subtotal * taxMilli) / 1000);
+  const permille = Math.round(toNumber(priceList.tax_rate) * 1000);
+  const tax =
+    normalizeTaxRounding(priceList.tax_rounding) === 'round'
+      ? Math.floor((subtotal * permille + 500) / 1000)
+      : Math.floor((subtotal * permille) / 1000);
   const total = subtotal + tax;
 
   return {

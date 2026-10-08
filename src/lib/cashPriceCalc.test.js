@@ -42,6 +42,9 @@ describe('cashPriceCalc', () => {
     expect(FIXTURE.large_base_load).toBe(3);
     expect(FIXTURE.small_base_load).toBe(1.5);
     expect(FIXTURE.tax_rate).toBe(0.1);
+    expect(FIXTURE.tax_rounding).toBe('floor');
+    expect(normalizePriceList({ ...FIXTURE, tax_rounding: 'round' }).tax_rounding).toBe('round');
+    expect(normalizePriceList({ ...FIXTURE, tax_rounding: 'ceil' }).tax_rounding).toBe('floor');
   });
 
   it('lists strength / slump / admixture options with filtering', () => {
@@ -253,6 +256,62 @@ describe('cashPriceCalc', () => {
       expect(result.subtotal, `${c.label} subtotal`).toBe(c.expect.subtotal);
       expect(result.tax, `${c.label} tax`).toBe(c.expect.tax);
       expect(result.total, `${c.label} total`).toBe(c.expect.total);
+    }
+  });
+
+  it('rounds consumption tax when tax_rounding is round', () => {
+    const rounded = normalizePriceList({ ...FIXTURE, tax_rounding: 'round' });
+    const cases = [
+      {
+        label: '21-18 AE BB / 3.5 / 庄内・湯布院 / 小型',
+        params: {
+          strength: 21,
+          slump: '18',
+          admixture: 'AE',
+          cement: 'BB',
+          quantity: 3.5,
+          vehicle: 'small',
+          areaCode: 'yufu',
+        },
+        floor: { tax: 10237, total: 112612 },
+        round: { tax: 10238, total: 112613 },
+      },
+      {
+        label: '24-18 AE N / 0.3 / 大分 / 大型',
+        params: {
+          strength: 24,
+          slump: '18',
+          admixture: 'AE',
+          cement: 'N',
+          quantity: 0.3,
+          vehicle: 'large',
+          areaCode: 'oita',
+        },
+        floor: { tax: 967, total: 10642 },
+        round: { tax: 968, total: 10643 },
+      },
+      {
+        label: '18-8 AE BB / 1 / 大分 / 小型',
+        params: {
+          strength: 18,
+          slump: '8',
+          admixture: 'AE',
+          cement: 'BB',
+          quantity: 1,
+          vehicle: 'small',
+          areaCode: 'oita',
+        },
+        floor: { tax: 2640, total: 29040 },
+        round: { tax: 2640, total: 29040 },
+      },
+    ];
+    for (const c of cases) {
+      const floored = calcCashPrice({ priceList: FIXTURE, ...c.params });
+      const roundedResult = calcCashPrice({ priceList: rounded, ...c.params });
+      expect(floored.tax, `${c.label} floor tax`).toBe(c.floor.tax);
+      expect(floored.total, `${c.label} floor total`).toBe(c.floor.total);
+      expect(roundedResult.tax, `${c.label} round tax`).toBe(c.round.tax);
+      expect(roundedResult.total, `${c.label} round total`).toBe(c.round.total);
     }
   });
 

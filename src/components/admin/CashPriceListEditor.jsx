@@ -74,6 +74,7 @@ export function CashPriceListEditor({ supabase, onSaved }) {
   const [smallBaseLoad, setSmallBaseLoad] = useState('1.5');
   const [emptyLoadRate, setEmptyLoadRate] = useState('1000');
   const [taxPercent, setTaxPercent] = useState('10');
+  const [taxRounding, setTaxRounding] = useState('floor');
   const [areas, setAreas] = useState([]);
   const [strengthRows, setStrengthRows] = useState([18, 21, 24]);
   const [slumpCols, setSlumpCols] = useState([...SLUMP_DEFAULTS]);
@@ -91,6 +92,7 @@ export function CashPriceListEditor({ supabase, onSaved }) {
     setSmallBaseLoad(String(normalized.small_base_load));
     setEmptyLoadRate(String(normalized.empty_load_rate));
     setTaxPercent(String(Math.round(normalized.tax_rate * 1000) / 10));
+    setTaxRounding(normalized.tax_rounding === 'round' ? 'round' : 'floor');
     setAreas(
       (normalized.area_surcharges || []).map((a) => ({
         code: a.code,
@@ -286,6 +288,7 @@ export function CashPriceListEditor({ supabase, onSaved }) {
         small_base_load: Number(smallBaseLoad),
         empty_load_rate: toIntOrNull(emptyLoadRate),
         tax_rate,
+        tax_rounding: taxRounding === 'round' ? 'round' : 'floor',
         updated_at: new Date().toISOString(),
       };
       const { data, error: upErr } = await supabase
@@ -375,6 +378,34 @@ export function CashPriceListEditor({ supabase, onSaved }) {
             className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-slate-300 px-3 text-sm font-semibold"
           />
         </label>
+        <fieldset className="block text-xs font-bold text-slate-600">
+          <legend>消費税の端数</legend>
+          <div className="mt-1 flex flex-wrap gap-2">
+            {[
+              ['floor', '切り捨て'],
+              ['round', '四捨五入'],
+            ].map(([value, label]) => (
+              <label
+                key={value}
+                className={
+                  'inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-lg border-2 px-3 text-sm font-black ' +
+                  (taxRounding === value
+                    ? 'border-indigo-600 bg-indigo-50 text-indigo-800'
+                    : 'border-slate-300 bg-white text-slate-700')
+                }
+              >
+                <input
+                  type="radio"
+                  name="tax_rounding"
+                  value={value}
+                  checked={taxRounding === value}
+                  onChange={() => setTaxRounding(value)}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
         <label className="block text-xs font-bold text-slate-600">
           小型加算（円/㎥）
           <input

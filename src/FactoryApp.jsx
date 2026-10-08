@@ -15,6 +15,7 @@ import {
   supabase,
 } from './supabaseClient.js';
 import { CashPriceCalculator } from './components/CashPriceCalculator.jsx';
+import { ContractorTraderSearch } from './components/ContractorTraderSearch.jsx';
 import { buildEscalationContext, filterOrdersForFactory, getOrderEscalationStepInfo } from './utils/escalationUtils.js';
 import { isAssignedProject } from './utils/assignedProjectEscalation.js';
 import {
@@ -4319,6 +4320,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
       const declinedReservationGroupIdsRef = useRef(declinedReservationGroupIds);
       const [showPhoneOrderModal, setShowPhoneOrderModal] = useState(false);
       const [showCashPriceModal, setShowCashPriceModal] = useState(false);
+      const [showTraderSearchModal, setShowTraderSearchModal] = useState(false);
 
       useEffect(() => {
         declinedReservationGroupIdsRef.current = declinedReservationGroupIds;
@@ -4342,10 +4344,11 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
             acceptSubmitting ||
             showPhoneOrderModal ||
             showCashPriceModal ||
+            showTraderSearchModal ||
             Boolean(availabilitySubmittingGroupId),
         );
         return () => setAutoReloadBlocked(false);
-      }, [acceptModalOrder, acceptSubmitting, showPhoneOrderModal, showCashPriceModal, availabilitySubmittingGroupId]);
+      }, [acceptModalOrder, acceptSubmitting, showPhoneOrderModal, showCashPriceModal, showTraderSearchModal, availabilitySubmittingGroupId]);
       const [actionNotice, setActionNotice] = useState('');
       const [chatThreads, setChatThreads] = useState({});
       const chatThreadsRef = useRef(chatThreads);
@@ -6664,6 +6667,13 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                 </button>
                 <button
                   type="button"
+                  onClick={() => setShowTraderSearchModal(true)}
+                  className="min-h-[36px] rounded-lg border-2 border-sky-500 bg-sky-50 px-2 py-1 text-[11px] font-black text-sky-900 shadow-sm hover:bg-sky-100 active:scale-95 sm:text-xs"
+                >
+                  商社検索
+                </button>
+                <button
+                  type="button"
                   disabled={hiddenOrderIds.size === 0 && hiddenReservationGroupIds.size === 0}
                   onClick={showAllHiddenOrders}
                   className={
@@ -7207,6 +7217,19 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
             >
               <div className="w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
                 <CashPriceCalculator supabase={supabase} onClose={() => setShowCashPriceModal(false)} />
+              </div>
+            </div>
+          ) : null}
+          {showTraderSearchModal ? (
+            <div
+              className="fixed inset-0 z-[96] flex items-center justify-center bg-slate-900/50 p-3 sm:p-6"
+              role="dialog"
+              aria-modal="true"
+              aria-label="商社検索"
+              onClick={() => setShowTraderSearchModal(false)}
+            >
+              <div className="w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
+                <ContractorTraderSearch onClose={() => setShowTraderSearchModal(false)} />
               </div>
             </div>
           ) : null}
