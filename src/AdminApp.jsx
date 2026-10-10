@@ -25,6 +25,7 @@ import { OrderVisibilityScopeBadge } from './components/OrderVisibilityScopeBadg
 import { AssociationOrderApproveModal } from './components/AssociationOrderApproveModal.jsx';
 import { OrderFactoryAssignmentForm } from './components/OrderFactoryAssignmentForm.jsx';
 import AdminAppReleaseSection from './components/AdminAppReleaseSection.jsx';
+import { AdminLoginHistorySection } from './components/AdminLoginHistorySection.jsx';
 import { AdminScheduleImportSection } from './components/AdminScheduleImportSection.jsx';
 import { setAutoReloadBlocked } from './hooks/useAppReleaseControl.js';
 import {
@@ -4940,6 +4941,7 @@ function readAdminTabFromUrl() {
     'escalation',
     'mixDesignRequests',
     'cashPrice',
+    'loginHistory',
   ]);
   try {
     const tab = new URLSearchParams(window.location.search).get('tab');
@@ -5127,7 +5129,7 @@ export function AdminApp() {
         </div>
       </header>
       <main id="admin-dashboard" className="mx-auto w-full max-w-[1600px] space-y-6 px-4 py-8 sm:px-6">
-        <div className="flex flex-wrap items-start gap-3">
+        <div className="space-y-2">
           <div className="flex flex-wrap gap-2">
             {tabBtn('monitor', '注文モニター')}
             {tabBtn('availability', '工場稼働')}
@@ -5145,6 +5147,16 @@ export function AdminApp() {
             {tabBtn('escalation', 'エスカレーション設定')}
             {tabBtn('mixDesignRequests', '配合計画書依頼')}
           </div>
+          <button
+            type="button"
+            onClick={() => setTab('loginHistory')}
+            className={
+              'min-h-[32px] text-xs font-bold underline-offset-2 hover:underline ' +
+              (tab === 'loginHistory' ? 'text-indigo-700 underline dark:text-indigo-300' : 'text-slate-500 dark:text-slate-400')
+            }
+          >
+            ログイン履歴
+          </button>
         </div>
         {tab === 'monitor' ? (
           <OrdersMonitorSection
@@ -5177,6 +5189,7 @@ export function AdminApp() {
         {tab === 'settings' ? <HolidaysAndSettingsSection /> : null}
         {tab === 'cashPrice' ? <CashPriceAdminSection /> : null}
         {tab === 'escalation' ? <AdminEscalationSection factories={factories} /> : null}
+        {tab === 'loginHistory' ? <AdminLoginHistorySection /> : null}
         {tab === 'mixDesignRequests' ? (
           <MixDesignRequestHistorySection
             factories={factories}

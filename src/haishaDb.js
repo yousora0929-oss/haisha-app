@@ -83,11 +83,11 @@ const ORDER_SELECT =
   'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, trading_agent_customer_id, site_history_contractor_id, is_admin_modified, is_factory_modified, is_customer_modified, has_pending_change_request, pending_change_request_patch, change_request_customer_decision_status, change_request_resolution, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at, factory_map_received_at, factory_map_received_by, customer_cancel_requested, customer_cancel_requested_at, customer_cancel_requested_change_id, is_counter_cash';
 
 const CUSTOMER_SELECT_MIN =
-  'id, company_name, phone_number, manager_name, url_token';
+  'id, company_name, phone_number, manager_name';
 
-/** customers の通常取得用（login_password を含まない。列 SELECT 権限剥奪後も壊れない） */
+/** customers の通常取得用（login_password と url_token を含まない。列 SELECT 権限剥奪後も壊れない） */
 const CUSTOMER_SELECT_SAFE =
-  'id,company_name,manager_name,phone_number,created_at,url_token,company_name_katakana,furigana,role,organization_id,can_import_schedule,is_credit_eligible,credit_source,can_request_mix_design,is_representative,is_counter_cash';
+  'id,company_name,manager_name,phone_number,created_at,company_name_katakana,furigana,role,organization_id,can_import_schedule,is_credit_eligible,credit_source,can_request_mix_design,is_representative,is_counter_cash';
 
 /** PostgREST / Supabase のデフォルト max-rows */
 const SUPABASE_PAGE_SIZE = 1000;
@@ -148,40 +148,11 @@ const PROJECT_SELECT_MIN_LEGACY =
 const PROJECT_SELECT_MIN_BASE =
   'id, name, main_factory_id, sub_factory_ids, lat, lng, created_at, updated_at';
 
-/** 物件の url_token が無い場合、紐づく業者（customers）の url_token を補完する */
-function pickSiteUrlToken(project, customer) {
+/** 現場QR用。物件の url_token だけを返す（業者トークンにはフォールバックしない） */
+function pickSiteUrlToken(project) {
   const fromProject = String(project?.url_token ?? '').trim();
   if (isValidSiteOrderUrlToken(fromProject)) return fromProject;
-  const fromCustomer = String(customer?.url_token ?? '').trim();
-  if (isValidSiteOrderUrlToken(fromCustomer)) return fromCustomer;
   return '';
-}
-
-async function enrichProjectsWithCustomerUrlTokens(projects) {
-  const list = Array.isArray(projects) ? projects.filter(Boolean) : [];
-  const customerIds = [...new Set(list.map((p) => p?.customer_id).filter(Boolean))];
-  if (!customerIds.length) return list;
-
-  let data = [];
-  try {
-    data = await fetchRowsByIdsInChunks(
-      (chunk) => supabase.from('customers').select('id, url_token').in('id', chunk),
-      customerIds,
-    );
-  } catch (error) {
-    console.warn('[fetchProjects] customers.url_token の取得に失敗しました', error);
-    return list;
-  }
-
-  const tokenByCustomerId = new Map(
-    (data || []).map((c) => [String(c.id), c.url_token != null ? String(c.url_token).trim() : '']),
-  );
-
-  return list.map((p) => {
-    const merged = pickSiteUrlToken(p, { url_token: tokenByCustomerId.get(String(p.customer_id || '')) });
-    if (!merged || merged === String(p.url_token ?? '').trim()) return p;
-    return { ...p, url_token: merged };
-  });
 }
 
 async function enrichProjectsWithTradingCompanyOrgs(projects) {
@@ -310,8 +281,20 @@ function sanitizeOrderRefs(order) {
   return o;
 }
 
+/** 保存時に order_data へ残さない。読み込み時の付与値や、過去に書き戻された業者トークンを再保存しない */
+function omitOrderUrlTokenFields(order) {
+  if (!order || typeof order !== 'object' || Array.isArray(order)) return order;
+  if (!Object.prototype.hasOwnProperty.call(order, 'url_token') && !Object.prototype.hasOwnProperty.call(order, 'urlToken')) {
+    return order;
+  }
+  const next = { ...order };
+  delete next.url_token;
+  delete next.urlToken;
+  return next;
+}
+
 function sanitizeOrderDataForDb(order) {
-  const o = sanitizeOrderRefs(order);
+  const o = sanitizeOrderRefs(omitOrderUrlTokenFields(order));
   const siteName = sanitizeSiteNameValue(o.siteName ?? o.site_name);
   const projectName = sanitizeSiteNameValue(o.projectName ?? o.project_name);
   const {
@@ -1155,7 +1138,7 @@ export async function fetchOrdersWithChat(options = {}) {
         resolveProjectTradingCompanyName(p),
       displayContractorName: parties.contractorName,
       displayTraderName: parties.traderName,
-      url_token: pickSiteUrlToken(p, c),
+      url_token: pickSiteUrlToken(p),
       linkedProject: p || null,
       tradingAgentCustomer: tradingAgentId ? customerById.get(tradingAgentId) || null : null,
       contractorCustomer: contractorId ? customerById.get(contractorId) || null : null,
@@ -2288,10 +2271,11 @@ export async function clearOrderCustomerModifiedFlag(orderId) {
       return null;
     }
     if (!row) return null;
-    const od =
+    const od = omitOrderUrlTokenFields(
       row.order_data && typeof row.order_data === 'object' && !Array.isArray(row.order_data)
         ? { ...row.order_data, is_customer_modified: false }
-        : { is_customer_modified: false };
+        : { is_customer_modified: false },
+    );
     const { data, error } = await supabase
       .from('orders')
       .update({ is_customer_modified: false, order_data: od })
@@ -2670,10 +2654,11 @@ export async function clearOrderAdminModifiedFlag(orderId) {
       return null;
     }
     if (!row) return null;
-    const od =
+    const od = omitOrderUrlTokenFields(
       row.order_data && typeof row.order_data === 'object' && !Array.isArray(row.order_data)
         ? { ...row.order_data, is_admin_modified: false }
-        : { is_admin_modified: false };
+        : { is_admin_modified: false },
+    );
     const { data, error } = await supabase
       .from('orders')
       .update({ is_admin_modified: false, order_data: od })
@@ -4082,7 +4067,7 @@ export async function acceptOrderForFactory(order, factorySiteId, factorySiteNam
       factory_site_id: fid,
       status: 'accepted',
       has_test: hasTest,
-      order_data: nextOrder,
+      order_data: omitOrderUrlTokenFields(nextOrder),
       factory_consult_status: null,
       factory_consult_started_at: null,
       factory_consult_by_factory_id: null,
@@ -4145,7 +4130,7 @@ export async function rejectOrderForFactory(orderId, factoryId, options = {}) {
     row.order_data && typeof row.order_data === 'object' && !Array.isArray(row.order_data)
       ? row.order_data
       : {};
-  const nextOrderData = { ...od, rejected_factory_ids: nextIds };
+  const nextOrderData = omitOrderUrlTokenFields({ ...od, rejected_factory_ids: nextIds });
 
   let chatMessages = normalizeChatMessages(row.chat_messages);
   if (appendCustomerChat) {
@@ -4334,10 +4319,10 @@ export async function startFactoryConsult(order, factorySiteId, factorySiteName)
       ? row.order_data
       : {};
   const startedAt = new Date().toISOString();
-  const nextOrderData = {
+  const nextOrderData = omitOrderUrlTokenFields({
     ...od,
     factoryConsultByName: fname || od.factoryConsultByName || '',
-  };
+  });
 
   const { data: updated, error: upErr } = await supabase
     .from('orders')
@@ -5834,6 +5819,32 @@ export async function adminGetCustomerCredentials(customerIds) {
 }
 
 /**
+ * 管理者: ログイン試行の履歴。権限がないロールでは RPC が失敗する。
+ * @param {{ limit?: number, onlyFailures?: boolean }} [opts]
+ */
+export async function adminListLoginAttempts({ limit = 200, onlyFailures = false } = {}) {
+  const take = Math.min(Math.max(Number(limit) || 200, 1), 500);
+  const { data, error } = await supabase.rpc('admin_list_login_attempts', {
+    p_limit: take,
+    p_only_failures: Boolean(onlyFailures),
+  });
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
+
+/** 管理者: 電話番号のログインロックを解除。解除した件数を返す。 */
+export async function adminClearLoginLock(phone) {
+  const value = String(phone || '').trim();
+  if (!value) throw new Error('電話番号が必要です');
+  const { data, error } = await supabase.rpc('admin_clear_login_lock', {
+    p_phone: value,
+  });
+  if (error) throw error;
+  const count = Number(data);
+  return Number.isFinite(count) ? count : 0;
+}
+
+/**
  * 代理発注の発注先業者について、請求先ベースの商社実績と直近物件を返す。
  * スポットは顧客IDがなくても会社名だけで照会できる。両方空なら null。
  * 権限がないロールでは null。集計は RPC 側で済んでいる。
@@ -6279,7 +6290,9 @@ export async function submitGuestOrders(urlToken, orders, { factories = [], proj
   const list = Array.isArray(orders) ? orders.filter((o) => o && typeof o === 'object') : [];
   if (list.length === 0) throw new Error('登録する注文がありません');
 
-  const prepared = list.map((order) => ensureOrderPreferredFactoryForInsert(order, { factories, projects }));
+  const prepared = list.map((order) =>
+    omitOrderUrlTokenFields(ensureOrderPreferredFactoryForInsert(order, { factories, projects })),
+  );
 
   const { data, error } = await supabase.rpc('submit_guest_orders', {
     p_token: token,
@@ -6305,7 +6318,9 @@ export async function submitGuestReservationGroup(
   const list = Array.isArray(orders) ? orders.filter((o) => o && typeof o === 'object') : [];
   if (list.length === 0) throw new Error('登録する注文がありません');
 
-  const prepared = list.map((order) => ensureOrderPreferredFactoryForInsert(order, { factories, projects }));
+  const prepared = list.map((order) =>
+    omitOrderUrlTokenFields(ensureOrderPreferredFactoryForInsert(order, { factories, projects })),
+  );
 
   const { data, error } = await supabase.rpc('submit_guest_reservation_group', {
     p_token: token,
@@ -6478,8 +6493,7 @@ export async function fetchProjects() {
     supabase.from('projects').select('*').order('name', { ascending: true }).order('id', { ascending: true }),
   );
   const mapped = (data || []).map(mapProjectRow).filter(Boolean);
-  const withTokens = await enrichProjectsWithCustomerUrlTokens(mapped);
-  return enrichProjectsWithTradingCompanyOrgs(withTokens);
+  return enrichProjectsWithTradingCompanyOrgs(mapped);
 }
 
 const PROJECT_LIST_SORT_COLUMNS = new Set([
@@ -6570,8 +6584,7 @@ export async function searchProjectsPage(opts = {}) {
   if (error) throw error;
 
   const mapped = (data || []).map(mapProjectRow).filter(Boolean);
-  const withTokens = await enrichProjectsWithCustomerUrlTokens(mapped);
-  const rows = await enrichProjectsWithTradingCompanyOrgs(withTokens);
+  const rows = await enrichProjectsWithTradingCompanyOrgs(mapped);
   return {
     rows,
     totalCount: typeof count === 'number' ? count : rows.length,
@@ -6675,8 +6688,7 @@ export async function bulkInsertProjects(projectRows, opts = {}) {
     inserted.push(...(data || []));
   }
   const mapped = inserted.map(mapProjectRow).filter(Boolean);
-  const withTokens = await enrichProjectsWithCustomerUrlTokens(mapped);
-  return enrichProjectsWithTradingCompanyOrgs(withTokens);
+  return enrichProjectsWithTradingCompanyOrgs(mapped);
 }
 
 export async function insertProject(payload) {

@@ -184,6 +184,35 @@ import {
   shouldShowMapPendingPlaceholder,
 } from './utils/orderSiteMapDisplay.js';
 
+/** fetchCustomers で本人行を上書きしても、login_customer が返した url_token を残す */
+function withOwnLoginUrlToken(rows, customerId, urlToken) {
+  const id = String(customerId || '').trim();
+  const token = String(urlToken || '').trim();
+  if (!id || !isValidSiteOrderUrlToken(token)) return rows;
+  return (Array.isArray(rows) ? rows : []).map((row) => {
+    if (!row || String(row.id) !== id) return row;
+    if (isValidSiteOrderUrlToken(row.url_token)) return row;
+    return { ...row, url_token: token };
+  });
+}
+
+const LOGIN_LOCK_MESSAGE =
+  'ログインの失敗が続いたため、しばらくログインできません。15分ほど待ってからお試しください。';
+
+function customerLoginErrorMessage(err) {
+  const message = String(err?.message || '').trim();
+  const details = String(err?.details || '').trim();
+  const code = String(err?.code || '').trim();
+  const locked =
+    message === 'too_many_attempts' ||
+    message.includes('too_many_attempts') ||
+    details.includes('too_many_attempts') ||
+    code === 'too_many_attempts';
+  if (!locked) return 'ログインに失敗しました。時間をおいて再度お試しください。';
+  const hint = String(err?.hint || '').trim();
+  return hint || LOGIN_LOCK_MESSAGE;
+}
+
 function isOrderForGuestSite(order, ctx) {
   if (!order || !ctx?.customer?.id) return false;
   if (String(order.customer_id || order.customerId || '').trim() !== String(ctx.customer.id).trim()) {
@@ -2275,6 +2304,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [escalationTick, setEscalationTick] = useState(0);
       const [customers, setCustomers] = useState([]);
       const [agentOrganizations, setAgentOrganizations] = useState([]);
+      const ownLoginUrlTokenRef = useRef('');
       const [currentCustomerId, setCurrentCustomerId] = useState(() => {
         try {
           return readAuthValue(DISPATCH_AUTH_SESSION_KEY) || readAuthValue(DISPATCH_CUSTOMER_SESSION_KEY) || '';
@@ -3652,7 +3682,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             if (cancelled) return;
             setFactories(rows);
             setProjects(projs);
-            setCustomers(customerRows);
+            const selfId = String(readAuthValue(DISPATCH_AUTH_SESSION_KEY) || '').trim();
+            setCustomers(withOwnLoginUrlToken(customerRows, selfId, ownLoginUrlTokenRef.current));
             setAgentOrganizations((orgRows || []).filter((o) => o && o.type === 'agent'));
             setAdminSettings(adminSettingRows || { admin_name: '', phone_number: '' });
             setHolidays(Array.isArray(holidayRows) ? holidayRows : []);
@@ -4662,7 +4693,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             customer = await db.loginCustomer(phone, password);
           } catch (authErr) {
             logDispatchError('カスタマーログイン認証エラー', authErr, { phone });
-            setLoginError('電話番号またはパスワードが間違っています。');
+            setLoginError(customerLoginErrorMessage(authErr));
             setLoginLoading(false);
             return;
           }
@@ -4677,6 +4708,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             // 以降の fetch がパネル用 RLS を使えるよう、先にセッションヘッダーを確立する
             setCustomerPanelSession(phone, password);
             setCurrentCustomerId(customer.id);
+            ownLoginUrlTokenRef.current = isValidSiteOrderUrlToken(customer?.url_token)
+              ? String(customer.url_token).trim()
+              : '';
             const role = customer.role ?? 'contractor';
             if (role === 'agent' || role === 'cooperative') {
               try {
@@ -4751,6 +4785,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const handleCustomerLogout = useCallback(() => {
         void unregisterOneSignalUser().catch(() => {});
         setIsLoggedIn(false);
+        ownLoginUrlTokenRef.current = '';
         setCurrentCustomerId('');
         setContractorCustomerId('');
         setContractorSearchText('');

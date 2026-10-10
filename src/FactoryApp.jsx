@@ -188,17 +188,12 @@ const SPLIT_MIN_LEFT_PX = 260;
 const SPLIT_MIN_RIGHT_PX = 300;
 const SPLIT_GRIP_PX = 12;
 
-function resolveSiteUrlToken(order, projectById, customerById) {
+function resolveSiteUrlToken(order, projectById) {
   const pid = String(order?.project_id ?? order?.projectId ?? '').trim();
-  const cid = String(order?.customer_id ?? order?.customerId ?? '').trim();
-  const project = pid ? projectById?.[pid] : null;
-  const customer = cid ? customerById?.[cid] : null;
+  if (!pid) return '';
+  const project = projectById?.[pid];
   const fromProject = String(project?.url_token ?? '').trim();
-  if (isValidSiteOrderUrlToken(fromProject)) return fromProject;
-  const fromCustomer = String(customer?.url_token ?? '').trim();
-  if (isValidSiteOrderUrlToken(fromCustomer)) return fromCustomer;
-  const fromOrder = String(order?.url_token ?? order?.urlToken ?? '').trim();
-  return isValidSiteOrderUrlToken(fromOrder) ? fromOrder : '';
+  return isValidSiteOrderUrlToken(fromProject) ? fromProject : '';
 }
 
 function csvCell(value) {
@@ -1518,12 +1513,8 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
     function enrichProjectForFactoryList(project, customers) {
       const customer = (customers || []).find((c) => c && String(c.id) === String(project?.customer_id || ''));
       const party = resolveProjectPartyDisplay(project, customer);
-      const pt = String(project?.url_token || '').trim();
-      const ct = String(customer?.url_token || '').trim();
-      const urlToken = isValidSiteOrderUrlToken(pt) ? pt : isValidSiteOrderUrlToken(ct) ? ct : '';
       return {
         ...project,
-        url_token: urlToken,
         displayContractor: party.prime,
         displaySubContractor: party.sub,
         displayTrader: party.trader,
@@ -2358,9 +2349,9 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                 <div className="min-w-0 basis-full pb-2 sm:basis-1/2 sm:border-r sm:border-slate-200/60 sm:pb-0 sm:pr-2 dark:sm:border-slate-600/60">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <p className={metaLabelClass}>現場名</p>
-                    {!isToast ? (
+                    {!isToast && String(order?.project_id ?? order?.projectId ?? '').trim() ? (
                       <SiteOrderUrlActions
-                        urlToken={resolveSiteUrlToken(order, projectById, customerById)}
+                        urlToken={resolveSiteUrlToken(order, projectById)}
                         siteName={party.site !== '—' ? party.site : siteNm}
                         customerName={displayPrime !== '—' ? displayPrime : ''}
                         traderName={displayTrader !== '—' ? displayTrader : ''}

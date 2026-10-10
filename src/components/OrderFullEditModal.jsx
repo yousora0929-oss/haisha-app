@@ -367,17 +367,12 @@ export function buildChangeRequestDiffRows(order, patch) {
   return rows;
 }
 
-function resolveSiteUrlToken(order, projectById, customerById) {
+function resolveSiteUrlToken(order, projectById) {
   const pid = String(order?.project_id ?? order?.projectId ?? '').trim();
-  const cid = String(order?.customer_id ?? order?.customerId ?? '').trim();
-  const project = pid ? projectById?.[pid] : null;
-  const customer = cid ? customerById?.[cid] : null;
+  if (!pid) return '';
+  const project = projectById?.[pid];
   const fromProject = String(project?.url_token ?? '').trim();
-  if (isValidSiteOrderUrlToken(fromProject)) return fromProject;
-  const fromCustomer = String(customer?.url_token ?? '').trim();
-  if (isValidSiteOrderUrlToken(fromCustomer)) return fromCustomer;
-  const fromOrder = String(order?.url_token ?? order?.urlToken ?? '').trim();
-  return isValidSiteOrderUrlToken(fromOrder) ? fromOrder : '';
+  return isValidSiteOrderUrlToken(fromProject) ? fromProject : '';
 }
 
 /**
@@ -418,7 +413,8 @@ export function OrderFullEditModal({
     [isFocusedRequest, focusKeyList.join('|')],
   );
   const showField = (name) => !focusedFormFields || focusedFormFields.has(name);
-  const showSiteUrlActions = !isCustomer;
+  const showSiteUrlActions =
+    !isCustomer && Boolean(String(order?.project_id ?? order?.projectId ?? '').trim());
   const titleId = isCustomer
     ? isRequestMode
       ? 'customer-order-request-title'
@@ -1135,7 +1131,7 @@ export function OrderFullEditModal({
                   <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
                     <p className="text-[10px] font-bold text-slate-500">専用発注URL（現場名とは別）</p>
                     <SiteOrderUrlActions
-                      urlToken={resolveSiteUrlToken(order, projectById, customerById)}
+                      urlToken={resolveSiteUrlToken(order, projectById)}
                       siteName={editData.siteName || resolveOrderSiteDisplayName(order)}
                       customerName={
                         customerById?.[String(order?.customer_id ?? order?.customerId ?? '')]
