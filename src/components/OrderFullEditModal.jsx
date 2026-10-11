@@ -272,97 +272,119 @@ export function formatChangeRequestPatchSummary(patch) {
     if (key === 'agent_organization_id') {
       display = resolveTraderDisplayName(patch) || (value ? String(value) : '');
     }
-    parts.push(`${label}: ${display == null || display === '' ? '（未設定）' : display}`);
+    parts.push(`${label}: ${display == null || display === '' ? '（空欄にする）' : display}`);
   }
   return parts.join('、');
 }
 
+function patchHasKey(patch, key) {
+  return Object.prototype.hasOwnProperty.call(patch, key);
+}
+
+function patchHasAnyKey(patch, keys) {
+  return keys.some((key) => patchHasKey(patch, key));
+}
+
+function changeSideText(value, { suffix = '', clearing = false } = {}) {
+  const text = value == null ? '' : String(value).trim();
+  if (!text) return clearing ? '（空欄にする）' : '（空欄）';
+  return `${text}${suffix}`;
+}
+
 /**
  * 変更点だけを「項目名 / 変更前 / 変更後」の行配列で返す（確認画面・チャット共用）
+ * patch にキーが無い項目は変更なし。キーがあって値が空なら「空欄にする」。
  * @returns {Array<{ label: string, before: string, after: string }>}
  */
 export function buildChangeRequestDiffRows(order, patch) {
   const o = order && typeof order === 'object' ? order : {};
-  const p = patch && typeof patch === 'object' ? patch : {};
-  const fields = [
-    {
-      label: '希望日',
-      before: String(o.preferredDate ?? '').trim(),
-      after: String(p.preferredDate ?? '').trim(),
-    },
-    {
-      label: '希望時刻',
-      before: String(o.timePointLabel || o.timeSlotLabel || '').trim(),
-      after: String(p.timePointLabel || p.timeSlotLabel || '').trim(),
-    },
-    {
-      label: '車種',
-      before: vehicleTypeLabel(o.vehicleType),
-      after: vehicleTypeLabel(p.vehicleType),
-    },
-    {
-      label: '数量',
-      before: String(o.confirmedQuantityM3 ?? o.quantityM3 ?? '').trim(),
-      after: String(p.quantityM3 ?? '').trim(),
-      suffix: 'm³',
-    },
-    {
-      label: '荷卸し時間',
-      before: unloadDurationLabel(o.unloadDurationMinutes || o.unloadDuration || o.unloadingTime),
-      after: unloadDurationLabel(p.unloadDuration || p.unloadDurationMinutes),
-    },
-    {
-      label: '配合',
-      before: String(o.confirmedMixText ?? o.mixText ?? '').trim(),
-      after: String(p.mixText ?? '').trim(),
-    },
-    {
-      label: '現場名',
-      before: String(o.siteName ?? o.projectName ?? '').trim(),
-      after: String(p.siteName ?? '').trim(),
-    },
-    {
-      label: '現場住所',
-      before: String(o.siteAddress ?? '').trim(),
-      after: String(p.siteAddress ?? '').trim(),
-    },
-    {
-      label: '電話番号',
-      before: String(o.sitePhone ?? '').trim(),
-      after: String(p.sitePhone ?? '').trim(),
-    },
-    {
-      label: '業者名',
-      before: String(o.contractorName ?? '').trim(),
-      after: String(p.contractorName ?? '').trim(),
-    },
-    {
-      label: '試験体',
-      before: o.has_test ? 'あり' : 'なし',
-      after: p.has_test ? 'あり' : 'なし',
-    },
-  ];
+  const p = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
   const rows = [];
-  for (const f of fields) {
-    if (f.before === f.after || (!f.before && !f.after)) continue;
-    const suffix = f.suffix ?? '';
-    rows.push({
-      label: f.label,
-      before: f.before ? `${f.before}${suffix}` : '（未設定）',
-      after: f.after ? `${f.after}${suffix}` : '（未設定）',
-    });
-  }
+  const push = (label, before, after, suffix = '') => {
+    const beforeText = changeSideText(before, { suffix });
+    const afterText = changeSideText(after, { suffix, clearing: true });
+    if (beforeText === afterText) return;
+    rows.push({ label, before: beforeText, after: afterText });
+  };
 
-  // 商社: ID または表示名の変更を検出（チャットと structuredPatch を一致させる）
-  const traderIdChanged = hasAgentOrganizationIdChanged(o, p);
-  const beforeTraderName = resolveTraderDisplayName(o);
-  const afterTraderName = resolveTraderDisplayName(p);
-  if (traderIdChanged || beforeTraderName !== afterTraderName) {
-    rows.push({
-      label: '商社',
-      before: beforeTraderName || '（未設定）',
-      after: afterTraderName || '（未設定）',
-    });
+  if (patchHasAnyKey(p, ['preferredDate', 'scheduleMatchDate'])) {
+    const after = patchHasKey(p, 'preferredDate') ? p.preferredDate : p.scheduleMatchDate;
+    push('希望日', o.preferredDate, after);
+  }
+  if (
+    patchHasAnyKey(p, [
+      'timeSlot',
+      'timeSlotMinutes',
+      'timeSlotLabel',
+      'timePointLabel',
+      'scheduleMatchMinutes',
+    ])
+  ) {
+    let afterLabel = String(p.timePointLabel || p.timeSlotLabel || '').trim();
+    if (!afterLabel) {
+      const minutes = p.scheduleMatchMinutes ?? p.timeSlotMinutes ?? p.timeSlot;
+      const parsed = parseInt(minutes, 10);
+      if (minutes != null && String(minutes).trim() !== '' && Number.isFinite(parsed)) {
+        afterLabel = `${Math.floor(parsed / 60)}:${String(parsed % 60).padStart(2, '0')}`;
+      }
+    }
+    push('希望時刻', o.timePointLabel || o.timeSlotLabel, afterLabel);
+  }
+  if (patchHasAnyKey(p, ['vehicleType', 'vehicleLabel'])) {
+    const after = String(p.vehicleLabel || '').trim() || (
+      patchHasKey(p, 'vehicleType') && String(p.vehicleType ?? '').trim()
+        ? vehicleTypeLabel(p.vehicleType)
+        : ''
+    );
+    const before = String(o.vehicleLabel || '').trim() || (
+      String(o.vehicleType ?? '').trim() ? vehicleTypeLabel(o.vehicleType) : ''
+    );
+    push('車種', before, after);
+  }
+  if (patchHasAnyKey(p, ['quantityM3', 'confirmedQuantityM3'])) {
+    const after = patchHasKey(p, 'quantityM3') ? p.quantityM3 : p.confirmedQuantityM3;
+    push('数量', o.confirmedQuantityM3 ?? o.quantityM3, after, 'm³');
+  }
+  if (patchHasAnyKey(p, ['unloadDuration', 'unloadDurationMinutes', 'unloadDurationLabel'])) {
+    let after = String(p.unloadDurationLabel || '').trim();
+    if (!after && (patchHasKey(p, 'unloadDuration') || patchHasKey(p, 'unloadDurationMinutes'))) {
+      const raw = patchHasKey(p, 'unloadDuration') ? p.unloadDuration : p.unloadDurationMinutes;
+      after = raw == null || String(raw).trim() === '' ? '' : unloadDurationLabel(raw);
+    }
+    push(
+      '荷卸し時間',
+      unloadDurationLabel(o.unloadDurationMinutes || o.unloadDuration || o.unloadingTime),
+      after,
+    );
+  }
+  if (patchHasAnyKey(p, ['mixText', 'confirmedMixText'])) {
+    const after = patchHasKey(p, 'mixText') ? p.mixText : p.confirmedMixText;
+    push('配合', o.confirmedMixText ?? o.mixText, after);
+  }
+  if (patchHasKey(p, 'siteName')) push('現場名', o.siteName ?? o.projectName, p.siteName);
+  if (patchHasKey(p, 'siteAddress')) push('現場住所', o.siteAddress, p.siteAddress);
+  if (patchHasKey(p, 'sitePhone')) push('電話番号', o.sitePhone, p.sitePhone);
+  if (patchHasAnyKey(p, ['contractorName', 'contractor_customer_id'])) {
+    const after = patchHasKey(p, 'contractorName') ? p.contractorName : '';
+    push('業者名', o.contractorName, after);
+  }
+  if (patchHasKey(p, 'has_test')) {
+    push('試験体', o.has_test ? 'あり' : 'なし', p.has_test ? 'あり' : 'なし');
+  }
+  if (
+    patchHasAnyKey(p, [
+      'agent_organization_id',
+      'traderName',
+      'trading_company_name',
+      'projectTradingCompanyName',
+    ])
+  ) {
+    const traderIdChanged = hasAgentOrganizationIdChanged(o, p);
+    const beforeTraderName = resolveTraderDisplayName(o);
+    const afterTraderName = resolveTraderDisplayName(p);
+    if (traderIdChanged || beforeTraderName !== afterTraderName) {
+      push('商社', beforeTraderName, afterTraderName);
+    }
   }
   return rows;
 }

@@ -97,4 +97,42 @@ describe('buildChangeRequestDiffRows / chat', () => {
     expect(message).toContain('配合:');
     expect(message).toContain('商社:');
   });
+
+  it('shows only keys present in the patch and labels an explicit blank as 空欄にする', () => {
+    const order = {
+      preferredDate: '2026-10-15',
+      delivery_date: '2026-10-15',
+      timePointLabel: '10:00',
+      quantityM3: '3',
+      confirmedQuantityM3: '3',
+      mixText: '18-8-20BB',
+      confirmedMixText: '18-8-20BB',
+      siteName: '現場A',
+      siteAddress: '大分市',
+      sitePhone: '09000000000',
+      contractorName: '山田建設',
+    };
+    const patch = {
+      mixText: '18-15-20BB',
+      confirmedMixText: '18-15-20BB',
+      timeSlot: '510',
+      timeSlotLabel: '8:30',
+      timePointLabel: '8:30',
+      timeSlotMinutes: 510,
+      scheduleMatchMinutes: 510,
+    };
+    const rows = buildChangeRequestDiffRows(order, patch);
+    expect(rows).toEqual([
+      { label: '希望時刻', before: '10:00', after: '8:30' },
+      { label: '配合', before: '18-8-20BB', after: '18-15-20BB' },
+    ]);
+
+    const cleared = buildChangeRequestDiffRows(
+      { mixText: '18-8-20BB', confirmedMixText: '18-8-20BB', siteName: '現場A' },
+      { mixText: '', confirmedMixText: '' },
+    );
+    expect(cleared).toEqual([
+      { label: '配合', before: '18-8-20BB', after: '（空欄にする）' },
+    ]);
+  });
 });

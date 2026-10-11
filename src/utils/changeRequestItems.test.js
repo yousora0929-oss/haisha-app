@@ -28,6 +28,26 @@ describe('changeRequestItems', () => {
     ]);
   });
 
+  it('copies only keys that exist on the patch when accepting', () => {
+    const patch = {
+      mixText: '18-15-20BB',
+      confirmedMixText: '18-15-20BB',
+      timeSlot: '510',
+      timeSlotLabel: '8:30',
+      timePointLabel: '8:30',
+      timeSlotMinutes: 510,
+      scheduleMatchMinutes: 510,
+    };
+    const picked = pickAcceptedChangeRequestPatch(patch, Object.keys(patch));
+    expect(Object.keys(picked).sort()).toEqual(Object.keys(patch).sort());
+    expect(picked).not.toHaveProperty('preferredDate');
+    expect(picked).not.toHaveProperty('quantityM3');
+    expect(picked).not.toHaveProperty('siteName');
+    expect(picked).not.toHaveProperty('siteAddress');
+    expect(picked).not.toHaveProperty('sitePhone');
+    expect(picked).not.toHaveProperty('contractorName');
+  });
+
   it('keeps only accepted keys when building the apply patch', () => {
     const picked = pickAcceptedChangeRequestPatch(patch, ['mixText', 'confirmedMixText']);
     expect(picked).toEqual({

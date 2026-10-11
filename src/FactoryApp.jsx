@@ -6768,17 +6768,19 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                           const diffRows = buildChangeRequestDiffRows(order, changePatch)
                             .map((row) => {
                               if (row.label === '希望日') {
-                                const beforeRaw = row.before === '（未設定）' ? '' : row.before;
-                                const afterRaw = row.after === '（未設定）' ? '' : row.after;
+                                const blank = (value) =>
+                                  value === '（未設定）' || value === '（空欄にする）' || value === '（空欄）';
+                                const beforeRaw = blank(row.before) ? '' : row.before;
+                                const afterRaw = blank(row.after) ? '' : row.after;
                                 return {
                                   ...row,
                                   label: '打設日',
                                   before: beforeRaw
                                     ? formatFactoryChangeRequestDate(beforeRaw)
-                                    : '（未設定）',
+                                    : row.before,
                                   after: afterRaw
                                     ? formatFactoryChangeRequestDate(afterRaw)
-                                    : '（未設定）',
+                                    : row.after,
                                 };
                               }
                               if (row.label === '希望時刻') {

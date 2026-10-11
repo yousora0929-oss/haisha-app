@@ -77,7 +77,7 @@ function displayForItem(def, patch) {
     const text = formatPatchValue(key, patch);
     if (text) return text;
   }
-  return '（未設定）';
+  return '（空欄にする）';
 }
 
 export function listChangeRequestItems(patch) {
@@ -101,7 +101,7 @@ export function listChangeRequestItems(patch) {
       id: `other:${key}`,
       label: key,
       keys: [key],
-      display: formatPatchValue(key, patch) || '（未設定）',
+      display: formatPatchValue(key, patch) || '（空欄にする）',
     });
   }
   return items;
