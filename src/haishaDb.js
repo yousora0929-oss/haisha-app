@@ -93,9 +93,6 @@ const CUSTOMER_SELECT_SAFE =
 export const FACTORY_SELECT_SAFE =
   'id,name,latitude,longitude,email,manager,site_code,preferred_no_response_timeout_minutes,phone,fax';
 
-/** 配達エリア判定が読む非秘匿列。FACTORY_SELECT_SAFE には無い */
-const FACTORY_SELECT_WITH_AREAS = `${FACTORY_SELECT_SAFE},allowed_delivery_areas`;
-
 /** PostgREST / Supabase のデフォルト max-rows */
 const SUPABASE_PAGE_SIZE = 1000;
 /** `.in(...)` を URL 長大化させないための分割サイズ */
@@ -4543,7 +4540,7 @@ export async function fetchFactories() {
   const data = await fetchAllRowsPaged(() =>
     supabase
       .from('factories')
-      .select(FACTORY_SELECT_WITH_AREAS)
+      .select(FACTORY_SELECT_SAFE)
       .order('name', { ascending: true })
       .order('id', { ascending: true }),
   );
@@ -8275,7 +8272,6 @@ function mapCharterOperatorRow(row) {
     company_name: String(row.company_name ?? ''),
     contact_name: row.contact_name != null ? String(row.contact_name) : '',
     phone: row.phone != null ? String(row.phone) : '',
-    login_password: row.login_password != null ? String(row.login_password) : '',
     status: row.status === 'suspended' ? 'suspended' : 'active',
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -8283,7 +8279,7 @@ function mapCharterOperatorRow(row) {
 }
 
 const CHARTER_OPERATOR_SELECT =
-  'id, company_name, contact_name, phone, login_password, status, created_at, updated_at';
+  'id, company_name, contact_name, phone, status, created_at, updated_at';
 
 /** チャーター業者一覧（管理者） */
 export async function fetchCharterOperators() {
@@ -8336,6 +8332,7 @@ export async function createCharterOperator({ companyName, contactName, phone })
     .single();
   if (error) throw error;
   const mapped = mapCharterOperatorRow(data);
+  // パスワードはフロントで生成した値を返す。列 SELECT では読み直さない。
   return { ...mapped, login_password };
 }
 
@@ -8394,6 +8391,7 @@ export async function resetCharterOperatorPassword(id) {
     .single();
   if (error) throw error;
   const mapped = mapCharterOperatorRow(data);
+  // 再発行もフロント生成。書き込み後に login_password は select しない。
   return { ...mapped, login_password };
 }
 
