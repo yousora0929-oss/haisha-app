@@ -13,3 +13,7 @@ public/maplibre-gl-shared.mjs
 
 # Supabase CLI cache
 supabase/.temp
+
+node.exe
+scripts/tmp-*
+scripts/rls-wrap-helpers-*
