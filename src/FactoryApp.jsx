@@ -25,7 +25,7 @@ import {
 } from './utils/projectPartyDisplay.js';
 import { factoryUnloadDurationLabel } from './utils/unloadDurationLabel.js';
 import BillingMark from './components/BillingMark.jsx';
-import { OrderFullEditModal } from './components/OrderFullEditModal.jsx';
+import { OrderFullEditModal, buildChangeRequestDiffRows } from './components/OrderFullEditModal.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { DIRECT_TRADE_SUGGEST_ITEM, organizationSuggestTexts } from './utils/masterSuggest.js';
 import { ChangeRequestResolvePanel } from './components/ChangeRequestResolvePanel.jsx';
@@ -216,6 +216,22 @@ function downloadCsv(filename, rows) {
 
 function factoryOrderDate(order) {
   return String(order?.delivery_date ?? order?.preferredDate ?? order?.preferred_date ?? '').slice(0, 10);
+}
+
+/** 予定変更タブ用。例: 10/15（水） */
+function formatFactoryChangeRequestDate(value) {
+  const raw = String(value || '').trim().slice(0, 10);
+  const matched = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(raw);
+  if (!matched) return raw || '—';
+  const year = Number(matched[1]);
+  const month = Number(matched[2]);
+  const day = Number(matched[3]);
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    return raw;
+  }
+  const weeks = ['日', '月', '火', '水', '木', '金', '土'];
+  return `${month}/${day}（${weeks[date.getDay()]}）`;
 }
 
 function factoryOrderQuantity(order) {
@@ -6738,17 +6754,50 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                             resolveOrderSiteDisplayName(order, linkedProject) ||
                             String(order.siteName || order.projectName || '').trim() ||
                             '（現場名なし）';
-                          const chatList = chatThreads[order.id];
-                          let chatSummary = '';
-                          if (Array.isArray(chatList)) {
-                            for (let i = chatList.length - 1; i >= 0; i -= 1) {
-                              const body = String(chatList[i]?.body || chatList[i]?.text || '').trim();
-                              if (body.startsWith('【変更依頼】')) {
-                                chatSummary = body;
-                                break;
+                          const dateLabel = formatFactoryChangeRequestDate(factoryOrderDate(order));
+                          const timeLabel = getOrderTimeDisplay(order);
+                          const contractorLabel =
+                            String(order?.contractorName || '').trim() ||
+                            String(order?.customerName || '').trim() ||
+                            '（業者名なし）';
+                          const changePatch =
+                            order?.pending_change_request_patch &&
+                            typeof order.pending_change_request_patch === 'object'
+                              ? order.pending_change_request_patch
+                              : {};
+                          const diffRows = buildChangeRequestDiffRows(order, changePatch)
+                            .map((row) => {
+                              if (row.label === '希望日') {
+                                const beforeRaw = row.before === '（未設定）' ? '' : row.before;
+                                const afterRaw = row.after === '（未設定）' ? '' : row.after;
+                                return {
+                                  ...row,
+                                  label: '打設日',
+                                  before: beforeRaw
+                                    ? formatFactoryChangeRequestDate(beforeRaw)
+                                    : '（未設定）',
+                                  after: afterRaw
+                                    ? formatFactoryChangeRequestDate(afterRaw)
+                                    : '（未設定）',
+                                };
                               }
-                            }
-                          }
+                              if (row.label === '希望時刻') {
+                                return {
+                                  ...row,
+                                  label: '時刻',
+                                  before: getOrderTimeDisplay(order),
+                                  after: getOrderTimeDisplay({
+                                    timePointLabel: changePatch.timePointLabel,
+                                    timeSlotLabel: changePatch.timeSlotLabel,
+                                    timeSlot: changePatch.timeSlot,
+                                    timeSlotMinutes: changePatch.timeSlotMinutes,
+                                    scheduleMatchMinutes: changePatch.scheduleMatchMinutes,
+                                  }),
+                                };
+                              }
+                              return row;
+                            })
+                            .filter((row) => row.before !== row.after);
                           const applicable = db.isChangeRequestPatchApplicable(order);
                           return (
                             <li
@@ -6756,13 +6805,32 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                               className="rounded-xl border-2 border-orange-300 bg-white p-3 shadow-sm dark:border-orange-700 dark:bg-slate-900/60"
                             >
                               <div className="min-w-0">
-                                <p className="text-sm font-black text-slate-900 dark:text-slate-100 sm:text-base">
+                                <p className="text-lg font-black tabular-nums leading-tight text-slate-900 dark:text-slate-100 sm:text-xl">
+                                  <span>{dateLabel}</span>
+                                  <span className="ml-2">{timeLabel}</span>
+                                </p>
+                                <p className="mt-0.5 text-sm font-black text-slate-800 dark:text-slate-100 sm:text-base">
                                   {siteLabel}
                                 </p>
-                                {chatSummary ? (
-                                  <p className="mt-1 break-words text-xs font-bold leading-relaxed text-slate-700 dark:text-slate-300 sm:text-sm">
-                                    {chatSummary}
-                                  </p>
+                                <p className="mt-0.5 text-xs font-bold text-slate-600 dark:text-slate-300 sm:text-sm">
+                                  {contractorLabel}
+                                </p>
+                                {diffRows.length > 0 ? (
+                                  <ul className="mt-2 grid gap-1">
+                                    {diffRows.map((row) => (
+                                      <li
+                                        key={row.label}
+                                        className="break-words text-xs font-bold leading-relaxed text-slate-700 dark:text-slate-300 sm:text-sm"
+                                      >
+                                        <span>{row.label}</span>
+                                        <span className="ml-1">{row.before}</span>
+                                        <span className="mx-1">→</span>
+                                        <span className="font-black text-orange-800 dark:text-orange-200">
+                                          {row.after}
+                                        </span>
+                                      </li>
+                                    ))}
+                                  </ul>
                                 ) : null}
                                 {applicable ? (
                                   <ChangeRequestResolvePanel
