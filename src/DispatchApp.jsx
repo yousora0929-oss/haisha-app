@@ -52,7 +52,11 @@ import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { CompanyMemberContactList } from './components/CompanyMemberContactList.jsx';
 import { OrderFullEditModal, isPreAcceptOrderEditable, isAcceptedOrderChangeRequestable } from './components/OrderFullEditModal.jsx';
 import {
-  formatChangeRequestItemLine,
+  changeRequestAnswerBadge,
+  changeRequestAnswerToneFromMessage,
+  CHANGE_REQUEST_ANSWER_CONTACT_LINE,
+  formatChangeRequestAnswerFragment,
+  formatUnchangedOrderSummary,
   isAwaitingCustomerChangeDecision,
   splitChangeRequestDecisions,
   CUSTOMER_CHANGE_REQUEST_REREQUEST_NOTICE,
@@ -843,6 +847,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
     /** 項目ごと変更依頼の一部却下後、客が最終判断するパネル（order_change_proposals とは別系統） */
     function CustomerChangeRequestDecisionPanel({
       order,
+      factoryName = '',
       submitting = false,
       onProceed,
       onCancel,
@@ -863,31 +868,46 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           : null;
       const acceptedKeys = Array.isArray(resolution?.accepted_keys) ? resolution.accepted_keys : [];
       const { accepted, declined } = splitChangeRequestDecisions(originalPatch, acceptedKeys);
+      const partial = accepted.length > 0 && declined.length > 0;
+      const factoryLabel = String(factoryName || '').trim() || getDefaultFactoryDisplayName(order) || '工場';
+      const acceptedText = accepted.map(formatChangeRequestAnswerFragment).join('、');
+      const declinedText = declined.map(formatChangeRequestAnswerFragment).join('、');
       return (
-        <div className="mx-2 my-3 space-y-3 rounded-2xl border-2 border-orange-400 bg-orange-50 p-4 shadow-sm dark:border-orange-600 dark:bg-orange-950/40">
-          <p className="text-sm font-black text-orange-950 dark:text-orange-100">
-            工場が変更依頼の一部に対応できないと回答しました。次の対応を選んでください。
+        <div
+          className={
+            'mx-2 my-3 space-y-3 rounded-2xl border-2 p-4 shadow-sm ' +
+            (partial
+              ? 'border-amber-400 bg-amber-50 dark:border-amber-500 dark:bg-amber-950/40'
+              : 'border-red-400 bg-red-50 dark:border-red-500 dark:bg-red-950/40')
+          }
+        >
+          <p
+            className={
+              'text-sm font-black ' +
+              (partial ? 'text-amber-950 dark:text-amber-100' : 'text-red-900 dark:text-red-100')
+            }
+          >
+            {partial
+              ? `⚠️ 一部のみ変更を承りました（${factoryLabel}）`
+              : `❌ 変更に対応できませんでした（${factoryLabel}）`}
           </p>
-          {accepted.length ? (
-            <div>
-              <p className="text-xs font-black text-emerald-800 dark:text-emerald-200">承諾された項目</p>
-              <ul className="mt-1 space-y-0.5 text-xs font-bold text-slate-800 dark:text-slate-200">
-                {accepted.map((item) => (
-                  <li key={item.id}>・{formatChangeRequestItemLine(item)}</li>
-                ))}
-              </ul>
-            </div>
+          {partial ? (
+            <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
+              承諾した変更：{acceptedText || '—'}
+            </p>
           ) : null}
-          {declined.length ? (
-            <div>
-              <p className="text-xs font-black text-red-800 dark:text-red-200">対応不可の項目</p>
-              <ul className="mt-1 space-y-0.5 text-xs font-bold text-slate-800 dark:text-slate-200">
-                {declined.map((item) => (
-                  <li key={item.id}>・{formatChangeRequestItemLine(item)}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
+          <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
+            対応できなかった変更：{declinedText || '—'}
+            {partial ? '（元の内容のままです）' : ''}
+          </p>
+          {partial ? null : (
+            <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
+              ご注文は元の内容のままです：{formatUnchangedOrderSummary(order)}
+            </p>
+          )}
+          <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
+            {CHANGE_REQUEST_ANSWER_CONTACT_LINE}
+          </p>
           <div className="flex flex-col gap-2">
             <button
               type="button"
@@ -1239,13 +1259,24 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   );
                 }
                 const mine = isOutgoingSideForCustomerView(m.from);
+                const answerTone = mine ? null : changeRequestAnswerToneFromMessage(m.body);
                 const displaySenderName = customerChatDisplayName(m.from, senderName);
+                const answerToneClass =
+                  answerTone === 'accepted'
+                    ? 'border-emerald-500 bg-emerald-50 text-emerald-950 dark:border-emerald-400 dark:bg-emerald-950/50 dark:text-emerald-50'
+                    : answerTone === 'partial'
+                      ? 'border-amber-500 bg-amber-50 text-amber-950 dark:border-amber-400 dark:bg-amber-950/50 dark:text-amber-50'
+                      : answerTone === 'declined'
+                        ? 'border-red-500 bg-red-50 text-red-900 dark:border-red-400 dark:bg-red-950/50 dark:text-red-50'
+                        : '';
                 return (
-                  <li key={m.id} className={'flex ' + (mine ? 'justify-end' : 'justify-start')}>
+                  <li key={m.id} className={'flex ' + (answerTone ? 'justify-center' : mine ? 'justify-end' : 'justify-start')}>
                     <div
                       className={
                         'max-w-[88%] rounded-2xl px-3 py-2 text-sm shadow-sm ' +
-                        (mine
+                        (answerTone
+                          ? 'border-2 ' + answerToneClass
+                          : mine
                           ? 'rounded-br-md border border-sky-200 bg-sky-100 text-slate-900 dark:border-sky-500 dark:bg-sky-800 dark:text-sky-50'
                           : 'rounded-bl-md bg-white text-slate-900 dark:bg-slate-700 dark:text-slate-100')
                       }
@@ -1290,6 +1321,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               <li>
                 <CustomerChangeRequestDecisionPanel
                   order={order}
+                  factoryName={factoryName}
                   submitting={changeRequestDecisionSubmitting}
                   onProceed={() => void onChangeRequestDecision?.('proceed', order)}
                   onCancel={() => void onChangeRequestDecision?.('cancel', order)}
@@ -1541,6 +1573,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
       const actionBtnBase =
         'min-h-[40px] min-w-0 flex-1 whitespace-nowrap rounded-lg px-2 py-1.5 text-sm font-black shadow-sm transition active:scale-[0.99] sm:flex-none sm:px-3';
+      const answerBadge = changeRequestAnswerBadge(order);
 
       return (
         <article
@@ -1684,9 +1717,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     工場変更
                   </span>
                 ) : null}
-                {isAwaitingCustomerChangeDecision(order) ? (
-                  <span className="inline-flex rounded-full border border-orange-400 bg-orange-50 px-2 py-0.5 text-[11px] font-black text-orange-950">
-                    客確認待ち
+                {answerBadge ? (
+                  <span className={'inline-flex rounded-full border px-2 py-0.5 text-[11px] font-black ' + answerBadge.className}>
+                    {answerBadge.label}
                   </span>
                 ) : null}
               </div>
@@ -1840,6 +1873,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           {showChangeRequestDecision ? (
             <CustomerChangeRequestDecisionPanel
               order={order}
+              factoryName={getDefaultFactoryDisplayName(order, factoryNameById)}
               submitting={changeRequestDecisionSubmitting}
               onProceed={(o) => onChangeRequestDecision?.('proceed', o)}
               onCancel={(o) => onChangeRequestDecision?.('cancel', o)}
@@ -2018,9 +2052,15 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       const contractorName = showOrderContractorName
                         ? String(order?.contractorName ?? '').trim()
                         : '';
+                      const answerBadge = changeRequestAnswerBadge(order);
                       return (
                         <span key={order.id} className="block min-w-0">
                           <span className={'block truncate rounded-md px-1.5 py-0.5 text-[10px] font-black ' + statusClass(order)}>{party.site || '現場未設定'}</span>
+                          {answerBadge ? (
+                            <span className={'mt-0.5 block truncate rounded px-1 text-[9px] font-black ' + answerBadge.className}>
+                              {answerBadge.kind === 'partial' ? '⚠️ 一部承諾' : '❌ 対応不可'}
+                            </span>
+                          ) : null}
                           {contractorName ? (
                             <span className="block truncate px-1.5 text-[10px] font-bold text-slate-600">{contractorName}</span>
                           ) : null}
@@ -2064,6 +2104,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                       !canEditPending &&
                       isAcceptedOrderChangeRequestable(order) &&
                       typeof onRequestChange === 'function';
+                    const answerBadge = changeRequestAnswerBadge(order);
                     return (
                       <div
                         onDoubleClick={() => toggleStatusCard(order.id)}
@@ -2074,6 +2115,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className={'inline-flex rounded-full px-3 py-1 text-xs font-black ' + statusClass(order)}>{meta.label}</span>
+                            {answerBadge ? (
+                              <span className={'inline-flex rounded-full border px-2 py-0.5 text-[11px] font-black ' + answerBadge.className}>
+                                {answerBadge.label}
+                              </span>
+                            ) : null}
                             {isForeign ? (
                               <span className="inline-flex rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-black text-amber-900">
                                 閲覧のみ
@@ -7373,13 +7419,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                             const trader = String(entry.tradingCompanyLabel || '').trim();
                             const contractorText = String(entry.contractorLabel || '').trim();
                             const statusCounts = new Map();
-                            let hasChangeDecision = false;
+                            let partialAnswerCount = 0;
+                            let declinedAnswerCount = 0;
                             let hasPreferredChoice = false;
                             let hasUnread = false;
                             for (const order of entry.orders) {
                               const label = resolveInProgressStatusBadgeLabel(order, customerEscalationCtx);
                               statusCounts.set(label, (statusCounts.get(label) || 0) + 1);
-                              if (isAwaitingCustomerChangeDecision(order)) hasChangeDecision = true;
+                              const answerKind = changeRequestAnswerBadge(order)?.kind;
+                              if (answerKind === 'partial') partialAnswerCount += 1;
+                              if (answerKind === 'declined') declinedAnswerCount += 1;
                               if (needsPreferredCustomerChoice(order)) hasPreferredChoice = true;
                               if (isUnreadForDispatch(chatThreads[order.id], readChatKeys[order.id])) hasUnread = true;
                             }
@@ -7432,9 +7481,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                         {label} {count}
                                       </span>
                                     ))}
-                                    {hasChangeDecision ? (
-                                      <span className="whitespace-nowrap rounded-full border border-orange-400 bg-orange-50 px-2 py-0.5 text-[10px] font-black text-orange-950">
-                                        客確認待ち
+                                    {partialAnswerCount > 0 ? (
+                                      <span className="whitespace-nowrap rounded-full border border-amber-500 bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-950">
+                                        ⚠️ 一部のみ変更を承りました
+                                      </span>
+                                    ) : null}
+                                    {declinedAnswerCount > 0 ? (
+                                      <span className="whitespace-nowrap rounded-full border border-red-500 bg-red-50 px-2 py-0.5 text-[10px] font-black text-red-800">
+                                        ❌ 変更に対応できませんでした
                                       </span>
                                     ) : null}
                                     {hasPreferredChoice ? (
@@ -7520,6 +7574,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     const foreignParty = isForeign
                       ? resolveAgentForeignOrderPartyLabels(row.source)
                       : null;
+                    const historyAnswerBadge = changeRequestAnswerBadge(row.source);
                     return (
                     <li key={row.id}>
                       <article
@@ -7538,6 +7593,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                               <span className={'inline-flex rounded-full border-2 px-3 py-1 text-xs font-black shadow-sm ' + row.statusMeta.className}>
                                 {row.statusMeta.label}
                               </span>
+                              {historyAnswerBadge ? (
+                                <span className={'inline-flex rounded-full border px-2 py-0.5 text-[11px] font-black ' + historyAnswerBadge.className}>
+                                  {historyAnswerBadge.label}
+                                </span>
+                              ) : null}
                               {isForeign ? (
                                 <span className="inline-flex rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-black text-amber-900">
                                   閲覧のみ
@@ -7644,6 +7704,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                               ? String(ord?.ordered_by || '').trim()
                               : '';
                             const statusMeta = historyStatusMeta(ord, customerEscalationCtx);
+                            const answerBadge = changeRequestAnswerBadge(ord);
                             const mix = String(ord.confirmedMixText ?? ord.mixText ?? '').trim();
                             const qty = ord.confirmedQuantityM3 ?? ord.quantityM3 ?? '';
                             const factoryLabel = getDefaultFactoryDisplayName(ord, factoryNameById);
@@ -7661,6 +7722,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                   >
                                     {statusMeta.label}
                                   </span>
+                                  {answerBadge ? (
+                                    <span className={'inline-flex rounded-full border px-2 py-0.5 text-[11px] font-black ' + answerBadge.className}>
+                                      {answerBadge.label}
+                                    </span>
+                                  ) : null}
                                   {isForeign ? (
                                     <span className="inline-flex rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-black text-amber-900">
                                       閲覧のみ

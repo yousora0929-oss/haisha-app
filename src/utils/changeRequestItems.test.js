@@ -74,29 +74,67 @@ describe('changeRequestItems', () => {
     expect(declined.map((item) => item.id)).toEqual(['preferredDate', 'quantity']);
   });
 
-  it('builds a chat body with accepted and declined lines', () => {
+  it('builds a partial answer chat body', () => {
     const { accepted, declined } = splitChangeRequestDecisions(patch, ['quantityM3']);
     const body = formatChangeRequestResolveChatBody({
       factoryName: '第一工場',
       acceptedItems: accepted,
       declinedItems: declined,
     });
-    expect(body).toContain('【変更依頼への回答】第一工場');
-    expect(body).toContain('承諾した項目:');
-    expect(body).toContain('対応不可の項目:');
-    expect(body).toContain('承諾した項目を注文へ反映しました。');
+    expect(body).toBe(
+      [
+        '⚠️ 一部のみ変更を承りました（第一工場）',
+        '承諾した変更：数量 12m³',
+        '対応できなかった変更：打設日 9/20（日）、配合 33-15-20N（元の内容のままです）',
+        'ご相談はこのチャット、または電話でお知らせください。',
+      ].join('\n'),
+    );
   });
 
-  it('builds a deferred chat body when awaiting customer', () => {
-    const { accepted, declined } = splitChangeRequestDecisions(patch, ['quantityM3']);
+  it('builds an all-accepted chat body from the new values', () => {
+    const { accepted, declined } = splitChangeRequestDecisions(patch, Object.keys(patch));
     const body = formatChangeRequestResolveChatBody({
       factoryName: '第一工場',
       acceptedItems: accepted,
       declinedItems: declined,
-      deferredApply: true,
     });
-    expect(body).toContain('お客様の確認をお待ちしています');
-    expect(body).not.toContain('承諾した項目を注文へ反映しました。');
+    expect(body).toBe(
+      [
+        '✅ 変更を承りました（第一工場）',
+        '変更後の内容：打設日 9/20（日）、数量 12m³、配合 33-15-20N',
+      ].join('\n'),
+    );
+  });
+
+  it('builds an all-declined chat body from the order that stayed unchanged', () => {
+    const timePatch = {
+      mixText: '18-15-20BB',
+      confirmedMixText: '18-15-20BB',
+      timeSlot: '510',
+      timeSlotLabel: '8:30',
+      timePointLabel: '8:30',
+      timeSlotMinutes: 510,
+      scheduleMatchMinutes: 510,
+    };
+    const { accepted, declined } = splitChangeRequestDecisions(timePatch, []);
+    const body = formatChangeRequestResolveChatBody({
+      factoryName: '㈱九大技建',
+      acceptedItems: accepted,
+      declinedItems: declined,
+      order: {
+        preferredDate: '2026-10-15',
+        timePointLabel: '10:00',
+        mixText: '18-8-20BB',
+      },
+    });
+    expect(body).toBe(
+      [
+        '❌ 変更に対応できませんでした（㈱九大技建）',
+        '対応できなかった変更：時刻 8:30、配合 18-15-20BB',
+        'ご注文は元の内容のままです：打設日 10/15（木）、時刻 10:00、配合 18-8-20BB',
+        'ご相談はこのチャット、または電話でお知らせください。',
+      ].join('\n'),
+    );
   });
 
   it('maps declined keys to form fields and compares patch summaries', () => {

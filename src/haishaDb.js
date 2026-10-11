@@ -89,6 +89,13 @@ const CUSTOMER_SELECT_MIN =
 const CUSTOMER_SELECT_SAFE =
   'id,company_name,manager_name,phone_number,created_at,company_name_katakana,furigana,role,organization_id,can_import_schedule,is_credit_eligible,credit_source,can_request_mix_design,is_representative,is_counter_cash';
 
+/** factories の通常取得用（login_password を含まない。列 SELECT 権限剥奪後も壊れない） */
+export const FACTORY_SELECT_SAFE =
+  'id,name,latitude,longitude,email,manager,site_code,preferred_no_response_timeout_minutes,phone,fax';
+
+/** 配達エリア判定が読む非秘匿列。FACTORY_SELECT_SAFE には無い */
+const FACTORY_SELECT_WITH_AREAS = `${FACTORY_SELECT_SAFE},allowed_delivery_areas`;
+
 /** PostgREST / Supabase のデフォルト max-rows */
 const SUPABASE_PAGE_SIZE = 1000;
 /** `.in(...)` を URL 長大化させないための分割サイズ */
@@ -875,7 +882,7 @@ export async function updateFactoryPreferredTimeoutMinutes(factoryId, minutes) {
     .from('factories')
     .update({ preferred_no_response_timeout_minutes: value })
     .eq('id', fid)
-    .select('id, preferred_no_response_timeout_minutes')
+    .select(FACTORY_SELECT_SAFE)
     .maybeSingle();
   if (error) throw error;
   return data;
@@ -2472,7 +2479,7 @@ export async function resolveOrderChangeRequest(orderId, opts = {}) {
         factoryName: opts.factoryName,
         acceptedItems: accepted,
         declinedItems: declined,
-        deferredApply: hasDeclines,
+        order: updated || latest,
       }),
     );
   } catch (chatErr) {
@@ -4510,39 +4517,82 @@ function mapFactoryRow(row) {
     Number.isFinite(timeoutRaw) && timeoutRaw >= 5 && timeoutRaw <= 60 && timeoutRaw % 5 === 0
       ? timeoutRaw
       : 15;
+  const phone = row.phone != null ? String(row.phone) : row.phone_number != null ? String(row.phone_number) : '';
+  const safeRaw = { ...row };
+  delete safeRaw.login_password;
   return {
     id,
     name,
-    phone_number: row.phone_number != null ? String(row.phone_number) : '',
+    phone,
+    phone_number: phone,
     email: String(row.email || row.contact_email || row.mail || '').trim(),
+    manager: row.manager != null ? String(row.manager) : '',
+    site_code: row.site_code != null ? String(row.site_code) : '',
+    fax: row.fax != null ? String(row.fax) : '',
     latitude,
     longitude,
     allowed_delivery_areas: normalizeAllowedDeliveryAreas(row?.allowed_delivery_areas),
     preferred_no_response_timeout_minutes: preferredNoResponseTimeoutMinutes,
     preferredNoResponseTimeoutMinutes,
-    raw: row,
+    raw: safeRaw,
   };
 }
 
-/** factories テーブルから全工場（id, name, latitude, longitude 等） */
+/** factories テーブルから全工場（login_password は取らない） */
 export async function fetchFactories() {
   const data = await fetchAllRowsPaged(() =>
-    supabase.from('factories').select('*').order('name', { ascending: true }).order('id', { ascending: true }),
+    supabase
+      .from('factories')
+      .select(FACTORY_SELECT_WITH_AREAS)
+      .order('name', { ascending: true })
+      .order('id', { ascending: true }),
   );
   return (data || []).map(mapFactoryRow).filter(Boolean);
 }
 
-export async function verifyFactoryPassword(factoryId, inputPassword) {
+/**
+ * 工場ログイン。パスワードは RPC 内で照合し、フロントでは読まない。
+ * 失敗時は null。ロック時は too_many_attempts を投げる。
+ */
+export async function loginFactory(factoryId, password) {
   const fid = String(factoryId || '').trim();
-  if (!fid) return false;
-  const { data, error } = await supabase
-    .from('factories')
-    .select('id, login_password')
-    .eq('id', fid)
-    .maybeSingle();
+  const pass = String(password || '').trim();
+  if (!fid || !pass) return null;
+  const { data, error } = await supabase.rpc('login_factory', {
+    p_factory_id: fid,
+    p_password: pass,
+  });
   if (error) throw error;
-  if (!data) return false;
-  return String(data.login_password ?? '') === String(inputPassword ?? '');
+  if (data == null) return null;
+  const row = typeof data === 'string' ? JSON.parse(data) : data;
+  if (!row || !row.id) return null;
+  return {
+    id: String(row.id),
+    name: row.name != null ? String(row.name) : '',
+    manager: row.manager != null ? String(row.manager) : '',
+    email: row.email != null ? String(row.email) : '',
+    site_code: row.site_code != null ? String(row.site_code) : '',
+    latitude: row.latitude ?? null,
+    longitude: row.longitude ?? null,
+    phone: row.phone != null ? String(row.phone) : '',
+    fax: row.fax != null ? String(row.fax) : '',
+    preferred_no_response_timeout_minutes: row.preferred_no_response_timeout_minutes ?? null,
+    realtime_token: row.realtime_token != null ? String(row.realtime_token) : '',
+  };
+}
+
+/** 管理者専用: factories.login_password を RPC で取得（パネル以外は 42501） */
+export async function adminGetFactoryCredentials() {
+  const { data, error } = await supabase.rpc('admin_get_factory_credentials');
+  if (error) throw error;
+  /** @type {Record<string, string>} */
+  const map = {};
+  for (const row of data || []) {
+    const id = row?.id != null ? String(row.id) : '';
+    if (!id) continue;
+    map[id] = row.login_password != null ? String(row.login_password) : '';
+  }
+  return map;
 }
 
 export async function fetchSchedulesForFactory(factorySiteId) {
@@ -4732,6 +4782,19 @@ export async function persistScheduleAutoRejections({
   return { changed: true, orders: next, chatThreads: nextThreads };
 }
 
+function stripFactoryLoginPassword(payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+  const next = { ...payload };
+  for (const key of ['new', 'old']) {
+    const row = next[key];
+    if (!row || typeof row !== 'object' || !Object.prototype.hasOwnProperty.call(row, 'login_password')) continue;
+    const copy = { ...row };
+    delete copy.login_password;
+    next[key] = copy;
+  }
+  return next;
+}
+
 function enrichRealtimePayload(payload, tableName) {
   if (!payload || typeof payload !== 'object') return payload;
   const table = payload.table != null ? String(payload.table).trim() : '';
@@ -4895,7 +4958,9 @@ export async function subscribeHaishaRealtime(onEvent) {
     .channel(channelName)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => route(payload, 'orders'))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, (payload) => route(payload, 'schedules'))
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'factories' }, (payload) => route(payload, 'factories'))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'factories' }, (payload) =>
+      route(stripFactoryLoginPassword(payload), 'factories'),
+    )
     .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, (payload) => route(payload, 'customers'))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_settings' }, (payload) => route(payload, 'admin_settings'))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'factory_news' }, (payload) => route(payload, 'factory_news'))
@@ -6558,7 +6623,7 @@ export async function searchProjectsPage(opts = {}) {
     try {
       const { data: factoryHits, error: factoryErr } = await supabase
         .from('factories')
-        .select('id')
+        .select(FACTORY_SELECT_SAFE)
         .ilike('name', `%${escapeIlikePattern(keyword)}%`)
         .limit(50);
       if (!factoryErr && Array.isArray(factoryHits) && factoryHits.length) {
@@ -7869,7 +7934,7 @@ export async function saveMonthlyVolumeForFactory(factoryId, volumeM3) {
 export async function fetchFactoryNameToIdMap() {
   const { data, error } = await supabase
     .from('factories')
-    .select('id, name');
+    .select(FACTORY_SELECT_SAFE);
   if (error) throw error;
   const map = {};
   for (const row of data ?? []) {
@@ -7928,7 +7993,7 @@ export async function fetchVolumesSummary() {
 
   const { data: factories, error: fe } = await supabase
     .from('factories')
-    .select('id, name');
+    .select(FACTORY_SELECT_SAFE);
   if (fe) throw fe;
 
   const nameById = {};
@@ -8555,7 +8620,7 @@ export async function fetchCharterNotificationTargetsCandidates(factoryId) {
   try {
     const { data: factoryRows, error: factoryError } = await supabase
       .from('factories')
-      .select('id, name')
+      .select(FACTORY_SELECT_SAFE)
       .order('name', { ascending: true });
     if (factoryError) {
       console.warn('[fetchCharterNotificationTargetsCandidates] factories failed', factoryError);
@@ -8837,7 +8902,7 @@ async function fetchCharterLendBookingsForResponder(responderType, responderId) 
   let factoryNameById = new Map();
   if (factoryIds.length) {
     const factories = await fetchRowsByIdsInChunks(
-      (chunk) => supabase.from('factories').select('id, name').in('id', chunk),
+      (chunk) => supabase.from('factories').select(FACTORY_SELECT_SAFE).in('id', chunk),
       factoryIds,
     );
     factoryNameById = new Map((factories || []).map((f) => [f.id, f.name]));

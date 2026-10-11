@@ -5,8 +5,6 @@ import {
   clearFactoryPanelSession,
   hasFactoryPanelSession,
   ensurePanelRealtimeAuth,
-  issuePanelRealtimeAuth,
-  FACTORY_PANEL_PASSWORD_KEY,
   FACTORY_SESSION_STORAGE_KEY,
   FACTORY_AUTH_STORAGE_KEY,
   readAuthValue,
@@ -29,7 +27,10 @@ import { OrderFullEditModal, buildChangeRequestDiffRows } from './components/Ord
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
 import { DIRECT_TRADE_SUGGEST_ITEM, organizationSuggestTexts } from './utils/masterSuggest.js';
 import { ChangeRequestResolvePanel } from './components/ChangeRequestResolvePanel.jsx';
-import { isAwaitingCustomerChangeDecision } from './utils/changeRequestItems.js';
+import {
+  formatChangeRequestDateLabel,
+  isAwaitingCustomerChangeDecision,
+} from './utils/changeRequestItems.js';
 import {
   FACTORY_SITE_ID,
   FACTORY_SITE_NAME,
@@ -214,24 +215,30 @@ function downloadCsv(filename, rows) {
   URL.revokeObjectURL(url);
 }
 
+const FACTORY_LOGIN_LOCK_MESSAGE =
+  'ログインの失敗が続いたため、しばらくログインできません。15分ほど待ってからお試しください。';
+
+function factoryLoginErrorMessage(err) {
+  const message = String(err?.message || '').trim();
+  const details = String(err?.details || '').trim();
+  const code = String(err?.code || '').trim();
+  const locked =
+    message === 'too_many_attempts' ||
+    message.includes('too_many_attempts') ||
+    details.includes('too_many_attempts') ||
+    code === 'too_many_attempts';
+  if (!locked) return 'ログインに失敗しました。通信状態を確認してください';
+  const hint = String(err?.hint || '').trim();
+  return hint || FACTORY_LOGIN_LOCK_MESSAGE;
+}
+
 function factoryOrderDate(order) {
   return String(order?.delivery_date ?? order?.preferredDate ?? order?.preferred_date ?? '').slice(0, 10);
 }
 
 /** 予定変更タブ用。例: 10/15（水） */
 function formatFactoryChangeRequestDate(value) {
-  const raw = String(value || '').trim().slice(0, 10);
-  const matched = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(raw);
-  if (!matched) return raw || '—';
-  const year = Number(matched[1]);
-  const month = Number(matched[2]);
-  const day = Number(matched[3]);
-  const date = new Date(year, month - 1, day);
-  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
-    return raw;
-  }
-  const weeks = ['日', '月', '火', '水', '木', '金', '土'];
-  return `${month}/${day}（${weeks[date.getDay()]}）`;
+  return formatChangeRequestDateLabel(value);
 }
 
 function factoryOrderQuantity(order) {
@@ -4644,13 +4651,14 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
           setLoginError('');
           setLoginLoading(true);
           try {
-            const ok = await db.verifyFactoryPassword(fid, loginPassword);
-            if (!ok) {
+            const loggedIn = await db.loginFactory(fid, loginPassword);
+            if (!loggedIn?.id) {
               setLoginError('パスワードが間違っています');
               return;
             }
             const selected = (factories || []).find((f) => String(f.id) === fid);
-            const displayName = selected?.name || (fid === FACTORY_SITE_ID ? FACTORY_SITE_NAME : fid);
+            const displayName =
+              loggedIn.name || selected?.name || (fid === FACTORY_SITE_ID ? FACTORY_SITE_NAME : fid);
             setActiveFactoryId(fid);
             setActiveFactoryName(displayName);
             setIsFactoryAuthenticated(true);
@@ -4663,7 +4671,11 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
             setToastOrder(null);
             setToastIsReassignment(false);
             setFactoryPanelSession(fid, loginPassword);
-            await issuePanelRealtimeAuth('factory', fid, loginPassword);
+            try {
+              await ensurePanelRealtimeAuth(loggedIn.realtime_token);
+            } catch (realtimeErr) {
+              console.warn('[FactoryApp] ログイン後の Realtime 認証に失敗（続行）', realtimeErr);
+            }
             try {
               writeAuthValue(FACTORY_SESSION_STORAGE_KEY, fid);
               writeAuthValue(FACTORY_AUTH_STORAGE_KEY, fid);
@@ -4672,7 +4684,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
             }
           } catch (err) {
             console.error(err);
-            setLoginError('ログインに失敗しました。通信状態を確認してください');
+            setLoginError(factoryLoginErrorMessage(err));
           } finally {
             setLoginLoading(false);
           }
@@ -5622,14 +5634,9 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
               setActiveFactoryName(displayName);
               setIsFactoryAuthenticated(true);
               try {
-                const storedPassword = String(readAuthValue(FACTORY_PANEL_PASSWORD_KEY) || '').trim();
-                if (storedPassword) {
-                  await issuePanelRealtimeAuth('factory', stored, storedPassword);
-                } else {
-                  await ensurePanelRealtimeAuth();
-                }
-              } catch {
                 await ensurePanelRealtimeAuth();
+              } catch (realtimeErr) {
+                console.warn('[FactoryApp] セッション復元時の Realtime 認証に失敗', realtimeErr);
               }
             } else {
               clearFactoryPanelSession();
@@ -5729,12 +5736,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
         };
         void (async () => {
           try {
-            const factoryPassword = String(readAuthValue(FACTORY_PANEL_PASSWORD_KEY) || '').trim();
-            if (factoryPassword) {
-              await issuePanelRealtimeAuth('factory', factoryId, factoryPassword);
-            } else {
-              await ensurePanelRealtimeAuth();
-            }
+            await ensurePanelRealtimeAuth();
             if (cancel) return;
             const subscribe = db?.subscribeOrdersRealtime;
             if (typeof subscribe !== 'function') return;
