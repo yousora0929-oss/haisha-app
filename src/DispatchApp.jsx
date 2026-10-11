@@ -4153,7 +4153,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [isAgentForeignViewOrder]);
 
       const handleOpenCustomerChangeRequestReRequest = useCallback((order) => {
-        if (!order?.id || !isAwaitingCustomerChangeDecision(order)) return;
+        if (!order?.id || !isAwaitingCustomerChangeDecision(order)) {
+          window.alert('再依頼できる状態ではありません。画面を更新してから、もう一度お試しください。');
+          return;
+        }
         const resolution =
           order.change_request_resolution &&
           typeof order.change_request_resolution === 'object' &&
@@ -4198,10 +4201,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               ? await db.confirmCustomerChangeRequestReRequest(orderId, {
                   message,
                   structuredPatch,
-                  expectedUpdatedAt: meta?.expectedUpdatedAt,
+                  fieldSnapshot: meta?.fieldSnapshot,
                 })
               : await db.submitOrderChangeRequest(orderId, message, structuredPatch, {
-                  expectedUpdatedAt: meta?.expectedUpdatedAt,
+                  fieldSnapshot: meta?.fieldSnapshot,
                 });
             setDashboardOrders((prev) =>
               (Array.isArray(prev) ? prev : []).map((o) =>
@@ -4231,7 +4234,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             return true;
           }
           const updated = await db.customerUpdateOrder(orderId, patch, {
-            expectedUpdatedAt: meta?.expectedUpdatedAt,
+            fieldSnapshot: meta?.fieldSnapshot,
           });
           setDashboardOrders((prev) =>
             (Array.isArray(prev) ? prev : []).map((o) =>

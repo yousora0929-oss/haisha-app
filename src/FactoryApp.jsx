@@ -5831,9 +5831,13 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
               nextPatch.confirmedMixText = patch.mixText;
             }
 
-            const updated = await db.updateOrderDetails(orderId, nextPatch, {
-              expectedUpdatedAt: meta?.expectedUpdatedAt,
-            });
+            const updated = meta?.fieldSnapshot
+              ? await db.withOrderFieldLock(orderId, meta.fieldSnapshot, (latest) =>
+                  db.updateOrderDetails(orderId, nextPatch, {
+                    expectedUpdatedAt: latest?.updated_at ?? latest?.updatedAt ?? null,
+                  }),
+                )
+              : await db.updateOrderDetails(orderId, nextPatch);
             if (!updated) return false;
 
             const changeParts = buildOrderChangeDiffLines(target, updated);

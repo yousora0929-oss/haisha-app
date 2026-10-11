@@ -19,9 +19,10 @@ import {
 } from '../utils/orderPartyInfo.js';
 import {
   changeRequestFormFieldsForKeys,
-  changeRequestPatchesEqual,
+  expandChangeRequestKeys,
   filterPatchToChangeRequestKeys,
 } from '../utils/changeRequestItems.js';
+import { CUSTOMER_ORDER_EDIT_KEYS, snapshotOrderFields } from '../utils/orderFieldSnapshot.js';
 
 function vehicleTypeLabel(value) {
   return String(value || '') === 'small' ? '小型' : '大型';
@@ -478,7 +479,7 @@ export function OrderFullEditModal({
   const [updateConflict, setUpdateConflict] = useState(false);
   const [reloadingOrder, setReloadingOrder] = useState(false);
   const submittingRef = useRef(false);
-  const openedUpdatedAtRef = useRef('');
+  const fieldSnapshotRef = useRef({});
   const partyNameTouchedRef = useRef({ contractorName: false, traderName: false });
 
   const customers = useMemo(
@@ -571,7 +572,10 @@ export function OrderFullEditModal({
     }
     setEditData(next);
     setBaselineOrder(source);
-    openedUpdatedAtRef.current = String(source.updated_at ?? source.updatedAt ?? '').trim();
+    fieldSnapshotRef.current = snapshotOrderFields(
+      source,
+      expandChangeRequestKeys([...CUSTOMER_ORDER_EDIT_KEYS, ...focusKeyList]),
+    );
     partyNameTouchedRef.current = { contractorName: false, traderName: false };
     setUpdateConflict(false);
     setSaveError('');
@@ -736,7 +740,11 @@ export function OrderFullEditModal({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (submittingRef.current || updateConflict || reloadingOrder) return;
+    if (updateConflict) {
+      setSaveError(db.ORDER_UPDATE_CONFLICT_MESSAGE);
+      return;
+    }
+    if (submittingRef.current || reloadingOrder) return;
     setSaveError('');
 
     // 依頼モード・入力画面: 送信せず確認画面へ
@@ -745,14 +753,6 @@ export function OrderFullEditModal({
       let structuredPatch = buildChangeRequestPatch(activeOrder, patch);
       if (isFocusedRequest) {
         structuredPatch = filterPatchToChangeRequestKeys(structuredPatch, focusKeyList);
-        const previousDeclined = filterPatchToChangeRequestKeys(initialPatch || {}, focusKeyList);
-        if (
-          Object.keys(structuredPatch).length > 0 &&
-          changeRequestPatchesEqual(structuredPatch, previousDeclined)
-        ) {
-          setSaveError('前回と同じ内容です。値を変更してから送信してください。');
-          return;
-        }
       }
       const diffRows = buildChangeRequestDiffRows(activeOrder, patch).filter((row) => {
         if (!isFocusedRequest) return true;
@@ -803,7 +803,7 @@ export function OrderFullEditModal({
     setSubmitting(true);
     try {
       const ok = await onSave(activeOrder.id, patch, {
-        expectedUpdatedAt: openedUpdatedAtRef.current,
+        fieldSnapshot: fieldSnapshotRef.current,
       });
       if (ok === false) {
         setSaveError('保存に失敗しました。内容を確認して再度お試しください。');
@@ -811,6 +811,7 @@ export function OrderFullEditModal({
     } catch (err) {
       if (db.isOrderUpdateConflict(err)) {
         setUpdateConflict(true);
+        setSaveError(db.ORDER_UPDATE_CONFLICT_MESSAGE);
         return;
       }
       console.error('[OrderFullEditModal] save failed', err);
@@ -823,7 +824,11 @@ export function OrderFullEditModal({
 
   const handleConfirmSend = async () => {
     if (!isRequestMode || requestStep !== 'confirm') return;
-    if (submittingRef.current || updateConflict || reloadingOrder) return;
+    if (updateConflict) {
+      setSaveError(db.ORDER_UPDATE_CONFLICT_MESSAGE);
+      return;
+    }
+    if (submittingRef.current || reloadingOrder) return;
     if (!confirmPayload?.structuredPatch || !confirmPayload?.message) {
       setSaveError('変更点がありません。戻って内容を確認してください。');
       return;
@@ -832,11 +837,17 @@ export function OrderFullEditModal({
     submittingRef.current = true;
     setSubmitting(true);
     try {
+      const watchKeys = expandChangeRequestKeys(Object.keys(confirmPayload.structuredPatch));
+      const opened = fieldSnapshotRef.current || {};
+      const fieldSnapshot = {};
+      for (const key of watchKeys) {
+        fieldSnapshot[key] = opened[key] ?? '';
+      }
       const ok = await onSave(activeOrder.id, confirmPayload.patch, {
         mode: 'request',
         message: confirmPayload.message,
         structuredPatch: confirmPayload.structuredPatch,
-        expectedUpdatedAt: openedUpdatedAtRef.current,
+        fieldSnapshot,
       });
       if (ok === false) {
         setSaveError('変更依頼の送信に失敗しました。通信状態を確認してください。');
@@ -844,6 +855,7 @@ export function OrderFullEditModal({
     } catch (err) {
       if (db.isOrderUpdateConflict(err)) {
         setUpdateConflict(true);
+        setSaveError(db.ORDER_UPDATE_CONFLICT_MESSAGE);
         return;
       }
       console.error('[OrderFullEditModal] change request send failed', err);
@@ -860,7 +872,7 @@ export function OrderFullEditModal({
 
   return (
     <div
-      className="fixed inset-0 z-[420] flex items-center justify-center bg-black bg-opacity-50 p-4"
+      className="fixed inset-0 z-[640] flex items-center justify-center bg-black bg-opacity-50 p-4"
       role="presentation"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !submitting) onClose();

@@ -36,6 +36,8 @@ import {
   formatFactoryAssignmentSummary,
   shouldResetOrderStatusOnFactoryReassign,
 } from './utils/orderFactoryReassign.js';
+import { expandChangeRequestKeys } from './utils/changeRequestItems.js';
+import { ADMIN_ORDER_EDIT_KEYS, snapshotOrderFields } from './utils/orderFieldSnapshot.js';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
@@ -3156,7 +3158,7 @@ function AdminOrderDetailModal({
   const [sessionOrder, setSessionOrder] = useState(null);
   const [updateConflict, setUpdateConflict] = useState(false);
   const [reloadingOrder, setReloadingOrder] = useState(false);
-  const openedUpdatedAtRef = useRef('');
+  const fieldSnapshotRef = useRef({});
 
   const customersById = useMemo(
     () => Object.fromEntries((customers || []).filter((c) => c?.id).map((c) => [String(c.id), c])),
@@ -3171,7 +3173,10 @@ function AdminOrderDetailModal({
     if (!source) return;
     setSessionOrder(source);
     setUpdateConflict(false);
-    openedUpdatedAtRef.current = String(source.updated_at ?? source.updatedAt ?? '').trim();
+    fieldSnapshotRef.current = snapshotOrderFields(
+      source,
+      expandChangeRequestKeys(ADMIN_ORDER_EDIT_KEYS),
+    );
     setPreferredDate(orderDeliveryDate(source));
     const t = formatOrderTime(source);
     setTimeValue(t === '—' ? '' : t);
@@ -3242,7 +3247,11 @@ function AdminOrderDetailModal({
 
   const submit = async (e) => {
     e.preventDefault();
-    if (updateConflict || reloadingOrder) return;
+    if (updateConflict) {
+      window.alert(db.ORDER_UPDATE_CONFLICT_MESSAGE);
+      return;
+    }
+    if (reloadingOrder) return;
     const qtyRaw = String(quantityM3 || '').trim();
     if (qtyRaw !== '') {
       const qtyNum = Number(qtyRaw);
@@ -3291,7 +3300,7 @@ function AdminOrderDetailModal({
       manager_name: managerName.trim() || null,
       ...(Number.isFinite(latNum) ? { delivery_lat: latNum, deliveryLat: latNum } : {}),
       ...(Number.isFinite(lngNum) ? { delivery_lng: lngNum, deliveryLng: lngNum } : {}),
-    }, { expectedUpdatedAt: openedUpdatedAtRef.current });
+    }, { fieldSnapshot: fieldSnapshotRef.current });
     } catch (err) {
       if (!db.isOrderUpdateConflict(err)) console.error(err);
       if (db.isOrderUpdateConflict(err)) setUpdateConflict(true);
@@ -4195,7 +4204,7 @@ function OrdersMonitorSection({
     setError('');
     try {
       const updated = await db.adminUpdateOrder(orderId, patch, {
-        expectedUpdatedAt: options?.expectedUpdatedAt,
+        fieldSnapshot: options?.fieldSnapshot,
       });
       if (updated) applyOrderUpdate(updated);
       setDetailOrder(null);
