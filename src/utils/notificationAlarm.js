@@ -1,5 +1,5 @@
 /**
- * 通知アラーム — Web Audio API（3種の音色・localStorage 切替）
+ * 通知アラーム — Web Audio API（音色は localStorage で切替）
  * HTMLAudio / <audio> は使わず、メディアセッションを起動しない。
  */
 
@@ -9,12 +9,16 @@ export const ALARM_SOUND_TYPES = {
   HARMONICS: 'harmonics',
   CHIME: 'chime',
   BUZZER: 'buzzer',
+  MARIMBA: 'marimba',
+  VISITOR_CHIME: 'visitor_chime',
 };
 
 export const ALARM_SOUND_LABELS = {
   [ALARM_SOUND_TYPES.HARMONICS]: 'ギターハーモニクス',
   [ALARM_SOUND_TYPES.CHIME]: '上品なチャイム',
   [ALARM_SOUND_TYPES.BUZZER]: '工場電子ブザー',
+  [ALARM_SOUND_TYPES.MARIMBA]: '木琴（マリンバ）',
+  [ALARM_SOUND_TYPES.VISITOR_CHIME]: '来客チャイム',
 };
 
 const HARMONICS_FREQS = [440, 660, 880, 1100];
@@ -36,7 +40,26 @@ const BUZZER_COUNT = 3;
 const BUZZER_PEAK_GAIN = 0.92;
 const BUZZER_LOOP_MS = 1000;
 
+const MARIMBA_FREQS = [523, 659, 784];
+const MARIMBA_STEP_S = 0.25;
+const MARIMBA_DURATION_S = 0.6;
+const MARIMBA_PEAK_GAIN = 0.5;
+const MARIMBA_FOURTH_RATIO = 0.16;
+const MARIMBA_LOOP_MS = 4200;
+
+const VISITOR_NOTE1_HZ = 659;
+const VISITOR_NOTE2_HZ = 523;
+const VISITOR_NOTE1_S = 0.5;
+const VISITOR_NOTE2_S = 1.2;
+const VISITOR_PEAK_GAIN = 0.48;
+const VISITOR_THIRD_RATIO = 0.12;
+const VISITOR_LOOP_MS = 4800;
+
 const RETRY_MS = 3500;
+
+function isKnownAlarmSoundType(type) {
+  return Object.values(ALARM_SOUND_TYPES).includes(type);
+}
 
 let audioCtx = null;
 let alarmIntervalId = null;
@@ -76,7 +99,7 @@ export function getAlarmSoundType() {
   if (typeof window === 'undefined') return ALARM_SOUND_TYPES.HARMONICS;
   try {
     const v = String(localStorage.getItem(ALARM_SOUND_STORAGE_KEY) || '').trim();
-    if (v === ALARM_SOUND_TYPES.CHIME || v === ALARM_SOUND_TYPES.BUZZER) return v;
+    if (isKnownAlarmSoundType(v)) return v;
   } catch {
     /* ignore */
   }
@@ -97,6 +120,8 @@ export function setAlarmSoundType(type) {
 function loopIntervalMs(type) {
   if (type === ALARM_SOUND_TYPES.CHIME) return CHIME_LOOP_MS;
   if (type === ALARM_SOUND_TYPES.BUZZER) return BUZZER_LOOP_MS;
+  if (type === ALARM_SOUND_TYPES.MARIMBA) return MARIMBA_LOOP_MS;
+  if (type === ALARM_SOUND_TYPES.VISITOR_CHIME) return VISITOR_LOOP_MS;
   return HARMONICS_LOOP_MS;
 }
 
@@ -161,6 +186,58 @@ function scheduleBuzzerBeep(ctx, startTime, frequencyHz) {
   osc.stop(end + 0.02);
 }
 
+function scheduleSoftPartial(ctx, startTime, durationS, frequencyHz, peakGain) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(frequencyHz, startTime);
+  const attackEnd = startTime + 0.008;
+  const peak = Math.max(peakGain, 0.0002);
+  gain.gain.setValueAtTime(0.0001, startTime);
+  gain.gain.linearRampToValueAtTime(peak, attackEnd);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startTime + durationS);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(startTime);
+  osc.stop(startTime + durationS + 0.05);
+}
+
+/** ④ 木琴 — sine + 弱めの4倍音。C5→E5→G5 */
+function playMarimbaOnce(ctx) {
+  const t0 = ctx.currentTime + 0.01;
+  MARIMBA_FREQS.forEach((freq, index) => {
+    const start = t0 + index * MARIMBA_STEP_S;
+    scheduleSoftPartial(ctx, start, MARIMBA_DURATION_S, freq, MARIMBA_PEAK_GAIN);
+    scheduleSoftPartial(
+      ctx,
+      start,
+      MARIMBA_DURATION_S * 0.45,
+      freq * 4,
+      MARIMBA_PEAK_GAIN * MARIMBA_FOURTH_RATIO,
+    );
+  });
+}
+
+/** ⑤ 来客チャイム — sine + 弱い3倍音。E5→C5 */
+function playVisitorChimeOnce(ctx) {
+  const t0 = ctx.currentTime + 0.01;
+  const notes = [
+    { freq: VISITOR_NOTE1_HZ, start: 0, duration: VISITOR_NOTE1_S },
+    { freq: VISITOR_NOTE2_HZ, start: VISITOR_NOTE1_S, duration: VISITOR_NOTE2_S },
+  ];
+  notes.forEach((note) => {
+    const start = t0 + note.start;
+    scheduleSoftPartial(ctx, start, note.duration, note.freq, VISITOR_PEAK_GAIN);
+    scheduleSoftPartial(
+      ctx,
+      start,
+      note.duration,
+      note.freq * 3,
+      VISITOR_PEAK_GAIN * VISITOR_THIRD_RATIO,
+    );
+  });
+}
+
 /** ③ 工場電子ブザー — square 3連 */
 function playBuzzerOnce(ctx) {
   const t0 = ctx.currentTime + 0.01;
@@ -179,6 +256,14 @@ function playAlarmOnce(ctx, type) {
   }
   if (type === ALARM_SOUND_TYPES.BUZZER) {
     playBuzzerOnce(ctx);
+    return;
+  }
+  if (type === ALARM_SOUND_TYPES.MARIMBA) {
+    playMarimbaOnce(ctx);
+    return;
+  }
+  if (type === ALARM_SOUND_TYPES.VISITOR_CHIME) {
+    playVisitorChimeOnce(ctx);
     return;
   }
   playHarmonicsOnce(ctx);
@@ -223,12 +308,7 @@ function triggerAlarmLoop() {
 
 /** 設定画面用：選択音色を1回だけテスト再生 */
 export function playTestNotificationAlarm(type) {
-  const soundType =
-    type === ALARM_SOUND_TYPES.CHIME ||
-    type === ALARM_SOUND_TYPES.BUZZER ||
-    type === ALARM_SOUND_TYPES.HARMONICS
-      ? type
-      : getAlarmSoundType();
+  const soundType = isKnownAlarmSoundType(type) ? type : getAlarmSoundType();
 
   const ctx = ensureContext();
   if (!ctx) return;
