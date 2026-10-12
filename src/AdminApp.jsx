@@ -37,6 +37,7 @@ import {
   shouldResetOrderStatusOnFactoryReassign,
 } from './utils/orderFactoryReassign.js';
 import { expandChangeRequestKeys } from './utils/changeRequestItems.js';
+import { isUnacknowledgedFactoryCustomerCancel } from './utils/factoryCustomerCancel.js';
 import { ADMIN_ORDER_EDIT_KEYS, snapshotOrderFields } from './utils/orderFieldSnapshot.js';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
@@ -4627,6 +4628,9 @@ function OrdersMonitorSection({
                           ) : null}
                           {String(o.change_request_customer_decision_status || '').trim() === 'awaiting_customer' ? (
                             <span className="inline-flex rounded-full border border-orange-400 bg-orange-50 px-2 py-0.5 text-xs font-black text-orange-950">客確認待ち</span>
+                          ) : null}
+                          {isUnacknowledgedFactoryCustomerCancel(o) ? (
+                            <span className="inline-flex rounded-full border border-red-500 bg-red-600 px-2 py-0.5 text-xs font-black text-white">工場未確認のキャンセル</span>
                           ) : null}
                           <LocationPendingBadge order={o} className="text-xs" />
                           <PhoneOrderBadge order={o} className="text-xs" />

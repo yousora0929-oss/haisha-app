@@ -95,6 +95,10 @@ import { CharterOpenRequestsPanel } from './components/CharterOpenRequestsPanel.
 import { FactoryCharterRequestCalendar } from './components/FactoryCharterRequestCalendar.jsx';
 import { FactoryNewsPanel } from './components/FactoryNewsPanel.jsx';
 import { countUnreadNewsForFactory } from './utils/factoryNews.js';
+import {
+  formatFactoryCustomerCancelledAt,
+  isUnacknowledgedFactoryCustomerCancel,
+} from './utils/factoryCustomerCancel.js';
 import { countPendingCharterResponses } from './utils/charterBadges.js';
 import { OrderAcceptModal } from './components/OrderAcceptModal.jsx';
 import { ReservationGroupAvailabilityCard } from './components/ReservationGroupAvailabilityCard.jsx';
@@ -1953,6 +1957,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
       const isAccepted =
         orderStatus === 'accepted' || responseStatus === FACTORY_RESPONSE.ACCEPTED || isGroupConfirmed;
       const isCustomerCancelled = orderStatus === 'customer_cancelled';
+      const unackedCustomerCancel = isUnacknowledgedFactoryCustomerCancel(order, currentFactoryId);
       const isAcceptedByMe =
         isOrderAcceptedByFactory(order, currentFid) ||
         (isGroupConfirmed && (!assignedFactoryId || isSameFactoryId(assignedFactoryId, currentFid)));
@@ -2204,7 +2209,8 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                   <p
                     className={
                       'mt-1.5 whitespace-nowrap font-black tabular-nums text-sky-950 dark:text-sky-200 ' +
-                      primaryValueDate
+                      primaryValueDate +
+                      (unackedCustomerCancel ? ' line-through' : '')
                     }
                     aria-label={`配車希望日 ${dateStr}`}
                   >
@@ -2218,7 +2224,8 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                   <p
                     className={
                       'mt-1.5 whitespace-nowrap font-black tabular-nums text-violet-950 dark:text-violet-200 ' +
-                      primaryValueTime
+                      primaryValueTime +
+                      (unackedCustomerCancel ? ' line-through' : '')
                     }
                     aria-label={`配車希望時刻 ${slotStr}`}
                   >
@@ -2264,7 +2271,8 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                       'mt-1.5 min-w-0 font-mono font-black tabular-nums ' +
                       primaryValueDate +
                       ' ' +
-                      (q.valid ? 'text-orange-950 dark:text-orange-200' : 'text-slate-600 dark:text-slate-300')
+                      (q.valid ? 'text-orange-950 dark:text-orange-200' : 'text-slate-600 dark:text-slate-300') +
+                      (unackedCustomerCancel ? ' line-through' : '')
                     }
                     aria-label={`数量 ${q.text}`}
                   >
@@ -2385,7 +2393,12 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                       />
                     ) : null}
                   </div>
-                  <p className={'mt-0.5 truncate ' + metaValueClass} title={party.site}>
+                  <p
+                    className={
+                      'mt-0.5 truncate ' + metaValueClass + (unackedCustomerCancel ? ' line-through' : '')
+                    }
+                    title={party.site}
+                  >
                     {party.site}
                   </p>
                 </div>
@@ -2471,6 +2484,11 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
             {isAwaitingCustomerChangeDecision(order) ? (
               <span className="inline-flex rounded-full border-2 border-orange-400 bg-orange-50 px-2 py-0.5 text-[10px] font-black text-orange-950 sm:text-[11px]">
                 客確認待ち
+              </span>
+            ) : null}
+            {unackedCustomerCancel ? (
+              <span className="inline-flex rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-black text-white sm:text-[11px]">
+                キャンセル
               </span>
             ) : null}
             <LocationPendingBadge order={order} />
@@ -4058,7 +4076,12 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
       const ordersByDate = useMemo(() => {
         const map = {};
         for (const order of orders || []) {
-          if (!isAcceptedCalendarOrder(order)) continue;
+          if (
+            !isAcceptedCalendarOrder(order) &&
+            !isUnacknowledgedFactoryCustomerCancel(order, currentFactoryId)
+          ) {
+            continue;
+          }
           const d = factoryOrderDate(order);
           if (!d) continue;
           if (!map[d]) map[d] = [];
@@ -4174,10 +4197,15 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                         const party = orderPartyInfo(order, { preferSiteContact: true });
                         return (
                           <span key={order.id} className={'block truncate rounded-md px-1 py-0.5 text-[9px] font-black leading-tight ' + getOrderKindClass(order)}>
-                            {isCustomerCancelRequested(order) ? 'キャンセル依頼 ' : ''}
-                            {order.isCounterCash || order.is_counter_cash ? '💴 ' : ''}
-                            {party.site || '現場未設定'}: {factoryOrderQuantity(order)}㎡
-                            {isLocationPendingOrder(order) ? ' ⚠️' : ''}
+                            {isUnacknowledgedFactoryCustomerCancel(order, currentFactoryId) ? (
+                              <span className="mr-0.5 rounded bg-red-600 px-0.5 text-white">キャンセル</span>
+                            ) : null}
+                            <span className={isUnacknowledgedFactoryCustomerCancel(order, currentFactoryId) ? 'line-through' : ''}>
+                              {isCustomerCancelRequested(order) ? 'キャンセル依頼 ' : ''}
+                              {order.isCounterCash || order.is_counter_cash ? '💴 ' : ''}
+                              {party.site || '現場未設定'}: {factoryOrderQuantity(order)}㎡
+                              {isLocationPendingOrder(order) ? ' ⚠️' : ''}
+                            </span>
                           </span>
                         );
                       })}
@@ -4202,6 +4230,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                 {selectedOrders.map((order) => {
                   const party = orderPartyInfo(order, { preferSiteContact: true });
                   const pendingProposal = pendingChangeProposalByOrderId?.[order.id] || null;
+                  const unackedCancel = isUnacknowledgedFactoryCustomerCancel(order, currentFactoryId);
                   return (
                     <li
                       key={order.id}
@@ -4210,8 +4239,13 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                       className="cursor-pointer rounded-xl border border-slate-200 bg-slate-50 p-2 transition-all hover:-translate-y-0.5 hover:scale-[1.01] hover:border-indigo-300 hover:bg-indigo-50 hover:shadow-md active:scale-[0.99]"
                       title="ダブルタップで注文詳細へ移動"
                     >
-                      <p className="text-sm font-black text-slate-900">{getOrderTimeDisplay(order)} ・ {party.site || '現場未設定'}</p>
-                      <p className="mt-0.5 text-xs font-bold text-slate-600">{party.contractor} / {factoryOrderQuantity(order)}㎡ / {order.mixText || order.confirmedMixText || '配合未入力'}</p>
+                      {unackedCancel ? (
+                        <span className="mb-1 inline-flex rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-black text-white">
+                          キャンセル
+                        </span>
+                      ) : null}
+                      <p className={'text-sm font-black text-slate-900' + (unackedCancel ? ' line-through' : '')}>{getOrderTimeDisplay(order)} ・ {party.site || '現場未設定'}</p>
+                      <p className={'mt-0.5 text-xs font-bold text-slate-600' + (unackedCancel ? ' line-through' : '')}>{party.contractor} / {factoryOrderQuantity(order)}㎡ / {order.mixText || order.confirmedMixText || '配合未入力'}</p>
                       <div className="mt-1 flex flex-wrap items-center gap-1">
                         <LocationPendingBadge order={order} />
                         <PhoneOrderBadge order={order} />
@@ -4364,6 +4398,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
         return () => setAutoReloadBlocked(false);
       }, [acceptModalOrder, acceptSubmitting, showPhoneOrderModal, showCashPriceModal, showTraderSearchModal, availabilitySubmittingGroupId]);
       const [actionNotice, setActionNotice] = useState('');
+      const [ackingCancelOrderId, setAckingCancelOrderId] = useState('');
       const [chatThreads, setChatThreads] = useState({});
       const chatThreadsRef = useRef(chatThreads);
       const [readChatKeys, setReadChatKeys] = useState({});
@@ -4411,8 +4446,10 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
       const applyFactoryPushRedirect = useCallback((payload) => {
         const id = String(payload?.orderId || '').trim();
         if (!id) return;
-        setActiveTab('orders');
-        setFocusedOrderId(id);
+        const openScheduleChanges =
+          payload?.tab === 'scheduleChanges' || payload?.type === 'order_customer_cancelled';
+        setActiveTab(openScheduleChanges ? 'scheduleChanges' : 'orders');
+        if (!openScheduleChanges) setFocusedOrderId(id);
         clearPushRedirect();
       }, []);
 
@@ -5283,7 +5320,12 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
       const todaySchedule = useMemo(() => todayLocalISODate(), [escalationTick]);
 
       const factoryInProgressOrders = useMemo(
-        () => (orders || []).filter((o) => isOrderInProgressView(o, todaySchedule, activeFactoryId)),
+        () =>
+          (orders || []).filter(
+            (o) =>
+              isOrderInProgressView(o, todaySchedule, activeFactoryId) ||
+              isUnacknowledgedFactoryCustomerCancel(o, activeFactoryId),
+          ),
         [orders, todaySchedule, activeFactoryId],
       );
 
@@ -5328,6 +5370,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
           (rawOrders || []).filter((o) => {
             if (!isOrderVisibleToFactoryHistory(o, activeFactoryId)) return false;
             // 自社見送りは予定日が先でも電話対応のため履歴へ出す
+            if (isUnacknowledgedFactoryCustomerCancel(o, activeFactoryId)) return false;
             if (isRejectedByFactory(o, activeFactoryId)) return true;
             return isOrderInHistoryView(o, todaySchedule, activeFactoryId);
           }),
@@ -5929,6 +5972,40 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
         [activeFactoryId, activeFactoryName, refreshChatThreads],
       );
 
+      const handleAcknowledgeCustomerCancel = useCallback(
+        async (order) => {
+          const orderId = String(order?.id || '').trim();
+          if (!orderId || ackingCancelOrderId) return;
+          setAckingCancelOrderId(orderId);
+          try {
+            const ok = await db.factoryAcknowledgeCustomerCancel(orderId);
+            if (!ok) {
+              window.alert('確認を保存できませんでした。受注した工場の画面から、もう一度お試しください。');
+              return;
+            }
+            const acknowledgedAt = new Date().toISOString();
+            const patchOrder = (row) =>
+              row?.id === orderId
+                ? {
+                    ...row,
+                    factory_cancel_ack_at: acknowledgedAt,
+                    factory_cancel_ack_by: activeFactoryId,
+                  }
+                : row;
+            setRawOrders((prev) => (Array.isArray(prev) ? prev.map(patchOrder) : prev));
+            setOrders((prev) => (Array.isArray(prev) ? prev.map(patchOrder) : prev));
+            setActionNotice('キャンセルを確認しました');
+            window.setTimeout(() => setActionNotice(''), 3500);
+          } catch (err) {
+            console.error('handleAcknowledgeCustomerCancel failed', err);
+            window.alert('確認の保存に失敗しました。通信状態を確認してください。');
+          } finally {
+            setAckingCancelOrderId('');
+          }
+        },
+        [ackingCancelOrderId, activeFactoryId],
+      );
+
       const pendingCustomerChangeRequestOrders = useMemo(() => {
         const list = Array.isArray(orders) ? orders : [];
         return list.filter(
@@ -5939,8 +6016,18 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
       }, [orders, activeFactoryId]);
 
       const pendingCustomerChangeRequestCount = pendingCustomerChangeRequestOrders.length;
+      const unacknowledgedCustomerCancels = useMemo(() => {
+        const list = (Array.isArray(orders) ? orders : []).filter((o) =>
+          isUnacknowledgedFactoryCustomerCancel(o, activeFactoryId),
+        );
+        return list.sort((a, b) =>
+          String(b?.customer_cancelled_at || '').localeCompare(String(a?.customer_cancelled_at || '')),
+        );
+      }, [orders, activeFactoryId]);
       const scheduleChangesTabBadgeCount =
-        scheduleChangePendingCount + pendingCustomerChangeRequestCount;
+        scheduleChangePendingCount +
+        pendingCustomerChangeRequestCount +
+        unacknowledgedCustomerCancels.length;
 
       const handleAcceptOrder = useCallback(
         (order) => {
@@ -6730,6 +6817,84 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
               ) : null}
               {activeTab === 'scheduleChanges' ? (
                 <div className="grid gap-4">
+                  <section
+                    className="rounded-xl border-2 border-red-200 bg-red-50/50 p-3 dark:border-red-800/60 dark:bg-red-950/30"
+                    aria-label="顧客からのキャンセル"
+                  >
+                    <header className="mb-3">
+                      <h2 className="text-base font-black text-red-950 dark:text-red-100 sm:text-lg">
+                        顧客からのキャンセル
+                        {unacknowledgedCustomerCancels.length > 0
+                          ? `（${unacknowledgedCustomerCancels.length}件）`
+                          : ''}
+                      </h2>
+                      <p className="mt-1 text-xs font-bold text-red-900/80 dark:text-red-200/90 sm:text-sm">
+                        受注後にキャンセルされた注文です。「確認しました」を押すまで、この一覧に残ります。
+                      </p>
+                    </header>
+                    {unacknowledgedCustomerCancels.length === 0 ? (
+                      <p className="rounded-lg border border-dashed border-red-300 bg-white/70 px-3 py-6 text-center text-sm font-bold text-red-900/70 dark:border-red-800 dark:bg-slate-900/40 dark:text-red-200/80">
+                        未確認のキャンセルはありません
+                      </p>
+                    ) : (
+                      <ul className="grid gap-2">
+                        {unacknowledgedCustomerCancels.map((order) => {
+                          const linkedProject =
+                            order?.project_id && projectById
+                              ? projectById[order.project_id] || projectById[String(order.project_id)]
+                              : null;
+                          const siteLabel =
+                            resolveOrderSiteDisplayName(order, linkedProject) ||
+                            String(order.siteName || order.projectName || '').trim() ||
+                            '（現場名なし）';
+                          const dateLabel = formatFactoryChangeRequestDate(factoryOrderDate(order));
+                          const timeLabel = getOrderTimeDisplay(order);
+                          const contractorLabel =
+                            String(order?.contractorName || '').trim() ||
+                            String(order?.customerName || '').trim() ||
+                            '（業者名なし）';
+                          const mixLabel =
+                            String(order?.confirmedMixText ?? order?.mixText ?? '').trim() || '—';
+                          const qtyRaw = order?.confirmedQuantityM3 ?? order?.quantityM3 ?? order?.quantityCube;
+                          const qtyLabel =
+                            qtyRaw != null && String(qtyRaw).trim() !== ''
+                              ? `${String(qtyRaw).trim()}m³`
+                              : '—';
+                          const busy = ackingCancelOrderId === order.id;
+                          return (
+                            <li
+                              key={order.id}
+                              className="rounded-xl border-2 border-red-300 bg-white p-3 shadow-sm dark:border-red-700 dark:bg-slate-900/60"
+                            >
+                              <p className="text-lg font-black leading-tight text-red-700 dark:text-red-300 sm:text-xl">
+                                ❌ キャンセル　{dateLabel} {timeLabel}
+                              </p>
+                              <p className="mt-0.5 text-sm font-black text-slate-800 dark:text-slate-100 sm:text-base">
+                                {siteLabel}
+                              </p>
+                              <p className="mt-0.5 text-xs font-bold text-slate-600 dark:text-slate-300 sm:text-sm">
+                                {contractorLabel}
+                              </p>
+                              <p className="mt-0.5 text-xs font-bold text-slate-600 dark:text-slate-300 sm:text-sm">
+                                {mixLabel}・{qtyLabel}
+                              </p>
+                              <p className="mt-0.5 text-xs font-bold text-slate-500 dark:text-slate-400 sm:text-sm">
+                                キャンセル日時 {formatFactoryCustomerCancelledAt(order.customer_cancelled_at)}
+                              </p>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void handleAcknowledgeCustomerCancel(order)}
+                                className="mt-3 min-h-[44px] w-full rounded-xl bg-red-600 px-4 text-sm font-black text-white hover:bg-red-700 disabled:cursor-wait disabled:opacity-60"
+                              >
+                                {busy ? '確認しています…' : '確認しました'}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </section>
                   <section
                     className="rounded-xl border-2 border-orange-200 bg-orange-50/40 p-3 dark:border-orange-700/50 dark:bg-orange-950/25"
                     aria-label="顧客からの変更依頼"

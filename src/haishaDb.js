@@ -81,7 +81,7 @@ import { normalizeAllowedDeliveryAreas, parseSpotThresholdVolume } from './utils
 import { generateInitialPassword } from './utils/initialPassword.js';
 
 const ORDER_SELECT =
-  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, trading_agent_customer_id, site_history_contractor_id, is_admin_modified, is_factory_modified, is_customer_modified, has_pending_change_request, pending_change_request_patch, change_request_customer_decision_status, change_request_resolution, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at, factory_map_received_at, factory_map_received_by, customer_cancel_requested, customer_cancel_requested_at, customer_cancel_requested_change_id, is_counter_cash';
+  'id, order_data, chat_messages, created_at, updated_at, has_test, project_id, customer_id, ordered_by, is_spot, delivery_lat, delivery_lng, preferred_factory_id, factory_site_id, status, rejected_factory_ids, override_map_image_url, is_location_pending, map_annotations, factory_consult_status, factory_consult_started_at, factory_consult_by_factory_id, accepted_at, sub_factory_current_index, sub_factory_notified_at, admin_followup_notes, admin_followup_started_at, contractor_customer_id, agent_organization_id, trading_agent_customer_id, site_history_contractor_id, is_admin_modified, is_factory_modified, is_customer_modified, has_pending_change_request, pending_change_request_patch, change_request_customer_decision_status, change_request_resolution, factory_chat_read_key, factory_chat_read_at, preferred_factory_declined_at, preferred_factory_choice, escalation_approved_at, push_notified_map, is_phone_order, phone_order_factory_id, phone_order_registered_by, phone_order_registered_at, factory_map_received_at, factory_map_received_by, customer_cancel_requested, customer_cancel_requested_at, customer_cancel_requested_change_id, is_counter_cash, customer_cancelled_at, factory_cancel_ack_at, factory_cancel_ack_by';
 
 const CUSTOMER_SELECT_MIN =
   'id, company_name, phone_number, manager_name';
@@ -352,6 +352,18 @@ function buildOrderDbPatch(row) {
     patch.accepted_at = String(row.accepted_at).trim();
   }
   return patch;
+}
+
+function attachFactoryCancelAckFields(order, row) {
+  if (!order || !row) return order;
+  const cancelledAt = row.customer_cancelled_at;
+  const ackAt = row.factory_cancel_ack_at;
+  const ackBy = row.factory_cancel_ack_by;
+  order.customer_cancelled_at =
+    cancelledAt != null && String(cancelledAt).trim() !== '' ? String(cancelledAt) : null;
+  order.factory_cancel_ack_at = ackAt != null && String(ackAt).trim() !== '' ? String(ackAt) : null;
+  order.factory_cancel_ack_by = ackBy != null && String(ackBy).trim() !== '' ? String(ackBy) : null;
+  return order;
 }
 
 export function normalizeOrderRow(row) {
@@ -998,7 +1010,7 @@ export async function fetchOrdersWithChat(options = {}) {
   const orders = [];
   const chatThreads = {};
   for (const row of data || []) {
-    const order = normalizeOrderRow(row);
+    const order = attachFactoryCancelAckFields(normalizeOrderRow(row), row);
     if (order) {
       if (includeReservationGroups) {
         const attached = attachReservationGroupFromRow(row);
@@ -2293,7 +2305,21 @@ export async function fetchOrderById(orderId) {
     console.error('fetchOrderById failed', error);
     throw error;
   }
-  return data ? normalizeOrderRow(data) : null;
+  return data ? attachFactoryCancelAckFields(normalizeOrderRow(data), data) : null;
+}
+
+/** 受注工場が、顧客キャンセルを確認したことを記録する */
+export async function factoryAcknowledgeCustomerCancel(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id) throw new Error('orderId が必要です');
+  const { data, error } = await supabase.rpc('factory_acknowledge_customer_cancel', {
+    p_order_id: id,
+  });
+  if (error) {
+    console.error('factoryAcknowledgeCustomerCancel failed', error);
+    throw error;
+  }
+  return data === true;
 }
 
 /** 顧客変更通知の確認後、DB側フラグを下ろす（カラム＋order_data の両方） */

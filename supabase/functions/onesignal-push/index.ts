@@ -1,4 +1,4 @@
-/** onesignal-push v64 — change_proposal_rejected / customer_cancel_requested */
+/** onesignal-push v65 — order_customer_cancelled */
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
@@ -11,7 +11,7 @@ import {
   rankFactoryIdsForOrder,
 } from '../_shared/escalationVisibility.ts';
 
-const FUNCTION_VERSION = 64;
+const FUNCTION_VERSION = 65;
 const PUSH_NOTIFY_COOLDOWN_MS = 60_000;
 const FETCH_ORDER_TIMEOUT_MS = 4000;
 /** プレフィックス導入前の端末向けに無印 ID へも送る期間（ISO8601） */
@@ -118,7 +118,8 @@ type PushEvent =
   | 'order_assigned_sub_next'
   | 'order_awaiting_admin'
   | 'change_proposal_rejected'
-  | 'customer_cancel_requested';
+  | 'customer_cancel_requested'
+  | 'order_customer_cancelled';
 
 type SlimPayload = {
   event?: PushEvent | string;
@@ -1188,7 +1189,11 @@ async function readWebhookPayload(req: Request): Promise<{ incoming: IncomingPay
 
   // change_proposal_rejected / customer_cancel_requested:
   // event は URL クエリ、詳細は body JSON（new_order_batch と同じ読み方）
-  if (queryEvent === 'change_proposal_rejected' || queryEvent === 'customer_cancel_requested') {
+  if (
+    queryEvent === 'change_proposal_rejected' ||
+    queryEvent === 'customer_cancel_requested' ||
+    queryEvent === 'order_customer_cancelled'
+  ) {
     const contentLengthHeader = req.headers.get('content-length');
     const rawText = await req.text();
     const bodyLen = rawText.length;
@@ -1417,7 +1422,13 @@ function inferTargetAppFromPushData(data: Record<string, unknown>): string {
   if (explicit === 'customer' || explicit === 'factory') return explicit;
   const type = pickString(data.type);
   if (type === 'order_status' || type === 'order_accepted' || type === 'order_rejected') return 'customer';
-  if (type === 'new_order' || type === 'new_order_batch' || type === 'customer_map_shared') return 'factory';
+  if (
+    type === 'new_order' ||
+    type === 'new_order_batch' ||
+    type === 'customer_map_shared' ||
+    type === 'customer_cancel_requested' ||
+    type === 'order_customer_cancelled'
+  ) return 'factory';
   return '';
 }
 
@@ -1435,6 +1446,8 @@ function buildPushLaunchUrl(data: Record<string, unknown>): string {
     type: type || 'order',
     app: targetApp,
   });
+  const tab = pickString(data.tab) || (type === 'order_customer_cancelled' ? 'scheduleChanges' : '');
+  if (tab) params.set('tab', tab);
   return `${base}${path}?${params.toString()}`;
 }
 
@@ -2152,6 +2165,70 @@ async function sendChangeProposalRejectedNotifications(payload: SlimPayload): Pr
   return sent;
 }
 
+function formatPushDeliveryDate(raw: string): string {
+  const iso = String(raw || '').trim().slice(0, 10);
+  const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return '';
+  const date = new Date(`${iso}T12:00:00+09:00`);
+  if (Number.isNaN(date.getTime())) return '';
+  const week = ['日', '月', '火', '水', '木', '金', '土'][date.getUTCDay()] || '';
+  return `${Number(match[2])}/${Number(match[3])}（${week}）`;
+}
+
+function formatPushDeliveryTime(od: Record<string, unknown>): string {
+  const point = pickString(od.timePointLabel);
+  if (point) return point;
+  const label = pickString(od.timeSlotLabel).replace(/〜/g, '').trim();
+  if (label && !/^\d+$/.test(label)) return label;
+  const minutes = Number(od.scheduleMatchMinutes ?? od.timeSlotMinutes ?? od.timeSlot);
+  if (!Number.isFinite(minutes)) return '';
+  const hour = Math.floor(minutes / 60);
+  const minute = minutes % 60;
+  return `${hour}:${String(minute).padStart(2, '0')}`;
+}
+
+async function sendOrderCustomerCancelledNotifications(payload: SlimPayload): Promise<string[]> {
+  const orderId = pickString(payload.order_id);
+  const row = orderId ? await fetchOrderRow(orderId) : null;
+  const od = orderData(row);
+  const factoryId = pickString(payload.factory_site_id, row?.factory_site_id, od.factory_site_id, od.factorySiteId);
+  const contractorName = pickString(od.contractorName, payload.contractor_name, od.customerName, od.customer_name);
+  const siteName = pickString(od.siteName, od.site_name, od.projectName);
+  const rowRecord = (row || {}) as Record<string, unknown>;
+  const dateLabel = formatPushDeliveryDate(pickString(
+    od.delivery_date,
+    od.deliveryDate,
+    od.preferredDate,
+    od.preferred_date,
+    rowRecord.delivery_date,
+  ));
+  const timeLabel = formatPushDeliveryTime(od);
+  const when = [dateLabel, timeLabel].filter(Boolean).join(' ');
+  const message = [when, siteName, contractorName].filter(Boolean).join('・') || '注文がキャンセルされました';
+  console.log('[onesignal-push] order_customer_cancelled values', {
+    order_id: orderId,
+    factory_site_id: factoryId,
+    contractor_name: contractorName,
+    site_name: siteName,
+    when,
+  });
+  if (!orderId || !factoryId) {
+    console.log('[onesignal-push] order_customer_cancelled skip: missing ids', { orderId, factoryId });
+    return [];
+  }
+  const data = {
+    type: 'order_customer_cancelled',
+    orderId,
+    targetApp: 'factory',
+    tab: 'scheduleChanges',
+  };
+  const ok = await sendToSpecificFactory(factoryId, message, data, {
+    orderId,
+    title: '❌ 注文がキャンセルされました',
+  });
+  return ok ? ['factory:order_customer_cancelled'] : [];
+}
+
 async function sendCustomerCancelRequestedNotifications(payload: SlimPayload): Promise<string[]> {
   const orderId = pickString(payload.order_id);
   const factoryId = pickString(payload.factory_site_id);
@@ -2717,6 +2794,10 @@ async function processSlimPayload(payload: SlimPayload): Promise<string[]> {
     }
     case 'customer_cancel_requested': {
       sent.push(...await sendCustomerCancelRequestedNotifications(payload));
+      break;
+    }
+    case 'order_customer_cancelled': {
+      sent.push(...await sendOrderCustomerCancelledNotifications(payload));
       break;
     }
     default:

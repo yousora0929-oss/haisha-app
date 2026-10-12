@@ -1,4 +1,4 @@
-/** @typedef {{ orderId: string, type?: string, targetApp: 'customer' | 'factory', view: 'chat' | 'order' }} PushRedirectPayload */
+/** @typedef {{ orderId: string, type?: string, targetApp: 'customer' | 'factory', view: 'chat' | 'order', tab?: string }} PushRedirectPayload */
 
 export const PUSH_REDIRECT_SESSION_KEY = 'push_redirect';
 /** @deprecated 互換用。新規は PUSH_REDIRECT_SESSION_KEY */
@@ -48,11 +48,15 @@ export function buildPushRedirectPayload(data) {
   const type = String(data?.type || '').trim();
   const targetApp = inferTargetAppFromNotification(type, data);
   if (!targetApp) return null;
+  const tab =
+    String(data?.tab || '').trim() ||
+    (type === 'order_customer_cancelled' ? 'scheduleChanges' : '');
   return {
     orderId,
     type,
     targetApp,
     view: inferViewFromNotificationType(type),
+    ...(tab ? { tab } : {}),
   };
 }
 
@@ -125,11 +129,13 @@ export function readPushRedirectFromUrl(search = typeof window !== 'undefined' ?
 
   if (!targetApp) return null;
 
+  const tab = String(params.get('tab') || '').trim();
   return {
     orderId,
     type,
     targetApp,
     view: view || inferViewFromNotificationType(type),
+    ...(tab ? { tab } : {}),
   };
 }
 
@@ -146,6 +152,7 @@ export function buildPushRedirectUrl(payload, origin = typeof window !== 'undefi
     type: payload.type || '',
     app: payload.targetApp,
   });
+  if (payload.tab) params.set('tab', payload.tab);
   return `${String(origin || '').replace(/\/$/, '')}${path}?${params.toString()}`;
 }
 
@@ -154,7 +161,7 @@ export function stripPushRedirectFromUrl() {
   const params = new URLSearchParams(window.location.search || '');
   const hasRedirect = Boolean(params.get('orderId') || params.get('action') === 'chat');
   if (!hasRedirect) return;
-  ['orderId', 'view', 'type', 'action', 'app', 'targetApp'].forEach((key) => params.delete(key));
+  ['orderId', 'view', 'type', 'action', 'app', 'targetApp', 'tab'].forEach((key) => params.delete(key));
   const qs = params.toString();
   const clean = `${window.location.pathname}${window.location.hash || ''}${qs ? `?${qs}` : ''}`;
   window.history.replaceState({}, '', clean);
