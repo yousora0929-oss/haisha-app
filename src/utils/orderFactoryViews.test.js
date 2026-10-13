@@ -13,7 +13,7 @@ describe('orderFactoryViews', () => {
 
   it('hides factory names from the customer wording', () => {
     expect(customerFactoryViewText(0).text).toBe('まだ工場が確認していません');
-    expect(customerFactoryViewText(2).text).toBe('👀 2工場が確認しました');
+    expect(customerFactoryViewText(2).text).toBe('2工場が確認しました');
   });
 
   it('includes the factory total for admins', () => {

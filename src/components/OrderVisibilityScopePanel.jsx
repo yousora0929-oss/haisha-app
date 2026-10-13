@@ -41,7 +41,7 @@ export function OrderVisibilityScopePanel({ order, escalationCtx, factoryNameByI
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <h4 id="order-visibility-scope-title" className="text-sm font-black text-sky-950 sm:text-base">
-          👀 現在の公開・エスカレーション範囲
+          現在の公開・エスカレーション範囲
         </h4>
         <OrderVisibilityScopePopover
           order={order}

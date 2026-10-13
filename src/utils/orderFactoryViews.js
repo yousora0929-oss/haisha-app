@@ -9,7 +9,7 @@ export function customerFactoryViewText(count) {
   if (!Number.isFinite(n) || n <= 0) {
     return { seen: false, text: 'まだ工場が確認していません' };
   }
-  return { seen: true, text: `👀 ${n}工場が確認しました` };
+  return { seen: true, text: `${n}工場が確認しました` };
 }
 
 export function adminFactoryViewText(count, factoryTotal) {
