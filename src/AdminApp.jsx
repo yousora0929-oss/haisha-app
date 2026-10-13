@@ -38,6 +38,11 @@ import {
 } from './utils/orderFactoryReassign.js';
 import { expandChangeRequestKeys } from './utils/changeRequestItems.js';
 import { isUnacknowledgedFactoryCustomerCancel } from './utils/factoryCustomerCancel.js';
+import {
+  adminFactoryViewText,
+  formatOrderViewedAt,
+  isPendingOrderStatus,
+} from './utils/orderFactoryViews.js';
 import { ADMIN_ORDER_EDIT_KEYS, snapshotOrderFields } from './utils/orderFieldSnapshot.js';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
@@ -3135,6 +3140,9 @@ function AdminOrderDetailModal({
   onReassignFactories,
   onClose,
   onSave,
+  orderViews = [],
+  factoryTotal = 0,
+  orderViewsLoaded = false,
 }) {
   const [preferredDate, setPreferredDate] = useState('');
   const [timeValue, setTimeValue] = useState('');
@@ -3324,11 +3332,34 @@ function AdminOrderDetailModal({
                 {order.is_spot ? 'スポット' : '物件'}
               </span>
               <span className={'inline-flex rounded-full border px-2 py-0.5 text-xs font-black ' + statusBadgeClass(st)}>{orderStatusLabel(st)}</span>
+              {orderViewsLoaded && isPendingOrderStatus(order) ? (
+                <span className="inline-flex rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-xs font-black text-sky-900">
+                  {adminFactoryViewText(orderViews.length, factoryTotal)}
+                </span>
+              ) : null}
               <LocationPendingBadge order={order} />
               <PhoneOrderBadge order={order} />
               <CounterCashBadge order={order} />
             </div>
           </div>
+
+          {orderViewsLoaded && (isPendingOrderStatus(order) || orderViews.length > 0) ? (
+            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <p className="text-xs font-black text-slate-700">確認した工場</p>
+              {orderViews.length === 0 ? (
+                <p className="mt-2 text-xs font-bold text-slate-400">まだ工場が確認していません</p>
+              ) : (
+                <ul className="mt-2 space-y-1">
+                  {orderViews.map((row) => (
+                    <li key={`${row.factory_id || row.factory_name}-${row.first_viewed_at || ''}`} className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+                      <span className="font-black text-slate-900">{row.factory_name || row.factory_id || '工場'}</span>
+                      <span className="font-mono text-xs font-bold text-slate-500">{formatOrderViewedAt(row.first_viewed_at)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : null}
 
           <div className="mt-4">
             <OrderVisibilityScopePanel
@@ -3913,6 +3944,8 @@ function OrdersMonitorSection({
   const [hoveredGroupId, setHoveredGroupId] = useState('');
   const [pinnedGroupId, setPinnedGroupId] = useState('');
   const [focusReservationOrderId, setFocusReservationOrderId] = useState('');
+  const [orderViewRows, setOrderViewRows] = useState([]);
+  const [orderViewsLoaded, setOrderViewsLoaded] = useState(false);
 
   useEffect(() => {
     const editing = Boolean(detailOrder || associationApproveOrder || acceptDraft || savingEdit || savingAssociation || savingReassign);
@@ -3951,6 +3984,14 @@ function OrdersMonitorSection({
       ]);
       setOrders(rows);
       setChatThreads(threads || {});
+      try {
+        const viewIds = (Array.isArray(rows) ? rows : []).map((o) => o?.id).filter(Boolean);
+        const viewRows = await db.adminListOrderViews(viewIds);
+        setOrderViewRows(Array.isArray(viewRows) ? viewRows : []);
+        setOrderViewsLoaded(true);
+      } catch (viewErr) {
+        console.warn('[OrdersMonitorSection] admin_list_order_views 取得に失敗', viewErr);
+      }
       setProjects(projs);
       setCustomers(Array.isArray(custs) ? custs : []);
       setOrganizations(Array.isArray(orgs) ? orgs : []);
@@ -3968,6 +4009,20 @@ function OrdersMonitorSection({
       setLoading(false);
     }
   }, []);
+
+  const orderViewsById = useMemo(() => {
+    const map = {};
+    for (const row of orderViewRows) {
+      const id = String(row?.order_id || '').trim();
+      if (!id) continue;
+      if (!map[id]) map[id] = [];
+      map[id].push(row);
+    }
+    for (const list of Object.values(map)) {
+      list.sort((a, b) => String(a.first_viewed_at || '').localeCompare(String(b.first_viewed_at || '')));
+    }
+    return map;
+  }, [orderViewRows]);
 
   const customerById = useMemo(
     () => Object.fromEntries((customers || []).filter((c) => c?.id).map((c) => [String(c.id), c])),
@@ -4632,6 +4687,11 @@ function OrdersMonitorSection({
                           {isUnacknowledgedFactoryCustomerCancel(o) ? (
                             <span className="inline-flex rounded-full border border-red-500 bg-red-600 px-2 py-0.5 text-xs font-black text-white">工場未確認のキャンセル</span>
                           ) : null}
+                          {orderViewsLoaded && isPendingOrderStatus(o) ? (
+                            <span className="inline-flex rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-xs font-black text-sky-900">
+                              {adminFactoryViewText((orderViewsById[String(o.id)] || []).length, factories.length)}
+                            </span>
+                          ) : null}
                           <LocationPendingBadge order={o} className="text-xs" />
                           <PhoneOrderBadge order={o} className="text-xs" />
                           <CounterCashBadge order={o} className="text-xs" />
@@ -4820,6 +4880,9 @@ function OrdersMonitorSection({
         onSave={handleSaveEdit}
         onApproveAssociation={openAssociationApprove}
         onReassignFactories={handleReassignFactories}
+        orderViews={detailOrder ? orderViewsById[String(detailOrder.id)] || [] : []}
+        factoryTotal={Array.isArray(factories) ? factories.length : 0}
+        orderViewsLoaded={orderViewsLoaded}
       />
     </section>
   );

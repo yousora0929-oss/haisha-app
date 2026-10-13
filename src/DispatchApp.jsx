@@ -8,6 +8,7 @@ import {
   todayLocalISODate,
 } from './haishaConstants.js';
 import * as db from './haishaDb.js';
+import { customerFactoryViewText, isPendingOrderStatus } from './utils/orderFactoryViews.js';
 import {
   supabase,
   setCustomerPanelSession,
@@ -202,6 +203,24 @@ function withOwnLoginUrlToken(rows, customerId, urlToken) {
 
 const LOGIN_LOCK_MESSAGE =
   'ログインの失敗が続いたため、しばらくログインできません。15分ほど待ってからお試しください。';
+
+function CustomerFactoryViewNote({ order, viewCounts }) {
+  if (!isPendingOrderStatus(order) || !viewCounts) return null;
+  const id = String(order?.id || '').trim();
+  if (!id || !Object.prototype.hasOwnProperty.call(viewCounts, id)) return null;
+  const { seen, text } = customerFactoryViewText(viewCounts[id]);
+  return (
+    <span
+      className={
+        seen
+          ? 'inline-flex rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-black text-sky-900'
+          : 'text-[11px] font-bold text-slate-400'
+      }
+    >
+      {text}
+    </span>
+  );
+}
 
 function customerLoginErrorMessage(err) {
   const message = String(err?.message || '').trim();
@@ -1510,6 +1529,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       highlighted = false,
       blinkFactoryName = false,
       showCounterCashBadge = false,
+      orderViewCounts = null,
     }) {
       const addr = order.siteAddress?.trim() || '';
       const party = orderPartyInfo(order);
@@ -1629,6 +1649,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     factoryNameById={factoryNameById}
                     blinkFactoryName={blinkFactoryName}
                   />
+                  <CustomerFactoryViewNote order={order} viewCounts={orderViewCounts} />
                   <ReservationGroupStatusBadge order={order} />
                   <LocationPendingBadge order={order} />
                   <PhoneOrderBadge order={order} />
@@ -1951,6 +1972,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       onRequestChange = null,
       isAgentForeignViewOrder: isAgentForeignViewOrderProp = null,
       showOrderContractorName = false,
+      orderViewCounts = null,
     }) {
       const isAgentForeignViewOrder =
         typeof isAgentForeignViewOrderProp === 'function'
@@ -2064,6 +2086,11 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                           {contractorName ? (
                             <span className="block truncate px-1.5 text-[10px] font-bold text-slate-600">{contractorName}</span>
                           ) : null}
+                          {isPendingOrderStatus(order) && orderViewCounts && Object.prototype.hasOwnProperty.call(orderViewCounts, String(order.id)) ? (
+                            <span className={'block truncate px-1 text-[9px] font-bold ' + (Number(orderViewCounts[String(order.id)]) > 0 ? 'text-sky-800' : 'text-slate-400')}>
+                              {customerFactoryViewText(orderViewCounts[String(order.id)]).text}
+                            </span>
+                          ) : null}
                         </span>
                       );
                     })}
@@ -2115,6 +2142,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className={'inline-flex rounded-full px-3 py-1 text-xs font-black ' + statusClass(order)}>{meta.label}</span>
+                            <CustomerFactoryViewNote order={order} viewCounts={orderViewCounts} />
                             {answerBadge ? (
                               <span className={'inline-flex rounded-full border px-2 py-0.5 text-[11px] font-black ' + answerBadge.className}>
                                 {answerBadge.label}
@@ -2182,6 +2210,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                               <p className="text-[10px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-300">現在のステータス</p>
                               <div className="mt-2">
                                 <OrderStatusBadges order={order} escalationCtx={escalationCtx} />
+                                <div className="mt-2">
+                                  <CustomerFactoryViewNote order={order} viewCounts={orderViewCounts} />
+                                </div>
                               </div>
                               <div className="mt-3">
                                 <ConfirmedDetailsBlock order={order} />
@@ -2280,6 +2311,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [loginLoading, setLoginLoading] = useState(false);
       const [adminSettings, setAdminSettings] = useState({ admin_name: '', phone_number: '' });
       const [dashboardOrders, setDashboardOrders] = useState([]);
+      const [orderViewCounts, setOrderViewCounts] = useState(null);
       const [customerEditOrder, setCustomerEditOrder] = useState(null);
       const [customerEditMode, setCustomerEditMode] = useState('edit');
       /** 客確認待ち→再依頼モーダル用（declined_keys / original_patch） */
@@ -3651,6 +3683,29 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 : [],
             );
             setDashboardOrders(Array.isArray(displayOrders) ? displayOrders : []);
+            const colleagueViewOrders =
+              colleagueIds && colleagueIds.size > 0
+                ? newOrders.filter(
+                    (o) => o && colleagueIds.has(String(o.customer_id ?? o.customerId ?? '').trim()),
+                  )
+                : [];
+            const pendingViewIds = [...(Array.isArray(displayOrders) ? displayOrders : []), ...colleagueViewOrders]
+              .filter((o) => isPendingOrderStatus(o))
+              .map((o) => o?.id)
+              .filter(Boolean);
+            try {
+              const viewRows = await db.listOrderViewCounts(pendingViewIds);
+              const nextCounts = {};
+              for (const id of pendingViewIds) nextCounts[String(id)] = 0;
+              for (const row of viewRows) {
+                const id = String(row?.order_id || '').trim();
+                if (!id) continue;
+                nextCounts[id] = Number(row.viewed_factory_count) || 0;
+              }
+              setOrderViewCounts(nextCounts);
+            } catch (viewErr) {
+              console.warn('[DispatchApp] list_order_view_counts 取得に失敗', viewErr);
+            }
             setChatThreads(newThreads);
             try {
               const proposalOrderIds = (Array.isArray(displayOrders) ? displayOrders : [])
@@ -7414,6 +7469,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                 highlighted={String(ord?.id || '') === String(highlightedOrderId || '')}
                                 blinkFactoryName={blinkFactoryOrderIds.has(String(ord.id))}
                                 showCounterCashBadge={isAgentOrCooperative}
+                                orderViewCounts={orderViewCounts}
                               />
                               );
                             };
@@ -7825,6 +7881,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 showOrderContractorName={isAgentOrCooperative && !isGuestSiteOrder}
                 onEditOrder={handleOpenCustomerOrderEdit}
                 onRequestChange={handleOpenCustomerChangeRequest}
+                orderViewCounts={orderViewCounts}
                 onMonthChange={(nextMonth) => {
                   const next = nextMonth instanceof Date && !Number.isNaN(nextMonth.getTime()) ? nextMonth : new Date();
                   const normalized = new Date(next.getFullYear(), next.getMonth(), 1);

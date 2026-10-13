@@ -2308,6 +2308,33 @@ export async function fetchOrderById(orderId) {
   return data ? attachFactoryCancelAckFields(normalizeOrderRow(data), data) : null;
 }
 
+/** 工場が注文詳細を開いたことを記録する。失敗は呼び出し側で警告だけにする。 */
+export async function factoryMarkOrderViewed(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id) return false;
+  const { data, error } = await supabase.rpc('factory_mark_order_viewed', { p_order_id: id });
+  if (error) throw error;
+  return data === true;
+}
+
+/** 顧客が見られる注文について、詳細を開いた工場の件数をまとめて返す */
+export async function listOrderViewCounts(orderIds) {
+  const ids = [...new Set((Array.isArray(orderIds) ? orderIds : []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) return [];
+  const { data, error } = await supabase.rpc('list_order_view_counts', { p_order_ids: ids });
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
+
+/** 管理者向け。工場名と最初・最後に見た時刻 */
+export async function adminListOrderViews(orderIds) {
+  const ids = [...new Set((Array.isArray(orderIds) ? orderIds : []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) return [];
+  const { data, error } = await supabase.rpc('admin_list_order_views', { p_order_ids: ids });
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
+
 /** 受注工場が、顧客キャンセルを確認したことを記録する */
 export async function factoryAcknowledgeCustomerCancel(orderId) {
   const id = String(orderId || '').trim();

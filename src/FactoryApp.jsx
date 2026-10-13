@@ -1922,6 +1922,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
       onSiteUrlCopied,
       escalationCtx = null,
       factoryNameById = {},
+      onOrderViewed = null,
     }) {
       const isToast = variant === 'toast';
       const isGroupManaged = isReservationGroupManagedOrder(order);
@@ -1992,6 +1993,11 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
           onMarkChatRead(order.id, chatMessages);
         }
       }, [expanded, order?.id, chatMessages, onMarkChatRead]);
+
+      useEffect(() => {
+        if (!expanded || !order?.id || typeof onOrderViewed !== 'function') return;
+        onOrderViewed(order.id);
+      }, [expanded, order?.id, onOrderViewed]);
 
       useEffect(() => {
         if (!forceExpanded) return;
@@ -2793,6 +2799,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                       className="w-full rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-left text-sm font-black text-emerald-700 hover:bg-emerald-100"
                       onClick={() => {
                         setActionMenuOpen(false);
+                        if (order?.id && typeof onOrderViewed === 'function') onOrderViewed(order.id);
                         setEditOpen(true);
                       }}
                     >
@@ -2992,6 +2999,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
       exitingOrderIds,
       escalationCtx = null,
       factoryNameById = {},
+      onOrderViewed = null,
     }) {
       const [searchQuery, setSearchQuery] = useState('');
       const [inboxSortKey, setInboxSortKey] = useState('deliveryDate');
@@ -3162,6 +3170,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                   onSiteUrlCopied={onSiteUrlCopied}
                   escalationCtx={escalationCtx}
                   factoryNameById={factoryNameById}
+                  onOrderViewed={onOrderViewed}
                 />
               </div>
             </div>
@@ -3359,6 +3368,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
       pendingChangeProposal = null,
       onRespondChangeProposal = null,
       onConfirmCustomerCancelRequest = null,
+      onOrderViewed = null,
     }) {
       if (!order) return null;
       const isGroupAvailability = isPendingReservationGroupAvailability(order);
@@ -3397,6 +3407,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
               pendingChangeProposal={pendingChangeProposal}
               onRespondChangeProposal={onRespondChangeProposal}
               onConfirmCustomerCancelRequest={onConfirmCustomerCancelRequest}
+              onOrderViewed={onOrderViewed}
             />
           </div>
         </div>
@@ -4313,6 +4324,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
       const stampUndoPaintedRef = useRef([]);
       const stampPaintActiveRef = useRef(false);
       const stampPaintedRef = useRef(new Set());
+      const viewedOrderIdsRef = useRef(new Set());
       const stampPaintMapRef = useRef(null);
       const stampPaintDirtyRef = useRef(false);
       const activeStampRef = useRef(null);
@@ -5522,6 +5534,15 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
       useEffect(() => {
         setAppBadge(newOrdersCount + unreadChatCount);
       }, [newOrdersCount, unreadChatCount]);
+
+      const markFactoryOrderViewed = useCallback((orderId) => {
+        const id = String(orderId || '').trim();
+        if (!id || viewedOrderIdsRef.current.has(id)) return;
+        viewedOrderIdsRef.current.add(id);
+        void db.factoryMarkOrderViewed(id).catch((err) => {
+          console.warn('[FactoryApp] factory_mark_order_viewed failed', err);
+        });
+      }, []);
 
       const handleOpenOrderFromCalendar = useCallback(
         (orderId) => {
@@ -7104,6 +7125,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                     exitingOrderIds={exitingOrderIds}
                     escalationCtx={inboxEscalationCtx}
                     factoryNameById={factoryNameById}
+                    onOrderViewed={markFactoryOrderViewed}
                   />
                 </div>
               ) : null}
@@ -7402,6 +7424,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
             pendingChangeProposal={toastOrder?.id ? pendingChangeProposalByOrderId[toastOrder.id] || null : null}
             onRespondChangeProposal={handleRespondOrderChangeProposal}
             onConfirmCustomerCancelRequest={handleConfirmCustomerCancelRequest}
+            onOrderViewed={markFactoryOrderViewed}
           />
           <OrderAcceptModal
             order={acceptModalOrder}
