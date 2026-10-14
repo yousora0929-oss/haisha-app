@@ -3,10 +3,9 @@ import { flushSync } from 'react-dom';
 import { MapEditorPrintDetails } from './MapEditorPrintDetails.jsx';
 import { MapEditorViewportMap } from './MapEditorViewportMap.jsx';
 import { PRINT_MAP_HEIGHT_PX, PRINT_PAGE_HEIGHT_PX } from '../utils/mapEditorPrintLayout.js';
-import { resolveRasterLayerForExport } from '../mapTiles.js';
 
 /** 詳細+地図同時印刷時の地図枠フォールバック高さ（計測前・計測失敗時） */
-const PRINT_BOTH_MAP_FALLBACK_PX = Math.max(280, PRINT_PAGE_HEIGHT_PX - 420);
+const PRINT_BOTH_MAP_FALLBACK_PX = Math.max(280, PRINT_PAGE_HEIGHT_PX - 260);
 
 function countLoadedTiles(map) {
   return map?.getContainer?.()?.querySelectorAll?.('img.leaflet-tile-loaded')?.length ?? 0;
@@ -82,7 +81,7 @@ function waitForFrameHeight(el, minPx = 80, timeoutMs = 1200) {
  * A4運行指示書 — 画面外に配置して印刷専用 DOM を描画
  */
 export const MapEditorPrintSheet = forwardRef(function MapEditorPrintSheet(
-  { session, order, project, siteTitle, annotations, tileLayerId },
+  { session, order, project, siteTitle, annotations, tileLayerId = 'pale' },
   ref,
 ) {
   const leafletMapRef = useRef(null);
@@ -181,11 +180,8 @@ export const MapEditorPrintSheet = forwardRef(function MapEditorPrintSheet(
     height: mapHeightPx,
     minHeight: mapHeightPx,
   };
-  const exportLayer = resolveRasterLayerForExport(tileLayerId);
-  const sourceLabel = exportLayer.layer.attributionPlain || '地図';
-  const sourceNote = exportLayer.usedFallback
-    ? `出典: ${sourceLabel}（ストリートは印刷安定のため地理院に切替）`
-    : `出典: ${sourceLabel}`;
+  const printLayerId = session?.printLayerId || tileLayerId || 'pale';
+  const sourceNote = '出典: 地理院タイル';
 
   return (
     <div className={shellClass}>
@@ -203,11 +199,12 @@ export const MapEditorPrintSheet = forwardRef(function MapEditorPrintSheet(
                 annotations={annotations}
                 viewport={viewport}
                 fixedHeightPx={mapHeightPx}
-                tileLayerId={tileLayerId}
+                tileLayerId={printLayerId}
+                printEmphasis
                 onMapReady={(map) => {
                   leafletMapRef.current = map;
                 }}
-                mapKey={`print-${viewport?.lat}-${viewport?.lng}-${viewport?.zoom}-${includeBoth ? 'both' : 'map'}-${tileLayerId || 'gsi'}`}
+                mapKey={`print-${viewport?.lat}-${viewport?.lng}-${viewport?.zoom}-${includeBoth ? 'both' : 'map'}-${printLayerId}`}
                 className="h-full w-full"
               />
             </div>

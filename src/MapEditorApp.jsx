@@ -220,7 +220,7 @@ export function MapEditorApp() {
     setPrintModalOpen(true);
   }, []);
 
-  const handlePrintConfirm = useCallback(({ includeMap, includeDetails, viewport }) => {
+  const handlePrintConfirm = useCallback(({ includeMap, includeDetails, viewport, printLayerId }) => {
     setPrintModalOpen(false);
     printRunIdRef.current += 1;
     const runId = printRunIdRef.current;
@@ -229,6 +229,7 @@ export function MapEditorApp() {
       includeMap,
       includeDetails,
       viewport,
+      printLayerId: printLayerId || 'pale',
       runId,
     });
   }, []);
@@ -607,7 +608,7 @@ export function MapEditorApp() {
         project={editorProject}
         siteTitle={siteSubtitle}
         annotations={annotations}
-        tileLayerId={tileLayerId}
+        tileLayerId={printSession?.printLayerId || 'pale'}
       />
 
       <MapEditorPrintModal

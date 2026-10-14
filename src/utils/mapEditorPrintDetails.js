@@ -1,8 +1,9 @@
 import { TIME_SLOTS } from '../haishaConstants.js';
 import { combineDeliveryAddress } from './deliveryAreas.js';
-import { resolveOrderSiteDisplayName } from './siteNameDisplay.js';
+import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './siteNameDisplay.js';
 import { resolveSiteContactName, resolveSitePhone } from './orderContactInfo.js';
 import { formatPhoneNumberJP } from './phoneFormat.js';
+import { formatYmdWithWeekday } from './orderGrouping.js';
 
 /** 配合文字列を 強度-スランプ-粗骨材-セメント に分解 */
 export function parseMixComponents(mixText) {
@@ -61,6 +62,16 @@ function formatMixLabel(order) {
   );
 }
 
+/** 配合は 18-8-20BB のように、セメント記号を末尾へつなげて出す */
+function formatPrintMixCode(order) {
+  const raw = formatMixLabel(order);
+  if (raw === '—') return '—';
+  const matched = raw.match(/^(\d+)-(\d+)-(\d+)\s*([A-Za-z]+)?$/);
+  if (!matched) return raw;
+  const code = matched[4] ? matched[4].toUpperCase() : '';
+  return `${matched[1]}-${matched[2]}-${matched[3]}${code}`;
+}
+
 function formatUnloadDurationLabel(order) {
   const labeled = field(order.unloadDurationLabel ?? order.unload_duration_label);
   if (labeled !== '—') return labeled;
@@ -81,15 +92,80 @@ function formatUnloadDurationLabel(order) {
   return raw;
 }
 
+/** 空白と全角半角の差を除いて現場名と住所を比べる */
+export function normalizePrintPlaceText(value) {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .replace(/[\s\u3000]+/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function explicitSiteName(order, project) {
+  const candidates = [
+    order?.siteName,
+    order?.site_name,
+    order?.projectName,
+    order?.project_name,
+    project?.name,
+  ];
+  for (const raw of candidates) {
+    const clean = sanitizeSiteNameValue(raw);
+    if (clean && clean !== '（現場名未設定）') return clean;
+  }
+  return '';
+}
+
+function buildPrintHeading(siteName, address) {
+  const samePlace =
+    Boolean(normalizePrintPlaceText(siteName)) &&
+    normalizePrintPlaceText(siteName) === normalizePrintPlaceText(address);
+  if (!siteName || samePlace) {
+    return { mode: 'addressOnly', address: address && address !== '—' ? address : '—' };
+  }
+  return { mode: 'nameAndAddress', siteName, address: address || '—' };
+}
+
+function formatPrintDateLabel(dateStr) {
+  const raw = String(dateStr ?? '').trim();
+  if (!raw) return '—';
+  const iso = raw.slice(0, 10);
+  return formatYmdWithWeekday(iso) || formatPreferredDateLabel(raw);
+}
+
+function formatDeliveryDateTime(dateLabel, timeLabel) {
+  const date = dateLabel && dateLabel !== '—' ? dateLabel : '';
+  const time = String(timeLabel || '').trim();
+  const timeOk = Boolean(time) && time !== '—';
+  if (date && timeOk) return `${date} ${time}`;
+  return date || (timeOk ? time : '—');
+}
+
+function formatQuantityAndVehicle(quantityLabel, vehicleLabel) {
+  const qty = quantityLabel && quantityLabel !== '—' ? String(quantityLabel).replace(/\s+/g, '') : '—';
+  const vehicle = vehicleLabel || '—';
+  if (qty === '—' && vehicle === '—') return '—';
+  return `${qty}・${vehicle}`;
+}
+
 /**
  * 運行指示書（A4上半分）用グリッドデータ
+ * cells は既存の詳細セクション用。画面は compactRows と heading を使う。
  */
 export function buildOperationInstructionPrintGrid(order, project, siteTitle) {
   if (!order) {
-    return { siteTitle: siteTitle || '—', siteName: '—', address: '—', cells: [] };
+    return {
+      siteTitle: siteTitle || '—',
+      siteName: '—',
+      address: '—',
+      heading: { mode: 'addressOnly', address: '—' },
+      cells: [],
+      compactRows: [],
+    };
   }
 
-  const siteName = resolveOrderSiteDisplayName(order, project) || '—';
+  const resolvedSiteName = resolveOrderSiteDisplayName(order, project) || '—';
+  const siteName = explicitSiteName(order, project);
   const contractor = field(
     order.contractorName ??
       order.contractor_name ??
@@ -104,9 +180,9 @@ export function buildOperationInstructionPrintGrid(order, project, siteTitle) {
       order.projectTradingCompanyName,
   );
 
-  const dateLabel = formatPreferredDateLabel(
-    order.preferredDate ?? order.preferred_date ?? order.delivery_date,
-  );
+  const dateSource = order.preferredDate ?? order.preferred_date ?? order.delivery_date;
+  const dateLabel = formatPreferredDateLabel(dateSource);
+  const printDateLabel = formatPrintDateLabel(dateSource);
   const timeLabel = formatTimeSlotLabel(
     order.timeSlot ?? order.time_slot ?? order.preferredTimeSlot,
   );
@@ -116,6 +192,7 @@ export function buildOperationInstructionPrintGrid(order, project, siteTitle) {
     qtyRaw !== '' && qtyRaw != null && String(qtyRaw).trim() !== ''
       ? `${String(qtyRaw).trim()} ㎥`
       : '—';
+  const vehicleLabel = formatVehicleLabel(order);
 
   const orderedBy = field(resolveSiteContactName(order));
   const phone = field(formatPhoneNumberJP(resolveSitePhone(order)));
@@ -127,10 +204,41 @@ export function buildOperationInstructionPrintGrid(order, project, siteTitle) {
       ? field(order.siteAddress ?? order.site_address)
       : field(combineDeliveryAddress(deliveryArea, addressDetail) || project?.site_address);
 
+  const heading = buildPrintHeading(siteName, address);
+  const deliveryWhen = formatDeliveryDateTime(printDateLabel, timeLabel);
+
   return {
-    siteTitle: siteTitle || siteName,
-    siteName,
+    siteTitle: siteTitle || resolvedSiteName,
+    siteName: resolvedSiteName,
     address,
+    heading,
+    compactRows: [
+      {
+        leftLabel: '配達日時',
+        leftValue: deliveryWhen,
+        rightLabel: '荷下ろし時間',
+        rightValue: formatUnloadDurationLabel(order),
+      },
+      {
+        leftLabel: '配合',
+        leftValue: formatPrintMixCode(order),
+        rightLabel: '数量・車両',
+        rightValue: formatQuantityAndVehicle(quantityLabel, vehicleLabel),
+      },
+      {
+        leftLabel: '発注業者（元請）',
+        leftValue: contractor,
+        rightLabel: '担当商社',
+        rightValue: trader,
+      },
+      {
+        leftLabel: '現場担当',
+        leftValue: orderedBy,
+        rightLabel: '連絡先',
+        rightValue: phone,
+        rightEmphasis: true,
+      },
+    ],
     cells: [
       {
         section: '配送日時',
@@ -151,7 +259,7 @@ export function buildOperationInstructionPrintGrid(order, project, siteTitle) {
         leftLabel: '予定数量',
         leftValue: quantityLabel,
         rightLabel: '指定車両',
-        rightValue: formatVehicleLabel(order),
+        rightValue: vehicleLabel,
       },
       {
         section: '関係業者',

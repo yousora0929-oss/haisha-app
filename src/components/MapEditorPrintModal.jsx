@@ -1,6 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { MapEditorViewportMap } from './MapEditorViewportMap.jsx';
 
+const PRINT_MAP_LAYER_OPTIONS = [
+  { id: 'pale', label: '淡色（推奨）' },
+  { id: 'gsi', label: '標準' },
+  { id: 'photo', label: '写真' },
+];
+
 /**
  * 印刷プレビュー — 項目選択とアングル調整ミニマップ
  */
@@ -17,12 +23,14 @@ export function MapEditorPrintModal({
   const [includeMap, setIncludeMap] = useState(initialIncludeMap);
   const [includeDetails, setIncludeDetails] = useState(initialIncludeDetails);
   const [viewport, setViewport] = useState(initialViewport);
+  const [printLayerId, setPrintLayerId] = useState('pale');
 
   useEffect(() => {
     if (!open) return;
     setIncludeMap(initialIncludeMap);
     setIncludeDetails(initialIncludeDetails);
     setViewport(initialViewport);
+    setPrintLayerId('pale');
   }, [open, initialIncludeMap, initialIncludeDetails, initialViewport]);
 
   if (!open) return null;
@@ -74,9 +82,31 @@ export function MapEditorPrintModal({
 
         {includeMap ? (
           <div className="mt-4">
-            <p className="text-xs font-black text-slate-700">アングル調整用ミニマップ</p>
+            <p className="text-xs font-black text-slate-700">地図の種類</p>
+            <div className="mt-1 flex gap-1" role="group" aria-label="地図の種類">
+              {PRINT_MAP_LAYER_OPTIONS.map((layer) => {
+                const pressed = printLayerId === layer.id;
+                return (
+                  <button
+                    key={layer.id}
+                    type="button"
+                    aria-pressed={pressed}
+                    onClick={() => setPrintLayerId(layer.id)}
+                    className={
+                      'min-h-[44px] flex-1 rounded-lg border-2 text-xs font-black ' +
+                      (pressed
+                        ? 'border-indigo-700 bg-indigo-600 text-white'
+                        : 'border-slate-300 bg-white text-slate-800')
+                    }
+                  >
+                    {layer.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-3 text-xs font-black text-slate-700">アングル調整用ミニマップ</p>
             <p className="mt-0.5 text-[10px] font-medium text-slate-500">
-              ドラッグで移動・ホイールでズーム（荷下ろし地点＝赤い円）
+              ドラッグで移動・ホイールでズーム（荷下ろし地点＝黒い円）
             </p>
             {String(tileLayerId || '') === 'street' ? (
               <p className="mt-1 text-[10px] font-bold text-amber-800">
@@ -88,8 +118,9 @@ export function MapEditorPrintModal({
                 annotations={annotations}
                 viewport={viewport}
                 onViewportChange={setViewport}
-                tileLayerId={tileLayerId}
-                mapKey="modal-preview"
+                tileLayerId={printLayerId}
+                printEmphasis
+                mapKey={`modal-preview-${printLayerId}`}
                 className="h-full w-full"
               />
             </div>
@@ -115,6 +146,7 @@ export function MapEditorPrintModal({
               onConfirm({
                 includeMap,
                 includeDetails,
+                printLayerId,
                 viewport: {
                   lat: viewport.lat,
                   lng: viewport.lng,
