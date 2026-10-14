@@ -209,25 +209,36 @@ function buildProjectTradingCompanyFields(payload) {
   };
 }
 
+function chatMessageFactoryId(message) {
+  const id = String(message?.factoryId ?? '').trim();
+  return id || '';
+}
+
+function mapStoredChatMessage(message, createdAtFallback) {
+  const factoryId = chatMessageFactoryId(message);
+  return {
+    id: message.id != null ? String(message.id) : `msg_${Date.now()}`,
+    from:
+      message.from === 'factory'
+        ? 'factory'
+        : message.from === 'system'
+          ? 'system'
+          : message.from === 'admin'
+            ? 'admin'
+            : message.from === 'customer'
+              ? 'customer'
+              : 'master',
+    body: String(message.body ?? ''),
+    createdAt: message.createdAt != null ? String(message.createdAt) : createdAtFallback,
+    ...(factoryId ? { factoryId } : {}),
+  };
+}
+
 function normalizeChatMessages(raw) {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((m) => m && typeof m === 'object')
-    .map((m) => ({
-      id: m.id != null ? String(m.id) : `msg_${Date.now()}`,
-      from:
-        m.from === 'factory'
-          ? 'factory'
-          : m.from === 'system'
-            ? 'system'
-            : m.from === 'admin'
-              ? 'admin'
-              : m.from === 'customer'
-                ? 'customer'
-                : 'master',
-      body: String(m.body ?? ''),
-      createdAt: m.createdAt != null ? String(m.createdAt) : new Date().toISOString(),
-    }))
+    .map((m) => mapStoredChatMessage(m, new Date().toISOString()))
     .slice(-100);
 }
 
@@ -238,7 +249,13 @@ function areChatMessagesEqual(a, b) {
   for (let i = 0; i < left.length; i += 1) {
     const l = left[i];
     const r = right[i];
-    if (l.id !== r.id || l.from !== r.from || l.body !== r.body || l.createdAt !== r.createdAt) {
+    if (
+      l.id !== r.id ||
+      l.from !== r.from ||
+      l.body !== r.body ||
+      l.createdAt !== r.createdAt ||
+      (l.factoryId || '') !== (r.factoryId || '')
+    ) {
       return false;
     }
   }
@@ -4542,12 +4559,16 @@ export function buildChatMessageEntry(from, body) {
 function chatMessagesToJsonbArray(messages) {
   return (Array.isArray(messages) ? messages : [])
     .filter((m) => m && typeof m === 'object')
-    .map((m) => ({
-      id: m.id != null ? String(m.id) : `msg_${Date.now()}`,
-      from: normalizeChatMessageSender(m.from),
-      body: String(m.body ?? ''),
-      createdAt: m.createdAt != null ? String(m.createdAt) : new Date().toISOString(),
-    }));
+    .map((m) => {
+      const factoryId = chatMessageFactoryId(m);
+      return {
+        id: m.id != null ? String(m.id) : `msg_${Date.now()}`,
+        from: normalizeChatMessageSender(m.from),
+        body: String(m.body ?? ''),
+        createdAt: m.createdAt != null ? String(m.createdAt) : new Date().toISOString(),
+        ...(factoryId ? { factoryId } : {}),
+      };
+    });
 }
 
 export function logChatSendError(error, context = {}) {

@@ -33,16 +33,36 @@ export function isOutgoingSideForCustomerView(from) {
   return isCustomerSideChatSender(from);
 }
 
-export function customerChatDisplayName(from, customerName = '担当者') {
+export function chatFactoryIdFromMessage(message) {
+  return String(message?.factoryId ?? '').trim();
+}
+
+/** factoryId があるときだけ工場名。無い・未知のときは fallback（既定は「工場」）。 */
+export function resolveChatFactoryName(factoryId, factoryNameById, fallback = '工場') {
+  const id = String(factoryId || '').trim();
+  if (!id) return fallback;
+  const name = String(factoryNameById?.[id] || '').trim();
+  return name || fallback;
+}
+
+export function customerChatDisplayName(from, customerName = '担当者', options = {}) {
   if (isAdminChatSender(from)) return '管理者';
   if (isCustomerSideChatSender(from)) return customerName || '担当者';
-  if (isFactorySideChatSender(from)) return '工場';
+  if (isFactorySideChatSender(from)) {
+    return resolveChatFactoryName(options?.factoryId, options?.factoryNameById, '工場');
+  }
   return '担当者';
 }
 
-export function factoryChatDisplayName(from, customerName = '担当者', factoryLabel = '工場（この端末）') {
+export function factoryChatDisplayName(from, customerName = '担当者', factoryLabel = '工場（この端末）', options = {}) {
   if (isAdminChatSender(from)) return '管理者';
   if (isCustomerSideChatSender(from)) return customerName || '担当者';
-  if (isFactorySideChatSender(from)) return factoryLabel;
+  if (isFactorySideChatSender(from)) {
+    const id = String(options?.factoryId || '').trim();
+    const ownId = String(options?.ownFactoryId || '').trim();
+    if (!id || (ownId && id === ownId)) return factoryLabel;
+    const name = String(options?.factoryNameById?.[id] || '').trim();
+    return name || factoryLabel;
+  }
   return factoryLabel;
 }

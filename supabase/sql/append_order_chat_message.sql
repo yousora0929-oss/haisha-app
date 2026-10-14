@@ -55,6 +55,7 @@ declare
   v_next jsonb;
   v_from text;
   v_body text;
+  v_factory_id text;
 begin
   v_body := trim(coalesce(p_body, ''));
   if coalesce(trim(p_order_id), '') = '' or v_body = '' then
@@ -93,6 +94,15 @@ begin
     'body', v_body,
     'createdAt', to_char(timezone('utc', clock_timestamp()), 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
   );
+
+  -- 工場発言のみ、呼び出した工場のIDをサーバー側で付与する（クライアント指定は信用しない）
+  -- 呼び出し元が工場として特定できない場合（管理者がfactory名義で送る等）は付与せず、そのまま保存する
+  if v_from = 'factory' then
+    v_factory_id := nullif(trim(coalesce(public.effective_factory_actor_id(), '')), '');
+    if v_factory_id is not null then
+      v_msg := v_msg || jsonb_build_object('factoryId', v_factory_id);
+    end if;
+  end if;
 
   -- JSONB 配列に安全に追記
   v_next := v_list || jsonb_build_array(v_msg);

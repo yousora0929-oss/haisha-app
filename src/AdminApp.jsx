@@ -3818,14 +3818,20 @@ function AdminFollowupOrderCard({
           {messages.length === 0 ? (
             <p className="text-slate-500">チャットはまだありません。</p>
           ) : (
-            messages.map((m) => (
+            messages.map((m) => {
+              const factorySenderName =
+                String(m.from || '') === 'factory'
+                  ? String(factoryNameById?.[String(m.factoryId || '').trim()] || '').trim()
+                  : '';
+              return (
               <p key={m.id} className="mb-2 border-b border-slate-200 pb-2 last:mb-0 last:border-0">
-                <span className="font-black text-slate-700">[{m.from}]</span>{' '}
+                <span className="font-black text-slate-700">[{factorySenderName || m.from}]</span>{' '}
                 <span className="text-slate-500">{m.createdAt ? new Date(m.createdAt).toLocaleString('ja-JP') : ''}</span>
                 <br />
                 {m.body}
               </p>
-            ))
+              );
+            })
           )}
         </div>
       ) : null}

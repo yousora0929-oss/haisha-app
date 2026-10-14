@@ -1178,6 +1178,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       changeProposalChoiceSubmitting = false,
       onChangeRequestDecision = null,
       changeRequestDecisionSubmitting = false,
+      factoryNameById = {},
     }) {
       const [draft, setDraft] = useState('');
       const [choiceSubmitting, setChoiceSubmitting] = useState(false);
@@ -1279,7 +1280,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 }
                 const mine = isOutgoingSideForCustomerView(m.from);
                 const answerTone = mine ? null : changeRequestAnswerToneFromMessage(m.body);
-                const displaySenderName = customerChatDisplayName(m.from, senderName);
+                const displaySenderName = customerChatDisplayName(m.from, senderName, {
+                  factoryId: m.factoryId,
+                  factoryNameById,
+                });
                 const answerToneClass =
                   answerTone === 'accepted'
                     ? 'border-emerald-500 bg-emerald-50 text-emerald-950 dark:border-emerald-400 dark:bg-emerald-950/50 dark:text-emerald-50'
@@ -8146,6 +8150,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               changeProposalChoiceSubmitting={changeProposalChoiceSubmitting}
               onChangeRequestDecision={handleChangeRequestDecision}
               changeRequestDecisionSubmitting={changeRequestDecisionSubmitting}
+              factoryNameById={factoryNameById}
             />
           ) : null}
         </div>

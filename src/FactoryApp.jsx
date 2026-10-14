@@ -1310,6 +1310,8 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
       factoryName,
       onAfterSend,
       customerById,
+      ownFactoryId = '',
+      factoryNameById = {},
     }) {
       const [txt, setTxt] = useState('');
       const list = Array.isArray(messages) ? messages : [];
@@ -1362,7 +1364,11 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                   );
                 }
                 const isCustomerSide = isIncomingSideForFactoryView(m.from);
-                const displaySenderName = factoryChatDisplayName(m.from, customerSenderName);
+                const displaySenderName = factoryChatDisplayName(m.from, customerSenderName, '工場（この端末）', {
+                  factoryId: m.factoryId,
+                  ownFactoryId,
+                  factoryNameById,
+                });
                 return (
                   <li key={m.id} className={'flex ' + (isCustomerSide ? 'justify-start' : 'justify-end')}>
                     <div
@@ -2710,6 +2716,8 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                 factoryName={factoryName}
                 onAfterSend={onFactoryChatSent}
                 customerById={customerById}
+                ownFactoryId={currentFactoryId}
+                factoryNameById={factoryNameById}
               />
             </div>
           ) : null}

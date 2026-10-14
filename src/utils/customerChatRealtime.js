@@ -48,6 +48,7 @@ function normalizeChatMessagesRaw(raw) {
                 : String(m.from || ''),
       body: String(m.body ?? ''),
       createdAt: m.createdAt != null ? String(m.createdAt) : '',
+      ...(String(m.factoryId ?? '').trim() ? { factoryId: String(m.factoryId).trim() } : {}),
     }));
 }
 
