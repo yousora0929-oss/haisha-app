@@ -297,6 +297,43 @@ function compareInProgressOrdersByDeliveryDate(a, b) {
   return inProgressOrderCreatedAtMs(b) - inProgressOrderCreatedAtMs(a);
 }
 
+function formatDashboardUpdatedAt(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '--:--';
+  return date.toLocaleTimeString('ja-JP', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Tokyo',
+  });
+}
+
+function chatThreadsUnchanged(prev, next) {
+  if (prev === next) return true;
+  if (!prev || !next || typeof prev !== 'object' || typeof next !== 'object') return false;
+  const prevKeys = Object.keys(prev);
+  const nextKeys = Object.keys(next);
+  if (prevKeys.length !== nextKeys.length) return false;
+  for (const key of nextKeys) {
+    const left = prev[key];
+    const right = next[key];
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+    for (let i = 0; i < left.length; i += 1) {
+      const a = left[i];
+      const b = right[i];
+      if (
+        a?.id !== b?.id ||
+        a?.from !== b?.from ||
+        a?.body !== b?.body ||
+        a?.createdAt !== b?.createdAt ||
+        (a?.factoryId || '') !== (b?.factoryId || '')
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 /** 登録日が新しい順（dashboardOrders と同じ） */
 function compareInProgressOrdersByCreatedAtDesc(a, b) {
   return inProgressOrderCreatedAtMs(b) - inProgressOrderCreatedAtMs(a);
@@ -2315,6 +2352,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [loginLoading, setLoginLoading] = useState(false);
       const [adminSettings, setAdminSettings] = useState({ admin_name: '', phone_number: '' });
       const [dashboardOrders, setDashboardOrders] = useState([]);
+      const [dashboardUpdatedAt, setDashboardUpdatedAt] = useState(null);
+      const [dashboardListRefreshing, setDashboardListRefreshing] = useState(false);
       const [orderViewCounts, setOrderViewCounts] = useState(null);
       const [customerEditOrder, setCustomerEditOrder] = useState(null);
       const [customerEditMode, setCustomerEditMode] = useState('edit');
@@ -3455,6 +3494,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const activeChatOrderIdRef = useRef(activeChatOrderId);
       activeChatOrderIdRef.current = activeChatOrderId;
       const refreshDashboardRef = useRef(() => Promise.resolve());
+      const realtimeControlsRef = useRef({ getStatus: () => 'IDLE', reconnect: () => {} });
+      const lastInsuranceRefreshAtRef = useRef(0);
+      const dashboardRefreshInFlightRef = useRef(false);
       const isRelevantDashboardOrderRef = useRef(() => true);
       const dashboardNoticeTimerRef = useRef(null);
       const notifiedRejectedProposalIdsRef = useRef(new Set());
@@ -3710,7 +3752,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             } catch (viewErr) {
               console.warn('[DispatchApp] list_order_view_counts 取得に失敗', viewErr);
             }
-            setChatThreads(newThreads);
+            setChatThreads((prev) => (chatThreadsUnchanged(prev, newThreads) ? prev : newThreads));
+            setDashboardUpdatedAt(new Date());
             try {
               const proposalOrderIds = (Array.isArray(displayOrders) ? displayOrders : [])
                 .map((o) => o?.id)
@@ -3722,7 +3765,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             }
           } catch (loadErr) {
             logDispatchError('[DispatchApp] ダッシュボード注文の取得・更新に失敗', loadErr);
-            window.alert(formatSupabaseError(loadErr, '注文一覧の更新に失敗しました'));
+            if (!options?.quiet) {
+              window.alert(formatSupabaseError(loadErr, '注文一覧の更新に失敗しました'));
+            }
           }
         },
         [factories, preferredFactoryId, currentCustomerId, currentCustomer, isGuestSiteOrder, isRelevantDashboardOrder, showDashboardNotice, registerBlinkFactoryOrderIds],
@@ -4640,12 +4685,34 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           ? `dispatch-guest-orders-${String(guestOrderToken || 'guest').replace(/[^a-zA-Z0-9_-]/g, '')}`
           : `dispatch-customer-orders-${String(currentCustomerId || 'customer').replace(/[^a-zA-Z0-9_-]/g, '')}`;
         let channel = null;
-        void (async () => {
+        let channelGeneration = 0;
+        let realtimeStatus = 'IDLE';
+        let reconnectTimer = null;
+        const clearReconnectTimer = () => {
+          if (reconnectTimer != null) {
+            window.clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+          }
+        };
+        const removeChannel = () => {
+          if (!channel) return;
+          const current = channel;
+          channel = null;
+          try {
+            void supabase?.removeChannel?.(current);
+          } catch {
+            /* ignore */
+          }
+        };
+        const openChannel = async () => {
+          if (disposed) return;
+          const generation = ++channelGeneration;
           try {
             await ensurePanelRealtimeAuth?.();
-            if (disposed || !supabase?.channel) return;
-            channel = supabase
-              .channel(channelKey)
+            if (disposed || generation !== channelGeneration || !supabase?.channel) return;
+            removeChannel();
+            const nextChannel = supabase
+              .channel(`${channelKey}-${generation}`)
               .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
                 dispatchRealtimePayloadByKind({ ...payload, table: payload?.table || 'orders' }, {
                   onOrder: (p) => realtimeSync.scheduleOrder(p),
@@ -4684,21 +4751,115 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   realtimeSync.scheduleOrder(payload);
                 },
               )
-              .subscribe();
+              .subscribe((status, err) => {
+                if (disposed || generation !== channelGeneration) return;
+                realtimeStatus = status;
+                if (status === 'SUBSCRIBED') {
+                  clearReconnectTimer();
+                  return;
+                }
+                if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                  console.warn('[DispatchApp] realtime disconnected', status, err);
+                  if (reconnectTimer != null) return;
+                  reconnectTimer = window.setTimeout(() => {
+                    reconnectTimer = null;
+                    void openChannel();
+                  }, 2000);
+                }
+              });
+            channel = nextChannel;
           } catch (realtimeErr) {
             logDispatchError('[DispatchApp] orders realtime 購読の開始に失敗', realtimeErr);
           }
-        })();
+        };
+        realtimeControlsRef.current = {
+          getStatus: () => realtimeStatus,
+          reconnect: () => {
+            if (disposed) return;
+            clearReconnectTimer();
+            void openChannel();
+          },
+        };
+        void openChannel();
         return () => {
           disposed = true;
+          clearReconnectTimer();
+          channelGeneration += 1;
+          realtimeControlsRef.current = { getStatus: () => 'CLOSED', reconnect: () => {} };
           realtimeSync.dispose();
-          try {
-            if (channel) void supabase?.removeChannel?.(channel);
-          } catch {
-            /* ignore */
-          }
+          removeChannel();
         };
       }, [isGuestSiteOrder, guestSiteOrderCtx, guestOrderToken, isLoggedIn, currentCustomerId]);
+
+      useEffect(() => {
+        const canRefresh = isGuestSiteOrder
+          ? Boolean(guestSiteOrderCtx && hasGuestSiteOrderSession())
+          : Boolean(isLoggedIn && hasCustomerPanelSession());
+        if (!canRefresh) return undefined;
+
+        const INSURANCE_GAP_MS = 10000;
+        const POLL_MS = 60000;
+        let pollId = null;
+
+        const runInsuranceRefresh = () => {
+          if (document.visibilityState !== 'visible') return;
+          const status = realtimeControlsRef.current.getStatus?.() || 'IDLE';
+          if (status !== 'SUBSCRIBED') {
+            console.warn('[DispatchApp] realtime not SUBSCRIBED on foreground — reconnecting', { status });
+            realtimeControlsRef.current.reconnect?.();
+          }
+          const now = Date.now();
+          if (now - lastInsuranceRefreshAtRef.current < INSURANCE_GAP_MS) return;
+          if (dashboardRefreshInFlightRef.current) return;
+          lastInsuranceRefreshAtRef.current = now;
+          dashboardRefreshInFlightRef.current = true;
+          setDashboardListRefreshing(true);
+          void refreshDashboardRef.current({ playSound: false, skipChatSound: true, quiet: true }).finally(() => {
+            dashboardRefreshInFlightRef.current = false;
+            setDashboardListRefreshing(false);
+          });
+        };
+
+        const startPoll = () => {
+          if (pollId != null) return;
+          pollId = window.setInterval(() => {
+            if (document.visibilityState !== 'visible') return;
+            runInsuranceRefresh();
+          }, POLL_MS);
+        };
+        const stopPoll = () => {
+          if (pollId == null) return;
+          window.clearInterval(pollId);
+          pollId = null;
+        };
+        const onVisibility = () => {
+          if (document.visibilityState !== 'visible') {
+            stopPoll();
+            return;
+          }
+          runInsuranceRefresh();
+          startPoll();
+        };
+        const onFocus = () => {
+          if (document.visibilityState !== 'visible') return;
+          runInsuranceRefresh();
+        };
+        const onOnline = () => {
+          if (document.visibilityState !== 'visible') return;
+          runInsuranceRefresh();
+        };
+
+        if (document.visibilityState === 'visible') startPoll();
+        document.addEventListener('visibilitychange', onVisibility);
+        window.addEventListener('focus', onFocus);
+        window.addEventListener('online', onOnline);
+        return () => {
+          stopPoll();
+          document.removeEventListener('visibilitychange', onVisibility);
+          window.removeEventListener('focus', onFocus);
+          window.removeEventListener('online', onOnline);
+        };
+      }, [isGuestSiteOrder, guestSiteOrderCtx, isLoggedIn]);
 
       useEffect(() => {
         if (!isLoggedIn || isGuestSiteOrder) return undefined;
@@ -7384,6 +7545,39 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     <p className="mt-1.5 text-xs leading-relaxed text-slate-400 dark:text-gray-300">
                       工場画面の対応状況（受注・回答・保留）がここに反映されます。
                     </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <p className="text-xs font-bold text-slate-500 dark:text-slate-300">
+                        最終更新 {formatDashboardUpdatedAt(dashboardUpdatedAt)}
+                      </p>
+                      {dashboardListRefreshing ? (
+                        <span
+                          className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600 dark:border-slate-600 dark:border-t-slate-200"
+                          role="status"
+                          aria-label="更新中"
+                        />
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (dashboardRefreshInFlightRef.current) return;
+                          dashboardRefreshInFlightRef.current = true;
+                          lastInsuranceRefreshAtRef.current = Date.now();
+                          setDashboardListRefreshing(true);
+                          void refreshDashboardRef.current({
+                            playSound: false,
+                            skipChatSound: true,
+                            quiet: true,
+                          }).finally(() => {
+                            dashboardRefreshInFlightRef.current = false;
+                            setDashboardListRefreshing(false);
+                          });
+                        }}
+                        disabled={dashboardListRefreshing}
+                        className="inline-flex min-h-[32px] items-center rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-black text-slate-700 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                      >
+                        🔄 更新
+                      </button>
+                    </div>
                   </div>
                 </div>
                   <div className="mt-4 grid grid-cols-1 gap-4">
