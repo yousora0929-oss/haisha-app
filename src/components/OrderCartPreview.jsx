@@ -2,14 +2,7 @@ import React, { useState } from 'react';
 import { LocationPendingBadge } from './LocationPendingBadge.jsx';
 import { hasCarriedMap } from '../utils/repeatOrderMap.js';
 import { TIME_SLOTS } from '../haishaConstants.js';
-
-function formatOrderDateLabel(order) {
-  const raw = String(order?.preferredDate || '').trim();
-  if (!raw) return '—';
-  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return raw;
-  return `${m[1]}/${m[2]}/${m[3]}`;
-}
+import { formatOrderDateLabel } from '../utils/orderGrouping.js';
 
 function buildEditDraft(order) {
   const o = order || {};

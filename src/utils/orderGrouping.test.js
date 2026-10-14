@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   attachAvailabilityGroupsToSiteEntries,
   compareOrdersForFactoryInbox,
+  formatDateTimeWithWeekday,
   formatOrderDateTimeSummary,
+  formatYmdWithWeekday,
   groupInProgressOrders,
   groupOrdersBySiteForAssignedProjects,
   reservationGroupIdsFromOrders,
@@ -10,6 +12,15 @@ import {
   resolveNearestUpcomingOrder,
   sortFactoryInboxEntries,
 } from './orderGrouping.js';
+
+describe('customer date labels', () => {
+  it('appends the Japan-local weekday mark and omits a missing time', () => {
+    expect(formatYmdWithWeekday('2026-10-14')).toBe('2026/10/14㈬');
+    expect(formatDateTimeWithWeekday('2026-10-14', '8:00')).toBe('2026/10/14㈬ · 8:00');
+    expect(formatDateTimeWithWeekday('2026-10-14', '')).toBe('2026/10/14㈬');
+    expect(formatDateTimeWithWeekday('2026-10-14', '—')).toBe('2026/10/14㈬');
+  });
+});
 
 describe('orderGrouping in-progress collapse helpers', () => {
   it('prefers project id for group storage key', () => {
@@ -50,7 +61,7 @@ describe('orderGrouping in-progress collapse helpers', () => {
       ],
       now,
     );
-    expect(formatOrderDateTimeSummary(upcoming)).toBe('2026/7/28 · 10:30');
+    expect(formatOrderDateTimeSummary(upcoming)).toBe('2026/7/28㈫ · 10:30');
 
     const pastOnly = resolveNearestUpcomingOrder(
       [
@@ -59,7 +70,7 @@ describe('orderGrouping in-progress collapse helpers', () => {
       ],
       now,
     );
-    expect(formatOrderDateTimeSummary(pastOnly)).toBe('2026/7/27 · 8:00');
+    expect(formatOrderDateTimeSummary(pastOnly)).toBe('2026/7/27㈪ · 8:00');
   });
 });
 

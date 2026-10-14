@@ -254,19 +254,48 @@ export function resolveInProgressGroupStorageId(entry) {
   return String(entry.key || (entry.site ? `site:${entry.site}` : '')).trim();
 }
 
-/** カード表示と同じ日付ラベル（例: 2026/7/28） */
-export function formatOrderDateLabel(order) {
-  const iso = String(order?.preferredDate || order?.preferred_date || order?.scheduleMatchDate || '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '—';
-  const p = iso.split('-');
-  return `${p[0]}/${Number(p[1])}/${Number(p[2])}`;
+const JP_WEEKDAY_MARKS = ['㈰', '㈪', '㈫', '㈬', '㈭', '㈮', '㈯'];
+
+/**
+ * 'YYYY-MM-DD' を日本の暦日として表示する。
+ * new Date('YYYY-MM-DD') は UTC 扱いで曜日がずれるため、年月日に分解してから Date を作る。
+ * 例: 2026/10/14㈬
+ */
+export function formatYmdWithWeekday(value) {
+  const raw = String(value ?? '').trim().slice(0, 10);
+  const matched = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!matched) return '';
+  const year = Number(matched[1]);
+  const month = Number(matched[2]);
+  const day = Number(matched[3]);
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return '';
+  return `${year}/${month}/${day}${JP_WEEKDAY_MARKS[date.getDay()] || ''}`;
 }
 
-/** カード表示と同じ日時サマリ（例: 2026/7/28 · 10:30） */
+/** 時刻が無いときは日付だけ。例: 2026/10/14㈬ · 8:00 */
+export function formatDateTimeWithWeekday(dateValue, timeValue) {
+  const dateLabel = formatYmdWithWeekday(dateValue);
+  if (!dateLabel) return '';
+  const time = String(timeValue ?? '').trim();
+  if (!time || time === '—') return dateLabel;
+  return `${dateLabel} · ${time}`;
+}
+
+/** カード表示と同じ日付ラベル（例: 2026/10/14㈬） */
+export function formatOrderDateLabel(order) {
+  const iso = String(order?.preferredDate || order?.preferred_date || order?.scheduleMatchDate || '').slice(0, 10);
+  return formatYmdWithWeekday(iso) || '—';
+}
+
+/** カード表示と同じ日時サマリ（例: 2026/10/14㈬ · 8:00） */
 export function formatOrderDateTimeSummary(order) {
   if (!order) return '';
-  const time = order.timePointLabel || order.timeSlotLabel || '—';
-  return `${formatOrderDateLabel(order)} · ${time}`;
+  const dateLabel = formatOrderDateLabel(order);
+  if (dateLabel === '—') return '—';
+  const time = String(order?.timePointLabel || order?.timeSlotLabel || '').trim();
+  if (!time) return dateLabel;
+  return `${dateLabel} · ${time}`;
 }
 
 /**

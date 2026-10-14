@@ -124,7 +124,9 @@ import {
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
 import { orderPartyInfo as buildOrderPartyInfo } from './utils/orderPartyInfo.js';
 import {
+  formatDateTimeWithWeekday,
   formatOrderDateTimeSummary,
+  formatYmdWithWeekday,
   groupInProgressOrders,
   groupOrdersBySiteForAssignedProjects,
   reservationGroupIdsFromOrders,
@@ -369,9 +371,9 @@ function resolveAgentForeignOrderPartyLabels(order) {
 
 function formatInProgressGroupDateRange(group) {
   const formatMd = (iso) => {
-    const match = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (!match) return '';
-    return `${Number(match[2])}/${Number(match[3])}`;
+    const full = formatYmdWithWeekday(iso);
+    const slash = full.indexOf('/');
+    return slash >= 0 ? full.slice(slash + 1) : '';
   };
   const start = formatMd(group?.earliestDate);
   const end = formatMd(group?.latestDate);
@@ -711,14 +713,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
     }
 
-    function formatOrderDate(order) {
-      const iso = order.preferredDate;
-      if (!iso || typeof iso !== 'string') return '—';
-      const p = iso.split('-');
-      if (p.length === 3) return `${p[0]}/${Number(p[1])}/${Number(p[2])}`;
-      return iso;
-    }
-
     function OrderStatusBadges({ order, escalationCtx = null, factoryNameById = {}, blinkFactoryName = false }) {
       const st = resolveOrderDisplayStatus(order);
       const displayName = getDefaultFactoryDisplayName(order, factoryNameById);
@@ -1053,7 +1047,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             </p>
             <dl className="mt-3 grid gap-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">
               <div>現在の数量：{currentQty != null ? `${currentQty} m³` : '—'}</div>
-              <div>現在の希望日：{currentDate || '—'}</div>
+              <div>現在の希望日：{formatYmdWithWeekday(currentDate) || currentDate || '—'}</div>
               <div>現在の希望時刻：{currentTime || '—'}</div>
             </dl>
             <div className="mt-4 grid gap-3">
@@ -1583,7 +1577,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const mixStr = mixDisp && String(mixDisp).trim() ? String(mixDisp).trim() : '—';
       const addrDisp = addr || '—';
 
-      const timeSummary = `${formatOrderDate(order)} · ${order.timePointLabel || order.timeSlotLabel || '—'}`;
+      const timeSummary = formatOrderDateTimeSummary(order) || '—';
       const isCustomerCancelled = order.status === 'customer_cancelled';
       // readOnly は「会社全体を表示」の同僚注文、または商社が担当物件で見る他者発注。操作系は出さない。
       const showPreferredChoice = !readOnly && needsPreferredCustomerChoice(order);
@@ -1603,7 +1597,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         () => shouldShowMapPendingPlaceholder(order, project),
         [order, project],
       );
-      const scheduleDateLabel = useMemo(() => resolveOrderScheduleMatchDate(order), [order]);
+      const scheduleDateLabel = useMemo(() => {
+        const raw = resolveOrderScheduleMatchDate(order);
+        return formatYmdWithWeekday(raw) || raw;
+      }, [order]);
       const mapUrl = useMemo(() => {
         if (!order?.id) return '';
         const token = String(guestToken || '').trim();
@@ -2143,7 +2140,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           </div>
           </div>
           <div className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-4 lg:sticky lg:top-24">
-            <h3 className="text-sm font-black text-slate-900">{selectedDate.replace(/-/g, '/')} の注文</h3>
+            <h3 className="text-sm font-black text-slate-900">{formatYmdWithWeekday(selectedDate) || selectedDate.replace(/-/g, '/')} の注文</h3>
             <CalendarDetailErrorBoundary key={selectedDate}>
             {selectedOrders.length === 0 ? (
               <p className="mt-3 rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm font-bold text-slate-500">この日の注文はありません。</p>
@@ -4617,7 +4614,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             site: party.site,
             orderedBy: party.orderedBy,
             phone: party.phone,
-            dateLabel: `${formatOrderDate(o)} ${o.timePointLabel || o.timeSlotLabel || ''}`.trim(),
+            dateLabel: formatDateTimeWithWeekday(
+              o.preferredDate || o.preferred_date || o.scheduleMatchDate,
+              o.timePointLabel || o.timeSlotLabel,
+            ),
             mix: String(o.confirmedMixText ?? o.mixText ?? '').trim(),
             quantityM3: o.confirmedQuantityM3 ?? o.quantityM3 ?? '',
             siteAddress: o.siteAddress ?? '',
