@@ -52,6 +52,7 @@ import {
   splitChangeRequestDecisions,
 } from './utils/changeRequestItems.js';
 import { listOrderFieldSnapshotConflicts } from './utils/orderFieldSnapshot.js';
+import { buildFactoryAcceptOrderData } from './utils/orderAcceptConflict.js';
 import {
   attachReservationGroupFromRow,
   isReservationGroupManagedOrder,
@@ -4180,48 +4181,45 @@ export async function confirmScheduleImportNewRows({
   return { created, rowResults };
 }
 
-export async function acceptOrderForFactory(order, factorySiteId, factorySiteName) {
+/**
+ * 受注を1回書く。
+ * order は内容比較済みの latest。order_data は DB の jsonb を土台に、受注で変わるキーだけ載せる。
+ * 戻り値: { ok: true, order } | { ok: false, reason: 'not_found' | 'stale' }
+ */
+export async function acceptOrderForFactory(order, factorySiteId, factorySiteName, options = {}) {
   if (!order?.id) throw new Error('order.id が必要です');
   const id = String(order.id);
   const fid = sanitizeRefId(factorySiteId);
   if (!fid) throw new Error('factorySiteId が必要です');
   const fname = String(factorySiteName || '').trim();
-  const hasTest = Boolean(order.has_test);
+  const displayOrder = options?.displayOrder;
+
+  const { data: row, error: selErr } = await supabase
+    .from('orders')
+    .select(ORDER_SELECT)
+    .eq('id', id)
+    .maybeSingle();
+  if (selErr) {
+    console.error('acceptOrderForFactory select failed', selErr);
+    throw selErr;
+  }
+  if (!row) return { ok: false, reason: 'not_found' };
+  if (!orderUpdatedAtMatches(readOrderUpdatedAt(order), row.updated_at)) {
+    return { ok: false, reason: 'stale' };
+  }
+
   const acceptedAt = new Date().toISOString();
-  const qRaw = order.quantityM3 ?? order.quantityCube;
-  const nextOrder = {
-    ...order,
-    id,
-    has_test: hasTest,
-    status: 'accepted',
-    accepted_at: acceptedAt,
-    acceptedAt,
-    factoryResponseStatus: 'accepted',
-    acceptedFactoryLabel: order.acceptedFactoryLabel || `受注工場：${fname || fid}`,
-    factorySiteName: fname || order.factorySiteName || fid,
-    factorySiteId: fid,
-    factory_site_id: fid,
-    factoryResponseLocked: true,
-    factoryUnlockRequested: false,
-    factoryPendingStartedAt: undefined,
-    factoryPendingByName: undefined,
-    confirmedQuantityM3:
-      qRaw !== undefined && qRaw !== null && String(qRaw).trim() !== '' ? qRaw : null,
-    confirmedMixText: order.mixText?.trim() || '',
-    factory_consult_status: '',
-    factoryConsultStatus: '',
-    factory_consult_started_at: '',
-    factory_consult_by_factory_id: '',
-    factoryConsultByFactoryId: '',
-    is_customer_modified: false,
-  };
-  const { error } = await supabase
+  const hasTest = Boolean(order.has_test);
+  const orderData = omitOrderUrlTokenFields(
+    buildFactoryAcceptOrderData(row.order_data, order, fid, fname, acceptedAt, displayOrder),
+  );
+  const { data: updatedIds, error } = await supabase
     .from('orders')
     .update({
       factory_site_id: fid,
       status: 'accepted',
       has_test: hasTest,
-      order_data: omitOrderUrlTokenFields(nextOrder),
+      order_data: orderData,
       factory_consult_status: null,
       factory_consult_started_at: null,
       factory_consult_by_factory_id: null,
@@ -4229,10 +4227,15 @@ export async function acceptOrderForFactory(order, factorySiteId, factorySiteNam
       is_customer_modified: false,
     })
     .eq('id', id)
-    .eq('status', 'pending');
+    .eq('status', 'pending')
+    .eq('updated_at', row.updated_at)
+    .select('id');
   if (error) {
     console.error('acceptOrderForFactory update failed', error);
     throw error;
+  }
+  if (!Array.isArray(updatedIds) || updatedIds.length === 0) {
+    return { ok: false, reason: 'stale' };
   }
   const { data: verify, error: verifyErr } = await supabase
     .from('orders')
@@ -4245,12 +4248,10 @@ export async function acceptOrderForFactory(order, factorySiteId, factorySiteNam
     console.error('acceptOrderForFactory verify failed', verifyErr);
     throw verifyErr;
   }
-  if (!verify) {
-    const err = new Error('この注文はすでに他工場が受注済みです。');
-    console.error('acceptOrderForFactory optimistic lock failed', { orderId: id, factorySiteId: fid });
-    throw err;
-  }
-  return normalizeOrderRow(verify) || { ...nextOrder, is_customer_modified: false };
+  if (verify) return { ok: true, order: normalizeOrderRow(verify) || { ...orderData, id } };
+  const reread = await fetchOrderById(id);
+  if (reread) return { ok: true, order: reread };
+  return { ok: true, order: { ...orderData, id, is_customer_modified: false } };
 }
 
 export async function rejectOrderForFactory(orderId, factoryId, options = {}) {

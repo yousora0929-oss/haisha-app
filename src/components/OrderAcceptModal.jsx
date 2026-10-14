@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatAcceptVehicleLabel } from '../utils/orderAcceptConflict.js';
 
 function formatPreferredDateJp(iso) {
   const raw = String(iso || '').trim().slice(0, 10);
@@ -72,6 +73,10 @@ export function OrderAcceptModal({ order, open, submitting, onClose, onConfirm }
             <div>
               <dt className="text-[11px] font-bold text-slate-500">数量</dt>
               <dd className="font-black text-slate-900">{formatQuantity(order)}</dd>
+            </div>
+            <div className="col-start-2">
+              <dt className="text-[11px] font-bold text-slate-500">車両</dt>
+              <dd className="font-black text-slate-900">{formatAcceptVehicleLabel(order)}</dd>
             </div>
           </dl>
         </div>

@@ -101,6 +101,12 @@ import {
 } from './utils/factoryCustomerCancel.js';
 import { countPendingCharterResponses } from './utils/charterBadges.js';
 import { OrderAcceptModal } from './components/OrderAcceptModal.jsx';
+import {
+  acceptBlockedStatusMessage,
+  copyMissingAcceptDisplayNames,
+  formatAcceptContentConflictMessage,
+  listAcceptContentConflicts,
+} from './utils/orderAcceptConflict.js';
 import { ReservationGroupAvailabilityCard } from './components/ReservationGroupAvailabilityCard.jsx';
 import { FactoryOrderVisibilityMini } from './components/FactoryOrderVisibilityMini.jsx';
 import { FactoryScheduleChangeProposalsPanel } from './components/FactoryScheduleChangeProposalsPanel.jsx';
@@ -4383,6 +4389,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
       const [toastIsReassignment, setToastIsReassignment] = useState(false);
       const [acceptModalOrder, setAcceptModalOrder] = useState(null);
       const [acceptSubmitting, setAcceptSubmitting] = useState(false);
+      const acceptOpenSeqRef = useRef(0);
       const [availabilitySubmittingGroupId, setAvailabilitySubmittingGroupId] = useState('');
       const [declinedReservationGroupIds, setDeclinedReservationGroupIds] = useState(() => new Set());
       const declinedReservationGroupIdsRef = useRef(declinedReservationGroupIds);
@@ -6062,7 +6069,19 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
         (order) => {
           if (!order?.id || !activeFactoryId) return;
           if (isReservationGroupManagedOrder(order)) return;
-          setAcceptModalOrder(order);
+          const seq = acceptOpenSeqRef.current + 1;
+          acceptOpenSeqRef.current = seq;
+          void (async () => {
+            let next = order;
+            try {
+              const latest = await db.fetchOrderById(order.id);
+              if (latest) next = copyMissingAcceptDisplayNames(latest, order);
+            } catch (err) {
+              console.error(err);
+            }
+            if (acceptOpenSeqRef.current !== seq) return;
+            setAcceptModalOrder(next);
+          })();
         },
         [activeFactoryId],
       );
@@ -6076,41 +6095,71 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
         }
         setAcceptSubmitting(true);
         markOrderRead(order.id);
+        const patchLists = (refreshed) => {
+          const patchOrder = (item) => (item?.id === refreshed.id ? { ...item, ...refreshed } : item);
+          setRawOrders((prev) => (Array.isArray(prev) ? prev.map(patchOrder) : prev));
+          setOrders((prev) => (Array.isArray(prev) ? prev.map(patchOrder) : prev));
+        };
         try {
-          const latest = await db.fetchOrderById(order.id);
-          if (!latest) {
-            window.alert("注文が見つかりません。画面を更新してから再度お試しください。");
-            return;
-          }
-          const localUpdatedAt = String(order.updated_at ?? order.updatedAt ?? "");
-          const serverUpdatedAt = String(latest.updated_at ?? latest.updatedAt ?? "");
-          if (localUpdatedAt !== serverUpdatedAt) {
-            let refreshed = latest;
-            if (latest.is_customer_modified) {
-              const cleared = await db.clearOrderCustomerModifiedFlag(order.id);
-              if (cleared) refreshed = cleared;
-              else refreshed = { ...latest, is_customer_modified: false };
+          const maxAttempts = 3;
+          let attempt = 0;
+          while (attempt < maxAttempts) {
+            const latest = await db.fetchOrderById(order.id);
+            if (!latest) {
+              window.alert(
+                attempt === 0
+                  ? "注文が見つかりません。画面を更新してから再度お試しください。"
+                  : "受注の保存に失敗しました。権限または通信状態を確認してください。",
+              );
+              return;
             }
-            const patchOrder = (o) => (o?.id === refreshed.id ? { ...o, ...refreshed } : o);
-            setRawOrders((prev) => (Array.isArray(prev) ? prev.map(patchOrder) : prev));
-            setOrders((prev) => (Array.isArray(prev) ? prev.map(patchOrder) : prev));
-            setAcceptModalOrder(refreshed);
-            window.alert("注文内容が更新されています。最新の内容に更新しました。再度ご確認のうえ受注してください");
-            return;
+            const statusMessage = acceptBlockedStatusMessage(latest, activeFactoryId);
+            if (statusMessage) {
+              patchLists(latest);
+              acceptOpenSeqRef.current += 1;
+              setAcceptModalOrder(null);
+              window.alert(statusMessage);
+              return;
+            }
+            const conflicts = listAcceptContentConflicts(order, latest);
+            if (conflicts.length) {
+              let refreshed = latest;
+              if (latest.is_customer_modified) {
+                const cleared = await db.clearOrderCustomerModifiedFlag(order.id);
+                const again = await db.fetchOrderById(order.id);
+                refreshed = again || cleared || { ...latest, is_customer_modified: false };
+              }
+              patchLists(refreshed);
+              setAcceptModalOrder(copyMissingAcceptDisplayNames(refreshed, order));
+              window.alert(formatAcceptContentConflictMessage(conflicts));
+              return;
+            }
+            attempt += 1;
+            const result = await db.acceptOrderForFactory(latest, activeFactoryId, activeFactoryName, {
+              displayOrder: order,
+            });
+            if (result?.ok) {
+              const accepted = result.order;
+              setRawOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === accepted.id ? accepted : o)) : prev));
+              setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === accepted.id ? accepted : o)) : prev));
+              acceptOpenSeqRef.current += 1;
+              setAcceptModalOrder(null);
+              setActionNotice("受注しました！");
+              window.setTimeout(() => setActionNotice(""), 4500);
+              await appendOrderChatMessage(
+                accepted.id,
+                "system",
+                "【受注】" + activeFactoryName + "がこの注文を受注しました。",
+              );
+              await syncFromStorage({ playSound: false });
+              return;
+            }
+            if (result?.reason === 'not_found') {
+              window.alert("受注の保存に失敗しました。権限または通信状態を確認してください。");
+              return;
+            }
           }
-
-          const accepted = await db.acceptOrderForFactory(order, activeFactoryId, activeFactoryName);
-          setRawOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === accepted.id ? accepted : o)) : prev));
-          setOrders((prev) => (Array.isArray(prev) ? prev.map((o) => (o?.id === accepted.id ? accepted : o)) : prev));
-          setAcceptModalOrder(null);
-          setActionNotice("受注しました！");
-          window.setTimeout(() => setActionNotice(""), 4500);
-          await appendOrderChatMessage(
-            accepted.id,
-            "system",
-            "【受注】" + activeFactoryName + "がこの注文を受注しました。",
-          );
-          await syncFromStorage({ playSound: false });
+          window.alert("注文の更新が続いているため受注できませんでした。もう一度受注してください。");
         } catch (e) {
           console.error(e);
           window.alert("受注処理に失敗しました。通信状態を確認して再度お試しください。");
@@ -7439,7 +7488,9 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
             open={Boolean(acceptModalOrder)}
             submitting={acceptSubmitting}
             onClose={() => {
-              if (!acceptSubmitting) setAcceptModalOrder(null);
+              if (acceptSubmitting) return;
+              acceptOpenSeqRef.current += 1;
+              setAcceptModalOrder(null);
             }}
             onConfirm={() => void executeAcceptOrder()}
           />
