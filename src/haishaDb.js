@@ -51,7 +51,7 @@ import {
   pickDeclinedChangeRequestPatch,
   splitChangeRequestDecisions,
 } from './utils/changeRequestItems.js';
-import { orderFieldSnapshotDiffers } from './utils/orderFieldSnapshot.js';
+import { listOrderFieldSnapshotConflicts } from './utils/orderFieldSnapshot.js';
 import {
   attachReservationGroupFromRow,
   isReservationGroupManagedOrder,
@@ -1905,16 +1905,17 @@ export const ORDER_UPDATE_CONFLICT_MESSAGE =
   '他のユーザーがこの注文を更新しました。最新の内容を読み込んでから、もう一度編集してください';
 
 export class OrderUpdateConflictError extends Error {
-  constructor(reason = 'fields') {
+  constructor(reason = 'fields', conflicts = null) {
     super(ORDER_UPDATE_CONFLICT_MESSAGE);
     this.name = 'OrderUpdateConflictError';
     this.code = 'ORDER_UPDATE_CONFLICT';
     this.reason = reason;
+    this.conflicts = Array.isArray(conflicts) ? conflicts : [];
   }
 }
 
-function fieldOrderUpdateConflict() {
-  return new OrderUpdateConflictError('fields');
+function fieldOrderUpdateConflict(conflicts) {
+  return new OrderUpdateConflictError('fields', conflicts);
 }
 
 function staleOrderUpdateConflict() {
@@ -2255,8 +2256,12 @@ export async function withOrderFieldLock(orderId, fieldSnapshot, writeUsingLates
   const attempt = async () => {
     const latest = await fetchOrderById(orderId);
     if (!latest) throw new Error('注文が見つかりません');
-    if (watchKeys.length && orderFieldSnapshotDiffers(fieldSnapshot, latest, watchKeys)) {
-      throw fieldOrderUpdateConflict();
+    if (watchKeys.length) {
+      const conflicts = listOrderFieldSnapshotConflicts(fieldSnapshot, latest, watchKeys);
+      if (conflicts.length) {
+        console.warn('[haisha] 注文項目の競合', conflicts);
+        throw fieldOrderUpdateConflict(conflicts);
+      }
     }
     return writeUsingLatest(latest);
   };
@@ -2436,7 +2441,9 @@ export async function submitOrderChangeRequest(orderId, messageBody, structuredP
       throw error;
     }
     if (!saved?.id) {
-      if (lockedUpdatedAt) throw staleOrderUpdateConflict();
+      if (lockedUpdatedAt) {
+        await throwChangeRequestUpdateMiss(id);
+      }
       const denied = new Error(
         '変更依頼の保存に失敗しました。権限または通信状態を確認してください。',
       );
@@ -2672,18 +2679,26 @@ export async function confirmCustomerChangeRequestReRequest(orderId, opts = {}) 
       itemLines.length ? `（${itemLines.join('、')}）` : ''
     }`;
 
-  const updated = await updateOrderDetails(
-    id,
-    {
-      ...(Object.keys(applyPatch).length > 0 ? applyPatch : {}),
-      is_customer_modified: false,
-      has_pending_change_request: true,
-      pending_change_request_patch: reRequestPatch,
-      change_request_customer_decision_status: null,
-      change_request_resolution: null,
-    },
-    { expectedUpdatedAt: readOrderUpdatedAt(latest) },
-  );
+  let updated;
+  try {
+    updated = await updateOrderDetails(
+      id,
+      {
+        ...(Object.keys(applyPatch).length > 0 ? applyPatch : {}),
+        is_customer_modified: false,
+        has_pending_change_request: true,
+        pending_change_request_patch: reRequestPatch,
+        change_request_customer_decision_status: null,
+        change_request_resolution: null,
+      },
+      { expectedUpdatedAt: readOrderUpdatedAt(latest) },
+    );
+  } catch (err) {
+    if (isOrderUpdateConflict(err) && err.reason === 'stale_updated_at') {
+      await throwChangeRequestUpdateMiss(id);
+    }
+    throw err;
+  }
 
   try {
     await appendChatMessage(id, 'customer', chatBody);
@@ -3386,13 +3401,44 @@ function normalizeProposedChanges(proposedChanges) {
     .filter(Boolean);
 }
 
+/** 404 を一度受けたら、このセッションでは list_order_change_proposals_for_customer を呼ばない */
+let customerChangeProposalsRpcMissing = false;
+let customerChangeProposalsRpcProbe = null;
+
+const CHANGE_REQUEST_UPDATE_DENIED_MESSAGE =
+  '変更依頼の保存に失敗しました。権限または通信状態を確認してください。';
+
+async function throwChangeRequestUpdateMiss(orderId) {
+  const visible = await fetchOrderById(orderId);
+  if (!visible) {
+    const denied = new Error(CHANGE_REQUEST_UPDATE_DENIED_MESSAGE);
+    denied.code = 'CHANGE_REQUEST_UPDATE_DENIED';
+    console.error('[haisha] has_pending_change_request 更新が空応答（注文を再取得できない）', {
+      orderId,
+    });
+    throw denied;
+  }
+  throw staleOrderUpdateConflict();
+}
+
 /** 顧客向け：自注文の変更提案一覧 */
 export async function fetchOrderChangeProposalsForOrders(orderIds) {
   const ids = [
     ...new Set((Array.isArray(orderIds) ? orderIds : []).map((id) => String(id || '').trim()).filter(Boolean)),
   ];
   if (!ids.length) return [];
+  if (customerChangeProposalsRpcMissing) return [];
+  if (customerChangeProposalsRpcProbe) {
+    await customerChangeProposalsRpcProbe;
+    if (customerChangeProposalsRpcMissing) return [];
+  }
 
+  let finishProbe = () => {};
+  const probe = new Promise((resolve) => {
+    finishProbe = resolve;
+  });
+  customerChangeProposalsRpcProbe = probe;
+  try {
   const { data: rpcData, error: rpcErr } = await supabase.rpc('list_order_change_proposals_for_customer', {
     p_order_ids: ids,
   });
@@ -3402,6 +3448,7 @@ export async function fetchOrderChangeProposalsForOrders(orderIds) {
   }
   // RPC 未作成環境（404 / PGRST202）では空配列。DB 側に関数を足すまではテーブル直読みに落とさない。
   if (isMissingRpcSignatureError(rpcErr)) {
+    customerChangeProposalsRpcMissing = true;
     return [];
   }
   console.warn('fetchOrderChangeProposalsForOrders rpc failed', rpcErr);
@@ -3420,6 +3467,10 @@ export async function fetchOrderChangeProposalsForOrders(orderIds) {
   } catch (error) {
     console.warn('fetchOrderChangeProposalsForOrders failed', error);
     return [];
+  }
+  } finally {
+    customerChangeProposalsRpcProbe = null;
+    finishProbe();
   }
 }
 

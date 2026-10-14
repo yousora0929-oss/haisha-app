@@ -23,6 +23,12 @@ import {
   filterPatchToChangeRequestKeys,
 } from '../utils/changeRequestItems.js';
 import { CUSTOMER_ORDER_EDIT_KEYS, snapshotOrderFields } from '../utils/orderFieldSnapshot.js';
+import {
+  changeRequestLabelsForKeys,
+  classifyChangeRequestReload,
+  editedChangeRequestFormFields,
+  filterChangeRequestPatchToEditedFields,
+} from '../utils/changeRequestFormDiff.js';
 
 function vehicleTypeLabel(value) {
   return String(value || '') === 'small' ? '小型' : '大型';
@@ -477,9 +483,15 @@ export function OrderFullEditModal({
   const [confirmPayload, setConfirmPayload] = useState(null);
   const [baselineOrder, setBaselineOrder] = useState(null);
   const [updateConflict, setUpdateConflict] = useState(false);
+  const [conflictLabels, setConflictLabels] = useState([]);
   const [reloadingOrder, setReloadingOrder] = useState(false);
   const submittingRef = useRef(false);
   const fieldSnapshotRef = useRef({});
+  const baseOrderRef = useRef(null);
+  const initialEditDataRef = useRef(null);
+  const snapshotGenRef = useRef(0);
+  const customerByIdRef = useRef(customerById);
+  customerByIdRef.current = customerById;
   const partyNameTouchedRef = useRef({ contractorName: false, traderName: false });
 
   const customers = useMemo(
@@ -502,6 +514,8 @@ export function OrderFullEditModal({
     submittingRef.current = false;
     setSubmitting(false);
     setSaveError('');
+    setUpdateConflict(false);
+    setConflictLabels([]);
     setRequestStep('edit');
     setConfirmDiffRows([]);
     setConfirmPayload(null);
@@ -525,8 +539,8 @@ export function OrderFullEditModal({
     };
   }, [open]);
 
-  const applyOrderSnapshot = (source) => {
-    if (!source) return;
+  const applyOrderSnapshot = (source, { seed = true, resetForm = true } = {}) => {
+    if (!source) return null;
     const ts = source.timeSlot != null ? String(source.timeSlot) : '';
     const ok = FULL_DAY_TIME_SLOTS.some((s) => s.value === ts);
     const q = source.confirmedQuantityM3 ?? source.quantityM3 ?? source.quantityCube;
@@ -563,32 +577,91 @@ export function OrderFullEditModal({
       next.contractorName = parties.contractorName || '';
       next.traderName = parties.traderName || '';
     }
-    if (initialPatch && typeof initialPatch === 'object' && !Array.isArray(initialPatch)) {
+    if (seed && initialPatch && typeof initialPatch === 'object' && !Array.isArray(initialPatch)) {
       const seedPatch =
         focusKeyList.length > 0
           ? filterPatchToChangeRequestKeys(initialPatch, focusKeyList)
           : initialPatch;
       next = applyInitialPatchToEditData(next, seedPatch);
     }
+    if (!resetForm) return next;
     setEditData(next);
+    initialEditDataRef.current = { ...next };
     setBaselineOrder(source);
-    fieldSnapshotRef.current = snapshotOrderFields(
-      source,
-      expandChangeRequestKeys([...CUSTOMER_ORDER_EDIT_KEYS, ...focusKeyList]),
-    );
     partyNameTouchedRef.current = { contractorName: false, traderName: false };
     setUpdateConflict(false);
+    setConflictLabels([]);
     setSaveError('');
     setRequestStep('edit');
     setConfirmDiffRows([]);
     setConfirmPayload(null);
+    return next;
+  };
+
+  const lockSnapshotKeys = () => [
+    ...expandChangeRequestKeys([...CUSTOMER_ORDER_EDIT_KEYS, ...focusKeyList]),
+  ];
+
+  const rememberLockSnapshot = (latest) => {
+    snapshotGenRef.current += 1;
+    if (!latest) return fieldSnapshotRef.current || {};
+    baseOrderRef.current = latest;
+    fieldSnapshotRef.current = snapshotOrderFields(latest, lockSnapshotKeys());
+    return fieldSnapshotRef.current;
+  };
+
+  const ensureFieldSnapshot = async () => {
+    if (baseOrderRef.current && Object.keys(fieldSnapshotRef.current || {}).length) {
+      return fieldSnapshotRef.current;
+    }
+    const id = String(order?.id || '').trim();
+    if (!id) return fieldSnapshotRef.current || {};
+    const latest = await db.fetchOrderById(id);
+    if (!latest) return fieldSnapshotRef.current || {};
+    return rememberLockSnapshot(latest);
+  };
+
+  const noteFieldConflict = (err) => {
+    const keys = Array.isArray(err?.conflicts) ? err.conflicts.map((row) => row?.key) : [];
+    const labels = changeRequestLabelsForKeys(keys);
+    setConflictLabels(labels);
+    setUpdateConflict(true);
+    setSaveError(
+      labels.length
+        ? `${db.ORDER_UPDATE_CONFLICT_MESSAGE}（${labels.join('、')}）`
+        : db.ORDER_UPDATE_CONFLICT_MESSAGE,
+    );
+    if (err?.reason === 'fields') {
+      console.warn('[OrderFullEditModal] 項目の競合', err.conflicts || []);
+    }
   };
 
   useEffect(() => {
-    if (!order || !open) return;
+    if (!order || !open) return undefined;
+    let cancelled = false;
+    const gen = snapshotGenRef.current + 1;
+    snapshotGenRef.current = gen;
+    baseOrderRef.current = null;
+    fieldSnapshotRef.current = {};
     applyOrderSnapshot(order);
-    // order 本体は依存に入れない。同じ注文の更新で編集中の入力を消さない。
-  }, [order?.id, open, projectById, customerById, focusKeyList.join('|'), initialPatch]);
+    const id = String(order.id);
+    const keys = [...expandChangeRequestKeys([...CUSTOMER_ORDER_EDIT_KEYS, ...focusKeyList])];
+    (async () => {
+      try {
+        const latest = await db.fetchOrderById(id);
+        if (cancelled || gen !== snapshotGenRef.current || !latest) return;
+        baseOrderRef.current = latest;
+        fieldSnapshotRef.current = snapshotOrderFields(latest, keys);
+      } catch (err) {
+        console.warn('[OrderFullEditModal] 基準スナップショットの取得に失敗', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // customerById / projectById の変化ではスナップショットも入力も取り直さない
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order?.id, open]);
 
   useEffect(() => {
     if (!open || !order) return;
@@ -596,18 +669,20 @@ export function OrderFullEditModal({
     if (!list.length) return;
     const source = baselineOrder || order;
     const parties = resolveOrderParties(source, {
-      customersById: customerById || {},
+      customersById: customerByIdRef.current || {},
       organizationsById: Object.fromEntries(list.map((item) => [String(item.id), item])),
     });
     setEditData((prev) => {
       const next = { ...prev };
       let changed = false;
+      const filled = {};
       if (
         !partyNameTouchedRef.current.contractorName &&
         !String(prev.contractorName || '').trim() &&
         parties.contractorName
       ) {
         next.contractorName = parties.contractorName;
+        filled.contractorName = parties.contractorName;
         changed = true;
       }
       if (
@@ -616,11 +691,17 @@ export function OrderFullEditModal({
         parties.traderName
       ) {
         next.traderName = parties.traderName;
+        filled.traderName = parties.traderName;
         changed = true;
+      }
+      if (changed) {
+        initialEditDataRef.current = { ...(initialEditDataRef.current || prev), ...filled };
       }
       return changed ? next : prev;
     });
-  }, [open, order?.id, organizationsProp, customerById, baselineOrder]);
+    // customerById の参照が変わっただけでは入力を埋め直さない
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, order?.id, organizationsProp]);
 
   const activeOrder = baselineOrder || order;
 
@@ -729,7 +810,42 @@ export function OrderFullEditModal({
         setSaveError('最新の注文を読み込めませんでした。');
         return;
       }
-      applyOrderSnapshot(latest);
+      const initialForm = initialEditDataRef.current || editData;
+      const classified = classifyChangeRequestReload({
+        baseOrder: baseOrderRef.current,
+        initialForm,
+        currentForm: editData,
+        latestOrder: latest,
+      });
+      const latestForm = applyOrderSnapshot(latest, { seed: false, resetForm: false });
+      const nextForm = { ...editData };
+      const nextInitial = { ...initialForm };
+      for (const field of classified.adoptFields) {
+        if (!latestForm || !Object.prototype.hasOwnProperty.call(latestForm, field)) continue;
+        nextForm[field] = latestForm[field];
+        nextInitial[field] = latestForm[field];
+      }
+      setEditData(nextForm);
+      initialEditDataRef.current = nextInitial;
+      rememberLockSnapshot(latest);
+      setBaselineOrder(latest);
+      setUpdateConflict(false);
+      setRequestStep('edit');
+      setConfirmDiffRows([]);
+      setConfirmPayload(null);
+      if (classified.conflicts.length) {
+        const labels = [...new Set(classified.conflicts.map((row) => row.label).filter(Boolean))];
+        setConflictLabels(labels);
+        console.warn('[OrderFullEditModal] 最新読み込みの競合', classified.conflicts);
+        setSaveError(
+          labels.length
+            ? `${db.ORDER_UPDATE_CONFLICT_MESSAGE}（${labels.join('、')}）`
+            : db.ORDER_UPDATE_CONFLICT_MESSAGE,
+        );
+      } else {
+        setConflictLabels([]);
+        setSaveError('');
+      }
     } catch (err) {
       console.error('[OrderFullEditModal] reload failed', err);
       setSaveError(err?.message || '最新の注文を読み込めませんでした。');
@@ -750,11 +866,18 @@ export function OrderFullEditModal({
     // 依頼モード・入力画面: 送信せず確認画面へ
     if (isRequestMode && requestStep === 'edit') {
       const patch = buildFormPatch();
-      let structuredPatch = buildChangeRequestPatch(activeOrder, patch);
+      const editedFields = editedChangeRequestFormFields(
+        initialEditDataRef.current || editData,
+        editData,
+      );
+      let structuredPatch = filterChangeRequestPatchToEditedFields(
+        buildChangeRequestPatch(activeOrder, patch),
+        editedFields,
+      );
       if (isFocusedRequest) {
         structuredPatch = filterPatchToChangeRequestKeys(structuredPatch, focusKeyList);
       }
-      const diffRows = buildChangeRequestDiffRows(activeOrder, patch).filter((row) => {
+      const diffRows = buildChangeRequestDiffRows(activeOrder, structuredPatch).filter((row) => {
         if (!isFocusedRequest) return true;
         // フォーカス外の差分行は確認画面に出さない
         const labelToFields = {
@@ -802,16 +925,16 @@ export function OrderFullEditModal({
     submittingRef.current = true;
     setSubmitting(true);
     try {
+      const fieldSnapshot = await ensureFieldSnapshot();
       const ok = await onSave(activeOrder.id, patch, {
-        fieldSnapshot: fieldSnapshotRef.current,
+        fieldSnapshot,
       });
       if (ok === false) {
         setSaveError('保存に失敗しました。内容を確認して再度お試しください。');
       }
     } catch (err) {
       if (db.isOrderUpdateConflict(err)) {
-        setUpdateConflict(true);
-        setSaveError(db.ORDER_UPDATE_CONFLICT_MESSAGE);
+        noteFieldConflict(err);
         return;
       }
       console.error('[OrderFullEditModal] save failed', err);
@@ -837,11 +960,11 @@ export function OrderFullEditModal({
     submittingRef.current = true;
     setSubmitting(true);
     try {
+      const opened = await ensureFieldSnapshot();
       const watchKeys = expandChangeRequestKeys(Object.keys(confirmPayload.structuredPatch));
-      const opened = fieldSnapshotRef.current || {};
       const fieldSnapshot = {};
       for (const key of watchKeys) {
-        fieldSnapshot[key] = opened[key] ?? '';
+        fieldSnapshot[key] = Object.prototype.hasOwnProperty.call(opened, key) ? opened[key] : '';
       }
       const ok = await onSave(activeOrder.id, confirmPayload.patch, {
         mode: 'request',
@@ -854,8 +977,7 @@ export function OrderFullEditModal({
       }
     } catch (err) {
       if (db.isOrderUpdateConflict(err)) {
-        setUpdateConflict(true);
-        setSaveError(db.ORDER_UPDATE_CONFLICT_MESSAGE);
+        noteFieldConflict(err);
         return;
       }
       console.error('[OrderFullEditModal] change request send failed', err);
@@ -1237,10 +1359,11 @@ export function OrderFullEditModal({
               </>
             )}
           </div>
-          {updateConflict ? (
+          {updateConflict || conflictLabels.length > 0 ? (
             <div className="mx-4 mb-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2" role="alert">
               <p className="text-sm font-bold text-amber-950">
-                他のユーザーがこの注文を更新しました。最新の内容を読み込んでから、もう一度編集してください
+                {db.ORDER_UPDATE_CONFLICT_MESSAGE}
+                {conflictLabels.length ? `（${conflictLabels.join('、')}）` : ''}
               </p>
               <button
                 type="button"

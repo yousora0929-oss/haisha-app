@@ -90,11 +90,25 @@ export function snapshotOrderFields(order, keys) {
   return snap;
 }
 
-/** 開いたときのスナップショットと、最新注文の同じ項目だけを比べる */
-export function orderFieldSnapshotDiffers(openedSnapshot, latestOrder, keys) {
-  const watch = (Array.isArray(keys) && keys.length ? keys : Object.keys(openedSnapshot || {}))
+function watchSnapshotKeys(openedSnapshot, keys) {
+  return (Array.isArray(keys) && keys.length ? keys : Object.keys(openedSnapshot || {}))
     .map((key) => String(key || '').trim())
     .filter(Boolean);
+}
+
+/** 開いたときのスナップショットと最新注文で値が違う項目 */
+export function listOrderFieldSnapshotConflicts(openedSnapshot, latestOrder, keys) {
   const opened = openedSnapshot && typeof openedSnapshot === 'object' ? openedSnapshot : {};
-  return watch.some((key) => String(opened[key] ?? '') !== norm(readRaw(latestOrder, key)));
+  return watchSnapshotKeys(opened, keys)
+    .filter((key) => String(opened[key] ?? '') !== norm(readRaw(latestOrder, key)))
+    .map((key) => ({
+      key,
+      base: String(opened[key] ?? ''),
+      latest: norm(readRaw(latestOrder, key)),
+    }));
+}
+
+/** 開いたときのスナップショットと、最新注文の同じ項目だけを比べる */
+export function orderFieldSnapshotDiffers(openedSnapshot, latestOrder, keys) {
+  return listOrderFieldSnapshotConflicts(openedSnapshot, latestOrder, keys).length > 0;
 }
