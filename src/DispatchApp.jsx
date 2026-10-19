@@ -44,6 +44,7 @@ import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
 import { setAutoReloadBlocked } from './hooks/useAppReleaseControl.js';
 import { OrderCartPreview } from './components/OrderCartPreview.jsx';
+import { DuplicateOrderConfirmModal, DuplicateOrderWarningBanner } from './components/DuplicateOrderWarning.jsx';
 import { OrderMapEditorUrlActions } from './components/OrderMapEditorUrlActions.jsx';
 import { LocationPendingBadge } from './components/LocationPendingBadge.jsx';
 import { PhoneOrderBadge } from './components/PhoneOrderBadge.jsx';
@@ -131,6 +132,13 @@ import {
   groupOrdersBySiteForAssignedProjects,
   reservationGroupIdsFromOrders,
 } from './utils/orderGrouping.js';
+import {
+  duplicateProceedBlocked,
+  duplicateWarningLevel,
+  fetchDuplicateOrderWarnings,
+  formatDuplicateOrderDateLabel,
+  formatDuplicateOrderTimeLabel,
+} from './utils/duplicateOrderCheck.js';
 import {
   formatProjectSiteContactsLabel,
   formatTradingAgentContactLabel,
@@ -997,12 +1005,17 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       useFullDayTimeSlots = false,
       onClose,
       onSubmit,
+      onCheckDuplicateOrders = null,
     }) {
       const proposeTimeSlots = useFullDayTimeSlots ? FULL_DAY_TIME_SLOTS : TIME_SLOTS;
       const [quantityM3, setQuantityM3] = useState('');
       const [preferredDate, setPreferredDate] = useState('');
       const [deliveryTime, setDeliveryTime] = useState('');
       const [error, setError] = useState('');
+      const [duplicateRows, setDuplicateRows] = useState([]);
+      const [duplicateAcknowledged, setDuplicateAcknowledged] = useState(false);
+      const [checkingDuplicate, setCheckingDuplicate] = useState(false);
+      const pendingProposeChangesRef = useRef(null);
 
       useEffect(() => {
         if (!open) return;
@@ -1010,6 +1023,9 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         setPreferredDate(String(initialForm?.preferredDate ?? ''));
         setDeliveryTime(String(initialForm?.deliveryTime ?? ''));
         setError('');
+        setDuplicateRows([]);
+        setDuplicateAcknowledged(false);
+        pendingProposeChangesRef.current = null;
       }, [open, order?.id, initialForm?.quantityM3, initialForm?.preferredDate, initialForm?.deliveryTime]);
 
       if (!open || !order) return null;
@@ -1017,14 +1033,48 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const currentDate = currentOrderDeliveryDate(order);
       const currentTime = currentOrderDeliveryTime(order);
 
-      const submit = async () => {
+      const submit = async (bypassDuplicate = false) => {
         setError('');
+        let changes = pendingProposeChangesRef.current;
+        if (!bypassDuplicate) {
+          try {
+            changes = buildProposedChangesFromForm(
+              order,
+              { quantityM3, preferredDate, deliveryTime },
+              { requireDate },
+            );
+          } catch (err) {
+            setError(err?.message ? String(err.message) : '送信に失敗しました');
+            return;
+          }
+          setCheckingDuplicate(true);
+          try {
+            const nextDate = String(preferredDate || '').trim() || currentOrderDeliveryDate(order);
+            const nextTime = String(deliveryTime || '').trim() || currentOrderDeliveryTime(order);
+            const draft = {
+              ...order,
+              preferredDate: nextDate,
+              scheduleMatchDate: nextDate,
+              timePointLabel: nextTime,
+              timeSlotLabel: nextTime,
+            };
+            const rows =
+              typeof onCheckDuplicateOrders === 'function'
+                ? await onCheckDuplicateOrders(draft)
+                : [];
+            if (Array.isArray(rows) && rows.length) {
+              pendingProposeChangesRef.current = changes;
+              setDuplicateRows(rows);
+              setDuplicateAcknowledged(false);
+              return;
+            }
+          } catch (err) {
+            console.error('[change propose duplicate check] failed', err);
+          } finally {
+            setCheckingDuplicate(false);
+          }
+        }
         try {
-          const changes = buildProposedChangesFromForm(
-            order,
-            { quantityM3, preferredDate, deliveryTime },
-            { requireDate },
-          );
           await onSubmit?.(changes);
         } catch (err) {
           setError(err?.message ? String(err.message) : '送信に失敗しました');
@@ -1088,15 +1138,50 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </select>
               </label>
             </div>
+            {duplicateRows.length ? (
+              <div className="mt-3">
+                <DuplicateOrderWarningBanner
+                  rows={duplicateRows}
+                  acknowledged={duplicateAcknowledged}
+                  onAcknowledgedChange={setDuplicateAcknowledged}
+                />
+              </div>
+            ) : null}
             {error ? (
               <p className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-black text-red-800">
                 {error}
               </p>
             ) : null}
             <div className="mt-4 grid grid-cols-2 gap-2">
+              {duplicateRows.length ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={onClose}
+                    className="min-h-[48px] rounded-xl border-2 border-slate-300 bg-white px-3 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    発注をやめる
+                  </button>
+                  <button
+                    type="button"
+                    disabled={submitting || checkingDuplicate || duplicateProceedBlocked(duplicateRows, duplicateAcknowledged)}
+                    onClick={() => void submit(true)}
+                    className={
+                      'min-h-[48px] rounded-xl px-3 text-sm font-black disabled:opacity-60 ' +
+                      (duplicateWarningLevel(duplicateRows) === 'strong'
+                        ? 'bg-red-600 text-white hover:bg-red-700'
+                        : 'bg-amber-500 text-amber-950 hover:bg-amber-600')
+                    }
+                  >
+                    {submitting ? '送信中…' : 'それでも発注する'}
+                  </button>
+                </>
+              ) : (
+                <>
               <button
                 type="button"
-                disabled={submitting}
+                disabled={submitting || checkingDuplicate}
                 onClick={onClose}
                 className="min-h-[48px] rounded-xl border-2 border-slate-300 bg-white px-3 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100"
               >
@@ -1104,12 +1189,14 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               </button>
               <button
                 type="button"
-                disabled={submitting}
-                onClick={() => void submit()}
+                disabled={submitting || checkingDuplicate}
+                onClick={() => void submit(false)}
                 className="min-h-[48px] rounded-xl bg-indigo-600 px-3 text-sm font-black text-white hover:bg-indigo-700 disabled:opacity-60"
               >
-                {submitting ? '送信中…' : '工場へ打診する'}
+                {checkingDuplicate ? '確認中…' : submitting ? '送信中…' : '工場へ打診する'}
               </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -2310,6 +2397,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       const [preferredDate, setPreferredDate] = useState(initialOrderDateTime.date);
       const [timeSlot, setTimeSlot] = useState(initialOrderDateTime.slot);
       const [cartItems, setCartItems] = useState([]);
+      const [cartConfirmOpen, setCartConfirmOpen] = useState(false);
+      const [cartDuplicateRows, setCartDuplicateRows] = useState([]);
+      const [cartDuplicateChecking, setCartDuplicateChecking] = useState(false);
+      const cartCheckGenRef = useRef(0);
 
       const [vehicleType, setVehicleType] = useState('large');
       const [mixText, setMixText] = useState('');
@@ -5813,22 +5904,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         );
       }, []);
 
-      const handleCartBulkConfirm = useCallback(async () => {
-        if (isSubmittingOrder) return;
+      const getCartBulkBlockMessage = useCallback(() => {
         if (!cartItems.length) {
-          const message = '発注リストが空です。日付・配合を入力して「リストに追加」してください。';
-          setSubmitError(message);
-          window.alert(message);
-          return;
+          return '発注リストが空です。日付・配合を入力して「リストに追加」してください。';
         }
         for (const item of cartItems) {
           const order = item?.order;
-          if (!order) {
-            const message = '発注リストに不正な行があります。削除して再度追加してください。';
-            setSubmitError(message);
-            window.alert(message);
-            return;
-          }
+          if (!order) return '発注リストに不正な行があります。削除して再度追加してください。';
           const date = String(order.preferredDate ?? order.scheduleMatchDate ?? '').trim();
           const missing = validateCartLineForm(buildCartLineContext(order), date, {
             today,
@@ -5837,11 +5919,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           });
           if (missing.length) {
             const coopTraderError = missing.find((m) => m === COOPERATIVE_OWN_ORG_TRADER_ERROR);
-            const message =
-              coopTraderError || `発注できません。次の項目を確認してください: ${missing.join('、')}`;
-            setSubmitError(message);
-            window.alert(message);
-            return;
+            return coopTraderError || `発注できません。次の項目を確認してください: ${missing.join('、')}`;
           }
         }
         for (const item of cartItems) {
@@ -5853,18 +5931,28 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
             order.preferred_factory_id ?? order.preferredFactoryId ?? order.main_factory_id ?? order.mainFactoryId ?? '',
           ).trim();
           if (!factoryId) {
-            const message =
-              '工場情報が不足している注文があります。物件をサジェストから選び直すか、第一希望工場を指定してください。';
-            setSubmitError(message);
-            window.alert(message);
-            return;
+            return '工場情報が不足している注文があります。物件をサジェストから選び直すか、第一希望工場を指定してください。';
           }
         }
         if (sameFactoryRequired && cartItems.length >= 2 && !isValidSiteOrderUrlToken(reservationUrlToken)) {
-          const message =
-            '同一工場必須で送信するには専用発注URL（url_token）が必要です。物件の専用URLから開くか、URLが設定された物件を選んでください。';
-          setSubmitError(message);
-          window.alert(message);
+          return '同一工場必須で送信するには専用発注URL（url_token）が必要です。物件の専用URLから開くか、URLが設定された物件を選んでください。';
+        }
+        return '';
+      }, [
+        cartItems,
+        buildCartLineContext,
+        today,
+        isGuestSiteOrder,
+        sameFactoryRequired,
+        reservationUrlToken,
+      ]);
+
+      const handleCartBulkConfirm = useCallback(async () => {
+        if (isSubmittingOrder) return;
+        const blocked = getCartBulkBlockMessage();
+        if (blocked) {
+          setSubmitError(blocked);
+          window.alert(blocked);
           return;
         }
         setIsSubmittingOrder(true);
@@ -5977,11 +6065,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         cartItems,
         isSubmittingOrder,
         refreshDashboard,
-        currentCustomer,
         resetOrderForm,
         orderKind,
-        buildCartLineContext,
-        today,
         isGuestSiteOrder,
         guestOrderToken,
         adminSettings,
@@ -5989,7 +6074,70 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         projects,
         sameFactoryRequired,
         reservationUrlToken,
+        getCartBulkBlockMessage,
       ]);
+
+      const openCartConfirmation = useCallback(async () => {
+        if (isSubmittingOrder || cartDuplicateChecking || cartConfirmOpen) return;
+        const blocked = getCartBulkBlockMessage();
+        if (blocked) {
+          setSubmitError(blocked);
+          window.alert(blocked);
+          return;
+        }
+        const gen = cartCheckGenRef.current + 1;
+        cartCheckGenRef.current = gen;
+        setCartDuplicateChecking(true);
+        setSubmitError('');
+        const orders = cartItems.map((item) => item?.order).filter(Boolean);
+        const checkOptions =
+          isAgentOrCooperative && !isGuestSiteOrder
+            ? { contractorCustomerId: String(contractorCustomerId || '').trim() || null }
+            : {};
+        try {
+          const rows = await fetchDuplicateOrderWarnings(db.checkDuplicateOrders, orders, checkOptions);
+          if (cartCheckGenRef.current !== gen) return;
+          setCartDuplicateRows(Array.isArray(rows) ? rows : []);
+          setCartConfirmOpen(true);
+        } catch (err) {
+          console.error('[cart duplicate check] failed', err);
+          if (cartCheckGenRef.current !== gen) return;
+          setCartDuplicateRows([]);
+          setCartConfirmOpen(true);
+        } finally {
+          if (cartCheckGenRef.current === gen) setCartDuplicateChecking(false);
+        }
+      }, [
+        isSubmittingOrder,
+        cartDuplicateChecking,
+        cartConfirmOpen,
+        getCartBulkBlockMessage,
+        cartItems,
+        isAgentOrCooperative,
+        isGuestSiteOrder,
+        contractorCustomerId,
+      ]);
+
+      const cartConfirmSignature = cartItems
+        .map((item) =>
+          [
+            item?.cartId,
+            item?.order?.preferredDate,
+            item?.order?.timePointLabel,
+            item?.order?.timeSlotLabel,
+            item?.order?.mixText,
+            item?.order?.project_id || item?.order?.projectId,
+            item?.order?.siteAddress,
+            item?.order?.quantityM3,
+          ].join('\u0001'),
+        )
+        .join('\u0002');
+      useEffect(() => {
+        cartCheckGenRef.current += 1;
+        setCartConfirmOpen(false);
+        setCartDuplicateRows([]);
+        setCartDuplicateChecking(false);
+      }, [cartConfirmSignature]);
 
       const btnBase =
         'min-h-[52px] flex-1 rounded-xl border-2 px-4 py-3 text-base font-bold transition-colors lg:min-h-[48px] lg:py-2.5';
@@ -7494,8 +7642,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   onRemove={handleRemoveFromCart}
                   onEditItem={handleEditCartItem}
                   validateItem={validateCartItemOrder}
-                  onConfirmBulk={() => void handleCartBulkConfirm()}
-                  bulkLoading={isSubmittingOrder}
+                  onConfirmBulk={() => void openCartConfirmation()}
+                  bulkLoading={isSubmittingOrder || cartDuplicateChecking}
+                  bulkActionLabel={cartDuplicateChecking ? '重複を確認しています…' : ''}
+                  bulkDisabled={cartConfirmOpen}
                   siteAddressLabel={isGuestSiteOrder ? '物件住所' : '現場住所'}
                   sameFactoryRequired={sameFactoryRequired}
                   onSameFactoryRequiredChange={setSameFactoryRequired}
@@ -8218,6 +8368,41 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 </div>
               </div>
             ) : null}
+            <DuplicateOrderConfirmModal
+              open={cartConfirmOpen}
+              rows={cartDuplicateRows}
+              proceeding={isSubmittingOrder}
+              proceedLabel={
+                duplicateWarningLevel(cartDuplicateRows)
+                  ? 'それでも発注する'
+                  : `カート内の${cartItems.length}件を一括で発注確定する`
+              }
+              onCancel={() => {
+                if (isSubmittingOrder) return;
+                setCartConfirmOpen(false);
+              }}
+              onProceed={() => {
+                if (isSubmittingOrder) return;
+                setCartConfirmOpen(false);
+                void handleCartBulkConfirm();
+              }}
+            >
+              <ul className="space-y-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                {cartItems.map((item) => {
+                  const order = item?.order || {};
+                  const date = formatDuplicateOrderDateLabel(order.preferredDate || order.scheduleMatchDate);
+                  const time = formatDuplicateOrderTimeLabel(order.timePointLabel || order.timeSlotLabel);
+                  const mix = String(order.mixText || '').trim() || '—';
+                  const qtyRaw = String(order.quantityM3 ?? '').trim();
+                  const qty = qtyRaw ? `${qtyRaw}m³` : '—';
+                  return (
+                    <li key={item.cartId} className="text-sm font-bold text-slate-800">
+                      {[`${date} ${time}`.trim(), mix, qty].filter(Boolean).join('　')}
+                    </li>
+                  );
+                })}
+              </ul>
+            </DuplicateOrderConfirmModal>
             <OrderFullEditModal
               order={customerEditOrder}
               open={Boolean(customerEditOrder)}
@@ -8238,6 +8423,21 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               initialPatch={
                 customerReRequestContext ? customerReRequestContext.originalPatch : null
               }
+              onCheckDuplicateOrders={async (draft) => {
+                const options = {
+                  excludeOrderId: String(draft?.id || '').trim() || null,
+                };
+                if (isAgentOrCooperative && !isGuestSiteOrder) {
+                  options.contractorCustomerId =
+                    String(
+                      draft?.contractor_customer_id ||
+                        draft?.contractorCustomerId ||
+                        contractorCustomerId ||
+                        '',
+                    ).trim() || null;
+                }
+                return fetchDuplicateOrderWarnings(db.checkDuplicateOrders, [draft], options);
+              }}
               projectById={projectById}
               customerById={customerById}
               organizations={agentOrganizations}
@@ -8258,6 +8458,21 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 setChangeProposeRequireDate(false);
               }}
               onSubmit={handleSubmitOrderChangePropose}
+              onCheckDuplicateOrders={async (draft) => {
+                const options = {
+                  excludeOrderId: String(draft?.id || '').trim() || null,
+                };
+                if (isAgentOrCooperative && !isGuestSiteOrder) {
+                  options.contractorCustomerId =
+                    String(
+                      draft?.contractor_customer_id ||
+                        draft?.contractorCustomerId ||
+                        contractorCustomerId ||
+                        '',
+                    ).trim() || null;
+                }
+                return fetchDuplicateOrderWarnings(db.checkDuplicateOrders, [draft], options);
+              }}
             />
 
             {changeRequestNotice ? (

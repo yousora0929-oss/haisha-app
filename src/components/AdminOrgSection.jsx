@@ -9,6 +9,8 @@ import {
   contractorIdsForAgentLinks,
   isCompanyScopeContractorRow,
 } from '../utils/agentContractorLinks.js';
+import { OrganizationContactPhones } from './OrganizationContactPhones.jsx';
+import { mapAdminContactPhone } from '../utils/phoneDirectory.js';
 
 const emptyMember = () => ({
   companyName: '',
@@ -290,16 +292,33 @@ export function AdminOrgSection({ orgType, label }) {
   const [initialLinkContractorIds, setInitialLinkContractorIds] = useState(() => new Set());
   const [contractorListFilter, setContractorListFilter] = useState('');
   const [credentialsById, setCredentialsById] = useState(() => ({}));
+  const [contactPhones, setContactPhones] = useState([]);
+  const [factoryNameById, setFactoryNameById] = useState({});
+  const [createdByFactoryId, setCreatedByFactoryId] = useState({});
+  const [factoryRegisteredOnly, setFactoryRegisteredOnly] = useState(false);
   const csvFileInputRef = useRef(null);
 
   const isAgentOrg = orgType === 'agent';
   const isContractorOrg = orgType === 'contractor';
+  const showDirectoryPhones = isAgentOrg || isContractorOrg;
   // 担当者名が空欄なら「会社の代表窓口」として扱うロール（商社・業者）
   const allowsRepresentativeMember = isAgentOrg || isContractorOrg;
+
+  const phonesByOrgId = useMemo(() => {
+    const map = {};
+    for (const phone of contactPhones) {
+      const orgId = String(phone.organizationId || '');
+      if (!orgId) continue;
+      if (!map[orgId]) map[orgId] = [];
+      map[orgId].push(phone);
+    }
+    return map;
+  }, [contactPhones]);
 
   const filteredOrgs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return orgs.filter((org) => {
+      if (factoryRegisteredOnly && !createdByFactoryId[String(org.id)]) return false;
       if (filterCounterCashOnly) {
         const hasCash = (org.members || []).some((m) => Boolean(m.is_counter_cash));
         if (!hasCash) return false;
@@ -307,6 +326,11 @@ export function AdminOrgSection({ orgType, label }) {
       if (!q) return true;
       if (String(org.name || '').toLowerCase().includes(q)) return true;
       if (String(org.furigana || '').toLowerCase().includes(q)) return true;
+      const directoryText = (phonesByOrgId[String(org.id)] || [])
+        .map((phone) => [phone.label, phone.phone, phone.personName, phone.note].join(' '))
+        .join(' ')
+        .toLowerCase();
+      if (directoryText.includes(q)) return true;
       return (org.members || []).some((m) => {
         const text = [m.furigana, m.manager_name, m.phone_number, m.company_name]
           .map((v) => String(v || ''))
@@ -315,7 +339,7 @@ export function AdminOrgSection({ orgType, label }) {
         return text.includes(q);
       });
     });
-  }, [orgs, searchQuery, filterCounterCashOnly]);
+  }, [orgs, searchQuery, filterCounterCashOnly, factoryRegisteredOnly, createdByFactoryId, phonesByOrgId]);
 
   const loadOrgs = useCallback(async () => {
     setLoading(true);
@@ -362,12 +386,68 @@ export function AdminOrgSection({ orgType, label }) {
         setContractors([]);
         setLinkCountByAgentId({});
       }
+
+      if (orgType === 'agent' || orgType === 'contractor') {
+        try {
+          const [phoneRows, factories, origins] = await Promise.all([
+            db.fetchAdminContactPhones(),
+            db.fetchFactories(),
+            db.fetchOrganizationFactoryOrigins(orgType),
+          ]);
+          setContactPhones(
+            (phoneRows || []).map(mapAdminContactPhone).filter((phone) => phone?.id && phone.organizationId),
+          );
+          setFactoryNameById(
+            Object.fromEntries(
+              (factories || []).map((factory) => [String(factory.id), String(factory.name || '').trim()]),
+            ),
+          );
+          setCreatedByFactoryId(
+            Object.fromEntries(
+              (origins || [])
+                .filter((org) => org?.created_by_factory_id)
+                .map((org) => [String(org.id), String(org.created_by_factory_id)]),
+            ),
+          );
+        } catch (phoneErr) {
+          console.warn('[AdminOrgSection] contact phones fetch failed', phoneErr);
+          setContactPhones([]);
+          setFactoryNameById({});
+          setCreatedByFactoryId({});
+        }
+      } else {
+        setContactPhones([]);
+        setFactoryNameById({});
+        setCreatedByFactoryId({});
+      }
     } catch (e) {
       setError(formatError(e, `${label}一覧の取得に失敗しました`));
     } finally {
       setLoading(false);
     }
   }, [orgType, label]);
+
+  const reloadContactPhones = useCallback(async () => {
+    if (orgType !== 'agent' && orgType !== 'contractor') return;
+    try {
+      const [phoneRows, origins] = await Promise.all([
+        db.fetchAdminContactPhones(),
+        db.fetchOrganizationFactoryOrigins(orgType),
+      ]);
+      setContactPhones(
+        (phoneRows || []).map(mapAdminContactPhone).filter((phone) => phone?.id && phone.organizationId),
+      );
+      setCreatedByFactoryId(
+        Object.fromEntries(
+          (origins || [])
+            .filter((org) => org?.created_by_factory_id)
+            .map((org) => [String(org.id), String(org.created_by_factory_id)]),
+        ),
+      );
+    } catch (err) {
+      console.warn('[AdminOrgSection] contact phones reload failed', err);
+    }
+  }, [orgType]);
 
   const toggleLinkContractor = useCallback((contractorId) => {
     const id = String(contractorId || '').trim();
@@ -1029,6 +1109,17 @@ export function AdminOrgSection({ orgType, label }) {
               窓口現金のみ表示
             </label>
           ) : null}
+          {showDirectoryPhones ? (
+            <label className="mt-2 flex items-center gap-2 text-xs font-bold text-slate-700">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={factoryRegisteredOnly}
+                onChange={(e) => setFactoryRegisteredOnly(e.target.checked)}
+              />
+              工場登録のみ表示
+            </label>
+          ) : null}
         </div>
       ) : null}
 
@@ -1081,6 +1172,11 @@ export function AdminOrgSection({ orgType, label }) {
                     {org.furigana?.trim() ? (
                       <span className="ml-2 text-sm font-normal text-slate-500">（{org.furigana}）</span>
                     ) : null}
+                    {showDirectoryPhones && createdByFactoryId[String(org.id)] ? (
+                      <span className="ml-2 inline-flex rounded-full border border-amber-400 bg-amber-50 px-2 py-0.5 text-[11px] font-black text-amber-900">
+                        工場登録（{factoryNameById[createdByFactoryId[String(org.id)]] || '工場'}）
+                      </span>
+                    ) : null}
                   </span>
                 )}
               </div>
@@ -1130,6 +1226,15 @@ export function AdminOrgSection({ orgType, label }) {
                 )}
               </div>
             </div>
+
+            {showDirectoryPhones ? (
+              <OrganizationContactPhones
+                organizationId={org.id}
+                phones={phonesByOrgId[String(org.id)] || []}
+                factoryNameById={factoryNameById}
+                onChanged={reloadContactPhones}
+              />
+            ) : null}
 
             {expanded ? (
               <div className="mt-4 pl-6">

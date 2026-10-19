@@ -38,6 +38,7 @@ import {
 } from './utils/orderFactoryReassign.js';
 import { expandChangeRequestKeys } from './utils/changeRequestItems.js';
 import { isUnacknowledgedFactoryCustomerCancel } from './utils/factoryCustomerCancel.js';
+import { collectDuplicateMonitorKeys, duplicateMonitorKey } from './utils/duplicateOrderCheck.js';
 import {
   adminFactoryViewText,
   formatOrderViewedAt,
@@ -4129,6 +4130,7 @@ function OrdersMonitorSection({
   }, [orders, factoryNameById]);
 
   const visibleOrders = useMemo(() => orders.filter((o) => orderStatus(o) !== 'deleted'), [orders]);
+  const duplicateMonitorKeys = useMemo(() => collectDuplicateMonitorKeys(visibleOrders), [visibleOrders]);
   const pendingCount = visibleOrders.filter((o) => orderStatus(o) === 'pending').length;
   const pendingAssociationCount = visibleOrders.filter((o) => orderStatus(o) === 'pending_association').length;
   const pendingAssociationOrders = useMemo(
@@ -4678,6 +4680,11 @@ function OrdersMonitorSection({
                       <td className="px-3 py-2.5">
                         <div className="flex flex-wrap gap-1">
                           <span className={'inline-flex rounded-full border px-2 py-0.5 text-xs font-black ' + statusBadgeClass(st)}>{orderStatusLabel(st)}</span>
+                          {duplicateMonitorKeys.has(duplicateMonitorKey(o)) ? (
+                            <span className="inline-flex rounded-full border border-rose-400 bg-rose-50 px-2 py-0.5 text-xs font-black text-rose-900">
+                              重複の可能性
+                            </span>
+                          ) : null}
                           {String(o.factory_consult_status || '').trim() === 'consulting' ? (
                             <span className="inline-flex rounded-full border border-blue-400 bg-blue-50 px-2 py-0.5 text-xs font-black text-blue-900">相談中</span>
                           ) : null}

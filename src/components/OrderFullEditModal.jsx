@@ -23,6 +23,11 @@ import {
   filterPatchToChangeRequestKeys,
 } from '../utils/changeRequestItems.js';
 import { CUSTOMER_ORDER_EDIT_KEYS, snapshotOrderFields } from '../utils/orderFieldSnapshot.js';
+import { duplicateProceedBlocked, duplicateWarningLevel } from '../utils/duplicateOrderCheck.js';
+import {
+  DuplicateOrderConfirmModal,
+  DuplicateOrderWarningBanner,
+} from './DuplicateOrderWarning.jsx';
 import {
   changeRequestLabelsForKeys,
   classifyChangeRequestReload,
@@ -411,6 +416,7 @@ function resolveSiteUrlToken(order, projectById) {
  * @param {string} [requestNotice] - 依頼モードの案内文（未指定時は既定文言）
  * @param {string[]} [requestFocusKeys] - 編集対象に絞るパッチキー（客確認待ちの再依頼用）
  * @param {object} [initialPatch] - フォーム初期値に載せるパッチ（original_patch 等）
+ * @param {(draft: object) => Promise<object[]>} [onCheckDuplicateOrders] - 確認画面に入るときの重複チェック
  */
 export function OrderFullEditModal({
   order,
@@ -428,6 +434,7 @@ export function OrderFullEditModal({
   requestNotice = '',
   requestFocusKeys = null,
   initialPatch = null,
+  onCheckDuplicateOrders = null,
 }) {
   const isCustomer = editorRole === 'customer';
   const timeSlotOptions =
@@ -481,6 +488,12 @@ export function OrderFullEditModal({
   const [requestStep, setRequestStep] = useState('edit');
   const [confirmDiffRows, setConfirmDiffRows] = useState([]);
   const [confirmPayload, setConfirmPayload] = useState(null);
+  const [duplicateRows, setDuplicateRows] = useState([]);
+  const [duplicateAcknowledged, setDuplicateAcknowledged] = useState(false);
+  const [duplicateChecking, setDuplicateChecking] = useState(false);
+  const [directDuplicateOpen, setDirectDuplicateOpen] = useState(false);
+  const duplicateGenRef = useRef(0);
+  const pendingDirectPatchRef = useRef(null);
   const [baselineOrder, setBaselineOrder] = useState(null);
   const [updateConflict, setUpdateConflict] = useState(false);
   const [conflictLabels, setConflictLabels] = useState([]);
@@ -519,6 +532,12 @@ export function OrderFullEditModal({
     setRequestStep('edit');
     setConfirmDiffRows([]);
     setConfirmPayload(null);
+    setDuplicateRows([]);
+    setDuplicateAcknowledged(false);
+    setDuplicateChecking(false);
+    setDirectDuplicateOpen(false);
+    pendingDirectPatchRef.current = null;
+    duplicateGenRef.current += 1;
   }, [open]);
 
   useEffect(() => {
@@ -791,12 +810,44 @@ export function OrderFullEditModal({
     };
   };
 
+  const clearDuplicateWarning = () => {
+    duplicateGenRef.current += 1;
+    setDuplicateRows([]);
+    setDuplicateAcknowledged(false);
+    setDuplicateChecking(false);
+    setDirectDuplicateOpen(false);
+    pendingDirectPatchRef.current = null;
+  };
+
+  const runDuplicateCheck = async (draft) => {
+    if (typeof onCheckDuplicateOrders !== 'function') return [];
+    const gen = duplicateGenRef.current + 1;
+    duplicateGenRef.current = gen;
+    setDuplicateChecking(true);
+    setDuplicateAcknowledged(false);
+    try {
+      const rows = await onCheckDuplicateOrders(draft);
+      if (duplicateGenRef.current !== gen) return null;
+      const list = Array.isArray(rows) ? rows : [];
+      setDuplicateRows(list);
+      return list;
+    } catch (err) {
+      console.error('[OrderFullEditModal] duplicate check failed', err);
+      if (duplicateGenRef.current !== gen) return null;
+      setDuplicateRows([]);
+      return [];
+    } finally {
+      if (duplicateGenRef.current === gen) setDuplicateChecking(false);
+    }
+  };
+
   const handleBackToEdit = () => {
     if (submittingRef.current) return;
     setSaveError('');
     setRequestStep('edit');
     setConfirmDiffRows([]);
     setConfirmPayload(null);
+    clearDuplicateWarning();
   };
 
   const reloadLatestOrder = async () => {
@@ -912,7 +963,9 @@ export function OrderFullEditModal({
         .join('、')}`;
       setConfirmDiffRows(diffRows);
       setConfirmPayload({ patch, structuredPatch, message });
+      setDuplicateRows([]);
       setRequestStep('confirm');
+      void runDuplicateCheck({ ...activeOrder, ...patch });
       return;
     }
 
@@ -922,6 +975,15 @@ export function OrderFullEditModal({
     }
 
     const patch = buildFormPatch();
+    if (typeof onCheckDuplicateOrders === 'function') {
+      const rows = await runDuplicateCheck({ ...activeOrder, ...patch });
+      if (rows == null) return;
+      if (rows.length) {
+        pendingDirectPatchRef.current = patch;
+        setDirectDuplicateOpen(true);
+        return;
+      }
+    }
     submittingRef.current = true;
     setSubmitting(true);
     try {
@@ -951,7 +1013,8 @@ export function OrderFullEditModal({
       setSaveError(db.ORDER_UPDATE_CONFLICT_MESSAGE);
       return;
     }
-    if (submittingRef.current || reloadingOrder) return;
+    if (submittingRef.current || reloadingOrder || duplicateChecking) return;
+    if (duplicateProceedBlocked(duplicateRows, duplicateAcknowledged)) return;
     if (!confirmPayload?.structuredPatch || !confirmPayload?.message) {
       setSaveError('変更点がありません。戻って内容を確認してください。');
       return;
@@ -990,7 +1053,39 @@ export function OrderFullEditModal({
     }
   };
 
+  const handleProceedDirectDuplicate = async () => {
+    const patch = pendingDirectPatchRef.current;
+    if (!patch || submittingRef.current) return;
+    setDirectDuplicateOpen(false);
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      const fieldSnapshot = await ensureFieldSnapshot();
+      const ok = await onSave(activeOrder.id, patch, {
+        fieldSnapshot,
+      });
+      if (ok === false) {
+        setSaveError('保存に失敗しました。内容を確認して再度お試しください。');
+      }
+    } catch (err) {
+      if (db.isOrderUpdateConflict(err)) {
+        noteFieldConflict(err);
+        return;
+      }
+      console.error('[OrderFullEditModal] save failed', err);
+      setSaveError(err?.message || '保存に失敗しました。通信状態を確認してください。');
+    } finally {
+      pendingDirectPatchRef.current = null;
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  };
+
   const isConfirmStep = isRequestMode && requestStep === 'confirm';
+  const confirmHasDuplicate = isConfirmStep && duplicateRows.length > 0;
+  const confirmLevel = duplicateWarningLevel(duplicateRows);
+  const confirmProceedBlocked =
+    duplicateChecking || duplicateProceedBlocked(duplicateRows, duplicateAcknowledged);
 
   return (
     <div
@@ -1028,6 +1123,17 @@ export function OrderFullEditModal({
           <div className="min-h-0 flex-1 overflow-y-auto pr-2 px-4 py-4">
             {isConfirmStep ? (
               <div className="space-y-3">
+                {duplicateChecking ? (
+                  <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600">
+                    重複を確認しています…
+                  </p>
+                ) : (
+                  <DuplicateOrderWarningBanner
+                    rows={duplicateRows}
+                    acknowledged={duplicateAcknowledged}
+                    onAcknowledgedChange={setDuplicateAcknowledged}
+                  />
+                )}
                 <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">
                   以下の変更点だけが工場・管理者へ送信されます。内容を確認してから送信してください。
                 </p>
@@ -1385,6 +1491,32 @@ export function OrderFullEditModal({
           ) : null}
           <div className="flex shrink-0 flex-col gap-2 border-t border-slate-200 bg-white px-4 py-3 sm:flex-row">
             {isConfirmStep ? (
+              confirmHasDuplicate ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    disabled={submitting || reloadingOrder}
+                    className="min-h-[52px] flex-1 rounded-xl border-2 border-slate-300 bg-white text-base font-black text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg"
+                  >
+                    発注をやめる
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleConfirmSend()}
+                    disabled={submitting || updateConflict || reloadingOrder || confirmProceedBlocked}
+                    aria-busy={submitting}
+                    className={
+                      'min-h-[52px] flex-1 rounded-xl border-2 text-base font-black shadow disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg ' +
+                      (confirmLevel === 'strong'
+                        ? 'border-red-800 bg-red-600 text-white hover:bg-red-700'
+                        : 'border-amber-700 bg-amber-500 text-amber-950 hover:bg-amber-600')
+                    }
+                  >
+                    {submitting ? '送信中…' : 'それでも発注する'}
+                  </button>
+                </>
+              ) : (
               <>
                 <button
                   type="button"
@@ -1397,13 +1529,14 @@ export function OrderFullEditModal({
                 <button
                   type="button"
                   onClick={() => void handleConfirmSend()}
-                  disabled={submitting || updateConflict || reloadingOrder}
+                  disabled={submitting || updateConflict || reloadingOrder || duplicateChecking}
                   aria-busy={submitting}
                   className="min-h-[52px] flex-1 rounded-xl border-2 border-indigo-700 bg-indigo-600 text-base font-black text-white shadow hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg"
                 >
-                  {submitting ? '送信中…' : 'この内容で変更依頼を送信'}
+                  {submitting ? '送信中…' : duplicateChecking ? '確認中…' : 'この内容で変更依頼を送信'}
                 </button>
               </>
+              )
             ) : (
               <>
                 <button
@@ -1416,12 +1549,14 @@ export function OrderFullEditModal({
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting || updateConflict || reloadingOrder}
-                  aria-busy={submitting}
+                  disabled={submitting || updateConflict || reloadingOrder || duplicateChecking}
+                  aria-busy={submitting || duplicateChecking}
                   className="min-h-[52px] flex-1 rounded-xl border-2 border-indigo-700 bg-indigo-600 text-base font-black text-white shadow hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg"
                 >
                   {submitting
                     ? '保存中…'
+                    : duplicateChecking
+                      ? '確認中…'
                     : isRequestMode
                       ? '確認'
                       : '保存'}
@@ -1431,6 +1566,16 @@ export function OrderFullEditModal({
           </div>
         </form>
       </div>
+      <DuplicateOrderConfirmModal
+        open={directDuplicateOpen}
+        rows={duplicateRows}
+        proceeding={submitting}
+        onCancel={() => {
+          if (submitting) return;
+          clearDuplicateWarning();
+        }}
+        onProceed={() => void handleProceedDirectDuplicate()}
+      />
     </div>
   );
 }

@@ -62,6 +62,8 @@ export function OrderCartPreview({
   validateItem,
   onConfirmBulk,
   bulkLoading,
+  bulkActionLabel = '',
+  bulkDisabled = false,
   siteAddressLabel = '現場住所',
   sameFactoryRequired = false,
   onSameFactoryRequiredChange,
@@ -320,7 +322,7 @@ export function OrderCartPreview({
       <button
         type="button"
         onClick={onConfirmBulk}
-        disabled={bulkLoading}
+        disabled={bulkLoading || bulkDisabled}
         className="mt-4 flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl border-2 border-emerald-700 bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-3 text-base font-black text-white shadow-lg transition hover:from-emerald-700 hover:to-teal-700 disabled:cursor-not-allowed disabled:border-slate-300 disabled:from-slate-300 disabled:to-slate-300"
       >
         {bulkLoading ? (
@@ -329,10 +331,10 @@ export function OrderCartPreview({
               className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-white/40 border-t-white"
               aria-hidden="true"
             />
-            登録中…
+            {bulkActionLabel || '登録中…'}
           </>
         ) : (
-          `カート内の${list.length}件を一括で発注確定する`
+          bulkActionLabel || `カート内の${list.length}件を一括で発注確定する`
         )}
       </button>
     </section>

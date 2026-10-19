@@ -1400,6 +1400,28 @@ export async function insertOrder(order) {
   throw new Error('注文IDの生成に失敗しました');
 }
 
+/**
+ * 同じ現場・同じ打設日の既存注文。失敗時は呼び出し側が警告なしで発注を続ける。
+ * @param {{ projectId?: string|null, siteKey?: string|null, dates?: string[], mix?: string, timeLabel?: string, contractorCustomerId?: string|null, excludeOrderId?: string|null }} query
+ */
+export async function checkDuplicateOrders(query = {}) {
+  if (!supabase?.rpc) throw new Error('Supabase クライアントが初期化されていません');
+  const dates = (Array.isArray(query.dates) ? query.dates : [])
+    .map((date) => String(date || '').trim().slice(0, 10))
+    .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date));
+  const { data, error } = await supabase.rpc('check_duplicate_orders', {
+    p_project_id: query.projectId || null,
+    p_site_key: query.siteKey || null,
+    p_dates: dates,
+    p_mix: String(query.mix || ''),
+    p_time_label: String(query.timeLabel || ''),
+    p_contractor_customer_id: query.contractorCustomerId || null,
+    p_exclude_order_id: query.excludeOrderId || null,
+  });
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
+
 /** 複数注文を orders テーブルへ一括挿入 */
 export async function insertOrdersBulk(orders, { factories = [], projects = [] } = {}) {
   const list = Array.isArray(orders) ? orders.filter((o) => o && typeof o === 'object') : [];
@@ -5407,6 +5429,79 @@ export async function fetchOrganizationsWithMembers(type) {
     ...org,
     members: members.filter((m) => String(m.organization_id) === String(org.id)),
   }));
+}
+
+/** 工場が作った組織か。電話帳バッジ用。失敗しても組織一覧自体は止めない。 */
+export async function fetchOrganizationFactoryOrigins(type) {
+  validateOrganizationType(type);
+  const data = await fetchAllRowsPaged(() =>
+    supabase
+      .from('organizations')
+      .select('id, created_by_factory_id')
+      .eq('type', type)
+      .order('id', { ascending: true }),
+  );
+  return data || [];
+}
+
+/** 管理者向け。deleted を除いた電話帳。工場は RPC を使い、この select は使わない。 */
+export async function fetchAdminContactPhones() {
+  const data = await fetchAllRowsPaged(() =>
+    supabase.from('contact_phones').select('*').is('deleted_at', null).order('id', { ascending: true }),
+  );
+  return data || [];
+}
+
+export async function searchPhoneDirectory(query, limit = 30) {
+  const { data, error } = await supabase.rpc('search_phone_directory', {
+    p_query: String(query ?? ''),
+    p_limit: Number.isFinite(Number(limit)) ? Number(limit) : 30,
+  });
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
+
+export async function registerContactPhone({
+  organizationId,
+  phone,
+  label = '代表',
+  personName = '',
+  note = '',
+} = {}) {
+  const { data, error } = await supabase.rpc('register_contact_phone', {
+    p_organization_id: organizationId,
+    p_phone: String(phone ?? ''),
+    p_label: String(label || '代表'),
+    p_person_name: String(personName ?? ''),
+    p_note: String(note ?? ''),
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function updateContactPhone({ id, phone, label, personName = '', note = '' } = {}) {
+  const { error } = await supabase.rpc('update_contact_phone', {
+    p_id: id,
+    p_phone: String(phone ?? ''),
+    p_label: String(label || '代表'),
+    p_person_name: String(personName ?? ''),
+    p_note: String(note ?? ''),
+  });
+  if (error) throw error;
+}
+
+export async function deleteContactPhone(id) {
+  const { error } = await supabase.rpc('delete_contact_phone', { p_id: id });
+  if (error) throw error;
+}
+
+export async function createOrganizationForPhone({ name, type } = {}) {
+  const { data, error } = await supabase.rpc('create_organization_for_phone', {
+    p_name: String(name ?? '').trim(),
+    p_type: type,
+  });
+  if (error) throw error;
+  return data;
 }
 
 /** 組織を新規作成 */
