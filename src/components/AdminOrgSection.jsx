@@ -11,7 +11,7 @@ import {
 } from '../utils/agentContractorLinks.js';
 import { OrganizationContactPhones } from './OrganizationContactPhones.jsx';
 import { CompanyStatusBadges } from './CompanyStatusBadges.jsx';
-import { OrganizationBlacklistControls } from './OrganizationBlacklistControls.jsx';
+import { AdminBlacklistPanel } from './AdminBlacklistPanel.jsx';
 import { mapAdminContactPhone } from '../utils/phoneDirectory.js';
 
 const emptyMember = () => ({
@@ -306,7 +306,7 @@ export function AdminOrgSection({ orgType, label, adminName = '' }) {
   const [createdByFactoryId, setCreatedByFactoryId] = useState({});
   const [factoryRegisteredOnly, setFactoryRegisteredOnly] = useState(false);
   const [blacklistById, setBlacklistById] = useState({});
-  const [blacklistOnly, setBlacklistOnly] = useState(false);
+  const [focusOrgId, setFocusOrgId] = useState('');
   const csvFileInputRef = useRef(null);
 
   const isAgentOrg = orgType === 'agent';
@@ -330,7 +330,6 @@ export function AdminOrgSection({ orgType, label, adminName = '' }) {
     const q = searchQuery.trim().toLowerCase();
     return orgs.filter((org) => {
       if (factoryRegisteredOnly && !createdByFactoryId[String(org.id)]) return false;
-      if (showDirectoryPhones && blacklistOnly && !blacklistById[String(org.id)]) return false;
       if (filterCounterCashOnly) {
         const hasCash = (org.members || []).some((m) => Boolean(m.is_counter_cash));
         if (!hasCash) return false;
@@ -360,7 +359,7 @@ export function AdminOrgSection({ orgType, label, adminName = '' }) {
         return text.includes(q);
       });
     });
-  }, [orgs, searchQuery, filterCounterCashOnly, factoryRegisteredOnly, createdByFactoryId, phonesByOrgId, showDirectoryPhones, blacklistOnly, blacklistById]);
+  }, [orgs, searchQuery, filterCounterCashOnly, factoryRegisteredOnly, createdByFactoryId, phonesByOrgId]);
 
   const loadOrgs = useCallback(async () => {
     setLoading(true);
@@ -460,6 +459,28 @@ export function AdminOrgSection({ orgType, label, adminName = '' }) {
       setLoading(false);
     }
   }, [orgType, label]);
+
+  const focusOrganization = useCallback((organizationId) => {
+    const org = orgs.find((row) => String(row.id) === String(organizationId));
+    if (!org) return;
+    setSearchQuery('');
+    setFactoryRegisteredOnly(false);
+    setFilterCounterCashOnly(false);
+    setExpandedIds((current) => {
+      const next = new Set(current);
+      next.add(org.id);
+      return next;
+    });
+    setFocusOrgId(String(org.id));
+  }, [orgs]);
+
+  useEffect(() => {
+    if (!focusOrgId) return undefined;
+    const node = document.getElementById(`org-card-${focusOrgId}`);
+    if (node) node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setFocusOrgId('');
+    return undefined;
+  }, [focusOrgId, filteredOrgs]);
 
   const reloadBlacklist = useCallback(async () => {
     if (orgType !== 'agent' && orgType !== 'contractor') return;
@@ -1135,6 +1156,15 @@ export function AdminOrgSection({ orgType, label, adminName = '' }) {
         <p className="text-sm text-gray-500">読み込み中…</p>
       ) : null}
 
+      {showDirectoryPhones ? (
+        <AdminBlacklistPanel
+          adminName={adminName}
+          blacklistById={blacklistById}
+          onChanged={reloadBlacklist}
+          onFocusOrganization={focusOrganization}
+        />
+      ) : null}
+
       {!loading && orgs.length > 0 ? (
         <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
           <label className="text-xs font-black text-slate-600" htmlFor={`org-search-${orgType}`}>
@@ -1170,17 +1200,6 @@ export function AdminOrgSection({ orgType, label, adminName = '' }) {
               工場登録のみ表示
             </label>
           ) : null}
-          {showDirectoryPhones ? (
-            <label className="mt-2 flex items-center gap-2 text-xs font-bold text-slate-700">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={blacklistOnly}
-                onChange={(e) => setBlacklistOnly(e.target.checked)}
-              />
-              ブラックリストのみ表示
-            </label>
-          ) : null}
         </div>
       ) : null}
 
@@ -1192,6 +1211,7 @@ export function AdminOrgSection({ orgType, label, adminName = '' }) {
         return (
           <div
             key={org.id}
+            id={`org-card-${org.id}`}
             className="border border-gray-200 rounded-lg p-4 mb-3 bg-white"
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1295,16 +1315,6 @@ export function AdminOrgSection({ orgType, label, adminName = '' }) {
                 )}
               </div>
             </div>
-
-            {showDirectoryPhones ? (
-              <OrganizationBlacklistControls
-                organizationId={org.id}
-                organizationName={org.name}
-                entry={blacklistById[String(org.id)] || null}
-                adminName={adminName}
-                onChanged={reloadBlacklist}
-              />
-            ) : null}
 
             {showDirectoryPhones ? (
               <OrganizationContactPhones
