@@ -1,6 +1,7 @@
 /** サジェスト用 — マスタ配列のリアルタイム絞り込み */
 import { resolveProjectTradingCompanyName } from './projectTradingCompany.js';
 import { normalizeSuggestSearchText } from './normalizeSuggestSearchText.js';
+import { phoneDigits } from './phoneFormat.js';
 
 export function getTextMatchRank(text, queryLower) {
   const t = normalizeSuggestSearchText(text);
@@ -20,6 +21,15 @@ export function getItemMatchRank(item, query, getSearchTexts) {
   for (const text of texts) {
     const r = getTextMatchRank(text, q);
     if (r < best) best = r;
+  }
+  const qDigits = phoneDigits(query);
+  if (qDigits.length >= 4 && best > 0) {
+    for (const text of texts) {
+      const digits = phoneDigits(text);
+      if (!digits || !digits.includes(qDigits)) continue;
+      const rank = digits.startsWith(qDigits) ? 0 : 1;
+      if (rank < best) best = rank;
+    }
   }
   return best;
 }

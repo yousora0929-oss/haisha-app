@@ -18,6 +18,7 @@ import {
   preventMinusKey,
   sanitizeNonNegativeInput,
 } from '../utils/mixDesignRequest.js';
+import { formatPhoneAsYouType, formatPhoneJP } from '../utils/phoneFormat.js';
 import './mixDesignPrint.css';
 
 const LABEL_CELL = { background: '#f7f7f5' };
@@ -200,8 +201,9 @@ export function MixDesignRequestPrint({
             <td>
               <PrintField
                 editable={editable}
-                value={header?.siteManagerContact}
-                onChange={(v) => patchHeader({ siteManagerContact: v })}
+                value={formatPhoneJP(header?.siteManagerContact)}
+                display={formatPhoneJP(header?.siteManagerContact)}
+                onChange={(v) => patchHeader({ siteManagerContact: formatPhoneAsYouType(v) })}
               />
             </td>
           </tr>

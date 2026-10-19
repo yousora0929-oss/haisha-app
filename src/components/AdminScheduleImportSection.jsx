@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import * as db from '../haishaDb.js';
+import { formatPhoneJP } from '../utils/phoneFormat.js';
 import { MasterSuggestInput } from './MasterSuggestInput.jsx';
 
 function fileToBase64(file) {
@@ -591,7 +592,7 @@ export function AdminScheduleImportSection({
                           : [];
                     return contacts.length
                       ? contacts
-                          .map((c) => `${c.name || '?'}${c.phone ? `（${c.phone}）` : ''}`)
+                          .map((c) => `${c.name || '?'}${c.phone ? `（${formatPhoneJP(c.phone)}）` : ''}`)
                           .join(' / ')
                       : '—';
                   })()}
@@ -636,7 +637,7 @@ export function AdminScheduleImportSection({
                   getItemLabel={(c) => {
                     const company = String(c.company_name || c.name || '').trim();
                     const manager = String(c.manager_name || '').trim();
-                    const phone = String(c.phone_number || '').trim();
+                    const phone = formatPhoneJP(c.phone_number || '');
                     const suffix = [manager, phone].filter(Boolean).join(' / ');
                     return suffix ? `${company}（${suffix}）` : company || String(c.id);
                   }}

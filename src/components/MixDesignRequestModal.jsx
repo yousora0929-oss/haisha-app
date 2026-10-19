@@ -16,6 +16,7 @@ import {
 } from '../utils/mixDesignCalc.js';
 import { dedupeCustomersByCompany } from '../utils/dedupeCustomersByCompany.js';
 import { customerSuggestTexts, organizationSuggestTexts } from '../utils/masterSuggest.js';
+import { formatPhoneAsYouType, formatPhoneJP } from '../utils/phoneFormat.js';
 import {
   MIX_DESIGN_GRID_COLS,
   MIX_DESIGN_REGIONS,
@@ -972,13 +973,13 @@ export function MixDesignRequestModal({
               onSelect={(c) =>
                 patchDraft({
                   siteManagerName: String(c?.name || '').trim(),
-                  siteManagerContact: String(c?.phone_number || c?.phone || '').trim(),
+                  siteManagerContact: formatPhoneJP(c?.phone_number || c?.phone || ''),
                 })
               }
               items={siteContactCandidates}
               getItemKey={(c) => String(c.id || c.name)}
               getItemLabel={(c) => String(c.name || '').trim()}
-              getItemSubLabel={(c) => String(c.phone_number || c.phone || '').trim()}
+              getItemSubLabel={(c) => formatPhoneJP(c.phone_number || c.phone || '')}
               getSearchTexts={(c) => [c?.name, c?.phone_number, c?.phone].filter(Boolean).map(String)}
               placeholder="担当者名（業者連絡先から候補表示）"
               emptyHint="候補がありません（自由入力可）"
@@ -995,7 +996,7 @@ export function MixDesignRequestModal({
               <input
                 type="text"
                 value={draft.siteManagerContact}
-                onChange={(e) => patchDraft({ siteManagerContact: e.target.value })}
+                onChange={(e) => patchDraft({ siteManagerContact: formatPhoneAsYouType(e.target.value) })}
                 className={FIELD}
               />
             </label>

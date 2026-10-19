@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import * as db from '../haishaDb.js';
-import { formatPhoneNumberJP } from '../utils/phoneFormat.js';
+import { formatPhoneJP } from '../utils/phoneFormat.js';
 
 const LOCK_WINDOW_MS = 15 * 60 * 1000;
 const LOCK_FAILURE_THRESHOLD = 5;
@@ -178,7 +178,7 @@ export function AdminLoginHistorySection() {
                       {formatAttemptedAt(row?.attempted_at)}
                     </td>
                     <td className="whitespace-nowrap px-2 py-2 font-mono text-slate-800 dark:text-slate-100">
-                      {phone ? formatPhoneNumberJP(phone) || phone : '—'}
+                      {phone ? formatPhoneJP(phone) || phone : '—'}
                     </td>
                     <td className="px-2 py-2 font-bold text-slate-800 dark:text-slate-100">
                       {String(row?.company_name || '').trim() || '—'}

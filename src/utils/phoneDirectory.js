@@ -1,3 +1,5 @@
+import { phoneDigits } from './phoneFormat.js';
+
 export const PHONE_DIRECTORY_LABELS = ['代表', '事務所', '携帯', '現場', 'FAX', 'その他'];
 
 export function phoneDirectoryErrorMessage(err, fallback = '処理に失敗しました') {
@@ -12,7 +14,7 @@ export function phoneDirectoryErrorMessage(err, fallback = '処理に失敗し�
 
 /** 数字が4桁以上なら番号検索。それ以外は社名検索。 */
 export function isPhoneDirectoryQuery(query) {
-  return String(query || '').replace(/\D/g, '').length >= 4;
+  return phoneDigits(query).length >= 4;
 }
 
 export function formatPhoneDirectoryDate(value) {

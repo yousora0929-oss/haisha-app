@@ -2,7 +2,7 @@ import { TIME_SLOTS } from '../haishaConstants.js';
 import { combineDeliveryAddress } from './deliveryAreas.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './siteNameDisplay.js';
 import { resolveSiteContactName, resolveSitePhone } from './orderContactInfo.js';
-import { formatPhoneNumberJP } from './phoneFormat.js';
+import { formatPhoneJP } from './phoneFormat.js';
 import { formatYmdWithWeekday } from './orderGrouping.js';
 
 /** 配合文字列を 強度-スランプ-粗骨材-セメント に分解 */
@@ -195,7 +195,7 @@ export function buildOperationInstructionPrintGrid(order, project, siteTitle) {
   const vehicleLabel = formatVehicleLabel(order);
 
   const orderedBy = field(resolveSiteContactName(order));
-  const phone = field(formatPhoneNumberJP(resolveSitePhone(order)));
+  const phone = field(formatPhoneJP(resolveSitePhone(order)));
 
   const deliveryArea = order.deliveryArea ?? order.delivery_area ?? project?.delivery_area ?? '';
   const addressDetail = order.siteAddressDetail ?? order.site_address_detail ?? '';

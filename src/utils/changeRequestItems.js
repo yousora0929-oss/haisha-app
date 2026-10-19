@@ -1,4 +1,5 @@
 /** 変更依頼パッチを、工場が項目ごとに判断できる単位へまとめる */
+import { formatPhoneJP } from './phoneFormat.js';
 
 export const CHANGE_REQUEST_ITEM_DEFS = [
   { id: 'preferredDate', label: '希望日', keys: ['preferredDate', 'scheduleMatchDate'] },
@@ -52,6 +53,7 @@ function formatPatchValue(key, patch) {
     const name = String(patch.traderName || patch.trading_company_name || '').trim();
     if (name) return name;
   }
+  if (key === 'sitePhone') return formatPhoneJP(value);
   if (value == null) return '';
   return String(value).trim();
 }

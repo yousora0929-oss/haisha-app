@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import * as db from '../haishaDb.js';
+import { formatPhoneAsYouType, formatPhoneJP } from '../utils/phoneFormat.js';
 import { PlateCategoryBadge } from './PlateCategoryBadge.jsx';
 
 const inputClass =
@@ -343,7 +344,7 @@ function CharterOperatorsPanel() {
     setEditForm({
       companyName: op.company_name || '',
       contactName: op.contact_name || '',
-      phone: op.phone || '',
+      phone: formatPhoneJP(op.phone || ''),
     });
     setError('');
   };
@@ -463,7 +464,7 @@ function CharterOperatorsPanel() {
               電話番号
               <input
                 value={newForm.phone}
-                onChange={(e) => setNewForm((f) => ({ ...f, phone: e.target.value }))}
+                onChange={(e) => setNewForm((f) => ({ ...f, phone: formatPhoneAsYouType(e.target.value) }))}
                 className={`${inputClass} mt-1`}
               />
             </label>
@@ -525,7 +526,7 @@ function CharterOperatorsPanel() {
                             電話
                             <input
                               value={editForm.phone}
-                              onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))}
+                              onChange={(e) => setEditForm((f) => ({ ...f, phone: formatPhoneAsYouType(e.target.value) }))}
                               className={`${inputClass} mt-1`}
                             />
                           </label>
@@ -558,7 +559,7 @@ function CharterOperatorsPanel() {
                           {op.contact_name || '—'}
                         </td>
                         <td className="px-3 py-2.5 font-semibold text-slate-800 dark:text-slate-200">
-                          {op.phone || '—'}
+                          {op.phone ? formatPhoneJP(op.phone) : '—'}
                         </td>
                         <td className="px-3 py-2.5">
                           {op.status === 'active' ? (

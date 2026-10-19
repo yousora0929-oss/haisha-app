@@ -1,11 +1,12 @@
 ﻿import React, { useCallback, useEffect, useState } from 'react';
 import * as db from '../haishaDb.js';
+import { formatPhoneAsYouType, formatPhoneJP } from '../utils/phoneFormat.js';
 
 function toEditRow(row) {
   return {
     id: String(row?.id || ''),
     name: String(row?.name || '').trim(),
-    phone: String(row?.phone_number || '').trim(),
+    phone: formatPhoneJP(row?.phone_number || ''),
   };
 }
 
@@ -127,7 +128,7 @@ export function CompanyMemberContactList({
                   value={row.phone}
                   disabled={disabled}
                   onChange={(e) => {
-                    const next = e.target.value;
+                    const next = formatPhoneAsYouType(e.target.value);
                     setRows((prev) => prev.map((item) => (item.id === row.id ? { ...item, phone: next } : item)));
                   }}
                   placeholder="電話番号"

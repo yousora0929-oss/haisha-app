@@ -146,7 +146,7 @@ import {
   resolveOrderLinkedProject,
   resolveSiteContactName,
 } from './utils/orderContactInfo.js';
-import { formatPhoneNumberJP } from './utils/phoneFormat.js';
+import { formatPhoneAsYouType, formatPhoneJP, isSamePhone } from './utils/phoneFormat.js';
 import { resolveGuestPreferredFactoryId, resolveProjectMainFactoryId, getProjectDataGapWarnings } from './utils/projectFactory.js';
 import { ProjectExternalUrlActions } from './components/ProjectExternalUrlActions.jsx';
 import { SiteOrderUrlActions } from './components/SiteOrderUrlActions.jsx';
@@ -1603,10 +1603,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
 
     function OrderMasterContactLines({ order, project, customerById, className = '' }) {
       const siteLabel = formatProjectSiteContactsLabel(project, {
-        formatPhone: formatPhoneNumberJP,
+        formatPhone: formatPhoneJP,
       });
       const tradingAgentLabel = formatTradingAgentContactLabel(order, customerById, {
-        formatPhone: formatPhoneNumberJP,
+        formatPhone: formatPhoneJP,
       });
       if (!siteLabel && !tradingAgentLabel) return null;
       return (
@@ -3292,10 +3292,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
               if (companyIds.has(orderContractorId)) return true;
             }
           }
-          const phoneDigits = currentCustomerPhone.replace(/\D/g, '');
-          if (!phoneDigits) return false;
-          const orderPhoneDigits = String(order.phone_number ?? order.customerPhone ?? order.sitePhone ?? order.phone ?? '').replace(/\D/g, '');
-          return Boolean(orderPhoneDigits && orderPhoneDigits === phoneDigits);
+          if (!currentCustomerPhone) return false;
+          return [order.phone_number, order.customerPhone, order.sitePhone, order.phone].some((value) =>
+            isSamePhone(currentCustomerPhone, value),
+          );
         },
         [currentCustomerId, currentCustomerPhone, currentCustomerRole, currentCustomer, customers],
       );
@@ -4068,7 +4068,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 if (locked.projectName) setSiteName(sanitizeSiteNameValue(locked.projectName));
                 setPreferredFactoryId(resolveGuestPreferredFactoryId(primaryProject));
                 lastAutofillProjectIdRef.current = String(primaryProject.id);
-                if (customer?.phone_number) setSitePhone(String(customer.phone_number));
+                if (customer?.phone_number) setSitePhone(formatPhoneJP(customer.phone_number));
               } else {
                 setSelectedProjectId('');
                 setDeliveryArea('');
@@ -5214,7 +5214,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
           setSiteName(draft.siteName || '');
           setDeliveryArea(draft.deliveryArea || '');
           setSiteAddressDetail(draft.siteAddressDetail || '');
-          setSitePhone(draft.sitePhone || currentCustomer?.phone_number || '');
+          setSitePhone(formatPhoneJP(draft.sitePhone || currentCustomer?.phone_number || ''));
           setSiteContactName(draft.siteContactName || '');
           setVehicleType(draft.vehicleType || 'large');
           setUnloadDuration(draft.unloadDuration || '30');
@@ -7545,13 +7545,13 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     getItemLabel={(c) => {
                       if (usesProjectSiteContacts) {
                         const contactName = String(c?.name || '').trim();
-                        const contactPhone = formatPhoneNumberJP(String(c?.phone || '').trim());
+                        const contactPhone = formatPhoneJP(String(c?.phone || '').trim());
                         return contactPhone
                           ? `${contactName || '—'}（${contactPhone}）`
                           : contactName;
                       }
                       const contactName = String(c?.name || '').trim();
-                      const contactPhone = formatPhoneNumberJP(String(c?.phone_number || '').trim());
+                      const contactPhone = formatPhoneJP(String(c?.phone_number || '').trim());
                       return contactPhone
                         ? `${contactName || '—'}（${contactPhone}）`
                         : contactName;
@@ -7571,7 +7571,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                         usesProjectSiteContacts ? c?.phone || '' : c?.phone_number || '',
                       ).trim();
                       // 候補選択時は現場電話を上書き（自由入力の上書きでOK）
-                      if (selectedPhone) setSitePhone(selectedPhone);
+                      if (selectedPhone) setSitePhone(formatPhoneJP(selectedPhone));
                       setSubmitError('');
                     }}
                     placeholder="現場担当者名を入力（候補から選択可）"
@@ -7607,7 +7607,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   placeholder="例：03-1234-5678"
                   value={sitePhone}
                   onChange={(e) => {
-                    setSitePhone(e.target.value);
+                    setSitePhone(formatPhoneAsYouType(e.target.value));
                     setSubmitError('');
                   }}
                   className={CUSTOMER_FIELD_CLASS}

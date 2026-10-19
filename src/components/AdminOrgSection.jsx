@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as db from '../haishaDb.js';
 import { downloadOrgMembersExportCsv } from '../utils/adminCsvImport.js';
 import { generateInitialMemberPassword } from '../utils/generatePassword.js';
-import { formatPhoneNumberJP } from '../utils/phoneFormat.js';
+import { formatPhoneAsYouType, formatPhoneJP, isSamePhone, phoneDigits } from '../utils/phoneFormat.js';
 import { normalizeSuggestSearchText } from '../utils/normalizeSuggestSearchText.js';
 import {
   agentContractorLinkScopeForRow,
@@ -65,7 +65,9 @@ export function ContractorLinksChecklist({
     if (!q) return list;
     return list.filter((c) => {
       const texts = [c.company_name, c.name, c.furigana, c.manager_name, c.phone_number];
-      return texts.some((t) => normalizeSuggestSearchText(t).includes(q));
+      if (texts.some((t) => normalizeSuggestSearchText(t).includes(q))) return true;
+      const qDigits = phoneDigits(filterText);
+      return qDigits.length >= 4 && phoneDigits(c.phone_number).includes(qDigits);
     });
   }, [contractors, filterText]);
 
@@ -161,12 +163,10 @@ function parseCsvRows(text) {
 
 function buildCsvPreview(rows, orgs) {
   const existingOrgNames = new Set(orgs.map((o) => o.name.trim()));
-  const existingPhones = new Set(
-    orgs
-      .flatMap((o) => o.members || [])
-      .map((m) => (m.phone_number ?? '').trim())
-      .filter(Boolean),
-  );
+  const existingPhones = orgs
+    .flatMap((o) => o.members || [])
+    .map((m) => (m.phone_number ?? '').trim())
+    .filter(Boolean);
 
   const grouped = {};
   for (const row of rows) {
@@ -178,7 +178,14 @@ function buildCsvPreview(rows, orgs) {
         members: [],
       };
     }
-    const phoneConflict = row.phone !== '' && existingPhones.has(row.phone);
+    const phoneConflict =
+      row.phone !== '' &&
+      existingPhones.some((phone) => {
+        if (/[A-Za-z]/.test(row.phone) || /[A-Za-z]/.test(phone)) {
+          return row.phone.toLowerCase() === phone.toLowerCase();
+        }
+        return isSamePhone(row.phone, phone);
+      });
     grouped[key].members.push({ ...row, phoneConflict });
   }
 
@@ -201,7 +208,7 @@ function memberToForm(member, orgName = '', password = '') {
     companyName: member.company_name || orgName || '',
     furigana: member.furigana ?? '',
     managerName: member.manager_name ?? '',
-    phone: member.phone_number ?? '',
+    phone: formatPhoneJP(member.phone_number ?? ''),
     password: password ?? '',
     canImportSchedule: Boolean(member.can_import_schedule),
     canRequestMixDesign: Boolean(member.can_request_mix_design),
@@ -326,11 +333,20 @@ export function AdminOrgSection({ orgType, label }) {
       if (!q) return true;
       if (String(org.name || '').toLowerCase().includes(q)) return true;
       if (String(org.furigana || '').toLowerCase().includes(q)) return true;
-      const directoryText = (phonesByOrgId[String(org.id)] || [])
+      const directoryPhones = phonesByOrgId[String(org.id)] || [];
+      const directoryText = directoryPhones
         .map((phone) => [phone.label, phone.phone, phone.personName, phone.note].join(' '))
         .join(' ')
         .toLowerCase();
       if (directoryText.includes(q)) return true;
+      const qDigits = phoneDigits(searchQuery);
+      if (
+        qDigits.length >= 4 &&
+        (directoryPhones.some((phone) => phoneDigits(phone.phone).includes(qDigits)) ||
+          (org.members || []).some((m) => phoneDigits(m.phone_number).includes(qDigits)))
+      ) {
+        return true;
+      }
       return (org.members || []).some((m) => {
         const text = [m.furigana, m.manager_name, m.phone_number, m.company_name]
           .map((v) => String(v || ''))
@@ -978,7 +994,7 @@ export function AdminOrgSection({ orgType, label }) {
                           >
                             {m.phoneConflict ? '⚠️' : '✅'}{' '}
                             {m.managerName || '—'}
-                            {m.furigana ? `（${m.furigana}）` : ''} {m.phone || '—'}{' '}
+                            {m.furigana ? `（${m.furigana}）` : ''} {m.phone ? formatPhoneJP(m.phone) : '—'}{' '}
                             {m.phoneConflict
                               ? '→ 電話番号重複・スキップ'
                               : group.orgIsNew
@@ -1299,7 +1315,9 @@ export function AdminOrgSection({ orgType, label }) {
                               value={editingMember.phone}
                               onChange={(e) =>
                                 setEditingMember((cur) =>
-                                  cur ? { ...cur, phone: e.target.value } : cur,
+                                  cur
+                                    ? { ...cur, phone: formatPhoneAsYouType(e.target.value) }
+                                    : cur,
                                 )
                               }
                               className={`${inputClass} mt-1 w-full`}
@@ -1496,7 +1514,7 @@ export function AdminOrgSection({ orgType, label }) {
                         ) : null}
                       </span>
                       <span className="min-w-[7rem] text-gray-600">
-                        {member.phone_number ? formatPhoneNumberJP(member.phone_number) : '—'}
+                        {member.phone_number ? formatPhoneJP(member.phone_number) : '—'}
                       </span>
                       <MaskedPasswordDisplay password={credentialsById[String(member.id)] ?? ''} />
                       {isAgentOrg ? (
@@ -1576,7 +1594,7 @@ export function AdminOrgSection({ orgType, label }) {
                           type="tel"
                           value={newMember.phone}
                           onChange={(e) =>
-                            setNewMember((m) => ({ ...m, phone: e.target.value }))
+                            setNewMember((m) => ({ ...m, phone: formatPhoneAsYouType(e.target.value) }))
                           }
                           className={`${inputClass} mt-1 w-full`}
                         />

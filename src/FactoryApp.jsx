@@ -86,7 +86,7 @@ import {
   resolveSiteContactName,
   resolveSitePhone,
 } from './utils/orderContactInfo.js';
-import { formatPhoneNumberJP } from './utils/phoneFormat.js';
+import { formatPhoneAsYouType, formatPhoneJP } from './utils/phoneFormat.js';
 import { MAP_EDITOR_ORDER_SAVED_DOM_EVENT, MAP_EDITOR_ORDER_SAVED_EVENT_KEY } from './mapEditorConstants.js';
 import concreteLinkLogo from './assets/concrete-link-logo.svg';
 import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
@@ -402,7 +402,10 @@ function PhoneOrderRegisterModal({
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
+    setForm((prev) => ({
+      ...prev,
+      [name]: name === 'sitePhone' ? formatPhoneAsYouType(value) : value,
+    }));
   };
 
   const setFormField = (name, value) => {
@@ -1241,8 +1244,8 @@ function buildOrderChangeDiffLines(before, after) {
     },
     {
       label: '電話番号',
-      before: String(b.sitePhone ?? '').trim(),
-      after: String(a.sitePhone ?? '').trim(),
+      before: formatPhoneJP(b.sitePhone),
+      after: formatPhoneJP(a.sitePhone),
     },
   ];
 
@@ -1624,7 +1627,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                       <ul className="space-y-0.5">
                         {siteContacts.map((c, i) => {
                           const tel = formatTelHref(c.phone);
-                          const phoneDisp = formatPhoneNumberJP(c.phone);
+                          const phoneDisp = formatPhoneJP(c.phone);
                           return (
                             <li key={`site-contact-${i}`}>
                               {c.name || '—'}
@@ -1660,10 +1663,10 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                               href={formatTelHref(tradingContactPhone)}
                               className="font-mono text-indigo-700 underline-offset-2 hover:underline"
                             >
-                              {formatPhoneNumberJP(tradingContactPhone)}
+                              {formatPhoneJP(tradingContactPhone)}
                             </a>
                           ) : (
-                            <span className="font-mono">{formatPhoneNumberJP(tradingContactPhone)}</span>
+                            <span className="font-mono">{formatPhoneJP(tradingContactPhone)}</span>
                           )}
                         </>
                       ) : null}
@@ -2103,7 +2106,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
         organizationsById: organizationById,
       });
       const siteContactName = resolveSiteContactName(order);
-      const sitePhoneFormatted = formatPhoneNumberJP(resolveSitePhone(order));
+      const sitePhoneFormatted = formatPhoneJP(resolveSitePhone(order));
       const phone = sitePhoneFormatted;
       const projectId = String(order?.project_id ?? order?.projectId ?? '').trim();
       const linkedProject = projectId ? projectById?.[projectId] : null;
@@ -2140,7 +2143,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
         orderedByLabel,
         orderedByIsProxy,
       } = orderPartyDisplay;
-      const ordererPhoneFormatted = formatPhoneNumberJP(
+      const ordererPhoneFormatted = formatPhoneJP(
         String(orderCustomer?.phone_number ?? '').trim(),
       );
       const ordererDisplayLine =

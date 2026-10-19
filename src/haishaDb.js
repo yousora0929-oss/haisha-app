@@ -25,6 +25,7 @@ import { shouldResetOrderStatusOnFactoryReassign } from './utils/orderFactoryRea
 import { ensureOrderPreferredFactoryForInsert } from './utils/dispatchBulkOrder.js';
 import { attachColumnMapAnnotations } from './utils/repeatOrderMap.js';
 import { resolveProjectTradingCompanyName } from './utils/projectTradingCompany.js';
+import { isSamePhone, phoneDigits } from './utils/phoneFormat.js';
 import {
   buildMixDesignAnchorProjectPayload,
   buildMixDesignChangeEntries,
@@ -5647,12 +5648,10 @@ export async function createOrgStaffIfMissing({
     .eq('organization_id', orgId);
   if (error) throw error;
 
-  const phoneDigits = phoneText.replace(/\D/g, '');
   const existing = (members || []).find((row) => {
     const rowName = String(row?.manager_name ?? '').trim();
     if (rowName && rowName === name) return true;
-    const rowDigits = String(row?.phone_number ?? '').replace(/\D/g, '');
-    return Boolean(phoneDigits && rowDigits && rowDigits === phoneDigits);
+    return isSamePhone(phoneText, row?.phone_number);
   });
   if (existing) return { customer: mapCustomerRow(existing), created: false };
 
@@ -5996,6 +5995,14 @@ export async function syncAgentContractorLinks(agentCustomerId, nextContractorId
   return { inserted: toInsert.length, deleted: toDelete.length };
 }
 
+function contactPhoneKey(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  if (/[A-Za-z]/.test(raw)) return `id:${raw.toLowerCase()}`;
+  const digits = phoneDigits(raw);
+  return digits ? `tel:${digits}` : '';
+}
+
 /**
  * CSVパース結果を一括インポート
  * @param {Array<{orgName, managerName, phone, password}>} rows
@@ -6010,9 +6017,11 @@ export async function bulkImportOrgMembers(rows, orgType, existingOrgs, existing
   const orgNameToId = {};
   for (const o of existingOrgs) orgNameToId[o.name.trim()] = o.id;
 
-  // 既存電話番号のSet
+  // 既存電話番号のSet（数字列。英字IDは原文のまま）
   const existingPhones = new Set(
-    existingMembers.map((m) => (m.phone_number ?? '').trim()).filter(Boolean),
+    existingMembers
+      .map((m) => contactPhoneKey(m.phone_number))
+      .filter(Boolean),
   );
 
   let created = 0;
@@ -6043,7 +6052,8 @@ export async function bulkImportOrgMembers(rows, orgType, existingOrgs, existing
     // 担当者を登録（電話番号重複はスキップ）
     for (const m of members) {
       const phone = (m.phone ?? '').trim();
-      if (phone && existingPhones.has(phone)) {
+      const phoneKey = contactPhoneKey(phone);
+      if (phoneKey && existingPhones.has(phoneKey)) {
         skipped++;
         continue;
       }
@@ -6059,7 +6069,7 @@ export async function bulkImportOrgMembers(rows, orgType, existingOrgs, existing
           login_password: m.password?.trim() ?? null,
         });
       if (error) throw error;
-      if (phone) existingPhones.add(phone);
+      if (phoneKey) existingPhones.add(phoneKey);
       created++;
     }
   }

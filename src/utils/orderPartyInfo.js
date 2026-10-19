@@ -4,7 +4,7 @@ import {
   resolveSiteContactName,
   resolveSitePhone,
 } from './orderContactInfo.js';
-import { formatPhoneNumberJP } from './phoneFormat.js';
+import { formatPhoneJP } from './phoneFormat.js';
 import { buildAgentOrganizationSyncPatch } from './orderAgentOrganization.js';
 
 function lookupById(map, id) {
@@ -238,7 +238,7 @@ export function orderPartyInfo(
     ? resolveSiteContactName(order)
     : resolveOrdererName(order);
   const phoneRaw = resolveSitePhone(order);
-  const phone = formatPhoneNumberJP(phoneRaw);
+  const phone = formatPhoneJP(phoneRaw);
   return {
     contractor: tradingCompany && contractor ? `${contractor} (商社: ${tradingCompany})` : contractor || '—',
     contractorName: contractor || '—',

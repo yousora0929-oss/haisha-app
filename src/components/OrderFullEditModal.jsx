@@ -24,6 +24,7 @@ import {
 } from '../utils/changeRequestItems.js';
 import { CUSTOMER_ORDER_EDIT_KEYS, snapshotOrderFields } from '../utils/orderFieldSnapshot.js';
 import { duplicateProceedBlocked, duplicateWarningLevel } from '../utils/duplicateOrderCheck.js';
+import { formatPhoneAsYouType, formatPhoneJP, isSamePhone } from '../utils/phoneFormat.js';
 import {
   DuplicateOrderConfirmModal,
   DuplicateOrderWarningBanner,
@@ -197,7 +198,13 @@ export function buildChangeRequestPatch(order, patch) {
   }
   setIfChanged('siteName', o.siteName ?? o.projectName, p.siteName);
   setIfChanged('siteAddress', o.siteAddress, p.siteAddress);
-  setIfChanged('sitePhone', o.sitePhone, p.sitePhone);
+  {
+    const beforePhone = o.sitePhone == null ? '' : String(o.sitePhone).trim();
+    const afterPhone = p.sitePhone == null ? '' : String(p.sitePhone).trim();
+    if (beforePhone !== afterPhone && !isSamePhone(beforePhone, afterPhone)) {
+      out.sitePhone = afterPhone;
+    }
+  }
   setIfChanged('contractorName', o.contractorName, p.contractorName);
   if (
     Object.prototype.hasOwnProperty.call(p, 'contractor_customer_id') ||
@@ -278,6 +285,7 @@ export function formatChangeRequestPatchSummary(patch) {
     if (!label || seen.has(label)) continue;
     seen.add(label);
     let display = value;
+    if (key === 'sitePhone') display = formatPhoneJP(value);
     if (key === 'has_test') display = value ? 'あり' : 'なし';
     if (key === 'vehicleType') display = vehicleTypeLabel(value);
     if (key === 'quantityM3') display = `${value}m³`;
@@ -375,7 +383,7 @@ export function buildChangeRequestDiffRows(order, patch) {
   }
   if (patchHasKey(p, 'siteName')) push('現場名', o.siteName ?? o.projectName, p.siteName);
   if (patchHasKey(p, 'siteAddress')) push('現場住所', o.siteAddress, p.siteAddress);
-  if (patchHasKey(p, 'sitePhone')) push('電話番号', o.sitePhone, p.sitePhone);
+  if (patchHasKey(p, 'sitePhone')) push('電話番号', formatPhoneJP(o.sitePhone), formatPhoneJP(p.sitePhone));
   if (patchHasAnyKey(p, ['contractorName', 'contractor_customer_id'])) {
     const after = patchHasKey(p, 'contractorName') ? p.contractorName : '';
     push('業者名', o.contractorName, after);
@@ -581,7 +589,7 @@ export function OrderFullEditModal({
       siteName:
         sanitizeSiteNameValue(source.siteName) || sanitizeSiteNameValue(source.projectName) || '',
       siteAddress: source.siteAddress != null ? String(source.siteAddress) : '',
-      sitePhone: source.sitePhone != null ? String(source.sitePhone) : '',
+      sitePhone: formatPhoneJP(source.sitePhone != null ? String(source.sitePhone) : ''),
       mixText: mixInitial,
       hasTest: Boolean(source.has_test),
     };
@@ -762,9 +770,10 @@ export function OrderFullEditModal({
 
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
+    const nextValue = type === 'checkbox' ? checked : name === 'sitePhone' ? formatPhoneAsYouType(value) : value;
     setEditData((prev) => ({
       ...prev,
-      [name]: type === 'checkbox' ? checked : value,
+      [name]: nextValue,
     }));
   };
   const setEditField = (name, value) => {

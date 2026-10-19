@@ -11,6 +11,7 @@ import {
   resolveOrderTradingCompanyDisplayName,
 } from './orderPartyInfo.js';
 import { combineDeliveryAddress, splitDeliveryAddress } from './deliveryAreas.js';
+import { formatPhoneJP } from './phoneFormat.js';
 
 export const MIX_DESIGN_REGIONS = ['大分市・挟間町', '湯布院・庄内'];
 
@@ -686,7 +687,7 @@ export function prefillMixDesignDraft(
   const contacts = Array.isArray(project?.site_contacts) ? project.site_contacts : [];
   const firstContact = contacts.find((c) => c && (c.name || c.phone)) || null;
   draft.siteManagerName = String(firstContact?.name || order?.siteContactName || order?.site_contact_name || '').trim();
-  draft.siteManagerContact = String(firstContact?.phone || order?.sitePhone || order?.site_phone || '').trim();
+  draft.siteManagerContact = formatPhoneJP(firstContact?.phone || order?.sitePhone || order?.site_phone || '');
   draft.registerNewContractor = true;
   draft.registerNewTrader = true;
   draft.registerSiteManagerAsContact = false;

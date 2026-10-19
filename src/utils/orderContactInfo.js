@@ -1,3 +1,5 @@
+import { formatPhoneJP } from './phoneFormat.js';
+
 /** 現場担当者名（カスタマーがフォーム入力した値）。order_data由来を最優先 */
 export function resolveSiteContactName(order) {
   // siteContactName / site_contact_name は order_data 由来。
@@ -81,7 +83,7 @@ export function resolveOrderLinkedProject(order, projectById = {}) {
 export function formatProjectSiteContactsLabel(project, { formatPhone } = {}) {
   const list = Array.isArray(project?.site_contacts) ? project.site_contacts : [];
   const fmt =
-    typeof formatPhone === 'function' ? formatPhone : (phone) => String(phone || '').trim();
+    typeof formatPhone === 'function' ? formatPhone : (phone) => formatPhoneJP(phone);
   const parts = [];
   for (const c of list) {
     if (!c || typeof c !== 'object') continue;
@@ -127,7 +129,7 @@ export function formatTradingAgentContactLabel(order, customerById, { formatPhon
   const manager = String(customer.manager_name || '').trim();
   const phoneRaw = String(customer.phone_number || customer.phone || '').trim();
   const fmt =
-    typeof formatPhone === 'function' ? formatPhone : (phone) => String(phone || '').trim();
+    typeof formatPhone === 'function' ? formatPhone : (phone) => formatPhoneJP(phone);
   const phone = fmt(phoneRaw);
   if (company && manager && phone) return `${company} ${manager}（${phone}）`;
   if (company && manager) return `${company} ${manager}`;

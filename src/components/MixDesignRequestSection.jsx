@@ -1,4 +1,5 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
+import { formatPhoneJP } from '../utils/phoneFormat.js';
 import * as db from '../haishaDb.js';
 import { MixDesignRequestPrint } from './MixDesignRequestPrint.jsx';
 import {
@@ -296,7 +297,7 @@ export const MixDesignRequestSection = forwardRef(function MixDesignRequestSecti
   );
 
   const printHeader = useMemo(() => {
-    const siteContactParts = [headerContext?.siteContactName, headerContext?.sitePhone]
+    const siteContactParts = [headerContext?.siteContactName, formatPhoneJP(headerContext?.sitePhone)]
       .map((v) => String(v || '').trim())
       .filter(Boolean);
     return {

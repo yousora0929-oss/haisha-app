@@ -72,7 +72,7 @@ import {
 } from './utils/salesStaff.js';
 import { customerSuggestTexts, organizationSuggestTexts } from './utils/masterSuggest.js';
 import { dedupeCustomersByCompany } from './utils/dedupeCustomersByCompany.js';
-import { formatPhoneNumberJP } from './utils/phoneFormat.js';
+import { formatPhoneAsYouType, formatPhoneJP } from './utils/phoneFormat.js';
 import { fetchTownLocationsForMunicipality, resolveDeliveryPrefecture } from './utils/heartrailsGeo.js';
 import { SCHEDULE_BLOCK_IDS, normalizeDayBlockSchedule, todayLocalISODate } from './haishaConstants.js';
 import { resolveOrderSiteDisplayName, sanitizeSiteNameValue } from './utils/siteNameDisplay.js';
@@ -592,7 +592,7 @@ function ProjectForm({
     () => String(initial?.trading_contact_name ?? '').trim(),
   );
   const [tradingContactPhone, setTradingContactPhone] = useState(
-    () => String(initial?.trading_contact_phone ?? '').trim(),
+    () => formatPhoneJP(initial?.trading_contact_phone ?? ''),
   );
   const [tradingContactCustomerId, setTradingContactCustomerId] = useState(
     () => String(initial?.trading_contact_customer_id ?? '').trim(),
@@ -600,7 +600,7 @@ function ProjectForm({
   const [siteContacts, setSiteContacts] = useState(() => {
     const list = Array.isArray(initial?.site_contacts) ? initial.site_contacts : [];
     return list.length
-      ? list.map((c) => ({ name: c?.name || '', phone: c?.phone || '', registerAsStaff: false }))
+      ? list.map((c) => ({ name: c?.name || '', phone: formatPhoneJP(c?.phone || ''), registerAsStaff: false }))
       : [{ name: '', phone: '', registerAsStaff: false }];
   });
   const [siteContactCandidates, setSiteContactCandidates] = useState([]);
@@ -688,7 +688,7 @@ function ProjectForm({
     setTradingCompanyOrganizationId(initial?.trading_company_organization_id ?? '');
     setRegisterNewTradingCompany(true);
     setTradingContactName(String(initial?.trading_contact_name ?? '').trim());
-    setTradingContactPhone(String(initial?.trading_contact_phone ?? '').trim());
+    setTradingContactPhone(formatPhoneJP(initial?.trading_contact_phone ?? ''));
     setTradingContactCustomerId(String(initial?.trading_contact_customer_id ?? '').trim());
     {
       const list = Array.isArray(initial?.site_contacts) ? initial.site_contacts : [];
@@ -696,7 +696,7 @@ function ProjectForm({
         list.length
           ? list.map((c) => ({
               name: String(c?.name || ''),
-              phone: String(c?.phone || ''),
+              phone: formatPhoneJP(c?.phone || ''),
               registerAsStaff: false,
             }))
           : [{ name: '', phone: '', registerAsStaff: false }],
@@ -916,7 +916,7 @@ function ProjectForm({
 
   const formatTradingContactLabel = useCallback((member) => {
     const name = String(member?.manager_name || '').trim() || '（名前未設定）';
-    const phone = String(member?.phone_number || '').trim();
+    const phone = formatPhoneJP(member?.phone_number || '');
     return phone ? `${name}（${phone}）` : name;
   }, []);
 
@@ -988,7 +988,7 @@ function ProjectForm({
       const hit = tradingContactCandidates.find((c) => String(c.id) === id);
       if (!hit) return;
       setTradingContactName(String(hit.manager_name || '').trim());
-      setTradingContactPhone(String(hit.phone_number || '').trim());
+      setTradingContactPhone(formatPhoneJP(hit.phone_number || ''));
     },
     [tradingContactCandidates],
   );
@@ -1009,7 +1009,7 @@ function ProjectForm({
               ...row,
               name: contactName,
               // 候補選択時は電話を上書き（DispatchApp の sitePhone と同様）
-              ...(contactPhone ? { phone: contactPhone } : {}),
+              ...(contactPhone ? { phone: formatPhoneJP(contactPhone) } : {}),
             }
           : row,
       ),
@@ -1419,7 +1419,7 @@ function ProjectForm({
                 id="proj-trading-contact-phone"
                 type="tel"
                 value={tradingContactPhone}
-                onChange={(e) => setTradingContactPhone(e.target.value)}
+                onChange={(e) => setTradingContactPhone(formatPhoneAsYouType(e.target.value))}
                 className={fieldClass}
                 placeholder="例: 097-xxx-xxxx"
                 disabled={!tradingCompany.trim()}
@@ -1448,12 +1448,12 @@ function ProjectForm({
                 getItemKey={(c) => String(c?.id || `${c?.name}::${c?.phone_number}`)}
                 getItemLabel={(c) => {
                   const contactName = String(c?.name || '').trim();
-                  const contactPhone = formatPhoneNumberJP(String(c?.phone_number || '').trim());
+                  const contactPhone = formatPhoneJP(String(c?.phone_number || '').trim());
                   return contactPhone
                     ? `${contactName || '—'}（${contactPhone}）`
                     : contactName;
                 }}
-                getSearchTexts={(c) => [c?.name || '', c?.phone_number || '']}
+                getSearchTexts={(c) => [c?.name || '', c?.phone_number || '', formatPhoneJP(c?.phone_number || '')]}
                 placeholder="担当者名（候補から選択可）"
                 emptyHint={
                   !String(customerId || '').trim()
@@ -1465,7 +1465,7 @@ function ProjectForm({
               <input
                 type="tel"
                 value={row.phone}
-                onChange={(e) => updateSiteContact(index, 'phone', e.target.value)}
+                onChange={(e) => updateSiteContact(index, 'phone', formatPhoneAsYouType(e.target.value))}
                 className="min-h-[44px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
                 placeholder="電話番号"
                 aria-label={`現場担当者の電話番号 ${index + 1}`}
@@ -1591,7 +1591,7 @@ function ProjectForm({
           {staffOptions.map((m) => (
             <option key={m.id} value={m.id}>
               {m.name}
-              {m.phone ? `（${m.phone}）` : ''}
+              {m.phone ? `（${formatPhoneJP(m.phone)}）` : ''}
             </option>
           ))}
         </select>
@@ -2288,7 +2288,7 @@ function ProjectsSection({ factories, factoryNameById }) {
                 key: 'trading_contact_phone',
                 label: '商社電話',
                 editable: true,
-                getValue: (r) => String(r.trading_contact_phone ?? ''),
+                getValue: (r) => formatPhoneJP(r.trading_contact_phone ?? ''),
                 applyValue: (r, v) => ({
                   ...r,
                   trading_contact_phone: v ? normalizeCsvPhoneNumber(v) : null,
@@ -2885,7 +2885,7 @@ function AdminSettingsSection() {
     try {
       const settings = await db.fetchAdminSettings();
       setAdminName(settings.admin_name || '');
-      setPhoneNumber(settings.phone_number || '');
+      setPhoneNumber(formatPhoneJP(settings.phone_number || ''));
       setDeliveryAreasText(formatDeliveryAreasTextInput(settings.allowed_delivery_areas));
       setSpotThresholdVolume(String(parseSpotThresholdVolume(settings.spot_threshold_volume)));
       setSalesStaff(normalizeSalesStaffList(settings.sales_staff));
@@ -2987,7 +2987,7 @@ function AdminSettingsSection() {
           </div>
           <div>
             <label className="text-xs font-bold text-slate-600" htmlFor="admin-setting-phone">管理者の電話番号</label>
-            <input id="admin-setting-phone" type="tel" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} className={fieldClass} placeholder="例: 097-123-4567" />
+            <input id="admin-setting-phone" type="tel" value={phoneNumber} onChange={(e) => setPhoneNumber(formatPhoneAsYouType(e.target.value))} className={fieldClass} placeholder="例: 097-123-4567" />
           </div>
           <div className="sm:col-span-2">
             <label className="text-xs font-bold text-slate-600" htmlFor="admin-setting-delivery-areas">
@@ -3069,7 +3069,7 @@ function AdminSettingsSection() {
                     <div className="min-w-0">
                       <p className="text-sm font-black text-slate-900">{m.name}</p>
                       <p className="font-mono text-[11px] text-slate-500">ID: {m.id}</p>
-                      {m.phone ? <p className="text-xs text-slate-600">{m.phone}</p> : null}
+                      {m.phone ? <p className="text-xs text-slate-600">{formatPhoneJP(m.phone)}</p> : null}
                     </div>
                     <button
                       type="button"
@@ -3100,7 +3100,7 @@ function AdminSettingsSection() {
                   id="admin-new-staff-phone"
                   type="tel"
                   value={newStaffPhone}
-                  onChange={(e) => setNewStaffPhone(e.target.value)}
+                  onChange={(e) => setNewStaffPhone(formatPhoneAsYouType(e.target.value))}
                   className={fieldClass}
                   placeholder="将来SMS用"
                 />
@@ -3206,7 +3206,7 @@ function AdminOrderDetailModal({
     setContractorName(parties.contractorName || '');
     setTraderName(parties.traderName || '');
     setSiteAddress(source.siteAddress != null ? String(source.siteAddress) : '');
-    setSitePhone(source.sitePhone != null ? String(source.sitePhone) : '');
+    setSitePhone(formatPhoneJP(source.sitePhone != null ? String(source.sitePhone) : ''));
     setManagerName(source.manager_name != null ? String(source.manager_name) : '');
     setDeliveryLat(source.delivery_lat != null ? String(source.delivery_lat) : '');
     setDeliveryLng(source.delivery_lng != null ? String(source.delivery_lng) : '');
@@ -3609,7 +3609,7 @@ function AdminOrderDetailModal({
                 type="text"
                 inputMode="tel"
                 value={sitePhone}
-                onChange={(e) => setSitePhone(e.target.value)}
+                onChange={(e) => setSitePhone(formatPhoneAsYouType(e.target.value))}
                 className={inputClass}
               />
             </label>

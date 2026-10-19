@@ -9,12 +9,13 @@ import {
   phoneDirectoryErrorMessage,
   unwrapCreatedOrganization,
 } from '../utils/phoneDirectory.js';
+import { formatPhoneAsYouType, formatPhoneJP } from '../utils/phoneFormat.js';
 
 const fieldClass =
   'mt-1 min-h-[44px] w-full rounded-xl border-2 border-slate-300 bg-white px-3 text-base font-semibold text-slate-900 outline-none focus:border-sky-500';
 
 function emptyPhoneForm(phone = '') {
-  return { phone, label: '代表', personName: '', note: '' };
+  return { phone: formatPhoneAsYouType(phone), label: '代表', personName: '', note: '' };
 }
 
 function PhoneFormFields({ form, onChange, keypad }) {
@@ -26,7 +27,7 @@ function PhoneFormFields({ form, onChange, keypad }) {
           type="text"
           inputMode={keypad ? 'numeric' : 'text'}
           value={form.phone}
-          onChange={(event) => onChange({ ...form, phone: event.target.value })}
+          onChange={(event) => onChange({ ...form, phone: formatPhoneAsYouType(event.target.value) })}
           className={fieldClass}
           autoComplete="off"
         />
@@ -190,7 +191,7 @@ export function PhoneDirectory({ onClose }) {
     setFormMode('edit');
     setEditingId(String(row.contact_phone_id || ''));
     setForm({
-      phone: String(row.phone_display || ''),
+      phone: formatPhoneJP(row.phone_display || ''),
       label: PHONE_DIRECTORY_LABELS.includes(row.label) ? row.label : 'その他',
       personName: String(row.person_name || ''),
       note: String(row.note || ''),
@@ -287,7 +288,7 @@ export function PhoneDirectory({ onClose }) {
   };
 
   const removePhone = async (row) => {
-    const label = String(row.phone_display || '').trim() || 'この番号';
+    const label = formatPhoneJP(row.phone_display || '') || 'この番号';
     if (!window.confirm(`${label} を削除しますか？`)) return;
     setError('');
     try {
@@ -388,7 +389,7 @@ export function PhoneDirectory({ onClose }) {
                             <>
                               <p className="text-sm font-black text-slate-900">
                                 <span className="mr-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs">アカウント</span>
-                                <span className="font-mono">{row.phone_display || ''}</span>
+                                <span className="font-mono">{formatPhoneJP(row.phone_display || '')}</span>
                                 {row.person_name ? <span className="ml-2">{row.person_name}</span> : null}
                               </p>
                             </>
@@ -396,7 +397,7 @@ export function PhoneDirectory({ onClose }) {
                             <>
                               <p className="text-sm font-black text-slate-900">
                                 {row.label ? <span className="mr-2">{row.label}</span> : null}
-                                <span className="font-mono">{row.phone_display || ''}</span>
+                                <span className="font-mono">{formatPhoneJP(row.phone_display || '')}</span>
                                 {row.person_name ? <span className="ml-2 font-bold">{row.person_name}</span> : null}
                               </p>
                               <p className="mt-1 text-xs font-bold text-slate-500">

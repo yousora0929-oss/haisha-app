@@ -1,4 +1,5 @@
 /** 管理者向け order_audit_logs の表示用ヘルパー（Admin のみ） */
+import { formatPhoneJP } from './phoneFormat.js';
 
 const ORDER_STATUS_LABELS = {
   pending: '配車待ち',
@@ -258,6 +259,9 @@ export function formatAuditChangeValue(value, field = '', opts = {}) {
   }
 
   const s = String(value).trim();
+  if (/(^|\.)(sitePhone|phone|phone_number|trading_contact_phone)$/.test(field)) {
+    return formatPhoneJP(s) || s;
+  }
   if (isIsoDateTimeString(s)) {
     return formatAuditOccurredAtJst(s);
   }

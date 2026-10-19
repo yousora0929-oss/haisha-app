@@ -6,6 +6,7 @@ import {
   formatPhoneDirectoryDate,
   phoneDirectoryErrorMessage,
 } from '../utils/phoneDirectory.js';
+import { formatPhoneAsYouType, formatPhoneJP } from '../utils/phoneFormat.js';
 
 const fieldClass =
   'mt-1 min-h-[40px] w-full rounded-lg border border-slate-300 px-2 text-sm font-bold text-slate-900';
@@ -30,7 +31,7 @@ export function OrganizationContactPhones({ organizationId, phones, factoryNameB
   const startEdit = (phone) => {
     setEditingId(phone.id);
     setForm({
-      phone: phone.phone,
+      phone: formatPhoneJP(phone.phone),
       label: PHONE_DIRECTORY_LABELS.includes(phone.label) ? phone.label : 'その他',
       personName: phone.personName,
       note: phone.note,
@@ -76,7 +77,7 @@ export function OrganizationContactPhones({ organizationId, phones, factoryNameB
   };
 
   const remove = async (phone) => {
-    if (!window.confirm(`${phone.phone || 'この番号'} を削除しますか？`)) return;
+    if (!window.confirm(`${formatPhoneJP(phone.phone) || 'この番号'} を削除しますか？`)) return;
     setError('');
     try {
       await db.deleteContactPhone(phone.id);
@@ -110,7 +111,7 @@ export function OrganizationContactPhones({ organizationId, phones, factoryNameB
             <li key={phone.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
               <p className="font-black text-slate-900">
                 {phone.label ? <span className="mr-2">{phone.label}</span> : null}
-                <span className="font-mono">{phone.phone}</span>
+                <span className="font-mono">{formatPhoneJP(phone.phone)}</span>
                 {phone.personName ? <span className="ml-2 font-bold">{phone.personName}</span> : null}
               </p>
               {phone.note ? <p className="mt-1 text-xs font-bold text-slate-600">メモ：{phone.note}</p> : null}
@@ -151,7 +152,9 @@ export function OrganizationContactPhones({ organizationId, phones, factoryNameB
             <input
               type="text"
               value={form.phone}
-              onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, phone: formatPhoneAsYouType(event.target.value) }))
+              }
               className={fieldClass}
             />
           </label>
