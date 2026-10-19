@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import * as db from '../haishaDb.js';
+import { formatPhoneAsYouType } from '../utils/phoneFormat.js';
+import { phoneDirectoryErrorMessage, unwrapCreatedOrganization } from '../utils/phoneDirectory.js';
 
 function formatJstDate(value) {
   if (!value) return '';
@@ -47,6 +49,90 @@ export function filterOrganizationCandidates(organizations, query, blacklistById
 
 const textButtonClass = 'h-8 shrink-0 px-1 text-xs font-bold hover:underline disabled:opacity-50';
 
+export function isDuplicatePhoneError(err) {
+  const msg = [err?.message, err?.details, err?.hint].map((value) => String(value || '')).join('\n');
+  return msg.includes('duplicate phone');
+}
+
+/**
+ * 新規作成 → ブラックリスト追加 → 電話番号、の順。
+ * 会社作成後にブラックリストが失敗しても会社は消さない。
+ */
+export async function submitBlacklistAdd({
+  selection,
+  reason = '',
+  phone = '',
+  createdBy = '',
+  blacklistById = {},
+  createOrganization,
+  addBlacklist,
+  registerPhone,
+} = {}) {
+  const result = {
+    status: 'ok',
+    organizationId: '',
+    notice: '',
+    error: '',
+    phoneWarning: '',
+    createdCompany: false,
+  };
+  const listed = (organizationId) => Boolean(blacklistById[String(organizationId || '')]);
+  let organizationId = String(selection?.id || '');
+  let createdCompany = false;
+
+  if (selection?.isNew) {
+    const created = unwrapCreatedOrganization(
+      await createOrganization({ name: selection.name, type: selection.type || 'contractor' }),
+    );
+    if (!created.organizationId) {
+      result.status = 'failed';
+      result.error = '会社を作成できませんでした';
+      return result;
+    }
+    organizationId = created.organizationId;
+    createdCompany = created.created === true;
+    result.organizationId = organizationId;
+    result.createdCompany = createdCompany;
+    if (!created.created) {
+      result.notice = `既存の『${selection.name}』に登録します`;
+      if (listed(organizationId)) {
+        result.status = 'stopped';
+        result.error = '登録済みです';
+        return result;
+      }
+    }
+  } else {
+    result.organizationId = organizationId;
+    if (!organizationId || selection?.listed || listed(organizationId)) {
+      result.status = 'stopped';
+      result.error = '登録済みです';
+      return result;
+    }
+  }
+
+  try {
+    await addBlacklist({ organizationId, reason, createdBy });
+  } catch (err) {
+    result.status = 'failed';
+    result.error = createdCompany
+      ? '会社は作成しましたが、ブラックリスト登録に失敗しました'
+      : String(err?.message || '').trim() || 'ブラックリストに追加できませんでした';
+    return result;
+  }
+
+  const trimmedPhone = String(phone || '').trim();
+  if (trimmedPhone) {
+    try {
+      await registerPhone({ organizationId, phone: trimmedPhone, label: '代表' });
+    } catch (err) {
+      if (!isDuplicatePhoneError(err)) {
+        result.phoneWarning = `電話番号は登録できませんでした：${phoneDirectoryErrorMessage(err)}`;
+      }
+    }
+  }
+  return result;
+}
+
 export function AdminBlacklistPanel({
   adminName = '',
   blacklistById = {},
@@ -66,8 +152,12 @@ export function AdminBlacklistPanel({
   const [addQuery, setAddQuery] = useState('');
   const [selected, setSelected] = useState(null);
   const [addReason, setAddReason] = useState('');
+  const [addPhone, setAddPhone] = useState('');
   const [addError, setAddError] = useState('');
+  const [addNotice, setAddNotice] = useState('');
+  const [addPhoneWarning, setAddPhoneWarning] = useState('');
   const [adding, setAdding] = useState(false);
+  const [directoryVersion, setDirectoryVersion] = useState(0);
 
   useEffect(() => {
     if (Array.isArray(organizations)) {
@@ -88,7 +178,7 @@ export function AdminBlacklistPanel({
     return () => {
       cancelled = true;
     };
-  }, [organizations]);
+  }, [organizations, directoryVersion]);
 
   const rows = useMemo(() => {
     const byId = new Map((directory || []).map((org) => [String(org.id), org]));
@@ -117,7 +207,10 @@ export function AdminBlacklistPanel({
     setAddQuery('');
     setSelected(null);
     setAddReason('');
+    setAddPhone('');
     setAddError('');
+    setAddNotice('');
+    setAddPhoneWarning('');
     setAddOpen(true);
   };
 
@@ -157,19 +250,39 @@ export function AdminBlacklistPanel({
     }
   };
 
+  const reloadLists = async () => {
+    setDirectoryVersion((current) => current + 1);
+    await onChanged?.();
+  };
+
   const add = async () => {
-    if (!selected?.id || selected.listed) return;
+    if (!selected || selected.listed) return;
+    if (!selected.isNew && !selected.id) return;
     setAdding(true);
     setAddError('');
+    setAddNotice('');
+    setAddPhoneWarning('');
     try {
-      await db.addOrganizationBlacklist({
-        organizationId: selected.id,
+      const result = await submitBlacklistAdd({
+        selection: selected,
         reason: addReason,
+        phone: addPhone,
         createdBy: adminName,
+        blacklistById,
+        createOrganization: (input) => db.createOrganizationForPhone(input),
+        addBlacklist: (input) => db.addOrganizationBlacklist(input),
+        registerPhone: (input) => db.registerContactPhone(input),
       });
-      setAddOpen(false);
-      setOpen(true);
-      await onChanged?.();
+      if (result.notice) setAddNotice(result.notice);
+      if (result.phoneWarning) setAddPhoneWarning(result.phoneWarning);
+      if (result.error) setAddError(result.error);
+      if (result.status === 'ok' || result.createdCompany) {
+        setOpen(true);
+        await reloadLists();
+      }
+      if (result.status === 'ok' && !result.notice && !result.phoneWarning) {
+        setAddOpen(false);
+      }
     } catch (err) {
       console.warn('[AdminBlacklistPanel] insert failed', err);
       setAddError(err?.message || 'ブラックリストに追加できませんでした');
@@ -309,7 +422,9 @@ export function AdminBlacklistPanel({
                 閉じる
               </button>
             </div>
+            {addNotice ? <p className="mt-2 text-xs font-bold text-amber-800">{addNotice}</p> : null}
             {addError ? <p className="mt-2 text-xs font-bold text-red-700">{addError}</p> : null}
+            {addPhoneWarning ? <p className="mt-2 text-xs font-bold text-red-700">{addPhoneWarning}</p> : null}
             <label className="mt-3 block text-xs font-bold text-slate-600">
               社名
               <input
@@ -318,6 +433,9 @@ export function AdminBlacklistPanel({
                 onChange={(event) => {
                   setSelected(null);
                   setAddQuery(event.target.value);
+                  setAddNotice('');
+                  setAddError('');
+                  setAddPhoneWarning('');
                 }}
                 className="mt-1 h-8 w-full rounded-lg border border-slate-300 px-2 text-sm font-bold text-slate-900"
                 placeholder="社名の一部"
@@ -347,18 +465,66 @@ export function AdminBlacklistPanel({
                     </li>
                   ))
                 )}
+                <li className="border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSelected({ isNew: true, name: addQuery.trim(), type: 'contractor' })
+                    }
+                    className="flex h-8 w-full items-center px-2 text-left text-xs font-bold text-indigo-700"
+                  >
+                    『{addQuery.trim()}』を新しい会社として登録
+                  </button>
+                </li>
               </ul>
             ) : null}
+            {selected?.isNew ? (
+              <div className="mt-3">
+                <p className="text-xs font-bold text-slate-600">種別</p>
+                <div className="mt-1 flex gap-2">
+                  {[
+                    ['contractor', '業者'],
+                    ['agent', '商社'],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setSelected((current) => (current ? { ...current, type: value } : current))}
+                      className={
+                        'h-8 rounded border px-2 text-xs font-bold ' +
+                        (selected.type === value
+                          ? 'border-indigo-600 text-indigo-800'
+                          : 'border-slate-300 text-slate-600')
+                      }
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             {selected ? (
-              <label className="mt-3 block text-xs font-bold text-slate-600">
-                理由（任意）
-                <textarea
-                  value={addReason}
-                  onChange={(event) => setAddReason(event.target.value)}
-                  rows={3}
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1 text-sm font-bold text-slate-900"
-                />
-              </label>
+              <>
+                <label className="mt-3 block text-xs font-bold text-slate-600">
+                  理由（任意）
+                  <textarea
+                    value={addReason}
+                    onChange={(event) => setAddReason(event.target.value)}
+                    rows={3}
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1 text-sm font-bold text-slate-900"
+                  />
+                </label>
+                <label className="mt-3 block text-xs font-bold text-slate-600">
+                  電話番号（任意）
+                  <input
+                    type="tel"
+                    value={addPhone}
+                    onChange={(event) => setAddPhone(formatPhoneAsYouType(event.target.value))}
+                    className="mt-1 h-8 w-full rounded-lg border border-slate-300 px-2 text-sm font-bold text-slate-900"
+                    placeholder="097-000-0000"
+                  />
+                </label>
+              </>
             ) : null}
             <div className="mt-3 flex justify-end gap-2">
               <button type="button" onClick={closeAdd} className={textButtonClass + ' text-slate-600'}>
@@ -366,7 +532,7 @@ export function AdminBlacklistPanel({
               </button>
               <button
                 type="button"
-                disabled={!selected || selected.listed || adding}
+                disabled={!selected || selected.listed || adding || (!selected.isNew && !selected.id)}
                 onClick={() => void add()}
                 className={textButtonClass + ' text-indigo-700'}
               >

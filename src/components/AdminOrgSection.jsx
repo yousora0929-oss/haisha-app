@@ -482,22 +482,6 @@ export function AdminOrgSection({ orgType, label, adminName = '' }) {
     return undefined;
   }, [focusOrgId, filteredOrgs]);
 
-  const reloadBlacklist = useCallback(async () => {
-    if (orgType !== 'agent' && orgType !== 'contractor') return;
-    try {
-      const rows = await db.fetchOrganizationBlacklist();
-      setBlacklistById(
-        Object.fromEntries(
-          (rows || [])
-            .filter((row) => row?.organization_id)
-            .map((row) => [String(row.organization_id), row]),
-        ),
-      );
-    } catch (err) {
-      console.warn('[AdminOrgSection] blacklist reload failed', err);
-    }
-  }, [orgType]);
-
   const reloadContactPhones = useCallback(async () => {
     if (orgType !== 'agent' && orgType !== 'contractor') return;
     try {
@@ -1160,7 +1144,7 @@ export function AdminOrgSection({ orgType, label, adminName = '' }) {
         <AdminBlacklistPanel
           adminName={adminName}
           blacklistById={blacklistById}
-          onChanged={reloadBlacklist}
+          onChanged={loadOrgs}
           onFocusOrganization={focusOrganization}
         />
       ) : null}
