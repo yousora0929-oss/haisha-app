@@ -5270,9 +5270,13 @@ export function AdminApp() {
         {tab === 'adminSettings' ? <AdminSettingsSection /> : null}
         {tab === 'projects' ? <ProjectsSection factories={factories} factoryNameById={factoryNameById} /> : null}
         {tab === 'scheduleImport' ? <AdminScheduleImportSection factories={factories} /> : null}
-        {tab === 'agents' ? <AdminOrgSection orgType="agent" label="商社" /> : null}
+        {tab === 'agents' ? (
+          <AdminOrgSection orgType="agent" label="商社" adminName={adminSettings.admin_name} />
+        ) : null}
         {tab === 'cooperatives' ? <AdminOrgSection orgType="cooperative" label="組合員" /> : null}
-        {tab === 'customers' ? <AdminOrgSection orgType="contractor" label="業者" /> : null}
+        {tab === 'customers' ? (
+          <AdminOrgSection orgType="contractor" label="業者" adminName={adminSettings.admin_name} />
+        ) : null}
         {tab === 'charter' ? <AdminCharterSection /> : null}
         {tab === 'inquiries' ? <CustomerInquirySection /> : null}
         {tab === 'settings' ? <HolidaysAndSettingsSection /> : null}

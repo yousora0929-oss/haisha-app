@@ -5453,6 +5453,48 @@ export async function fetchAdminContactPhones() {
   return data || [];
 }
 
+/** 管理者のみ。工場・組合からは select しない。 */
+export async function fetchOrganizationBlacklist() {
+  const data = await fetchAllRowsPaged(() =>
+    supabase
+      .from('organization_blacklist')
+      .select('organization_id, reason, created_at, created_by, updated_at')
+      .order('organization_id', { ascending: true }),
+  );
+  return data || [];
+}
+
+export async function addOrganizationBlacklist({ organizationId, reason = '', createdBy = '' } = {}) {
+  const id = String(organizationId || '').trim();
+  if (!id) throw new Error('組織IDが必要です');
+  const { error } = await supabase.from('organization_blacklist').insert({
+    organization_id: id,
+    reason: String(reason ?? '').trim() || null,
+    created_by: String(createdBy || '').trim() || '管理者',
+  });
+  if (error) throw error;
+}
+
+export async function updateOrganizationBlacklist({ organizationId, reason = '' } = {}) {
+  const id = String(organizationId || '').trim();
+  if (!id) throw new Error('組織IDが必要です');
+  const { error } = await supabase
+    .from('organization_blacklist')
+    .update({
+      reason: String(reason ?? '').trim() || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('organization_id', id);
+  if (error) throw error;
+}
+
+export async function removeOrganizationBlacklist(organizationId) {
+  const id = String(organizationId || '').trim();
+  if (!id) throw new Error('組織IDが必要です');
+  const { error } = await supabase.from('organization_blacklist').delete().eq('organization_id', id);
+  if (error) throw error;
+}
+
 export async function searchPhoneDirectory(query, limit = 30) {
   const { data, error } = await supabase.rpc('search_phone_directory', {
     p_query: String(query ?? ''),
@@ -6209,6 +6251,8 @@ export async function searchContractorsForHistory(query, limit = 20) {
       customer_id: row?.customer_id != null ? String(row.customer_id) : '',
       company_name: String(row?.company_name ?? '').trim(),
       organization_id: row?.organization_id != null ? String(row.organization_id) : '',
+      is_blacklisted: row?.is_blacklisted === true || row?.is_blacklisted === 't',
+      is_counter_cash: row?.is_counter_cash === true || row?.is_counter_cash === 't',
     }))
     .filter((row) => row.customer_id && row.company_name);
 }

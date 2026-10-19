@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import * as db from '../haishaDb.js';
 import { ContractorTraderHistory } from './ContractorTraderHistory.jsx';
+import { CompanyBlacklistNote, CompanyStatusBadges, readCompanyFlag } from './CompanyStatusBadges.jsx';
 
 const DAY_OPTIONS = [90, 180, 365];
 
@@ -124,9 +125,10 @@ export function ContractorTraderSearch({ onClose }) {
                     setSelected(row);
                     setQuery(row.company_name);
                   }}
-                  className="min-h-[44px] w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm font-black text-slate-900 hover:border-sky-400 hover:bg-sky-50"
+                  className="flex min-h-[44px] w-full flex-wrap items-center gap-2 rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm font-black text-slate-900 hover:border-sky-400 hover:bg-sky-50"
                 >
-                  {row.company_name}
+                  <span>{row.company_name}</span>
+                  <CompanyStatusBadges isBlacklisted={row.is_blacklisted} isCounterCash={row.is_counter_cash} />
                 </button>
               </li>
             ))}
@@ -134,7 +136,31 @@ export function ContractorTraderSearch({ onClose }) {
         ) : null}
         {selected ? (
           <div className="space-y-3">
-            <p className="text-sm font-black text-slate-900">選択中：{selected.company_name}</p>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-black text-slate-900">選択中：{selected.company_name}</p>
+                <CompanyStatusBadges
+                  isBlacklisted={
+                    history?.contractor
+                      ? readCompanyFlag(history.contractor.is_blacklisted)
+                      : selected.is_blacklisted
+                  }
+                  isCounterCash={
+                    history?.contractor
+                      ? readCompanyFlag(history.contractor.is_counter_cash)
+                      : selected.is_counter_cash
+                  }
+                />
+              </div>
+              <CompanyBlacklistNote
+                isBlacklisted={
+                  history?.contractor
+                    ? history.contractor.is_blacklisted
+                    : selected.is_blacklisted
+                }
+                className="mt-1"
+              />
+            </div>
             <div className="flex flex-wrap gap-2" role="group" aria-label="集計期間">
               {DAY_OPTIONS.map((option) => (
                 <button

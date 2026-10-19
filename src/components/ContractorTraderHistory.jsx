@@ -1,5 +1,6 @@
 import React from 'react';
 import { sortTradingCompanies } from '../utils/contractorHistoryDisplay.js';
+import { CompanyStatusBadges } from './CompanyStatusBadges.jsx';
 
 const NOTE = '商社実績は請求先の業者で集計しています（下請請求の物件は下請側に表示）';
 
@@ -43,7 +44,10 @@ function HistorySection({ title, children }) {
 function TradingRow({ row }) {
   return (
     <li className="min-h-[44px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-      <p className="font-black text-slate-900">{traderListName(row)}</p>
+      <p className="flex flex-wrap items-center gap-2 font-black text-slate-900">
+        <span>{traderListName(row)}</span>
+        <CompanyStatusBadges isBlacklisted={row?.is_blacklisted} />
+      </p>
       <p className="mt-0.5 text-xs font-semibold text-slate-600">
         物件 {Number(row?.project_count) || 0} ・ 注文 {Number(row?.order_count) || 0} ・ 最終利用{' '}
         {formatYmd(row?.last_used_at)}

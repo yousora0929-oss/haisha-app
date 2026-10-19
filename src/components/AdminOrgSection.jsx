@@ -10,6 +10,8 @@ import {
   isCompanyScopeContractorRow,
 } from '../utils/agentContractorLinks.js';
 import { OrganizationContactPhones } from './OrganizationContactPhones.jsx';
+import { CompanyStatusBadges } from './CompanyStatusBadges.jsx';
+import { OrganizationBlacklistControls } from './OrganizationBlacklistControls.jsx';
 import { mapAdminContactPhone } from '../utils/phoneDirectory.js';
 
 const emptyMember = () => ({
@@ -275,7 +277,7 @@ function formatError(err, fallback = '処理に失敗しました') {
 /**
  * 商社 / 組合 / 業者の組織・担当者管理（管理画面タブ共通）
  */
-export function AdminOrgSection({ orgType, label }) {
+export function AdminOrgSection({ orgType, label, adminName = '' }) {
   const [orgs, setOrgs] = useState([]);
   const [expandedIds, setExpandedIds] = useState(() => new Set());
   const [editingOrg, setEditingOrg] = useState(null);
@@ -303,6 +305,8 @@ export function AdminOrgSection({ orgType, label }) {
   const [factoryNameById, setFactoryNameById] = useState({});
   const [createdByFactoryId, setCreatedByFactoryId] = useState({});
   const [factoryRegisteredOnly, setFactoryRegisteredOnly] = useState(false);
+  const [blacklistById, setBlacklistById] = useState({});
+  const [blacklistOnly, setBlacklistOnly] = useState(false);
   const csvFileInputRef = useRef(null);
 
   const isAgentOrg = orgType === 'agent';
@@ -326,6 +330,7 @@ export function AdminOrgSection({ orgType, label }) {
     const q = searchQuery.trim().toLowerCase();
     return orgs.filter((org) => {
       if (factoryRegisteredOnly && !createdByFactoryId[String(org.id)]) return false;
+      if (showDirectoryPhones && blacklistOnly && !blacklistById[String(org.id)]) return false;
       if (filterCounterCashOnly) {
         const hasCash = (org.members || []).some((m) => Boolean(m.is_counter_cash));
         if (!hasCash) return false;
@@ -355,7 +360,7 @@ export function AdminOrgSection({ orgType, label }) {
         return text.includes(q);
       });
     });
-  }, [orgs, searchQuery, filterCounterCashOnly, factoryRegisteredOnly, createdByFactoryId, phonesByOrgId]);
+  }, [orgs, searchQuery, filterCounterCashOnly, factoryRegisteredOnly, createdByFactoryId, phonesByOrgId, showDirectoryPhones, blacklistOnly, blacklistById]);
 
   const loadOrgs = useCallback(async () => {
     setLoading(true);
@@ -405,10 +410,14 @@ export function AdminOrgSection({ orgType, label }) {
 
       if (orgType === 'agent' || orgType === 'contractor') {
         try {
-          const [phoneRows, factories, origins] = await Promise.all([
+          const [phoneRows, factories, origins, blacklistRows] = await Promise.all([
             db.fetchAdminContactPhones(),
             db.fetchFactories(),
             db.fetchOrganizationFactoryOrigins(orgType),
+            db.fetchOrganizationBlacklist().catch((err) => {
+              console.warn('[AdminOrgSection] blacklist fetch failed', err);
+              return [];
+            }),
           ]);
           setContactPhones(
             (phoneRows || []).map(mapAdminContactPhone).filter((phone) => phone?.id && phone.organizationId),
@@ -425,16 +434,25 @@ export function AdminOrgSection({ orgType, label }) {
                 .map((org) => [String(org.id), String(org.created_by_factory_id)]),
             ),
           );
+          setBlacklistById(
+            Object.fromEntries(
+              (blacklistRows || [])
+                .filter((row) => row?.organization_id)
+                .map((row) => [String(row.organization_id), row]),
+            ),
+          );
         } catch (phoneErr) {
           console.warn('[AdminOrgSection] contact phones fetch failed', phoneErr);
           setContactPhones([]);
           setFactoryNameById({});
           setCreatedByFactoryId({});
+          setBlacklistById({});
         }
       } else {
         setContactPhones([]);
         setFactoryNameById({});
         setCreatedByFactoryId({});
+        setBlacklistById({});
       }
     } catch (e) {
       setError(formatError(e, `${label}一覧の取得に失敗しました`));
@@ -442,6 +460,22 @@ export function AdminOrgSection({ orgType, label }) {
       setLoading(false);
     }
   }, [orgType, label]);
+
+  const reloadBlacklist = useCallback(async () => {
+    if (orgType !== 'agent' && orgType !== 'contractor') return;
+    try {
+      const rows = await db.fetchOrganizationBlacklist();
+      setBlacklistById(
+        Object.fromEntries(
+          (rows || [])
+            .filter((row) => row?.organization_id)
+            .map((row) => [String(row.organization_id), row]),
+        ),
+      );
+    } catch (err) {
+      console.warn('[AdminOrgSection] blacklist reload failed', err);
+    }
+  }, [orgType]);
 
   const reloadContactPhones = useCallback(async () => {
     if (orgType !== 'agent' && orgType !== 'contractor') return;
@@ -1136,6 +1170,17 @@ export function AdminOrgSection({ orgType, label }) {
               工場登録のみ表示
             </label>
           ) : null}
+          {showDirectoryPhones ? (
+            <label className="mt-2 flex items-center gap-2 text-xs font-bold text-slate-700">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={blacklistOnly}
+                onChange={(e) => setBlacklistOnly(e.target.checked)}
+              />
+              ブラックリストのみ表示
+            </label>
+          ) : null}
         </div>
       ) : null}
 
@@ -1183,15 +1228,23 @@ export function AdminOrgSection({ orgType, label }) {
                     />
                   </div>
                 ) : (
-                  <span className="font-semibold text-slate-900 truncate">
-                    {org.name}
-                    {org.furigana?.trim() ? (
-                      <span className="ml-2 text-sm font-normal text-slate-500">（{org.furigana}）</span>
-                    ) : null}
+                  <span className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="truncate font-semibold text-slate-900">
+                      {org.name}
+                      {org.furigana?.trim() ? (
+                        <span className="ml-2 text-sm font-normal text-slate-500">（{org.furigana}）</span>
+                      ) : null}
+                    </span>
                     {showDirectoryPhones && createdByFactoryId[String(org.id)] ? (
-                      <span className="ml-2 inline-flex rounded-full border border-amber-400 bg-amber-50 px-2 py-0.5 text-[11px] font-black text-amber-900">
+                      <span className="inline-flex rounded-full border border-amber-400 bg-amber-50 px-2 py-0.5 text-[11px] font-black text-amber-900">
                         工場登録（{factoryNameById[createdByFactoryId[String(org.id)]] || '工場'}）
                       </span>
+                    ) : null}
+                    {showDirectoryPhones ? (
+                      <CompanyStatusBadges
+                        isBlacklisted={Boolean(blacklistById[String(org.id)])}
+                        isCounterCash={(org.members || []).some((member) => member?.is_counter_cash === true)}
+                      />
                     ) : null}
                   </span>
                 )}
@@ -1242,6 +1295,16 @@ export function AdminOrgSection({ orgType, label }) {
                 )}
               </div>
             </div>
+
+            {showDirectoryPhones ? (
+              <OrganizationBlacklistControls
+                organizationId={org.id}
+                organizationName={org.name}
+                entry={blacklistById[String(org.id)] || null}
+                adminName={adminName}
+                onChanged={reloadBlacklist}
+              />
+            ) : null}
 
             {showDirectoryPhones ? (
               <OrganizationContactPhones

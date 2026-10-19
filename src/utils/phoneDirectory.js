@@ -1,5 +1,9 @@
 import { phoneDigits } from './phoneFormat.js';
 
+function readCompanyFlag(value) {
+  return value === true || value === 'true' || value === 't' || value === 1;
+}
+
 export const PHONE_DIRECTORY_LABELS = ['代表', '事務所', '携帯', '現場', 'FAX', 'その他'];
 
 export function phoneDirectoryErrorMessage(err, fallback = '処理に失敗しました') {
@@ -55,6 +59,8 @@ export function groupPhoneDirectoryRows(rows) {
         organizationName: String(row?.organization_name || '').trim() || '（会社名なし）',
         organizationType: String(row?.organization_type || '').trim(),
         orgCreatedByFactoryId: String(row?.org_created_by_factory_id || '').trim(),
+        isBlacklisted: readCompanyFlag(row?.is_blacklisted),
+        isCounterCash: readCompanyFlag(row?.is_counter_cash),
         rows: [],
       };
       index.set(key, group);
@@ -66,6 +72,8 @@ export function groupPhoneDirectoryRows(rows) {
     if (!group.organizationType && row?.organization_type) {
       group.organizationType = String(row.organization_type).trim();
     }
+    if (readCompanyFlag(row?.is_blacklisted)) group.isBlacklisted = true;
+    if (readCompanyFlag(row?.is_counter_cash)) group.isCounterCash = true;
     group.rows.push(row);
   });
   return groups;

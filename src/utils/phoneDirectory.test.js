@@ -51,6 +51,8 @@ describe('phone directory search helpers', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].rows).toHaveLength(2);
     expect(groups[0].orgCreatedByFactoryId).toBe('fac-1');
+    expect(groups[0].isBlacklisted).toBe(false);
+    expect(groups[0].isCounterCash).toBe(false);
     expect(organizationTypeLabel('agent')).toBe('商社');
     expect(organizationTypeLabel('contractor')).toBe('業者');
   });
@@ -70,6 +72,15 @@ describe('phone directory search helpers', () => {
     expect(mapped.updatedAt).toBeNull();
     expect(contactActorLabel('fac-1', { 'fac-1': '工場A' })).toBe('工場A');
     expect(contactActorLabel('', {})).toBe('組合');
+  });
+
+  it('keeps company blacklist and counter-cash flags on the group', () => {
+    const groups = groupPhoneDirectoryRows([
+      { organization_id: 'org-2', organization_name: '中村建設', is_blacklisted: true, source: 'directory' },
+      { organization_id: 'org-2', organization_name: '中村建設', is_counter_cash: true, source: 'account' },
+    ]);
+    expect(groups[0].isBlacklisted).toBe(true);
+    expect(groups[0].isCounterCash).toBe(true);
   });
 
   it('reads an existing organization from create_organization_for_phone', () => {

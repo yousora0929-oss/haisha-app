@@ -10,6 +10,7 @@ import {
   unwrapCreatedOrganization,
 } from '../utils/phoneDirectory.js';
 import { formatPhoneAsYouType, formatPhoneJP } from '../utils/phoneFormat.js';
+import { CompanyBlacklistNote, CompanyStatusBadges } from './CompanyStatusBadges.jsx';
 
 const fieldClass =
   'mt-1 min-h-[44px] w-full rounded-xl border-2 border-slate-300 bg-white px-3 text-base font-semibold text-slate-900 outline-none focus:border-sky-500';
@@ -363,7 +364,13 @@ export function PhoneDirectory({ onClose }) {
             ) : null}
             <ul className="space-y-3">
               {groups.map((group) => (
-                <li key={group.key} className="rounded-2xl border-2 border-slate-200 p-3">
+                <li
+                  key={group.key}
+                  className={
+                    'rounded-2xl border-2 p-3 ' +
+                    (group.isBlacklisted ? 'border-red-200 border-l-8 border-l-red-600 bg-red-50/50' : 'border-slate-200')
+                  }
+                >
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-base font-black text-slate-900">{group.organizationName}</p>
                     {organizationTypeLabel(group.organizationType) ? (
@@ -376,7 +383,9 @@ export function PhoneDirectory({ onClose }) {
                         工場登録
                       </span>
                     ) : null}
+                    <CompanyStatusBadges isBlacklisted={group.isBlacklisted} isCounterCash={group.isCounterCash} />
                   </div>
+                  <CompanyBlacklistNote isBlacklisted={group.isBlacklisted} className="mt-1" />
                   <ul className="mt-2 space-y-2">
                     {group.rows.map((row, index) => {
                       const source = String(row.source || '');
@@ -473,10 +482,15 @@ export function PhoneDirectory({ onClose }) {
                     onClick={() => chooseCompany(group)}
                     className="min-h-[44px] w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-3 text-left text-sm font-black text-slate-900"
                   >
-                    {group.organizationName}
-                    {organizationTypeLabel(group.organizationType)
-                      ? `（${organizationTypeLabel(group.organizationType)}）`
-                      : ''}
+                    <span className="inline-flex flex-wrap items-center gap-2">
+                      <span>
+                        {group.organizationName}
+                        {organizationTypeLabel(group.organizationType)
+                          ? `（${organizationTypeLabel(group.organizationType)}）`
+                          : ''}
+                      </span>
+                      <CompanyStatusBadges isBlacklisted={group.isBlacklisted} isCounterCash={group.isCounterCash} />
+                    </span>
                   </button>
                 </li>
               ))}
