@@ -74,6 +74,24 @@ export function sortCustomersByUsageFrequency(items, usageCounts) {
   });
 }
 
+/**
+ * 最近使ったものを先頭にする。score が大きいほど新しい。
+ * 同じ score（未使用の 0 を含む）は元の並びを保つ。
+ * @param {object[]} items
+ * @param {(item: object) => number} scoreOf
+ */
+export function sortByRecentUse(items, scoreOf) {
+  const list = Array.isArray(items) ? items : [];
+  return list
+    .map((item, index) => ({
+      item,
+      index,
+      score: Math.max(0, Number(scoreOf?.(item)) || 0),
+    }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((row) => row.item);
+}
+
 /** 商社リストの先頭に固定する「商社なし」。保存値にはせず、選択時は空文字にする。 */
 export const DIRECT_TRADE_SUGGEST_ITEM = {
   id: '__direct_trade__',

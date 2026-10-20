@@ -12,6 +12,8 @@ import {
 import { OrganizationContactPhones } from './OrganizationContactPhones.jsx';
 import { CompanyStatusBadges } from './CompanyStatusBadges.jsx';
 import { AdminBlacklistPanel } from './AdminBlacklistPanel.jsx';
+import { AdminCompanyCreateForm, CreatedLoginDialog } from './AdminCompanyCreateForm.jsx';
+import { mapCompanyCreateError } from '../utils/companyCreateForm.js';
 import { mapAdminContactPhone } from '../utils/phoneDirectory.js';
 
 const emptyMember = () => ({
@@ -307,6 +309,7 @@ export function AdminOrgSection({ orgType, label, adminName = '' }) {
   const [factoryRegisteredOnly, setFactoryRegisteredOnly] = useState(false);
   const [blacklistById, setBlacklistById] = useState({});
   const [focusOrgId, setFocusOrgId] = useState('');
+  const [createdLogins, setCreatedLogins] = useState(null);
   const csvFileInputRef = useRef(null);
 
   const isAgentOrg = orgType === 'agent';
@@ -364,9 +367,10 @@ export function AdminOrgSection({ orgType, label, adminName = '' }) {
   const loadOrgs = useCallback(async () => {
     setLoading(true);
     setError('');
+    let list = [];
     try {
       const rows = await db.fetchOrganizationsWithMembers(orgType);
-      const list = Array.isArray(rows) ? rows : [];
+      list = Array.isArray(rows) ? rows : [];
       setOrgs(list);
 
       const memberIds = list.flatMap((o) => (o.members || []).map((m) => m.id).filter(Boolean));
@@ -458,6 +462,7 @@ export function AdminOrgSection({ orgType, label, adminName = '' }) {
     } finally {
       setLoading(false);
     }
+    return list;
   }, [orgType, label]);
 
   const focusOrganization = useCallback((organizationId) => {
@@ -477,7 +482,8 @@ export function AdminOrgSection({ orgType, label, adminName = '' }) {
   useEffect(() => {
     if (!focusOrgId) return undefined;
     const node = document.getElementById(`org-card-${focusOrgId}`);
-    if (node) node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (!node) return undefined;
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' });
     setFocusOrgId('');
     return undefined;
   }, [focusOrgId, filteredOrgs]);
@@ -598,6 +604,46 @@ export function AdminOrgSection({ orgType, label, adminName = '' }) {
       showNotice(`${label}を登録しました`);
     } catch (e) {
       setError(formatError(e, '登録に失敗しました'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreateCompany = async (payload, loginRows) => {
+    setLoading(true);
+    setError('');
+    const previousIds = new Set(orgs.map((org) => String(org.id)));
+    try {
+      const created = await db.adminCreateCompanyWithContacts(payload);
+      const createdId = String(created?.organization_id || '').trim();
+      setShowNewOrgForm(false);
+      const list = await loadOrgs();
+      const matched =
+        (list || []).find((org) => createdId && String(org.id) === createdId) ||
+        (list || []).find(
+          (org) => String(org.name || '') === payload.name && !previousIds.has(String(org.id)),
+        );
+      const focusId = matched?.id || createdId;
+      if (focusId) {
+        setSearchQuery('');
+        setFactoryRegisteredOnly(false);
+        setFilterCounterCashOnly(false);
+        setExpandedIds((prev) => {
+          const next = new Set(prev);
+          next.add(focusId);
+          return next;
+        });
+        setFocusOrgId(focusId);
+      }
+      if (Array.isArray(loginRows) && loginRows.length > 0) {
+        setCreatedLogins(loginRows);
+      }
+      showNotice(`${label}を登録しました`);
+    } catch (e) {
+      const mapped = mapCompanyCreateError(e);
+      const failure = new Error(mapped.text);
+      failure.existingOrgId = mapped.existingOrgId;
+      throw failure;
     } finally {
       setLoading(false);
     }
@@ -935,22 +981,118 @@ export function AdminOrgSection({ orgType, label, adminName = '' }) {
 
   const inputClass =
     'rounded border border-gray-200 px-2 py-1 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200';
+  const actionButtonClass =
+    'bg-indigo-600 text-white px-3 py-1 rounded text-sm hover:bg-indigo-500 disabled:opacity-60';
 
   return (
     <section>
       <div className="mb-4">
-        <button
-          type="button"
-          onClick={() => {
-            setCsvPanelOpen((open) => !open);
-            if (csvPanelOpen) {
-              setCsvPreview(null);
-            }
-          }}
-          className="text-sm font-medium text-indigo-700 hover:text-indigo-900"
-        >
-          📥 CSVで一括登録 {csvPanelOpen ? '▲' : '▼'}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setShowNewOrgForm((open) => !open);
+              setNewOrgName('');
+              setNewOrgFurigana('');
+              setError('');
+            }}
+            disabled={loading}
+            className={actionButtonClass}
+          >
+            ＋ {showDirectoryPhones ? '新規登録' : `${label}を追加`}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setCsvPanelOpen((open) => !open);
+              if (csvPanelOpen) {
+                setCsvPreview(null);
+              }
+            }}
+            className={actionButtonClass}
+          >
+            CSVで一括登録 {csvPanelOpen ? '▲' : '▼'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const prefix = orgType === 'contractor' ? 'contractors' : orgType;
+              downloadOrgMembersExportCsv(orgs, prefix);
+              showNotice(`${orgs.flatMap((o) => o.members || []).length}件をCSVでダウンロードしました`);
+            }}
+            disabled={loading || orgs.length === 0}
+            className={actionButtonClass}
+          >
+            CSVダウンロード
+          </button>
+          {showDirectoryPhones ? (
+            <AdminBlacklistPanel
+              adminName={adminName}
+              blacklistById={blacklistById}
+              onChanged={loadOrgs}
+              onFocusOrganization={focusOrganization}
+            />
+          ) : null}
+        </div>
+
+        {showNewOrgForm && showDirectoryPhones ? (
+          <div className="mt-3">
+            <AdminCompanyCreateForm
+              orgType={orgType}
+              label={label}
+              adminName={adminName}
+              orgs={orgs}
+              disabled={loading}
+              onCancel={() => {
+                setShowNewOrgForm(false);
+                setError('');
+              }}
+              onFocusOrganization={focusOrganization}
+              onSubmit={handleCreateCompany}
+            />
+          </div>
+        ) : null}
+
+        {showNewOrgForm && !showDirectoryPhones ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <input
+              type="text"
+              value={newOrgName}
+              onChange={(e) => setNewOrgName(e.target.value)}
+              placeholder="組織名"
+              className={inputClass}
+              disabled={loading}
+            />
+            <input
+              type="text"
+              value={newOrgFurigana}
+              onChange={(e) => setNewOrgFurigana(e.target.value)}
+              placeholder="フリガナ（任意）"
+              className={inputClass}
+              disabled={loading}
+            />
+            <button
+              type="button"
+              onClick={() => void handleAddOrg()}
+              disabled={loading}
+              className={actionButtonClass}
+            >
+              登録
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowNewOrgForm(false);
+                setNewOrgName('');
+                setNewOrgFurigana('');
+              }}
+              disabled={loading}
+              className="text-sm text-gray-600 hover:text-gray-800"
+            >
+              キャンセル
+            </button>
+          </div>
+        ) : null}
 
         {csvPanelOpen ? (
           <div className="border border-dashed border-indigo-300 rounded-lg p-4 mb-4 bg-indigo-50 mt-3">
@@ -1062,91 +1204,10 @@ export function AdminOrgSection({ orgType, label, adminName = '' }) {
         ) : null}
       </div>
 
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={() => {
-            const prefix = orgType === 'contractor' ? 'contractors' : orgType;
-            downloadOrgMembersExportCsv(orgs, prefix);
-            showNotice(`${orgs.flatMap((o) => o.members || []).length}件をCSVでダウンロードしました`);
-          }}
-          disabled={loading || orgs.length === 0}
-          className="rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-        >
-          CSVダウンロード
-        </button>
-      </div>
-
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        {!showNewOrgForm ? (
-          <button
-            type="button"
-            onClick={() => {
-              setShowNewOrgForm(true);
-              setNewOrgName('');
-              setNewOrgFurigana('');
-              setError('');
-            }}
-            disabled={loading}
-            className="bg-indigo-600 text-white px-3 py-1 rounded text-sm hover:bg-indigo-500 disabled:opacity-60"
-          >
-            ＋ {label}を追加
-          </button>
-        ) : (
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              type="text"
-              value={newOrgName}
-              onChange={(e) => setNewOrgName(e.target.value)}
-              placeholder="組織名"
-              className={inputClass}
-              disabled={loading}
-            />
-            <input
-              type="text"
-              value={newOrgFurigana}
-              onChange={(e) => setNewOrgFurigana(e.target.value)}
-              placeholder="フリガナ（任意）"
-              className={inputClass}
-              disabled={loading}
-            />
-            <button
-              type="button"
-              onClick={() => void handleAddOrg()}
-              disabled={loading}
-              className="bg-indigo-600 text-white px-3 py-1 rounded text-sm hover:bg-indigo-500 disabled:opacity-60"
-            >
-              登録
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setShowNewOrgForm(false);
-                setNewOrgName('');
-                setNewOrgFurigana('');
-              }}
-              disabled={loading}
-              className="text-sm text-gray-600 hover:text-gray-800"
-            >
-              キャンセル
-            </button>
-          </div>
-        )}
-      </div>
-
       {notice ? <p className="text-green-600 text-sm mt-2">{notice}</p> : null}
       {error ? <p className="text-red-600 text-sm mt-2">{error}</p> : null}
       {loading && orgs.length === 0 ? (
         <p className="text-sm text-gray-500">読み込み中…</p>
-      ) : null}
-
-      {showDirectoryPhones ? (
-        <AdminBlacklistPanel
-          adminName={adminName}
-          blacklistById={blacklistById}
-          onChanged={loadOrgs}
-          onFocusOrganization={focusOrganization}
-        />
       ) : null}
 
       {!loading && orgs.length > 0 ? (
@@ -1825,6 +1886,10 @@ export function AdminOrgSection({ orgType, label, adminName = '' }) {
 
       {!loading && orgs.length === 0 ? (
         <p className="text-sm text-gray-500">{label}が登録されていません</p>
+      ) : null}
+
+      {createdLogins?.length ? (
+        <CreatedLoginDialog rows={createdLogins} onClose={() => setCreatedLogins(null)} />
       ) : null}
     </section>
   );

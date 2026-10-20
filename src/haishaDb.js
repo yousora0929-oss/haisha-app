@@ -5547,6 +5547,27 @@ export async function createOrganizationForPhone({ name, type } = {}) {
   return data;
 }
 
+/**
+ * 業者・商社を、担当者・代表電話・ブラックリスト込みで RPC 1回で登録する。
+ * 失敗時は RPC 側で全部取り消される。
+ */
+export async function adminCreateCompanyWithContacts(payload) {
+  const { data, error } = await supabase.rpc('admin_create_company_with_contacts', {
+    p: payload,
+  });
+  if (error) throw error;
+  if (Array.isArray(data)) return data[0] ?? {};
+  if (typeof data === 'string') {
+    try {
+      const parsed = JSON.parse(data);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return data && typeof data === 'object' ? data : {};
+}
+
 /** 組織を新規作成 */
 export async function createOrganization(name, type, { furigana } = {}) {
   const trimmed = String(name ?? '').trim();

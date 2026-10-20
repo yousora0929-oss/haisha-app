@@ -292,12 +292,12 @@ export function AdminBlacklistPanel({
   };
 
   return (
-    <section className="mb-3 rounded-xl border border-slate-200 bg-white">
-      <div className="flex items-center justify-between gap-2 px-3 py-1">
+    <>
+      <div className="inline-flex h-8 items-center rounded border border-slate-300 bg-white">
         <button
           type="button"
           onClick={() => setOpen((current) => !current)}
-          className="flex h-8 min-w-0 items-center gap-2 text-left text-sm font-black"
+          className="inline-flex h-full items-center gap-1 px-2 text-xs font-bold hover:bg-slate-50"
           aria-expanded={open}
         >
           <span className="text-slate-400">{open ? '▼' : '▶'}</span>
@@ -305,12 +305,12 @@ export function AdminBlacklistPanel({
             ブラックリスト（{rows.length}件）
           </span>
         </button>
-        <button type="button" onClick={openAdd} className={textButtonClass + ' text-indigo-700'}>
+        <button type="button" onClick={openAdd} className="h-full shrink-0 border-l border-slate-300 px-2 text-xs font-bold text-indigo-700 hover:bg-slate-50 disabled:opacity-50">
           ＋追加
         </button>
       </div>
       {open ? (
-        <div className="border-t border-slate-100">
+        <div className="basis-full rounded-lg border border-slate-200 bg-white">
           {directoryError ? <p className="px-3 py-2 text-xs font-bold text-red-700">{directoryError}</p> : null}
           {rowError ? <p className="px-3 py-2 text-xs font-bold text-red-700">{rowError}</p> : null}
           {rows.length === 0 ? (
@@ -542,6 +542,6 @@ export function AdminBlacklistPanel({
           </div>
         </div>
       ) : null}
-    </section>
+    </>
   );
 }

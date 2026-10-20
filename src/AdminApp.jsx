@@ -5207,7 +5207,7 @@ export function AdminApp() {
               <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-10 w-auto" />
             </a>
             <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{APP_BRAND_NAME}</p>
-            <p className="mt-2 text-sm text-slate-500">全注文の監視・工場別スケジュール・物件マスタ・休日設定（Supabase 連携）</p>
+            <p className="mt-2 text-sm text-slate-500">注文モニター・商社・業者管理・その他の設定。</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <ThemeToggle />
@@ -5218,34 +5218,23 @@ export function AdminApp() {
         </div>
       </header>
       <main id="admin-dashboard" className="mx-auto w-full max-w-[1600px] space-y-6 px-4 py-8 sm:px-6">
-        <div className="space-y-2">
-          <div className="flex flex-wrap gap-2">
-            {tabBtn('monitor', '注文モニター')}
-            {tabBtn('availability', '工場稼働')}
-            {tabBtn('factoryNews', 'ニュース配信')}
-            {tabBtn('adminSettings', '管理者情報設定')}
-            {tabBtn('projects', '物件管理')}
-            {tabBtn('scheduleImport', 'スケジュール取込')}
-            {tabBtn('agents', '商社')}
-            {tabBtn('cooperatives', '組合員')}
-            {tabBtn('customers', '業者管理')}
-            {tabBtn('charter', 'チャーター業務')}
-            {tabBtn('inquiries', '問い合わせ対応')}
-            {tabBtn('settings', '休日・稼働時間')}
-            {tabBtn('cashPrice', '窓口価格表')}
-            {tabBtn('escalation', 'エスカレーション設定')}
-            {tabBtn('mixDesignRequests', '配合計画書依頼')}
-          </div>
-          <button
-            type="button"
-            onClick={() => setTab('loginHistory')}
-            className={
-              'min-h-[32px] text-xs font-bold underline-offset-2 hover:underline ' +
-              (tab === 'loginHistory' ? 'text-indigo-700 underline dark:text-indigo-300' : 'text-slate-500 dark:text-slate-400')
-            }
-          >
-            ログイン履歴
-          </button>
+        <div className="flex flex-wrap gap-2">
+          {tabBtn('monitor', '注文モニター')}
+          {tabBtn('availability', '工場稼働')}
+          {tabBtn('factoryNews', 'ニュース配信')}
+          {tabBtn('projects', '物件管理')}
+          {tabBtn('mixDesignRequests', '配合計画書依頼')}
+          {tabBtn('scheduleImport', 'スケジュール取込')}
+          {tabBtn('agents', '商社')}
+          {tabBtn('customers', '業者管理')}
+          {tabBtn('cooperatives', '組合員')}
+          {tabBtn('charter', 'チャーター業務')}
+          {tabBtn('cashPrice', '窓口価格表')}
+          {tabBtn('settings', '休日・稼働時間')}
+          {tabBtn('escalation', 'エスカレーション設定')}
+          {tabBtn('adminSettings', '管理者情報設定')}
+          {tabBtn('loginHistory', 'ログイン履歴')}
+          {tabBtn('inquiries', '問い合わせ対応')}
         </div>
         {tab === 'monitor' ? (
           <OrdersMonitorSection

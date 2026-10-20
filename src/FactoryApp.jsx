@@ -26,7 +26,9 @@ import { factoryUnloadDurationLabel } from './utils/unloadDurationLabel.js';
 import BillingMark from './components/BillingMark.jsx';
 import { OrderFullEditModal, buildChangeRequestDiffRows } from './components/OrderFullEditModal.jsx';
 import { MasterSuggestInput } from './components/MasterSuggestInput.jsx';
-import { DIRECT_TRADE_SUGGEST_ITEM, organizationSuggestTexts } from './utils/masterSuggest.js';
+import { DIRECT_TRADE_SUGGEST_ITEM, organizationSuggestTexts, sortByRecentUse } from './utils/masterSuggest.js';
+import { normalizeSuggestSearchText } from './utils/normalizeSuggestSearchText.js';
+import { AGGREGATE_SIZE_CANDIDATES, NOMINAL_STRENGTH_LIST, SLUMP_CANDIDATES } from './utils/mixDesignCalc.js';
 import { ChangeRequestResolvePanel } from './components/ChangeRequestResolvePanel.jsx';
 import {
   formatChangeRequestDateLabel,
@@ -262,12 +264,75 @@ function orderContactPersonName(order, fallback = '担当者', customer = null) 
   return resolveOrderContactPersonName(order, { customer, fallback });
 }
 
+const PHONE_ORDER_QTY_PRESETS = ['1', '2', '3', '4', '5'];
+const PHONE_ORDER_CEMENTS = [
+  { value: 'N', label: 'N（普通）' },
+  { value: 'BB', label: 'BB（高炉B種）' },
+];
+const EMPTY_PHONE_ORDER_MIX = { strength: '', slump: '', aggregate: '', cement: '' };
+
+function composePhoneOrderMix(parts) {
+  const strength = String(parts?.strength || '').trim();
+  const slump = String(parts?.slump || '').trim();
+  const aggregate = String(parts?.aggregate || '').trim();
+  const cement = String(parts?.cement || '').trim();
+  if (!strength || !slump || !aggregate || !cement) return '';
+  return `${strength}-${slump}-${aggregate}${cement}`;
+}
+
+function parsePhoneOrderMix(text) {
+  const match = String(text || '')
+    .trim()
+    .match(/^(\d+)-(\d+)-(\d+)\s*([A-Za-z]+)$/);
+  if (!match) return null;
+  return {
+    strength: match[1],
+    slump: match[2],
+    aggregate: match[3],
+    cement: match[4].toUpperCase(),
+  };
+}
+
+const PHONE_ORDER_QTY_OFFSETS = [0, 10, 25, 30, 40, 50, 60, 75, 80, 90];
+
+function formatPhoneOrderQuantity(hundredths) {
+  const whole = Math.floor(hundredths / 100);
+  const frac = hundredths % 100;
+  if (frac === 0) return String(whole);
+  if (frac % 10 === 0) return `${whole}.${frac / 10}`;
+  return `${whole}.${String(frac).padStart(2, '0')}`;
+}
+
+function stepPhoneOrderQuantity(current, direction) {
+  const parsed = Number(String(current ?? '').replace(/,/g, ''));
+  const base = Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) : 0;
+  const whole = Math.floor(base / 100);
+  const ladder = [];
+  for (let n = Math.max(1, whole - 1); n <= whole + 2; n += 1) {
+    for (const offset of PHONE_ORDER_QTY_OFFSETS) ladder.push(n * 100 + offset);
+  }
+  if (direction > 0) {
+    const next = ladder.find((value) => value > base);
+    return formatPhoneOrderQuantity(next ?? Math.max(base, 100));
+  }
+  const prev = [...ladder].reverse().find((value) => value < base);
+  if (prev == null || prev < 100) return '';
+  return formatPhoneOrderQuantity(prev);
+}
+
+function phoneOrderCompanyId(customer) {
+  const companyName = String(customer?.company_name || '').trim() || '(会社名未設定)';
+  return customer?.organization_id ? `org:${customer.organization_id}` : `name:${companyName}`;
+}
+
 function PhoneOrderRegisterModal({
   open,
   onClose,
   activeFactoryId,
   activeFactoryName,
   allowedDeliveryAreas = [],
+  recentOrders = [],
+  recentProjects = [],
   onRegistered,
 }) {
   const emptyForm = {
@@ -282,19 +347,19 @@ function PhoneOrderRegisterModal({
     orderedByName: '',
     sitePhone: '',
     vehicleType: 'large',
-    unloadDuration: '30',
-    registeredByName: '',
     traderName: '',
   };
   const [customers, setCustomers] = useState([]);
-  const [companyGroups, setCompanyGroups] = useState([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
   const [companySearchText, setCompanySearchText] = useState('');
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [customerProjects, setCustomerProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState('');
+  const [projectSearchText, setProjectSearchText] = useState('');
   const [traderOrganizations, setTraderOrganizations] = useState([]);
   const [form, setForm] = useState(emptyForm);
+  const [mixParts, setMixParts] = useState(EMPTY_PHONE_ORDER_MIX);
+  const mixPartsRef = useRef(EMPTY_PHONE_ORDER_MIX);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const submittingRef = useRef(false);
@@ -308,10 +373,12 @@ function PhoneOrderRegisterModal({
       setCompanySearchText('');
       setSelectedCustomerId('');
       setSelectedProjectId('');
+      setProjectSearchText('');
       setCustomerProjects([]);
-      setCompanyGroups([]);
       setCustomers([]);
       setTraderOrganizations([]);
+      mixPartsRef.current = EMPTY_PHONE_ORDER_MIX;
+      setMixParts(EMPTY_PHONE_ORDER_MIX);
       setForm(emptyForm);
       return;
     }
@@ -322,7 +389,6 @@ function PhoneOrderRegisterModal({
         if (cancelled) return;
         const list = Array.isArray(rows) ? rows : [];
         setCustomers(list);
-        setCompanyGroups(db.groupCustomersByCompany(list));
       })
       .catch((e) => {
         console.error(e);
@@ -346,6 +412,7 @@ function PhoneOrderRegisterModal({
     if (!open || !selectedCustomerId) {
       setCustomerProjects([]);
       setSelectedProjectId('');
+      setProjectSearchText('');
       return;
     }
     let cancelled = false;
@@ -377,15 +444,102 @@ function PhoneOrderRegisterModal({
     }));
   }, [selectedProjectId, customerProjects]);
 
-  const traderCandidates = useMemo(
-    () =>
-      (traderOrganizations || [])
-        .filter((o) => o?.id && String(o.type || '').trim() === 'agent')
-        .slice()
-        .sort((a, b) =>
-          String(a.name || '').localeCompare(String(b.name || ''), 'ja'),
+  const contractorCustomers = useMemo(() => {
+    const blockedNames = new Set();
+    const orgTypeById = new Map();
+    for (const org of traderOrganizations) {
+      const id = String(org?.id || '').trim();
+      const type = String(org?.type || '').trim();
+      if (id) orgTypeById.set(id, type);
+      if (type && type !== 'contractor') {
+        const name = normalizeSuggestSearchText(org?.name || org?.company_name || '');
+        if (name) blockedNames.add(name);
+      }
+    }
+    return customers.filter((customer) => {
+      const orgId = String(customer?.organization_id || '').trim();
+      const type = orgId ? orgTypeById.get(orgId) : '';
+      if (type && type !== 'contractor') return false;
+      const name = normalizeSuggestSearchText(customer?.company_name || '');
+      if (!type && name && blockedNames.has(name)) return false;
+      return true;
+    });
+  }, [customers, traderOrganizations]);
+
+  const companyGroups = useMemo(
+    () => db.groupCustomersByCompany(contractorCustomers),
+    [contractorCustomers],
+  );
+
+  const usageCounts = useMemo(() => {
+    const companyCounts = new Map();
+    const traderCounts = new Map();
+    const companyIdByCustomerId = new Map();
+    const orgTypeById = new Map();
+    const agentIdByName = new Map();
+    for (const customer of contractorCustomers) {
+      const id = String(customer?.id || '').trim();
+      if (id) companyIdByCustomerId.set(id, phoneOrderCompanyId(customer));
+    }
+    for (const org of traderOrganizations) {
+      const id = String(org?.id || '').trim();
+      const type = String(org?.type || '').trim();
+      if (id) orgTypeById.set(id, type);
+      if (type !== 'agent' || !id) continue;
+      const name = normalizeSuggestSearchText(org?.name || org?.company_name || '');
+      if (name && !agentIdByName.has(name)) agentIdByName.set(name, id);
+    }
+    for (const order of recentOrders) {
+      const companyIds = new Set();
+      for (const rawId of [order?.contractor_customer_id, order?.customer_id]) {
+        const companyId = companyIdByCustomerId.get(String(rawId || '').trim());
+        if (companyId) companyIds.add(companyId);
+      }
+      for (const companyId of companyIds) {
+        companyCounts.set(companyId, (companyCounts.get(companyId) || 0) + 1);
+      }
+      const agentId = String(order?.agent_organization_id || '').trim();
+      const namedId = agentIdByName.get(
+        normalizeSuggestSearchText(
+          order?.trading_company_name || order?.projectTradingCompanyName || order?.traderName || '',
         ),
-    [traderOrganizations],
+      );
+      const traderId =
+        agentId && orgTypeById.get(agentId) === 'agent' ? agentId : namedId || '';
+      if (!traderId) continue;
+      traderCounts.set(traderId, (traderCounts.get(traderId) || 0) + 1);
+    }
+    for (const project of recentProjects) {
+      const companyId = companyIdByCustomerId.get(String(project?.customer_id || '').trim());
+      if (companyId) companyCounts.set(companyId, (companyCounts.get(companyId) || 0) + 1);
+      const agentId = String(project?.trading_company_organization_id || '').trim();
+      const namedId = agentIdByName.get(
+        normalizeSuggestSearchText(
+          project?.trading_company_organization_name ||
+            project?.trading_company_name ||
+            project?.trading_company ||
+            '',
+        ),
+      );
+      const traderId = agentId && orgTypeById.get(agentId) === 'agent' ? agentId : namedId || '';
+      if (!traderId) continue;
+      traderCounts.set(traderId, (traderCounts.get(traderId) || 0) + 1);
+    }
+    return { companyCounts, traderCounts };
+  }, [contractorCustomers, traderOrganizations, recentOrders, recentProjects]);
+
+  const traderCandidates = useMemo(() => {
+    const agents = (traderOrganizations || [])
+      .filter((o) => o?.id && String(o.type || '').trim() === 'agent')
+      .slice()
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'));
+    return sortByRecentUse(agents, (org) => usageCounts.traderCounts.get(String(org.id)) || 0);
+  }, [traderOrganizations, usageCounts]);
+
+  const companySuggestItems = useMemo(
+    () =>
+      sortByRecentUse(companyGroups, (group) => usageCounts.companyCounts.get(group.companyId) || 0),
+    [companyGroups, usageCounts],
   );
 
   if (!open) return null;
@@ -412,8 +566,33 @@ function PhoneOrderRegisterModal({
     setForm((prev) => ({ ...prev, [name]: value }));
   };
 
+  const stepQuantity = (direction) => {
+    setForm((prev) => ({
+      ...prev,
+      quantityM3: stepPhoneOrderQuantity(prev.quantityM3, direction),
+    }));
+  };
+
+  const chooseMixPart = (key, value) => {
+    const next = { ...mixPartsRef.current, [key]: value };
+    mixPartsRef.current = next;
+    setMixParts(next);
+    const mixText = composePhoneOrderMix(next);
+    if (mixText) setForm((prev) => ({ ...prev, mixText }));
+  };
+
+  const handleMixTextChange = (e) => {
+    const mixText = e.target.value;
+    setForm((prev) => ({ ...prev, mixText }));
+    const parsed = parsePhoneOrderMix(mixText);
+    const next = parsed || EMPTY_PHONE_ORDER_MIX;
+    mixPartsRef.current = next;
+    setMixParts(next);
+  };
+
   const clearSiteFields = () => {
     setSelectedProjectId('');
+    setProjectSearchText('');
     setForm((prev) => ({
       ...prev,
       siteName: '',
@@ -441,7 +620,7 @@ function PhoneOrderRegisterModal({
     e.preventDefault();
     if (submittingRef.current) return;
     if (!selectedCustomerId) {
-      window.alert(selectedCompanyId ? '担当者を選択してください' : '会社を選択してください');
+      window.alert(selectedCompanyId ? '担当者を選択してください' : '業者を選択してください');
       return;
     }
     if (!form.quantityM3 || Number(form.quantityM3) <= 0) {
@@ -476,8 +655,7 @@ function PhoneOrderRegisterModal({
         orderedByName: form.orderedByName,
         sitePhone: form.sitePhone,
         vehicleType: form.vehicleType,
-        unloadDuration: form.unloadDuration,
-        registeredByName: form.registeredByName,
+        unloadDuration: '30',
         traderName: form.traderName,
       });
       onRegistered?.(registered);
@@ -534,13 +712,40 @@ function PhoneOrderRegisterModal({
             <section className="space-y-4 rounded-xl border-2 border-sky-300 bg-sky-50 p-3 shadow-inner">
               <div>
                 <MasterSuggestInput
+                  htmlFor="phone-order-trader"
+                  label="商社名（任意）"
+                  name="traderName"
+                  value={form.traderName}
+                  onValueChange={(text) => setForm((prev) => ({ ...prev, traderName: text }))}
+                  onSelect={(org) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      traderName: org?.directTrade
+                        ? ''
+                        : String(org?.name || org?.company_name || '').trim(),
+                    }))
+                  }
+                  items={traderCandidates}
+                  leadingItems={[DIRECT_TRADE_SUGGEST_ITEM]}
+                  summarizeSelection
+                  getItemKey={(o) => String(o.id)}
+                  getItemLabel={(o) => String(o.name || o.company_name || '').trim()}
+                  getSearchTexts={organizationSuggestTexts}
+                  placeholder="商社名を入力（空欄＝商社なし／自由入力可）"
+                  emptyHint="候補がありません（自由入力できます）"
+                  labelClassName={fieldLabel}
+                  inputClassName={fieldInput}
+                />
+              </div>
+              <div>
+                <MasterSuggestInput
                   htmlFor="por-company"
-                  label="会社（必須）"
+                  label="業者名（必須）"
                   name="phone_order_company"
-                  placeholder="会社名を入力して候補から選択"
+                  placeholder="業者名を入力して候補から選択"
                   value={companySearchText}
                   required
-                  items={companyGroups}
+                  items={companySuggestItems}
                   getItemKey={(g) => String(g.companyId)}
                   getItemLabel={(g) => String(g.companyName || '').trim()}
                   getItemSubLabel={(g) =>
@@ -568,14 +773,14 @@ function PhoneOrderRegisterModal({
                     setCompanySearchText(String(g.companyName || '').trim());
                     handleCompanyChange(g.companyId);
                   }}
-                  emptyHint="該当する会社が見つかりません（登録済み顧客のみ対象です）"
+                  emptyHint="該当する業者が見つかりません（登録済み顧客のみ対象です）"
                   labelClassName={fieldLabel}
                   inputClassName={fieldInput}
                   summarizeSelection
                 />
                 {!selectedCompanyId && companySearchText ? (
                   <p className="mt-1 text-xs font-bold text-amber-700">
-                    候補の中から会社を選択してください（一覧にない場合は登録済み顧客ではありません）
+                    候補の中から業者を選択してください（一覧にない場合は登録済み顧客ではありません）
                   </p>
                 ) : null}
               </div>
@@ -609,63 +814,81 @@ function PhoneOrderRegisterModal({
                 </p>
               ) : null}
               <div>
-                <label className={fieldLabel} htmlFor="por-project">
-                  物件（任意・未選択はスポット）
-                </label>
-                <select
-                  id="por-project"
-                  value={selectedProjectId}
-                  onChange={(e) => setSelectedProjectId(e.target.value)}
-                  className={fieldInput}
-                  disabled={!selectedCustomerId}
-                >
-                  <option value="">スポット入力（物件なし）</option>
-                  {customerProjects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name || p.id}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
                 <MasterSuggestInput
-                  htmlFor="phone-order-trader"
-                  label="商社名（任意）"
-                  name="traderName"
-                  value={form.traderName}
-                  onValueChange={(text) => setForm((prev) => ({ ...prev, traderName: text }))}
-                  onSelect={(org) =>
+                  htmlFor="por-project"
+                  label="物件（任意・未選択はスポット）"
+                  name="projectName"
+                  value={projectSearchText}
+                  placeholder="物件名を入力（候補から選択、または自由入力）"
+                  items={customerProjects}
+                  leadingItems={[{ id: '__phone_order_spot__', directTrade: true, name: 'スポット入力（物件なし）' }]}
+                  summarizeSelection
+                  getItemKey={(project) => String(project.id)}
+                  getItemLabel={(project) => String(project.name || project.id || '').trim()}
+                  getSearchTexts={(project) => [project.name || '', project.site_address || '']}
+                  disabled={!selectedCustomerId}
+                  onValueChange={(text) => {
+                    const leavingProject = Boolean(selectedProjectId);
+                    setProjectSearchText(text);
+                    setSelectedProjectId('');
                     setForm((prev) => ({
                       ...prev,
-                      traderName: org?.directTrade
-                        ? ''
-                        : String(org?.name || org?.company_name || '').trim(),
-                    }))
-                  }
-                  items={traderCandidates}
-                  leadingItems={[DIRECT_TRADE_SUGGEST_ITEM]}
-                  summarizeSelection
-                  getItemKey={(o) => String(o.id)}
-                  getItemLabel={(o) => String(o.name || o.company_name || '').trim()}
-                  getSearchTexts={organizationSuggestTexts}
-                  placeholder="商社名を入力（空欄＝商社なし／自由入力可）"
-                  emptyHint="候補がありません（自由入力できます）"
+                      siteName: text,
+                      ...(leavingProject ? { siteAddress: '', deliveryArea: '' } : {}),
+                    }));
+                  }}
+                  onSelect={(project) => {
+                    if (project?.directTrade) {
+                      setProjectSearchText('');
+                      setSelectedProjectId('');
+                      setForm((prev) => ({
+                        ...prev,
+                        siteName: '',
+                        siteAddress: '',
+                        deliveryArea: '',
+                      }));
+                      return;
+                    }
+                    const name = String(project?.name || '').trim();
+                    setProjectSearchText(name);
+                    setSelectedProjectId(String(project?.id || ''));
+                    setForm((prev) => ({
+                      ...prev,
+                      siteName: name,
+                      siteAddress: String(project?.site_address || ''),
+                      deliveryArea: String(project?.delivery_area || ''),
+                    }));
+                  }}
+                  emptyHint="該当する物件がありません（自由入力できます）"
                   labelClassName={fieldLabel}
                   inputClassName={fieldInput}
                 />
               </div>
               <div>
-                <label className={fieldLabel} htmlFor="por-registered-by">
-                  工場側登録担当者名（内部記録）
+                <p className={fieldLabel}>先方連絡先</p>
+                <label className="mt-1 block text-xs font-bold text-slate-500" htmlFor="por-contact">
+                  氏名
                 </label>
                 <input
-                  id="por-registered-by"
-                  name="registeredByName"
+                  id="por-contact"
+                  name="orderedByName"
                   type="text"
-                  value={form.registeredByName}
+                  value={form.orderedByName}
                   onChange={handleInputChange}
                   className={fieldInput}
-                  placeholder="例：山田"
+                  placeholder="先方の担当者名"
+                />
+                <label className="mt-2 block text-xs font-bold text-slate-500" htmlFor="por-phone">
+                  電話番号
+                </label>
+                <input
+                  id="por-phone"
+                  name="sitePhone"
+                  type="tel"
+                  value={form.sitePhone}
+                  onChange={handleInputChange}
+                  className={fieldInput}
+                  placeholder="097-000-0000"
                 />
               </div>
             </section>
@@ -704,24 +927,6 @@ function PhoneOrderRegisterModal({
                 </select>
               </div>
               <div>
-                <label className={fieldLabel} htmlFor="por-unload">
-                  1台あたりの荷卸し予定時間
-                </label>
-                <select
-                  id="por-unload"
-                  name="unloadDuration"
-                  value={form.unloadDuration}
-                  onChange={handleInputChange}
-                  className={fieldInput}
-                >
-                  <option value="15">15分</option>
-                  <option value="30">30分（標準）</option>
-                  <option value="45">45分</option>
-                  <option value="60">60分（手押し車など時間要）</option>
-                  <option value="95_plus">95分以上（要相談）</option>
-                </select>
-              </div>
-              <div>
                 <span className={fieldLabel}>車両（車種）</span>
                 <div className="mt-2 flex gap-3">
                   <button
@@ -754,16 +959,52 @@ function PhoneOrderRegisterModal({
                 <label className={fieldLabel} htmlFor="por-qty">
                   数量（m³）
                 </label>
-                <input
-                  id="por-qty"
-                  name="quantityM3"
-                  type="text"
-                  inputMode="decimal"
-                  value={form.quantityM3}
-                  onChange={handleInputChange}
-                  className={fieldInput}
-                  required
-                />
+                <div className="mt-1 flex items-center gap-2">
+                  <button
+                    type="button"
+                    aria-label="数量を一段減らす"
+                    disabled={!form.quantityM3 || Number(form.quantityM3) <= 0}
+                    onClick={() => stepQuantity(-1)}
+                    className="min-h-[56px] min-w-[56px] rounded-lg border-2 border-slate-200 bg-white text-2xl font-black text-slate-800 disabled:opacity-40"
+                  >
+                    −
+                  </button>
+                  <input
+                    id="por-qty"
+                    name="quantityM3"
+                    type="text"
+                    inputMode="decimal"
+                    value={form.quantityM3}
+                    onChange={handleInputChange}
+                    className="min-h-[56px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-center text-2xl font-black text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+                    required
+                  />
+                  <button
+                    type="button"
+                    aria-label="数量を一段増やす"
+                    onClick={() => stepQuantity(1)}
+                    className="min-h-[56px] min-w-[56px] rounded-lg border-2 border-indigo-600 bg-indigo-600 text-2xl font-black text-white"
+                  >
+                    ＋
+                  </button>
+                </div>
+                <div className="mt-2 grid grid-cols-5 gap-2">
+                  {PHONE_ORDER_QTY_PRESETS.map((qty) => (
+                    <button
+                      key={qty}
+                      type="button"
+                      onClick={() => setFormField('quantityM3', qty)}
+                      className={
+                        'min-h-[48px] rounded-lg border-2 text-base font-black ' +
+                        (form.quantityM3 === qty
+                          ? 'border-indigo-600 bg-indigo-600 text-white'
+                          : 'border-slate-200 bg-white text-slate-800')
+                      }
+                    >
+                      {qty}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div>
                 <label className={fieldLabel} htmlFor="por-mix">
@@ -774,28 +1015,68 @@ function PhoneOrderRegisterModal({
                   name="mixText"
                   type="text"
                   value={form.mixText}
-                  onChange={handleInputChange}
-                  className={fieldInput}
-                  placeholder="例：27-18-20 N"
+                  onChange={handleMixTextChange}
+                  className="mt-1 min-h-[48px] w-full rounded-lg border-2 border-slate-200 bg-white px-3 text-center text-xl font-black text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+                  placeholder="例：21-15-20N"
                 />
+                {[
+                  ['strength', '呼び強度', NOMINAL_STRENGTH_LIST],
+                  ['slump', 'スランプ', SLUMP_CANDIDATES],
+                  ['aggregate', '骨材', AGGREGATE_SIZE_CANDIDATES],
+                ].map(([key, label, values]) => (
+                  <div key={key} className="mt-3">
+                    <p className="mb-1 text-xs font-black text-slate-600">{label}</p>
+                    <div className="flex flex-wrap gap-2">
+                      {values.map((value) => {
+                        const text = String(value);
+                        const active = mixParts[key] === text;
+                        return (
+                          <button
+                            key={text}
+                            type="button"
+                            onClick={() => chooseMixPart(key, text)}
+                            className={
+                              'min-h-[44px] min-w-[44px] rounded-lg border-2 px-2 text-sm font-black ' +
+                              (active
+                                ? 'border-indigo-600 bg-indigo-600 text-white'
+                                : 'border-slate-200 bg-white text-slate-800')
+                            }
+                          >
+                            {text}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+                <div className="mt-3">
+                  <p className="mb-1 text-xs font-black text-slate-600">セメント種類</p>
+                  <div className="flex flex-wrap gap-2">
+                    {PHONE_ORDER_CEMENTS.map((cement) => {
+                      const active = mixParts.cement === cement.value;
+                      return (
+                        <button
+                          key={cement.value}
+                          type="button"
+                          onClick={() => chooseMixPart('cement', cement.value)}
+                          className={
+                            'min-h-[44px] min-w-[72px] rounded-lg border-2 px-3 text-sm font-black ' +
+                            (active
+                              ? 'border-indigo-600 bg-indigo-600 text-white'
+                              : 'border-slate-200 bg-white text-slate-800')
+                          }
+                        >
+                          {cement.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             </section>
 
             <section className="mt-4 space-y-4 rounded-xl border border-slate-200 bg-white p-3">
               <p className="text-xs font-black uppercase tracking-wider text-slate-500">現場情報</p>
-              <div>
-                <label className={fieldLabel} htmlFor="por-site">
-                  現場名
-                </label>
-                <input
-                  id="por-site"
-                  name="siteName"
-                  type="text"
-                  value={form.siteName}
-                  onChange={handleInputChange}
-                  className={fieldInput}
-                />
-              </div>
               {Array.isArray(allowedDeliveryAreas) && allowedDeliveryAreas.length > 0 ? (
                 <div>
                   <label className={fieldLabel} htmlFor="por-area">
@@ -853,32 +1134,6 @@ function PhoneOrderRegisterModal({
                   name="siteAddressDetail"
                   type="text"
                   value={form.siteAddressDetail}
-                  onChange={handleInputChange}
-                  className={fieldInput}
-                />
-              </div>
-              <div>
-                <label className={fieldLabel} htmlFor="por-contact">
-                  現場担当者名（帳票表示）
-                </label>
-                <input
-                  id="por-contact"
-                  name="orderedByName"
-                  type="text"
-                  value={form.orderedByName}
-                  onChange={handleInputChange}
-                  className={fieldInput}
-                />
-              </div>
-              <div>
-                <label className={fieldLabel} htmlFor="por-phone">
-                  現場電話番号
-                </label>
-                <input
-                  id="por-phone"
-                  name="sitePhone"
-                  type="tel"
-                  value={form.sitePhone}
                   onChange={handleInputChange}
                   className={fieldInput}
                 />
@@ -7513,6 +7768,8 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
             activeFactoryId={activeFactoryId}
             activeFactoryName={activeFactoryName}
             allowedDeliveryAreas={phoneOrderAllowedDeliveryAreas}
+            recentOrders={rawOrders}
+            recentProjects={projects}
             onRegistered={async (registered) => {
               if (!registered?.id) return;
               setRawOrders((prev) => {
