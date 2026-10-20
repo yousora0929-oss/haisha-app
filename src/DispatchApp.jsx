@@ -145,6 +145,7 @@ import {
   resolveOrderContactPersonName,
   resolveOrderLinkedProject,
   resolveSiteContactName,
+  resolveSitePhone,
 } from './utils/orderContactInfo.js';
 import { formatPhoneAsYouType, formatPhoneJP, isSamePhone } from './utils/phoneFormat.js';
 import { resolveGuestPreferredFactoryId, resolveProjectMainFactoryId, getProjectDataGapWarnings } from './utils/projectFactory.js';
@@ -1601,13 +1602,25 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       );
     }
 
-    function OrderMasterContactLines({ order, project, customerById, className = '' }) {
+    function OrderMasterContactLines({
+      order,
+      project,
+      customerById,
+      className = '',
+      excludeOrderContact = false,
+      hideTradingAgent = false,
+    }) {
       const siteLabel = formatProjectSiteContactsLabel(project, {
         formatPhone: formatPhoneJP,
+        excludeContact: excludeOrderContact
+          ? { name: resolveSiteContactName(order), phone: resolveSitePhone(order) }
+          : null,
       });
-      const tradingAgentLabel = formatTradingAgentContactLabel(order, customerById, {
-        formatPhone: formatPhoneJP,
-      });
+      const tradingAgentLabel = hideTradingAgent
+        ? ''
+        : formatTradingAgentContactLabel(order, customerById, {
+            formatPhone: formatPhoneJP,
+          });
       if (!siteLabel && !tradingAgentLabel) return null;
       return (
         <>
@@ -1655,7 +1668,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
     }) {
       const addr = order.siteAddress?.trim() || '';
       const party = orderPartyInfo(order);
-      const trader = order.traderName?.trim() || '—';
       const vehicle = order.vehicleLabel || (order.vehicleType === 'small' ? '小型' : '大型');
       const qtyRaw = order.confirmedQuantityM3 ?? order.quantityM3 ?? order.quantityCube;
       const qtyDisp =
@@ -1695,13 +1707,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
       }, [guestToken, order?.id]);
 
       const orderedByDisp = resolveSiteContactName(order);
-      const compactMeta = [
-        vehicle ? `車種:${vehicle}` : '',
-        trader && trader !== '—' ? `商社:${trader}` : '',
-        orderedByDisp ? `担当:${orderedByDisp}` : '',
-      ]
-        .filter(Boolean)
-        .join(' / ');
+      const compactMeta = [vehicle ? `車種:${vehicle}` : ''].filter(Boolean).join(' / ');
 
       const handleOpenMap = useCallback(
         (e) => {
@@ -1844,6 +1850,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                     order={order}
                     project={project}
                     customerById={customerById}
+                    excludeOrderContact
+                    hideTradingAgent
                     className="min-w-0 break-words text-sm font-bold text-slate-600 dark:text-slate-300"
                   />
                 </div>
@@ -7825,19 +7833,27 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                             const dateRange = formatInProgressGroupDateRange(entry);
                             const trader = String(entry.tradingCompanyLabel || '').trim();
                             const contractorText = String(entry.contractorLabel || '').trim();
-                            const statusCounts = new Map();
+                            const subContractorText = String(entry.subContractorLabel || '').trim();
+                            const showSubContractor = Boolean(subContractorText) && subContractorText !== contractorText;
+                            const partyLine = [
+                              showSubContractor && contractorText ? `元請: ${contractorText}` : contractorText,
+                              showSubContractor ? `下請: ${subContractorText}` : '',
+                            ]
+                              .filter(Boolean)
+                              .join(' / ');
+                            let undecidedCount = 0;
+                            let unreadCount = 0;
                             let partialAnswerCount = 0;
                             let declinedAnswerCount = 0;
                             let hasPreferredChoice = false;
-                            let hasUnread = false;
                             for (const order of entry.orders) {
-                              const label = resolveInProgressStatusBadgeLabel(order, customerEscalationCtx);
-                              statusCounts.set(label, (statusCounts.get(label) || 0) + 1);
+                              const status = resolveOrderDisplayStatus(order);
+                              if (status === 'pending' || status === 'pending_association') undecidedCount += 1;
+                              if (isUnreadForDispatch(chatThreads[order.id], readChatKeys[order.id])) unreadCount += 1;
                               const answerKind = changeRequestAnswerBadge(order)?.kind;
                               if (answerKind === 'partial') partialAnswerCount += 1;
                               if (answerKind === 'declined') declinedAnswerCount += 1;
                               if (needsPreferredCustomerChoice(order)) hasPreferredChoice = true;
-                              if (isUnreadForDispatch(chatThreads[order.id], readChatKeys[order.id])) hasUnread = true;
                             }
                             return (
                               <section
@@ -7865,8 +7881,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                       >
                                         {entry.title}
                                       </p>
-                                      <p className="mt-0.5 truncate text-xs font-bold text-slate-600 dark:text-slate-300">
-                                        {contractorText || '—'}
+                                      <p className="mt-0.5 break-words text-xs font-bold text-slate-600 dark:text-slate-300">
+                                        {partyLine || '—'}
                                         {trader ? ` (商社: ${trader})` : ''}
                                       </p>
                                     </div>
@@ -7880,14 +7896,16 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                         {dateRange}
                                       </span>
                                     ) : null}
-                                    {[...statusCounts.entries()].map(([label, count]) => (
-                                      <span
-                                        key={label}
-                                        className="whitespace-nowrap rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-black text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
-                                      >
-                                        {label} {count}
+                                    {undecidedCount > 0 ? (
+                                      <span className="whitespace-nowrap rounded-full border border-amber-400 bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-950">
+                                        未決定 {undecidedCount}
                                       </span>
-                                    ))}
+                                    ) : null}
+                                    {unreadCount > 0 ? (
+                                      <span className="whitespace-nowrap rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-black text-white">
+                                        未読 {unreadCount}
+                                      </span>
+                                    ) : null}
                                     {partialAnswerCount > 0 ? (
                                       <span className="whitespace-nowrap rounded-full border border-amber-500 bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-950">
                                         ⚠️ 一部のみ変更を承りました
@@ -7901,11 +7919,6 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                     {hasPreferredChoice ? (
                                       <span className="whitespace-nowrap rounded-full border-2 border-amber-500 bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-950">
                                         {CUSTOMER_ACTION_REQUIRED_LABEL}
-                                      </span>
-                                    ) : null}
-                                    {hasUnread ? (
-                                      <span className="whitespace-nowrap rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-black text-white">
-                                        未読
                                       </span>
                                     ) : null}
                                   </div>

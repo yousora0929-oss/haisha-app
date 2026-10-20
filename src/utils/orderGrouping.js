@@ -6,6 +6,7 @@ import {
   resolveOrderContractorDisplayName,
   resolveOrderTradingCompanyDisplayName,
 } from './orderPartyInfo.js';
+import { resolveProjectSubContractorName } from './projectContractorLabel.js';
 import { resolveOrderSiteDisplayName } from './siteNameDisplay.js';
 
 /** 実際の時刻値（分）で並べるためのキー。表示ラベルの文字列比較はしない */
@@ -476,6 +477,7 @@ export function groupInProgressOrders(
       key: bucket.key,
       title,
       contractorLabel: party.contractorName || '',
+      subContractorLabel: resolveProjectSubContractorName(project),
       tradingCompanyLabel: resolveOrderTradingCompanyDisplayName(first) || '',
       orders: sorted,
       earliestAt,

@@ -1,4 +1,4 @@
-import { formatPhoneJP } from './phoneFormat.js';
+import { formatPhoneJP, phoneDigits } from './phoneFormat.js';
 
 /** 現場担当者名（カスタマーがフォーム入力した値）。order_data由来を最優先 */
 export function resolveSiteContactName(order) {
@@ -75,18 +75,36 @@ export function resolveOrderLinkedProject(order, projectById = {}) {
 }
 
 /**
+ * 物件の現場担当者が、注文カードに既に出している氏名・電話と同じなら true。
+ * 氏名か電話の片方だけが注文側にある場合も、もう片方が空なら重複とみなす。
+ */
+export function siteContactRepeatsOrderContact(contact, excludeContact) {
+  if (!excludeContact) return false;
+  const name = String(contact?.name || '').trim();
+  const phone = phoneDigits(contact?.phone);
+  const shownName = String(excludeContact.name || '').trim();
+  const shownPhone = phoneDigits(excludeContact.phone);
+  if (!name && !phone) return true;
+  const nameShown = !name || name === shownName;
+  const phoneShown = !phone || Boolean(shownPhone && phone === shownPhone);
+  return nameShown && phoneShown;
+}
+
+/**
  * 物件マスタの現場担当者リスト（projects.site_contacts）を1行表示用に整形。
  * 未登録・空なら ''（呼び出し側で行ごと非表示）。
+ * excludeContact があるとき、注文側に既出の担当者は含めない。
  * @param {object|null|undefined} project
- * @param {{ formatPhone?: (phone: string) => string }} [opts]
+ * @param {{ formatPhone?: (phone: string) => string, excludeContact?: { name?: string, phone?: string }|null }} [opts]
  */
-export function formatProjectSiteContactsLabel(project, { formatPhone } = {}) {
+export function formatProjectSiteContactsLabel(project, { formatPhone, excludeContact = null } = {}) {
   const list = Array.isArray(project?.site_contacts) ? project.site_contacts : [];
   const fmt =
     typeof formatPhone === 'function' ? formatPhone : (phone) => formatPhoneJP(phone);
   const parts = [];
   for (const c of list) {
     if (!c || typeof c !== 'object') continue;
+    if (siteContactRepeatsOrderContact(c, excludeContact)) continue;
     const name = String(c.name || '').trim();
     const phone = fmt(String(c.phone || '').trim());
     if (!name && !phone) continue;

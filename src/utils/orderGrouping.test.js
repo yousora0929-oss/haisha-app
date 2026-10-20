@@ -257,6 +257,35 @@ describe('groupInProgressOrders', () => {
     expect(groups[0].orders).toHaveLength(2);
   });
 
+  it('keeps the prime contractor and shows the project subcontractor separately', () => {
+    const groups = groupInProgressOrders(
+      [
+        {
+          id: '1',
+          project_id: 'proj-apt',
+          siteName: '野崎啓治様アパート新築工事',
+          contractorName: '東建コーポレーション株式会社',
+          contractor_customer_id: 'prime',
+        },
+      ],
+      {
+        projectById: {
+          'proj-apt': {
+            id: 'proj-apt',
+            name: '野崎啓治様アパート新築工事',
+            sub_contractor_name: '株式会社廣亜',
+            contractor: '株式会社廣亜',
+          },
+        },
+        customersById: {
+          prime: { company_name: '東建コーポレーション株式会社' },
+        },
+      },
+    );
+    expect(groups[0].contractorLabel).toBe('東建コーポレーション株式会社');
+    expect(groups[0].subContractorLabel).toBe('株式会社廣亜');
+  });
+
   it('keeps different contractors at the same site in separate groups', () => {
     const groups = groupInProgressOrders(
       [
