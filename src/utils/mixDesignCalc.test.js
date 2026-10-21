@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildMixCode,
+  isMortarBaseStrength,
   lookupCorrectionValue,
   roundUpToNominalStrength,
 } from './mixDesignCalc.js';
@@ -112,5 +113,72 @@ describe('buildMixCode', () => {
         aeAdmixture: false,
       }),
     ).toBe('27-18-20BB');
+  });
+
+  it('keeps the correction unit as N and the cement type at the end', () => {
+    expect(
+      buildMixCode({
+        baseStrength: 21,
+        correctionValue: 6,
+        nominalStrength: 27,
+        cementType: 'BB',
+        slump: 15,
+        aggregateSize: 20,
+        aeAdmixture: false,
+      }),
+    ).toBe('27（21+6N）-15-20BB');
+  });
+
+  it('formats mortar as cement-to-sand ratio without aggregate or correction', () => {
+    expect(isMortarBaseStrength(1)).toBe(true);
+    expect(isMortarBaseStrength('1')).toBe(true);
+    expect(isMortarBaseStrength(18)).toBe(false);
+    expect(
+      buildMixCode({
+        baseStrength: 1,
+        correctionValue: null,
+        nominalStrength: 1,
+        cementType: 'N',
+        slump: 3,
+        aggregateSize: null,
+        aeAdmixture: false,
+      }),
+    ).toBe('1:3N');
+    expect(
+      buildMixCode({
+        baseStrength: 1,
+        correctionValue: 6,
+        nominalStrength: 18,
+        cementType: 'BB',
+        slump: 2,
+        aggregateSize: 0,
+        aeAdmixture: false,
+      }),
+    ).toBe('1:2BB');
+    expect(
+      buildMixCode({
+        baseStrength: 1,
+        correctionValue: null,
+        nominalStrength: 1,
+        cementType: 'N',
+        slump: 5,
+        aggregateSize: null,
+        aeAdmixture: false,
+      }),
+    ).toBe('1:5N');
+  });
+
+  it('appends the existing AE suffix when mortar still has it checked', () => {
+    expect(
+      buildMixCode({
+        baseStrength: 1,
+        correctionValue: null,
+        nominalStrength: 1,
+        cementType: 'N',
+        slump: 3,
+        aggregateSize: null,
+        aeAdmixture: true,
+      }),
+    ).toBe('1:3N・高性能');
   });
 });

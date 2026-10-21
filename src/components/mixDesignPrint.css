@@ -215,10 +215,19 @@
 }
 
 .mix-design-print-issuer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6pt;
   margin: 0;
   font-size: 11pt;
   font-weight: 700;
   color: #475569;
+}
+
+.mix-design-print-brand {
+  display: block;
+  height: 14pt;
+  width: auto;
 }
 
 .mix-design-print-candidate {

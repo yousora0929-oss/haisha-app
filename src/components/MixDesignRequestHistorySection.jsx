@@ -12,6 +12,7 @@ import {
   mixDesignLastChangedAt,
   mixDesignPrintPropsFromDb,
   mixDesignStatusLabel,
+  mixDesignSubmissionMethodLabel,
   printMixDesignSheet,
 } from '../utils/mixDesignRequest.js';
 import {
@@ -308,6 +309,22 @@ export function MixDesignRequestHistorySection({
                 <dt className="inline text-slate-400">最終変更 </dt>
                 <dd className={`inline ${bodyClass}`}>{formatRequestedAt(lastChanged)}</dd>
               </div>
+              <div>
+                <dt className="inline text-slate-400">提出方法 </dt>
+                <dd className={`inline ${bodyClass}`}>{mixDesignSubmissionMethodLabel(row.submission_method)}</dd>
+              </div>
+              <div>
+                <dt className="inline text-slate-400">作成部数 </dt>
+                <dd className={`inline ${bodyClass}`}>
+                  {row.copies_count != null && row.copies_count !== '' ? String(row.copies_count) : '—'}
+                </dd>
+              </div>
+              {Array.isArray(row.mix_codes) && row.mix_codes.length ? (
+                <div className="sm:col-span-2">
+                  <dt className="inline text-slate-400">配合 </dt>
+                  <dd className={`inline ${bodyClass}`}>{row.mix_codes.join('、')}</dd>
+                </div>
+              ) : null}
               <div>
                 <dt className="inline text-slate-400">ステータス </dt>
                 <dd className="inline">

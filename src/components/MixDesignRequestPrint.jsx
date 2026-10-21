@@ -5,6 +5,8 @@ import {
   AGGREGATE_SIZE_OPTIONS,
   BASE_STRENGTH_OPTIONS,
   CORRECTION_VALUE_OPTIONS,
+  isMortarBaseStrength,
+  MORTAR_RATIO_OPTIONS,
   SLUMP_OPTIONS,
   UNIT_WATER_CONTENT_OPTIONS,
   WATER_CEMENT_RATIO_OPTIONS,
@@ -15,8 +17,10 @@ import {
   formatConstructionPeriod,
   formatRequesterDisplay,
   mixCodeForItem,
+  mixDesignSubmissionMethodLabel,
   preventMinusKey,
   sanitizeNonNegativeInput,
+  submissionMethodChangePatch,
 } from '../utils/mixDesignRequest.js';
 import { formatPhoneAsYouType, formatPhoneJP } from '../utils/phoneFormat.js';
 import './mixDesignPrint.css';
@@ -43,9 +47,7 @@ function formatDate(value) {
 }
 
 function submissionLabel(request) {
-  if (request?.submissionMethod === 'electronic') return '電子';
-  if (request?.submissionMethod === 'original') return '原本';
-  return '—';
+  return mixDesignSubmissionMethodLabel(request?.submissionMethod);
 }
 
 function PrintCandidate({ label, value, options, onChange, disabled = false }) {
@@ -327,17 +329,18 @@ export function MixDesignRequestPrint({
                         inputClassName="mix-design-print-input"
                       />
                       <MixCandidateSelect
-                        label="スランプ"
+                        label={isMortarBaseStrength(item.baseStrength) ? '砂の比率' : 'スランプ'}
                         value={item.slump}
-                        options={SLUMP_OPTIONS}
+                        options={isMortarBaseStrength(item.baseStrength) ? MORTAR_RATIO_OPTIONS : SLUMP_OPTIONS}
                         onChange={(value) => onItemChange?.(index, { slump: value })}
                         className="mix-design-print-candidate"
                         inputClassName="mix-design-print-input"
                       />
                       <MixCandidateSelect
                         label="骨材"
-                        value={item.aggregateSize}
+                        value={isMortarBaseStrength(item.baseStrength) ? '' : item.aggregateSize}
                         options={AGGREGATE_SIZE_OPTIONS}
+                        disabled={isMortarBaseStrength(item.baseStrength)}
                         onChange={(value) => onItemChange?.(index, { aggregateSize: value })}
                         className="mix-design-print-candidate"
                         inputClassName="mix-design-print-input"
@@ -355,9 +358,9 @@ export function MixDesignRequestPrint({
                       </label>
                       <MixCandidateSelect
                         label="構造体補正値"
-                        value={item.correctionValue}
+                        value={isMortarBaseStrength(item.baseStrength) ? '' : item.correctionValue}
                         options={CORRECTION_VALUE_OPTIONS}
-                        disabled={Boolean(item.correctionIsAuto)}
+                        disabled={isMortarBaseStrength(item.baseStrength) || Boolean(item.correctionIsAuto)}
                         onChange={(value) => onItemChange?.(index, { correctionValue: value, correctionIsAuto: false })}
                         className="mix-design-print-candidate"
                         inputClassName="mix-design-print-input"
@@ -365,10 +368,13 @@ export function MixDesignRequestPrint({
                       <label className="mix-design-print-candidate mix-design-print-candidate-check">
                         <input
                           type="checkbox"
-                          checked={Boolean(item.correctionIsAuto)}
+                          checked={!isMortarBaseStrength(item.baseStrength) && Boolean(item.correctionIsAuto)}
+                          disabled={isMortarBaseStrength(item.baseStrength)}
                           onChange={(e) => onItemChange?.(index, { correctionIsAuto: e.target.checked })}
                         />
-                        <span className="whitespace-nowrap">補正値を自動計算</span>
+                        <span className="whitespace-nowrap">
+                          {isMortarBaseStrength(item.baseStrength) ? '補正値なし' : '補正値を自動計算'}
+                        </span>
                       </label>
                       <label className="mix-design-print-candidate mix-design-print-candidate-check">
                         <input
@@ -504,7 +510,9 @@ export function MixDesignRequestPrint({
               {editable ? (
                 <select
                   value={request?.submissionMethod || ''}
-                  onChange={(e) => patchRequest({ submissionMethod: e.target.value })}
+                  onChange={(e) =>
+                    patchRequest(submissionMethodChangePatch(request?.copiesCount, e.target.value))
+                  }
                   className="mix-design-print-input"
                 >
                   <option value="">未指定</option>
@@ -523,6 +531,21 @@ export function MixDesignRequestPrint({
                 value={request?.submissionEmail}
                 onChange={(v) => patchRequest({ submissionEmail: v })}
               />
+            </td>
+          </tr>
+          <tr>
+            <th style={LABEL_CELL}>作成部数</th>
+            <td colSpan={3}>
+              {editable ? (
+                <PrintField
+                  editable
+                  type="number"
+                  value={request?.copiesCount ?? ''}
+                  onChange={(v) => patchRequest({ copiesCount: sanitizeNonNegativeInput(v) })}
+                />
+              ) : (
+                String(request?.copiesCount ?? '').trim() || '—'
+              )}
             </td>
           </tr>
           <tr>
@@ -552,7 +575,10 @@ export function MixDesignRequestPrint({
         {lastChangedAt ? (
           <p className="mix-design-print-last-changed">最終変更: {formatLastChanged(lastChangedAt)}</p>
         ) : null}
-        <p className="mix-design-print-issuer">{APP_BRAND_NAME} 発行</p>
+        <p className="mix-design-print-issuer">
+          <img src="/brand/logo-horizontal-mono.svg" alt={APP_BRAND_NAME} className="mix-design-print-brand" />
+          発行
+        </p>
       </footer>
     </div>
   );

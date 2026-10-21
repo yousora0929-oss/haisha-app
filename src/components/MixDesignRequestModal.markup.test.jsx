@@ -27,6 +27,7 @@ describe('MixDesignRequestModal markup', () => {
     expect(aeAt).toBeGreaterThan(strengthAt);
     expect(quantityAt).toBeGreaterThan(aeAt);
     expect(html).toContain('whitespace-nowrap text-base text-slate-900');
+    expect(html).toContain('1（モルタル）');
     expect(html).toContain('65%以下');
     expect(html).toContain('20mm');
     expect(html).toContain('40mm');

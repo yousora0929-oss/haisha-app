@@ -1,6 +1,7 @@
 import {
   buildMixCode,
   FALLBACK_CORRECTION_VALUE_RULES,
+  isMortarBaseStrength,
   lookupCorrectionValue,
   roundUpToNominalStrength,
 } from './mixDesignCalc.js';
@@ -377,6 +378,31 @@ export function preventMinusKey(event) {
   }
 }
 
+/**
+ * 提出方法を変えたときの差分。
+ * 「原本」にしたとき、部数が空または 0 なら 1 を入れる。入力済みなら上書きしない。
+ * 原本以外へ切り替えても部数は消さない。
+ */
+export function submissionMethodChangePatch(currentCopies, nextMethod) {
+  const submissionMethod = String(nextMethod ?? '');
+  const patch = { submissionMethod };
+  if (submissionMethod !== 'original') return patch;
+  const raw = String(currentCopies ?? '').trim();
+  if (raw === '') {
+    patch.copiesCount = '1';
+    return patch;
+  }
+  const n = Number(raw);
+  if (Number.isFinite(n) && n === 0) patch.copiesCount = '1';
+  return patch;
+}
+
+export function mixDesignSubmissionMethodLabel(method) {
+  if (method === 'electronic') return '電子';
+  if (method === 'original') return '原本';
+  return '—';
+}
+
 export function toggleMixDesignVehicle(current, id) {
   const key = String(id || '').trim();
   const list = Array.isArray(current) ? current.map(String) : [];
@@ -411,6 +437,7 @@ export function rulesForLookup(allRules, { region, cementType, pourDate }) {
 export function computeNominalStrength(baseStrength, correctionValue) {
   const base = parseRequiredInt(baseStrength);
   if (base == null) return null;
+  if (isMortarBaseStrength(base)) return 1;
   const correction = parseOptionalNumber(correctionValue);
   const raw = correction == null ? base : base + correction;
   return roundUpToNominalStrength(raw);
@@ -431,6 +458,16 @@ export function correctionLookupDate(item) {
 }
 
 export function applyAutoCorrection(item, allRules, region) {
+  if (isMortarBaseStrength(item?.baseStrength)) {
+    return {
+      ...item,
+      correctionValue: '',
+      correctionLabel: '',
+      correctionIsAuto: false,
+      nominalStrength: '1',
+      aggregateSize: '',
+    };
+  }
   let next = { ...item };
   if (next.correctionIsAuto) {
     const pourDate = correctionLookupDate(next);
@@ -459,18 +496,32 @@ export function applyAutoCorrection(item, allRules, region) {
 export function mixCodeForItem(item) {
   const baseStrength = parseRequiredInt(item?.baseStrength);
   const slump = parseRequiredInt(item?.slump);
+  if (baseStrength == null || slump == null) return '';
+  const cementType = item?.cementType || 'N';
+  const aeAdmixture = Boolean(item?.aeAdmixture);
+  if (isMortarBaseStrength(baseStrength)) {
+    return buildMixCode({
+      baseStrength,
+      correctionValue: null,
+      nominalStrength: baseStrength,
+      cementType,
+      slump,
+      aggregateSize: null,
+      aeAdmixture,
+    });
+  }
   const aggregateSize = parseRequiredInt(item?.aggregateSize);
-  if (baseStrength == null || slump == null || aggregateSize == null) return '';
+  if (aggregateSize == null) return '';
   const correctionValue = parseOptionalNumber(item?.correctionValue);
   const nominalStrength = computeNominalStrength(baseStrength, correctionValue);
   return buildMixCode({
     baseStrength,
     correctionValue,
     nominalStrength,
-    cementType: item?.cementType || 'N',
+    cementType,
     slump,
     aggregateSize,
-    aeAdmixture: Boolean(item?.aeAdmixture),
+    aeAdmixture,
   });
 }
 
@@ -614,9 +665,10 @@ export function validateMixDesignDraft(draft) {
   if (!items.length) missing.push('配合パターン');
   items.forEach((item, index) => {
     const n = index + 1;
+    const mortar = isMortarBaseStrength(item.baseStrength);
     if (parseRequiredInt(item.baseStrength) == null) missing.push(`配合${n}の設計基準強度`);
-    if (parseRequiredInt(item.slump) == null) missing.push(`配合${n}のスランプ`);
-    if (parseRequiredInt(item.aggregateSize) == null) missing.push(`配合${n}の骨材`);
+    if (parseRequiredInt(item.slump) == null) missing.push(mortar ? `配合${n}の砂の比率` : `配合${n}のスランプ`);
+    if (!mortar && parseRequiredInt(item.aggregateSize) == null) missing.push(`配合${n}の骨材`);
     if (!['N', 'BB'].includes(String(item.cementType || ''))) missing.push(`配合${n}のセメント種別`);
   });
   return [...new Set(missing)];
@@ -900,17 +952,19 @@ export function buildMixDesignItemInsertRows(draft) {
   const items = Array.isArray(draft?.items) ? draft.items : [];
   return items.map((item, index) => {
     const baseStrength = parseRequiredInt(item.baseStrength);
+    const mortar = isMortarBaseStrength(baseStrength);
     const correctionRaw = clampNonNegativeNumber(item.correctionValue);
     const correctionValue = correctionRaw == null ? null : Math.trunc(correctionRaw);
     const pourDate = String(item.pourDate || '').trim();
     return {
       sort_order: index,
       base_strength: baseStrength,
-      correction_value: correctionValue,
-      correction_is_auto: Boolean(item.correctionIsAuto),
-      nominal_strength: computeNominalStrength(baseStrength, correctionValue),
+      // aggregate_size は NOT NULL。モルタルは未入力を 0 で保存する（表示には出さない）
+      correction_value: mortar ? null : correctionValue,
+      correction_is_auto: mortar ? false : Boolean(item.correctionIsAuto),
+      nominal_strength: mortar ? 1 : computeNominalStrength(baseStrength, correctionValue),
       slump: parseRequiredInt(item.slump),
-      aggregate_size: parseRequiredInt(item.aggregateSize),
+      aggregate_size: mortar ? 0 : parseRequiredInt(item.aggregateSize),
       cement_type: String(item.cementType || 'N'),
       ae_admixture: Boolean(item.aeAdmixture),
       quantity_m3: clampNonNegativeNumber(item.quantityM3),
@@ -988,7 +1042,7 @@ export function mixDesignItemFromDbRow(row, index = 0) {
   const pourDate = row?.pour_date != null ? String(row.pour_date).slice(0, 10) : '';
   const parts = pourPartsFromIso(pourDate);
   const quantityRaw = row?.quantity_m3;
-  return {
+  const item = {
     localId: String(row?.id || `mixitem_db_${index}`),
     baseStrength: row?.base_strength != null && row.base_strength !== '' ? String(row.base_strength) : '',
     correctionValue:
@@ -1017,6 +1071,13 @@ export function mixDesignItemFromDbRow(row, index = 0) {
         : '',
     memo: String(row?.memo || ''),
   };
+  if (isMortarBaseStrength(item.baseStrength)) {
+    item.correctionValue = '';
+    item.correctionIsAuto = false;
+    item.nominalStrength = '1';
+    item.aggregateSize = '';
+  }
+  return item;
 }
 
 function firstNonEmpty(...values) {
@@ -1105,6 +1166,8 @@ export function mixDesignPrintPropsFromDb(request, itemRows = [], project = null
       totalVolumeM3: Number.isFinite(total) ? total : null,
       submissionMethod: String(request?.submission_method || ''),
       submissionEmail: String(request?.submission_email || ''),
+      copiesCount:
+        request?.copies_count != null && request.copies_count !== '' ? String(request.copies_count) : '',
       memo: String(request?.memo || ''),
       lastChangedAt,
       requestedToFactoryIds: factoryIds,
@@ -1324,12 +1387,23 @@ export function buildMixDesignChangeEntries(beforeSnapshot, afterSnapshot) {
   return changes;
 }
 
+function mixCodesFromSnapshotItems(items) {
+  return (Array.isArray(items) ? items : []).map((item) => mixCodeForItem(item)).filter(Boolean);
+}
+
 export function formatMixDesignChangeLine(entry) {
   const label = entry?.label || MIX_DESIGN_CHANGE_LABELS[entry?.field] || entry?.field || '項目';
   if (entry?.field === 'status') {
     return `${label}: ${mixDesignStatusLabel(entry?.old)} → ${mixDesignStatusLabel(entry?.new)}`;
   }
   if (entry?.field === 'items') {
+    const oldCodes = mixCodesFromSnapshotItems(entry.old);
+    const newCodes = mixCodesFromSnapshotItems(entry.new);
+    if (oldCodes.join('\u0001') !== newCodes.join('\u0001')) {
+      const oldText = oldCodes.length ? oldCodes.join('、') : '（空）';
+      const newText = newCodes.length ? newCodes.join('、') : '（空）';
+      return `${label}: ${oldText} → ${newText}`;
+    }
     const oldCount = Array.isArray(entry.old) ? entry.old.length : 0;
     const newCount = Array.isArray(entry.new) ? entry.new.length : 0;
     return `${label}: ${oldCount}件 → ${newCount}件`;

@@ -27,6 +27,7 @@ import {
   resolvePourDateFromPeriod,
   sanitizeNonNegativeInput,
   stepCandidateValue,
+  submissionMethodChangePatch,
   validateMixDesignDraft,
 } from './mixDesignRequest.js';
 import { BASE_STRENGTH_CANDIDATES, SLUMP_CANDIDATES, AGGREGATE_SIZE_CANDIDATES } from './mixDesignCalc.js';
@@ -38,6 +39,32 @@ describe('computeNominalStrength', () => {
 
   it('rounds 33+6 to 40', () => {
     expect(computeNominalStrength(33, 6)).toBe(40);
+  });
+
+  it('does not round mortar strength 1 up to 18', () => {
+    expect(computeNominalStrength(1, null)).toBe(1);
+    expect(computeNominalStrength(1, 6)).toBe(1);
+    expect(computeNominalStrength('1', '')).toBe(1);
+  });
+});
+
+describe('submissionMethodChangePatch', () => {
+  it('fills 1 when original is chosen and copies are empty or zero', () => {
+    expect(submissionMethodChangePatch('', 'original')).toEqual({
+      submissionMethod: 'original',
+      copiesCount: '1',
+    });
+    expect(submissionMethodChangePatch('0', 'original')).toEqual({
+      submissionMethod: 'original',
+      copiesCount: '1',
+    });
+    expect(submissionMethodChangePatch(0, 'original').copiesCount).toBe('1');
+  });
+
+  it('does not overwrite an entered count and does not clear it when leaving original', () => {
+    expect(submissionMethodChangePatch('3', 'original')).toEqual({ submissionMethod: 'original' });
+    expect(submissionMethodChangePatch('1', 'electronic')).toEqual({ submissionMethod: 'electronic' });
+    expect(submissionMethodChangePatch('2', '')).toEqual({ submissionMethod: '' });
   });
 });
 
@@ -58,6 +85,21 @@ describe('validateMixDesignDraft', () => {
         items: [{ baseStrength: 30, slump: 15, aggregateSize: 20, cementType: 'N' }],
       }),
     ).toEqual([]);
+  });
+
+  it('does not require aggregate for mortar', () => {
+    expect(
+      validateMixDesignDraft({
+        region: '大分市・挟間町',
+        items: [{ baseStrength: 1, slump: 3, aggregateSize: '', cementType: 'N' }],
+      }),
+    ).toEqual([]);
+    const missing = validateMixDesignDraft({
+      region: '大分市・挟間町',
+      items: [{ baseStrength: 1, slump: '', aggregateSize: '', cementType: 'N' }],
+    });
+    expect(missing).toContain('配合1の砂の比率');
+    expect(missing.some((label) => label.includes('骨材'))).toBe(false);
   });
 });
 
@@ -105,6 +147,42 @@ describe('buildMixDesignItemInsertRows', () => {
       ae_admixture: true,
     });
     expect(rows[0].memo).toBe('基礎注意');
+  });
+
+  it('stores mortar with strength 1, sand ratio, and aggregate 0', () => {
+    const rows = buildMixDesignItemInsertRows({
+      items: [
+        {
+          baseStrength: '1',
+          correctionValue: '6',
+          correctionIsAuto: true,
+          slump: '3',
+          aggregateSize: '',
+          cementType: 'BB',
+          aeAdmixture: false,
+        },
+      ],
+    });
+    expect(rows[0]).toMatchObject({
+      base_strength: 1,
+      correction_value: null,
+      correction_is_auto: false,
+      nominal_strength: 1,
+      slump: 3,
+      aggregate_size: 0,
+      cement_type: 'BB',
+    });
+    expect(mixCodeForItem({ baseStrength: '1', slump: '3', aggregateSize: '', cementType: 'N' })).toBe('1:3N');
+    expect(mixCodeForItem({ baseStrength: '1', slump: '2', aggregateSize: '0', cementType: 'BB' })).toBe('1:2BB');
+    expect(
+      mixCodeForItem({
+        baseStrength: '21',
+        correctionValue: '6',
+        slump: '15',
+        aggregateSize: '20',
+        cementType: 'BB',
+      }),
+    ).toBe('27（21+6N）-15-20BB');
   });
 
   it('clamps negative numeric fields to 0', () => {
@@ -378,7 +456,7 @@ describe('mixCodeLinesForPrint', () => {
         aggregateSize: 20,
         cementType: 'BB',
       }),
-    ).toEqual(['30（27+3BB）', '18-20BB']);
+    ).toEqual(['30（27+3N）', '18-20BB']);
   });
 });
 
@@ -537,6 +615,28 @@ describe('applyAutoCorrection', () => {
     expect(next.correctionValue).toBe('6');
   });
 
+  it('does not calculate a structural correction for mortar', () => {
+    const next = applyAutoCorrection(
+      {
+        ...createEmptyMixDesignItem(),
+        baseStrength: '1',
+        slump: '3',
+        aggregateSize: '20',
+        cementType: 'N',
+        correctionIsAuto: true,
+        pourMonth: '12',
+        pourDay: '20',
+      },
+      winterRules,
+      '大分市・挟間町',
+    );
+    expect(next.correctionValue).toBe('');
+    expect(next.correctionIsAuto).toBe(false);
+    expect(next.nominalStrength).toBe('1');
+    expect(next.aggregateSize).toBe('');
+    expect(mixCodeForItem(next)).toBe('1:3N');
+  });
+
   it('leaves a manual value untouched when auto is off', () => {
     const next = applyAutoCorrection(
       {
@@ -666,6 +766,19 @@ describe('buildMixDesignChangeEntries', () => {
     const itemMemo = changes.find((c) => c.field === 'items.0.memo');
     expect(itemMemo).toMatchObject({ label: '配合1の備考', new: 'スラブ注意' });
     expect(formatMixDesignChangeLine(itemMemo)).toBe('配合1の備考: （空） → スラブ注意');
+  });
+
+  it('shows mortar and concrete mix codes in the item diff', async () => {
+    const { buildMixDesignChangeEntries, buildMixDesignRequestSnapshot, formatMixDesignChangeLine } =
+      await import('./mixDesignRequest.js');
+    const before = buildMixDesignRequestSnapshot({
+      items: [{ baseStrength: '21', correctionValue: '6', slump: '15', aggregateSize: '20', cementType: 'BB' }],
+    });
+    const after = buildMixDesignRequestSnapshot({
+      items: [{ baseStrength: '1', slump: '3', aggregateSize: '', cementType: 'N' }],
+    });
+    const itemsChange = buildMixDesignChangeEntries(before, after).find((entry) => entry.field === 'items');
+    expect(formatMixDesignChangeLine(itemsChange)).toBe('配合パターン: 27（21+6N）-15-20BB → 1:3N');
   });
 });
 

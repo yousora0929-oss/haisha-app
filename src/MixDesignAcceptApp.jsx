@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { APP_BRAND_NAME } from './constants/brand.js';
+import BrandLogo from './components/BrandLogo.jsx';
 import { supabase } from './supabaseClient.js';
 import {
   formatMixDesignAcceptedAt,
@@ -99,7 +99,7 @@ export function MixDesignAcceptApp() {
   return (
     <div className="min-h-[100dvh] bg-slate-100 px-4 py-8 text-slate-900">
       <div className="mx-auto w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-md">
-        <p className="text-xs font-black uppercase tracking-wider text-indigo-700">{APP_BRAND_NAME}</p>
+        <BrandLogo tone="light" className="h-10 w-auto shrink-0" />
         <h1 className="mt-1 text-xl font-black">配合計画書 受注確認</h1>
 
         {state.kind === 'loading' ? (

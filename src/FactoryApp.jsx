@@ -90,8 +90,8 @@ import {
 } from './utils/orderContactInfo.js';
 import { formatPhoneAsYouType, formatPhoneJP } from './utils/phoneFormat.js';
 import { MAP_EDITOR_ORDER_SAVED_DOM_EVENT, MAP_EDITOR_ORDER_SAVED_EVENT_KEY } from './mapEditorConstants.js';
-import concreteLinkLogo from './assets/concrete-link-logo.svg';
-import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
+import BrandLogo from './components/BrandLogo.jsx';
+import { APP_BRAND_HOME_LABEL } from './constants/brand.js';
 import { FactorySettingsPanel } from './components/FactorySettingsPanel.jsx';
 import { CharterRequestsPanel } from './components/CharterRequestsPanel.jsx';
 import { CharterOpenRequestsPanel } from './components/CharterOpenRequestsPanel.jsx';
@@ -3494,7 +3494,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                   <div className="flex shrink-0 items-center gap-2 pl-8 sm:ml-auto sm:pl-0">
                     {collapsed && nextLabel ? (
                       <span
-                        className="whitespace-nowrap rounded-lg bg-white/80 px-2 py-0.5 text-xs font-black tabular-nums text-indigo-800 dark:bg-slate-900/60 dark:text-indigo-200"
+                        className="whitespace-nowrap rounded-lg border border-indigo-200 bg-white/90 px-2 py-0.5 text-xs font-black tabular-nums text-indigo-950 dark:border-indigo-300 dark:bg-indigo-500/35 dark:text-white"
                         title={`次回：${nextLabel}`}
                       >
                         次回：{nextLabel}
@@ -6921,6 +6921,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
               onSubmit={handleFactoryLogin}
               className="w-full max-w-md rounded-2xl border-2 border-slate-200 bg-white p-5 shadow-2xl sm:p-6"
             >
+              <BrandLogo tone="light" className="mb-5 h-12 w-auto shrink-0" />
               <p className="text-xs font-black uppercase tracking-widest text-indigo-600">Factory Login</p>
               <h1 className="mt-2 text-2xl font-black tracking-tight text-slate-900">工場ログイン</h1>
               <p className="mt-2 text-sm font-bold leading-relaxed text-slate-600">
@@ -7004,7 +7005,7 @@ function isFactoryUnreadPendingOrder(order, activeFactoryId, readOrderIds) {
                   className="inline-flex w-fit shrink-0 items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
                   aria-label={APP_BRAND_HOME_LABEL}
                 >
-                  <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-7 w-auto sm:h-8" />
+                  <BrandLogo tone="icon" className="inline-flex h-7 w-7 sm:h-8 sm:w-8" />
                 </a>
                 <div className="min-w-0">
                   <p className="truncate text-xs font-black leading-tight text-slate-900 dark:text-slate-100 sm:text-sm">

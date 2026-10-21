@@ -20,8 +20,8 @@ import {
   registerOneSignalUser,
   unregisterOneSignalUser,
 } from './utils/notification.js';
-import concreteLinkLogo from './assets/concrete-link-logo.svg';
-import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
+import BrandLogo from './components/BrandLogo.jsx';
+import { APP_BRAND_HOME_LABEL } from './constants/brand.js';
 import { countPendingCharterResponses } from './utils/charterBadges.js';
 
 function readStoredCharterId() {
@@ -236,6 +236,7 @@ export function CharterApp() {
           onSubmit={(e) => void handleLogin(e)}
           className="w-full max-w-md rounded-2xl border-2 border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-800 sm:p-6"
         >
+          <BrandLogo tone="auto" className="mb-5 inline-flex h-12" />
           <p className="text-xs font-black uppercase tracking-widest text-indigo-600 dark:text-indigo-400">
             Charter Login
           </p>
@@ -314,7 +315,7 @@ export function CharterApp() {
               className="inline-flex shrink-0 items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
               aria-label={APP_BRAND_HOME_LABEL}
             >
-              <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-7 w-auto" />
+              <BrandLogo tone="icon" className="inline-flex h-7 w-7" />
             </a>
             <div className="min-w-0">
               <p className="truncate text-xs font-black text-slate-900 dark:text-slate-100">チャーター業者画面</p>

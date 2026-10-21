@@ -3,14 +3,21 @@ export const NOMINAL_STRENGTH_LIST = [18, 21, 24, 27, 30, 33, 36, 40, 42, 45, 48
 export const BASE_STRENGTH_CANDIDATES = [18, 21, 24, 27, 30, 33, 36, 40, 42, 45];
 export const SLUMP_CANDIDATES = [8, 12, 15, 18, 21];
 export const AGGREGATE_SIZE_CANDIDATES = [20, 40];
+/** 設計基準強度 1 はモルタル。砂の比率は 1〜5（直接入力も可） */
+export const MORTAR_BASE_STRENGTH = 1;
+export const MORTAR_RATIO_CANDIDATES = [1, 2, 3, 4, 5];
 
 function candidateOptions(candidates, labelFor = (n) => String(n)) {
   return candidates.map((n) => ({ value: String(n), label: labelFor(n) }));
 }
 
 /** プルダウンの表示ラベル。保存値は value（数値文字列） */
-export const BASE_STRENGTH_OPTIONS = candidateOptions(BASE_STRENGTH_CANDIDATES);
+export const BASE_STRENGTH_OPTIONS = [
+  { value: String(MORTAR_BASE_STRENGTH), label: '1（モルタル）' },
+  ...candidateOptions(BASE_STRENGTH_CANDIDATES),
+];
 export const SLUMP_OPTIONS = candidateOptions(SLUMP_CANDIDATES);
+export const MORTAR_RATIO_OPTIONS = candidateOptions(MORTAR_RATIO_CANDIDATES);
 export const AGGREGATE_SIZE_OPTIONS = candidateOptions(AGGREGATE_SIZE_CANDIDATES, (n) => `${n}mm`);
 export const WATER_CEMENT_RATIO_OPTIONS = [
   { value: '65', label: '65%以下' },
@@ -47,6 +54,12 @@ export const FALLBACK_CORRECTION_VALUE_RULES = [
   { fiscal_year: 2026, region: '湯布院・庄内', cement_type: 'BB', category_label: '0℃以上13℃未満', date_start_month: 10, date_start_day: 15, date_end_month: 4, date_end_day: 4, correction_value: 6 },
 ];
 
+/** 設計基準強度が 1 のときモルタル配合。呼び強度の切り上げ対象にしない */
+export function isMortarBaseStrength(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && Math.trunc(n) === MORTAR_BASE_STRENGTH;
+}
+
 // 与えられた値以上で最小の規格値に切り上げる
 export function roundUpToNominalStrength(rawValue) {
   for (const v of NOMINAL_STRENGTH_LIST) {
@@ -72,7 +85,8 @@ export function lookupCorrectionValue(pourDate, rules) {
 }
 
 // 配合コード文字列を組み立てる
-// 例: "36（30+6N）-15-20N・高性能"
+// コンクリート例: "36（30+6N）-15-20N・高性能"（補正の N はニュートン。末尾はセメント種別）
+// モルタル例: "1:3N"（強度1・砂3・セメントN。骨材と構造体補正は付けない）
 export function buildMixCode({
   baseStrength,
   correctionValue,
@@ -82,10 +96,14 @@ export function buildMixCode({
   aggregateSize,
   aeAdmixture,
 }) {
+  const cement = cementType || 'N';
+  const aePart = aeAdmixture ? '・高性能' : '';
+  if (isMortarBaseStrength(baseStrength)) {
+    return `1:${slump}${cement}${aePart}`;
+  }
   const correctionPart = correctionValue != null
-    ? `（${baseStrength}+${correctionValue}${cementType}）`
+    ? `（${baseStrength}+${correctionValue}N）`
     : '';
   const nominalPart = correctionValue != null ? `${nominalStrength}${correctionPart}` : `${baseStrength}`;
-  const aePart = aeAdmixture ? '・高性能' : '';
-  return `${nominalPart}-${slump}-${aggregateSize}${cementType}${aePart}`;
+  return `${nominalPart}-${slump}-${aggregateSize}${cement}${aePart}`;
 }

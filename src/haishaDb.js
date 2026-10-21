@@ -33,6 +33,8 @@ import {
   buildMixDesignRequestInsertRow,
   buildMixDesignRequestSnapshot,
   isMixDesignStatus,
+  mixCodeForItem,
+  mixDesignItemFromDbRow,
   normalizeMixDesignFactoryIds,
   resolveMixDesignProjectId,
 } from './utils/mixDesignRequest.js';
@@ -1734,10 +1736,10 @@ export async function searchMixDesignRequests({ keyword = '', limit = 50 } = {})
   const q = String(keyword || '').trim();
   const take = Math.min(Math.max(Number(limit) || 50, 1), 200);
   const snapshotSelect =
-    'id, project_id, project_name, contractor_name, trading_company_name, site_address, site_manager_name, site_manager_contact, requested_to_factory_id, status, created_at, updated_at, requested_by, total_volume_m3';
+    'id, project_id, project_name, contractor_name, trading_company_name, site_address, site_manager_name, site_manager_contact, requested_to_factory_id, status, created_at, updated_at, requested_by, total_volume_m3, submission_method, copies_count';
   // Phase1 初期スキーマ（スナップショット列・帳票列が未適用の環境向け）
   const legacySelect =
-    'id, project_id, requested_to_factory_id, status, created_at, requested_by, total_volume_m3';
+    'id, project_id, requested_to_factory_id, status, created_at, requested_by, total_volume_m3, submission_method, copies_count';
 
   let query = supabase
     .from('mix_design_requests')
@@ -1838,13 +1840,50 @@ export async function searchMixDesignRequests({ keyword = '', limit = 50 } = {})
     }
   }
 
+  const mixCodesByRequestId = new Map();
+  if (requestIds.length) {
+    try {
+      const itemRows = await fetchRowsByIdsInChunks(
+        (chunk) =>
+          supabase
+            .from('mix_design_request_items')
+            .select(
+              'request_id, sort_order, base_strength, correction_value, nominal_strength, slump, aggregate_size, cement_type, ae_admixture',
+            )
+            .in('request_id', chunk),
+        requestIds,
+      );
+      const grouped = new Map();
+      for (const row of itemRows || []) {
+        const rid = String(row?.request_id || '').trim();
+        if (!rid) continue;
+        const list = grouped.get(rid) || [];
+        list.push(row);
+        grouped.set(rid, list);
+      }
+      for (const [rid, list] of grouped) {
+        list.sort((a, b) => Number(a?.sort_order ?? 0) - Number(b?.sort_order ?? 0));
+        const codes = list
+          .map((row, index) => mixCodeForItem(mixDesignItemFromDbRow(row, index)))
+          .filter(Boolean);
+        mixCodesByRequestId.set(rid, codes);
+      }
+    } catch (itemError) {
+      console.warn('[searchMixDesignRequests] items lookup failed', itemError);
+    }
+  }
+
   const withFactories = normalized.map((row) => {
     const rid = String(row.id || '').trim();
     const fromJunction = factoryIdsByRequestId.get(rid) || [];
     const factoryIds = fromJunction.length
       ? fromJunction
       : normalizeMixDesignFactoryIds(row.requested_to_factory_id ? [row.requested_to_factory_id] : []);
-    return { ...row, requested_to_factory_ids: factoryIds };
+    return {
+      ...row,
+      requested_to_factory_ids: factoryIds,
+      mix_codes: mixCodesByRequestId.get(rid) || [],
+    };
   });
 
   if (!q) return withFactories.slice(0, take);

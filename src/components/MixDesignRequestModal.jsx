@@ -10,6 +10,8 @@ import {
   AGGREGATE_SIZE_OPTIONS,
   BASE_STRENGTH_OPTIONS,
   CORRECTION_VALUE_OPTIONS,
+  isMortarBaseStrength,
+  MORTAR_RATIO_OPTIONS,
   SLUMP_OPTIONS,
   UNIT_WATER_CONTENT_OPTIONS,
   WATER_CEMENT_RATIO_OPTIONS,
@@ -47,6 +49,7 @@ import {
   saveMixDesignDraft,
   sanitizeNonNegativeInput,
   selectAllOnFocus,
+  submissionMethodChangePatch,
   toggleMixDesignFactoryId,
   toggleMixDesignVehicle,
   validateMixDesignDraft,
@@ -79,6 +82,7 @@ function NonNegNumberInput({ value, onChange, className, inputMode = 'decimal', 
 
 function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, onDuplicate, canRemove, periodStart, periodEnd }) {
   const code = mixCodeForItem(item);
+  const mortar = isMortarBaseStrength(item.baseStrength);
   const nav = (col) => `${index},${col}`;
 
   return (
@@ -116,17 +120,18 @@ function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, onDuplic
           onChange={(value) => onChange({ baseStrength: value })}
         />
         <MixCandidateSelect
-          label="スランプ"
+          label={mortar ? '砂の比率' : 'スランプ'}
           nav={nav(1)}
           value={item.slump}
-          options={SLUMP_OPTIONS}
+          options={mortar ? MORTAR_RATIO_OPTIONS : SLUMP_OPTIONS}
           onChange={(value) => onChange({ slump: value })}
         />
         <MixCandidateSelect
           label="骨材"
           nav={nav(2)}
-          value={item.aggregateSize}
+          value={mortar ? '' : item.aggregateSize}
           options={AGGREGATE_SIZE_OPTIONS}
+          disabled={mortar}
           onChange={(value) => onChange({ aggregateSize: value })}
         />
         <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
@@ -238,9 +243,9 @@ function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, onDuplic
         <MixCandidateSelect
           label="構造体補正値"
           nav={nav(10)}
-          value={item.correctionValue}
+          value={mortar ? '' : item.correctionValue}
           options={CORRECTION_VALUE_OPTIONS}
-          disabled={Boolean(item.correctionIsAuto)}
+          disabled={mortar || Boolean(item.correctionIsAuto)}
           onChange={(value) => onChange({ correctionValue: value, correctionIsAuto: false })}
         />
         <label className="col-span-2 flex flex-col gap-1 text-xs font-bold text-slate-600 sm:col-span-4">
@@ -258,11 +263,14 @@ function MixDesignItemCard({ item, index, rowCount, onChange, onRemove, onDuplic
           <input
             type="checkbox"
             className="h-4 w-4"
-            checked={Boolean(item.correctionIsAuto)}
+            checked={!mortar && Boolean(item.correctionIsAuto)}
+            disabled={mortar}
             onChange={(e) => onChange({ correctionIsAuto: e.target.checked })}
           />
           補正値を自動計算
-          {item.correctionIsAuto && item.correctionLabel ? (
+          {mortar ? (
+            <span className="font-medium text-slate-500">（なし）</span>
+          ) : item.correctionIsAuto && item.correctionLabel ? (
             <span className="font-medium text-slate-500">（{item.correctionLabel}）</span>
           ) : null}
         </label>
@@ -540,7 +548,9 @@ export function MixDesignRequestModal({
     setDraft((prev) => ({
       ...prev,
       items: prev.items.map((item) =>
-        item.correctionIsAuto ? applyAutoCorrection(item, rules, prev.region) : item,
+        item.correctionIsAuto || isMortarBaseStrength(item.baseStrength)
+          ? applyAutoCorrection(item, rules, prev.region)
+          : item,
       ),
     }));
   }, [rules, open]);
@@ -588,6 +598,7 @@ export function MixDesignRequestModal({
       totalVolumeM3: draft.totalVolumeM3,
       submissionMethod: draft.submissionMethod,
       submissionEmail: draft.submissionEmail,
+      copiesCount: draft.copiesCount,
       memo: draft.memo,
       factoryNames: draft.factoryOmakase
         ? MIX_DESIGN_FACTORY_OMAKASE_LABEL
@@ -678,7 +689,13 @@ export function MixDesignRequestModal({
 
   const restoreOfferedDraft = () => {
     if (!draftOffer) return;
-    setDraft(draftOffer);
+    const region = draftOffer.region;
+    setDraft({
+      ...draftOffer,
+      items: (Array.isArray(draftOffer.items) ? draftOffer.items : []).map((item) =>
+        isMortarBaseStrength(item.baseStrength) ? applyAutoCorrection(item, rules, region) : item,
+      ),
+    });
     setDirty(true);
     setDraftOffer(null);
   };
@@ -1070,7 +1087,7 @@ export function MixDesignRequestModal({
               提出方法
               <select
                 value={draft.submissionMethod}
-                onChange={(e) => patchDraft({ submissionMethod: e.target.value })}
+                onChange={(e) => patchDraft(submissionMethodChangePatch(draft.copiesCount, e.target.value))}
                 className={FIELD}
               >
                 <option value="">未指定</option>

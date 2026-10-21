@@ -39,8 +39,8 @@ import {
   consumePushRedirectForApp,
   setupPushRedirectListener,
 } from './utils/pushRedirect.js';
-import concreteLinkLogo from './assets/concrete-link-logo.svg';
-import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
+import BrandLogo from './components/BrandLogo.jsx';
+import { APP_BRAND_HOME_LABEL } from './constants/brand.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
 import { setAutoReloadBlocked } from './hooks/useAppReleaseControl.js';
 import { OrderCartPreview } from './components/OrderCartPreview.jsx';
@@ -6202,6 +6202,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
         return (
           <div className="flex min-h-[100dvh] w-full items-center justify-center overflow-x-hidden bg-gradient-to-br from-slate-100 via-indigo-50 to-slate-100 px-4 py-[max(2rem,env(safe-area-inset-top))]">
             <form onSubmit={handleCustomerLogin} className="w-full max-w-md rounded-3xl border-2 border-slate-200 bg-white p-6 shadow-2xl sm:max-w-lg sm:p-8">
+              <BrandLogo tone="light" className="mb-5 h-12 w-auto shrink-0" />
               <p className="text-xs font-black uppercase tracking-widest text-indigo-600">現場注文ログイン</p>
               <h1 className="mt-2 break-words text-2xl font-black text-slate-900">カスタマーログイン</h1>
               <p className="mt-2 break-words text-sm font-bold leading-relaxed text-slate-500">
@@ -6283,10 +6284,10 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                 <div className="p-5 space-y-4">
                   <a
                     href="/"
-                    className="inline-flex w-fit items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                    className="block w-full min-w-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
                     aria-label={APP_BRAND_HOME_LABEL}
                   >
-                    <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-10 w-auto" />
+                    <BrandLogo tone="auto" className="block w-full min-w-0" />
                   </a>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -6355,7 +6356,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                   <div className="min-w-0">
                     {isGuestSiteOrder ? (
                       <>
-                        <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-10 w-auto" />
+                        <BrandLogo tone="icon" className="inline-flex h-10 w-10 sm:hidden" />
+                        <BrandLogo tone="auto" className="hidden h-10 sm:inline-flex" />
                         <div className="mt-3 space-y-1">
                           <p className="text-xs font-black uppercase tracking-wider text-indigo-600">物件専用発注フォーム</p>
                           {guestVendorLabel ? (
@@ -6382,7 +6384,8 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                             className="inline-flex w-fit items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
                             aria-label={APP_BRAND_HOME_LABEL}
                           >
-                            <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-10 w-auto" />
+                            <BrandLogo tone="icon" className="inline-flex h-10 w-10 sm:hidden" />
+                            <BrandLogo tone="auto" className="hidden h-10 sm:inline-flex" />
                           </a>
                           <div className="flex items-start gap-2">
                             <ThemeToggle compact />
@@ -7892,7 +7895,7 @@ function GuestLockedField({ label, value, emptyLabel = '—' }) {
                                       全{entry.orders.length}件
                                     </span>
                                     {dateRange ? (
-                                      <span className="whitespace-nowrap rounded-lg bg-white/80 px-2 py-0.5 text-xs font-black tabular-nums text-indigo-800 dark:bg-slate-900/60 dark:text-indigo-200">
+                                      <span className="whitespace-nowrap rounded-lg border border-indigo-200 bg-white/90 px-2 py-0.5 text-xs font-black tabular-nums text-indigo-950 dark:border-indigo-300 dark:bg-indigo-500/35 dark:text-white">
                                         {dateRange}
                                       </span>
                                     ) : null}

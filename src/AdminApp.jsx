@@ -80,7 +80,7 @@ import { orderPartyInfo, buildOrderPartyPersistPatch, resolveOrderParties } from
 // 業者欄: contractor_customer_id 優先。発注者名は業者の代役にしない。
 import { unloadDurationLabel } from './utils/unloadDurationLabel.js';
 import { OrderPartyEditFields } from './components/OrderPartyEditFields.jsx';
-import concreteLinkLogo from './assets/concrete-link-logo.svg';
+import BrandLogo from './components/BrandLogo.jsx';
 import { APP_BRAND_HOME_LABEL, APP_BRAND_NAME } from './constants/brand.js';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
 import {
@@ -4968,7 +4968,7 @@ function AdminLoginScreen({ onLogin }) {
     <div className="flex min-h-[100dvh] w-full items-center justify-center overflow-x-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 px-4 py-[max(2rem,env(safe-area-inset-top))] text-white">
       <form onSubmit={submit} className="w-full max-w-md rounded-3xl border border-white/10 bg-slate-950/80 p-6 shadow-2xl ring-1 ring-white/10 backdrop-blur sm:p-8">
         <a href="/" className="inline-flex w-fit rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label={APP_BRAND_HOME_LABEL}>
-          <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-12 w-auto rounded bg-white/95 p-1" />
+          <BrandLogo tone="dark" className="h-12 w-auto shrink-0" />
         </a>
         <p className="mt-6 text-xs font-black uppercase tracking-[0.24em] text-indigo-300">Admin Control Panel</p>
         <h1 className="mt-2 text-2xl font-black tracking-tight text-white">管理者専用ログイン</h1>
@@ -5204,7 +5204,7 @@ export function AdminApp() {
         <div className="mx-auto flex max-w-6xl flex-wrap items-start justify-between gap-3 px-4 py-5 sm:px-6">
           <div className="min-w-0">
             <a href="/" className="inline-flex w-fit items-center rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" aria-label={APP_BRAND_HOME_LABEL}>
-              <img src={concreteLinkLogo} alt={APP_BRAND_NAME} className="h-10 w-auto" />
+              <BrandLogo tone="auto" className="inline-flex h-10" />
             </a>
             <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{APP_BRAND_NAME}</p>
             <p className="mt-2 text-sm text-slate-500">注文モニター・商社・業者管理・その他の設定。</p>

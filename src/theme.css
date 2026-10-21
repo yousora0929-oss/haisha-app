@@ -317,6 +317,14 @@ html.dark .text-emerald-900 {
 html.dark .text-amber-950 {
   color: #fde68a !important;
 }
+/* bg-amber-100 は暗くならないため、文字だけ #fde68a になると黄地に黄文字になる */
+html.dark .bg-amber-100.text-amber-950,
+html.dark .bg-amber-100.text-amber-900,
+html.dark .bg-amber-100.text-amber-800 {
+  background-color: #92400e !important;
+  color: #fffbeb !important;
+  border-color: #fcd34d !important;
+}
 html.dark .text-orange-950 {
   color: #fed7aa !important;
 }
